@@ -4,7 +4,7 @@
 @implements IAsyncDisposable
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
-@inject IServiceScopeFactory ScopeFactory
+@inject EquipmentService EquipmentService
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
 @inject IJSRuntime JS
@@ -369,6 +369,7 @@
 
     private bool _modelDropOpen;
     private string _modelSearch = "";
+    private Guid? _loadedCardId;
 
     protected override void OnInitialized()
     {
@@ -400,11 +401,9 @@
         canArchive = user.IsInRole("NormAdmin");
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
 
-        using var scope = ScopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        nodes = await db.Nodes.OrderBy(n => n.Code).ToListAsync();
-        assemblyUnits = await db.AssemblyUnits.OrderBy(a => a.Code).ToListAsync();
-        gsmMaterials = await db.GsmMaterials.OrderBy(m => m.Name).ToListAsync();
+        nodes = await EquipmentService.GetNodesAsync();
+        assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
+        gsmMaterials = await EquipmentService.GetGsmMaterialsAsync();
 
         if (NodeId.HasValue && NodeId.Value != Guid.Empty)
             selectedNodeId = NodeId.Value;
@@ -428,16 +427,52 @@
 
         if (!IsNew && Id.HasValue)
         {
-            var existing = await HKCardService.GetByIdAsync(Id.Value);
-            if (existing != null)
-            {
-                card = existing;
-                selectedNodeId = card.NodeId;
-                statusStr = card.Status.ToString();
-            }
+            await LoadCardAsync(Id.Value);
+            _loadedCardId = Id;
         }
+        else
+        {
+            canEdit = isOperator && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
 
-        canEdit = isOperator && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
+            if (!card.Items.Any())
+            {
+                card.Items.Add(new HKCardItem
+                {
+                    Id = Guid.NewGuid(),
+                    HKCardId = card.Id,
+                    AssemblyUnitId = Guid.Empty,
+                    Quantity = 1,
+                    Volume = 1.000m,
+                    UnitOfMeasure = "кг",
+                    SortOrder = 1
+                });
+            }
+
+            InitItemDicts();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!IsNew && Id.HasValue && Id != _loadedCardId)
+        {
+            await LoadCardAsync(Id.Value);
+            _loadedCardId = Id;
+        }
+    }
+
+    private async Task LoadCardAsync(Guid cardId)
+    {
+        var existing = await HKCardService.GetByIdAsync(cardId);
+        if (existing == null) return;
+
+        card = existing;
+        selectedNodeId = card.NodeId;
+        statusStr = card.Status.ToString();
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var isOperator = authState.User.IsInRole("Operator");
+        canEdit = isOperator && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
 
         if (!card.Items.Any())
         {
@@ -625,9 +660,8 @@
 
         if (card.BranchId == Guid.Empty)
         {
-            using var scope = ScopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var branch = await db.Branches.FirstOrDefaultAsync();
+            var branches = await EquipmentService.GetBranchesAsync();
+            var branch = branches.FirstOrDefault();
             card.BranchId = branch?.Id ?? Guid.Empty;
         }
 
@@ -672,6 +706,11 @@
             return;
         }
         catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+            return;
+        }
+        catch (UnauthorizedAccessException ex)
         {
             errorMessage = ex.Message;
             return;

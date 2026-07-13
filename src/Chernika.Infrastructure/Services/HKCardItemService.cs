@@ -11,7 +11,7 @@ public class HKCardItemService
 
     public HKCardItemService(AppDbContext db) => _db = db;
 
-    public async Task SaveMaterialsAsync(Guid hkCardItemId,
+    public async Task ReplaceMaterialsAsync(Guid hkCardItemId,
         IEnumerable<(Guid GsmMaterialId, GsmCategory Category)> materials)
     {
         var existing = await _db.HKCardItemMaterials
@@ -28,6 +28,5 @@ public class HKCardItemService
         }).ToList();
 
         await _db.HKCardItemMaterials.AddRangeAsync(newMaterials);
-        await _db.SaveChangesAsync();
     }
 }

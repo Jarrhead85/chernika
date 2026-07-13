@@ -119,7 +119,7 @@ public class IndividualCardService
 
         var coefficientProduct = await GetCoefficientProductAsync(coefficientIds);
         var appliedCoefficients = await LoadActiveCoefficientsAsync(coefficientIds);
-        var version = "v" + DateTime.Now.ToString("MMyy");
+        var version = "v" + DateTime.UtcNow.ToString("MMyy");
         var newCards = new List<IndividualCard>();
 
         var now = DateTime.UtcNow;

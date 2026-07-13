@@ -38,6 +38,9 @@ public class HKCard
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    [Timestamp]
+    public uint RowVersion { get; set; }
+
     public ICollection<HKCardItem> Items { get; set; } = new List<HKCardItem>();
     public ICollection<HKCardStatusLog> StatusLog { get; set; } = new List<HKCardStatusLog>();
 }

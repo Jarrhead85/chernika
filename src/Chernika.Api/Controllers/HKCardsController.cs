@@ -83,6 +83,10 @@ public class HKCardsController : ControllerBase
         {
             return BadRequest(ex.Message);
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ex.Message);
+        }
         return NoContent();
     }
 

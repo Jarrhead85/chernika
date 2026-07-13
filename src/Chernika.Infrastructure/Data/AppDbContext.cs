@@ -143,10 +143,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Purpose).HasMaxLength(2000);
             e.Property(x => x.NormativeBasis).HasMaxLength(2000);
             e.Property(x => x.Notes).HasMaxLength(4000);
+            e.Property(x => x.RowVersion)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .IsRowVersion();
             e.HasOne(x => x.Branch).WithMany(x => x.HKCards).HasForeignKey(x => x.BranchId)
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Node).WithMany(x => x.HKCards).HasForeignKey(x => x.NodeId);
             e.HasIndex(x => new { x.Code, x.Version }).IsUnique();
+            e.HasIndex(x => x.NodeId)
+                .HasDatabaseName("UX_HKCards_OneActivePerNode")
+                .HasFilter("\"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')")
+                .IsUnique();
             e.HasQueryFilter(x => x.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 

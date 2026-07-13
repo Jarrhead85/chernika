@@ -9,7 +9,7 @@
     <section class="panel">
         <div class="panelHeader">
             <h2>Оперативная сводка по формам</h2>
-            <div class="hint">Обновлено: @DateTime.Now.ToString("dd.MM.yyyy HH:mm") MSK</div>
+            <div class="hint">Обновлено: @DateTime.UtcNow.ToString("dd.MM.yyyy HH:mm") UTC</div>
         </div>
         <div class="panelBody">
             <div class="hero">
@@ -21,13 +21,13 @@
                 <div class="heroGrid">
                     <div class="heroStat">
                         <div class="label">ХК в банке <span class="tag ok">актуальные</span></div>
-                        <div class="value">@cards.Count</div>
-                        <div class="trend">@cards.Count(c => c.Status == HKCardStatus.Approved) утверждённых</div>
+                        <div class="value">@totalCount</div>
+                        <div class="trend">@statusCounts.GetValueOrDefault(HKCardStatus.Approved) утверждённых</div>
                     </div>
                     <div class="heroStat">
                         <div class="label">Изделия состава <span class="tag warn">в работе</span></div>
-                        <div class="value">@cards.Count(c => c.Status == HKCardStatus.OnReview)</div>
-                        <div class="trend">@cards.Count(c => c.Status == HKCardStatus.RevisionRequired) требуют доработки</div>
+                        <div class="value">@statusCounts.GetValueOrDefault(HKCardStatus.OnReview)</div>
+                        <div class="trend">@statusCounts.GetValueOrDefault(HKCardStatus.RevisionRequired) требуют доработки</div>
                     </div>
                     <div class="heroStat">
                         <div class="label">Инд. карты <span class="tag ok">расчет</span></div>
@@ -36,7 +36,7 @@
                     </div>
                     <div class="heroStat">
                         <div class="label">Замечания <span class="tag bad">контроль</span></div>
-                        <div class="value">@cards.Count(c => c.Status == HKCardStatus.RevisionRequired)</div>
+                        <div class="value">@statusCounts.GetValueOrDefault(HKCardStatus.RevisionRequired)</div>
                         <div class="trend">Требуют внимания</div>
                     </div>
                 </div>
@@ -130,7 +130,7 @@
                         </table>
                         <div class="footer">
                             <div>Двойной клик по строке — открыть карточку ХК.</div>
-                            <div class="mono">Показано @filteredCards.Count из @cards.Count</div>
+                            <div class="mono">Показано @filteredCards.Count из @totalCount</div>
                         </div>
                     }
                 </div>
@@ -167,21 +167,21 @@
                 <div class="panelHeader"><h2>Мои задачи</h2><div class="hint">Рабочий процесс</div></div>
                 <div class="panelBody">
                     <div class="alerts">
-                        @foreach (var card in cards.Where(c => c.Status == HKCardStatus.OnReview).Take(3))
+                        @foreach (var card in taskCardsOnReview)
                         {
                             <div class="alert">
                                 <div class="top"><p class="title">Согласовать @card.Code</p><span class="tag warn">до @card.CreatedAt.AddDays(7).ToString("dd.MM")</span></div>
                                 <p class="desc">Проверить состав марок ГСМ и маршрут согласования.</p>
                             </div>
                         }
-                        @foreach (var card in cards.Where(c => c.Status == HKCardStatus.RevisionRequired).Take(3))
+                        @foreach (var card in taskCardsRevision)
                         {
                             <div class="alert">
                                 <div class="top"><p class="title">Замечания по @card.Code</p><span class="tag bad">критично</span></div>
                                 <p class="desc">Заполнить поля «срок действия» и «основание утверждения».</p>
                             </div>
                         }
-                        @if (!cards.Any(c => c.Status == HKCardStatus.OnReview || c.Status == HKCardStatus.RevisionRequired))
+                        @if (!taskCardsOnReview.Any() && !taskCardsRevision.Any())
                         {
                             <div class="note">Нет активных задач</div>
                         }
@@ -193,8 +193,11 @@
 </div>
 
 @code {
-    private List<HKCard> cards = new();
     private List<HKCard> filteredCards = new();
+    private List<HKCard> taskCardsOnReview = new();
+    private List<HKCard> taskCardsRevision = new();
+    private Dictionary<HKCardStatus, int> statusCounts = new();
+    private int totalCount;
     private HKCard? selectedCard;
     private bool loading = true;
     private bool canCreate;
@@ -230,8 +233,30 @@
         loading = true;
         try
         {
-            cards = await HKCardService.GetAllAsync();
-            ApplyFilters();
+            Guid? branchFilter = Guid.TryParse(userBranchId, out var branchId) ? branchId : null;
+            statusCounts = await HKCardService.GetStatusCountsAsync(branchFilter);
+            totalCount = statusCounts.Values.Sum();
+
+            HKCardStatus? statusFilter = null;
+            if (!string.IsNullOrEmpty(filterStatus) && Enum.TryParse<HKCardStatus>(filterStatus, out var parsedStatus))
+                statusFilter = parsedStatus;
+
+            filteredCards = await HKCardService.GetFilteredAsync(
+                code: filterCode,
+                status: statusFilter,
+                version: filterVersion,
+                nodeSearch: filterNode,
+                branchId: branchFilter);
+
+            taskCardsOnReview = await HKCardService.GetFilteredAsync(
+                status: HKCardStatus.OnReview,
+                branchId: branchFilter);
+            taskCardsOnReview = taskCardsOnReview.Take(3).ToList();
+
+            taskCardsRevision = await HKCardService.GetFilteredAsync(
+                status: HKCardStatus.RevisionRequired,
+                branchId: branchFilter);
+            taskCardsRevision = taskCardsRevision.Take(3).ToList();
         }
         finally
         {
@@ -239,26 +264,14 @@
         }
     }
 
-    private void ApplyFilters()
+    private async Task ApplyFilters()
     {
-        var q = cards.AsEnumerable();
-
-        if (!string.IsNullOrEmpty(filterCode))
-            q = q.Where(c => c.Code.Contains(filterCode, StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrEmpty(filterStatus))
-            q = q.Where(c => c.Status.ToString() == filterStatus);
-        if (!string.IsNullOrEmpty(filterVersion))
-            q = q.Where(c => c.Version.Contains(filterVersion, StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrEmpty(filterNode))
-            q = q.Where(c => (c.Node?.Name?.Contains(filterNode, StringComparison.OrdinalIgnoreCase) ?? false)
-                          || (c.Node?.Code?.Contains(filterNode, StringComparison.OrdinalIgnoreCase) ?? false));
-
-        filteredCards = q.ToList();
+        await LoadCards();
     }
 
-    private void SelectCard(Guid id)
+    private async Task SelectCard(Guid id)
     {
-        selectedCard = cards.FirstOrDefault(c => c.Id == id);
+        selectedCard = await HKCardService.GetByIdAsync(id);
     }
 
     private void GoToCreate() => Nav.NavigateTo("/хк/создать");
@@ -275,7 +288,7 @@
 
     private async Task DeleteCard(Guid id)
     {
-        var card = cards.FirstOrDefault(c => c.Id == id);
+        var card = filteredCards.FirstOrDefault(c => c.Id == id);
         if (card == null || !CanDeleteCard(card)) return;
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;

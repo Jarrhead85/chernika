@@ -44,6 +44,12 @@ public class TaskService
         return task;
     }
 
+    public async Task CreateTasksAsync(IEnumerable<WorkTask> tasks)
+    {
+        _db.WorkTasks.AddRange(tasks);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<bool> CompleteTaskAsync(Guid id)
     {
         var task = await _db.WorkTasks.FindAsync(id);

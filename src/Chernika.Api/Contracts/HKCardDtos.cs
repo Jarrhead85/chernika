@@ -38,6 +38,7 @@ public record HKCardDetailDto(
     DateTime? ExpirationDate,
     DateTime CreatedAt,
     DateTime UpdatedAt,
+    uint RowVersion,
     IReadOnlyList<HKCardItemDto> Items);
 
 public record HKCardItemDto(
@@ -70,7 +71,8 @@ public record UpdateHKCardRequest(
     string? NormativeBasis,
     string? Notes,
     DateTime? EffectiveDate,
-    DateTime? ExpirationDate);
+    DateTime? ExpirationDate,
+    uint RowVersion = 0);
 
 public record StatusChangeRequest(HKCardStatus NewStatus, string? Comment = null);
 
@@ -88,7 +90,7 @@ public static class HKCardMapper
         c.Purpose, c.NormativeBasis, c.Notes,
         c.AuthorId, c.ReviewerId,
         c.ApprovedDate, c.EffectiveDate, c.ExpirationDate,
-        c.CreatedAt, c.UpdatedAt,
+        c.CreatedAt, c.UpdatedAt, c.RowVersion,
         c.Items.Select(ToItemDto).ToList());
 
     private static HKCardItemDto ToItemDto(HKCardItem i) =>
@@ -145,5 +147,6 @@ public static class HKCardMapper
         card.Notes = r.Notes;
         card.EffectiveDate = r.EffectiveDate;
         card.ExpirationDate = r.ExpirationDate;
+        card.RowVersion = r.RowVersion;
     }
 }
