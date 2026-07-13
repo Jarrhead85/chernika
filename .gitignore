@@ -4,6 +4,7 @@ run_err*.txt
 *stdout.txt
 start_app.cmd
 test_run.ps1
+*.docx
 ~$*.docx
 
 # .NET
