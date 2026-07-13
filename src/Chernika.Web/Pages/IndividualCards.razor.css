@@ -1,0 +1,93 @@
+.ik-items-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: var(--panel);
+    overflow: hidden;
+    font-size: 13px;
+    min-width: 900px;
+}
+
+.ik-items-table thead th {
+    background: var(--panel2);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    font-weight: 600;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.ik-items-table thead th[colspan] {
+    border-bottom: none;
+}
+
+.ik-items-table tbody tr {
+    background: var(--panel);
+}
+
+.ik-items-table tbody tr:nth-child(even) {
+    background: var(--panel2);
+}
+
+.ik-items-table tbody tr:hover {
+    background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.ik-items-table tbody td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    color: var(--text);
+    font-size: 13px;
+    vertical-align: top;
+}
+
+.ik-items-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.ik-items-table td.col-num,
+.ik-items-table th.col-num {
+    width: 40px;
+    text-align: center;
+    color: var(--muted);
+}
+
+.ik-num {
+    text-align: right;
+    width: 50px;
+}
+
+.ik-mono {
+    font-variant-numeric: tabular-nums;
+}
+
+.ik-mat-cell {
+    min-width: 120px;
+}
+
+.ik-mat-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    margin: 2px 4px 2px 0;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--line) 80%, var(--text));
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.ik-empty {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.ik-warn {
+    color: var(--warn, #f59e0b);
+    font-weight: 600;
+    font-size: 11px;
+}

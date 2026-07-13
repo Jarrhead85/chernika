@@ -1,0 +1,301 @@
+@page "/реестр-хк"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject HKCardService HKCardService
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+@inject UserManager<ApplicationUser> UserManager
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Оперативная сводка по формам</h2>
+            <div class="hint">Обновлено: @DateTime.Now.ToString("dd.MM.yyyy HH:mm") MSK</div>
+        </div>
+        <div class="panelBody">
+            <div class="hero">
+                <div class="heroBox">
+                    <div class="eyebrow">Нормативный контур • Веб-интерфейс</div>
+                    <h3>Химмотологические карты</h3>
+                    <p>Ведение нормативных ХК по изделиям: разрешённые марки ГСМ, базовые объёмы и версии карточек</p>
+                </div>
+                <div class="heroGrid">
+                    <div class="heroStat">
+                        <div class="label">ХК в банке <span class="tag ok">актуальные</span></div>
+                        <div class="value">@cards.Count</div>
+                        <div class="trend">@cards.Count(c => c.Status == HKCardStatus.Approved) утверждённых</div>
+                    </div>
+                    <div class="heroStat">
+                        <div class="label">Изделия состава <span class="tag warn">в работе</span></div>
+                        <div class="value">@cards.Count(c => c.Status == HKCardStatus.OnReview)</div>
+                        <div class="trend">@cards.Count(c => c.Status == HKCardStatus.RevisionRequired) требуют доработки</div>
+                    </div>
+                    <div class="heroStat">
+                        <div class="label">Инд. карты <span class="tag ok">расчет</span></div>
+                        <div class="value">—</div>
+                        <div class="trend">Модуль в разработке</div>
+                    </div>
+                    <div class="heroStat">
+                        <div class="label">Замечания <span class="tag bad">контроль</span></div>
+                        <div class="value">@cards.Count(c => c.Status == HKCardStatus.RevisionRequired)</div>
+                        <div class="trend">Требуют внимания</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="grid">
+        <div class="stack">
+            <section class="panel">
+                <div class="panelHeader">
+                    <h2>Реестр ХК</h2>
+                    <div class="hint">Поиск / фильтрация / версии</div>
+                </div>
+                <div class="panelBody">
+                    <div class="form">
+                        <div class="field"><label>Номер ХК</label><input @bind="filterCode" placeholder="HK-2026-001301" /></div>
+                        <div class="field"><label>Статус</label>
+                            <select @bind="filterStatus" class="field-select">
+                                <option value="">Все</option>
+                                <option value="Draft">Черновик</option>
+                                <option value="OnReview">На проверке</option>
+                                <option value="RevisionRequired">На доработке</option>
+                                <option value="Approved">Утверждена</option>
+                                <option value="Archived">Архивная</option>
+                            </select>
+                        </div>
+                        <div class="field"><label>Версия</label><input @bind="filterVersion" placeholder="v0426" /></div>
+                        <div class="field"><label>Изделие</label><input @bind="filterNode" placeholder="UZ-044 / двигатель" /></div>
+                        <div class="formActions">
+                            <button class="btn" @onclick="ApplyFilters">Применить фильтры</button>
+                            @if (canCreate) { <button class="btn primary" @onclick="GoToCreate">Создать ХК</button> }
+                        </div>
+                    </div>
+                    <div class="chips">
+                        <span class="pill">Все версии</span>
+                        <span class="pill">Только действующие</span>
+                        @if (!string.IsNullOrEmpty(filterStatus))
+                        {
+                            <span class="pill">Статус: @filterStatus</span>
+                        }
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panelHeader">
+                    <h2>Список ХК</h2>
+                    <div class="hint">@filteredCards.Count записей</div>
+                </div>
+                <div class="panelBody">
+                    @if (loading)
+                    {
+                        <div class="loading-state">Загрузка...</div>
+                    }
+                    else if (!filteredCards.Any())
+                    {
+                        <div class="empty-state">Нет ХК, соответствующих фильтру</div>
+                    }
+                    else
+                    {
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>№ ХК</th>
+                                    <th>Изделие</th>
+                                    <th>Статус</th>
+                                    <th>Версия</th>
+                                    <th>Филиал</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var card in filteredCards)
+                                {
+                                    <tr @onclick="() => SelectCard(card.Id)" @ondblclick="() => GoToEdit(card.Id)" style="cursor:pointer">
+                                        <td class="mono">@card.Code</td>
+                                        <td>@card.Node?.Name<br /><span class="mono">@card.Node?.Code</span></td>
+                                        <td><StatusBadge Status="@card.Status" /></td>
+                                        <td class="mono">@card.Version</td>
+                                        <td>@card.Branch?.Name</td>
+                                        <td>
+                                            <div class="rowActions">
+                                                <button class="linkBtn" @onclick="() => GoToEdit(card.Id)">Открыть</button>
+                                                @if (CanDeleteCard(card)) { <button class="linkBtn" @onclick="() => DeleteCard(card.Id)">Удалить</button> }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                        <div class="footer">
+                            <div>Двойной клик по строке — открыть карточку ХК.</div>
+                            <div class="mono">Показано @filteredCards.Count из @cards.Count</div>
+                        </div>
+                    }
+                </div>
+            </section>
+        </div>
+
+        <aside class="stack">
+            <section class="panel">
+                <div class="panelHeader"><h2>Карточка ХК</h2><div class="hint">Быстрый просмотр</div></div>
+                <div class="panelBody">
+                    @if (selectedCard == null)
+                    {
+                        <div class="empty-state">Выберите ХК из списка</div>
+                    }
+                    else
+                    {
+                        <div class="metrics2">
+                            <div class="metric"><div class="label">Статус</div><div class="value"><StatusBadge Status="@selectedCard.Status" /></div></div>
+                            <div class="metric"><div class="label">Версия</div><div class="value mono">@selectedCard.Version</div></div>
+                            <div class="metric"><div class="label">Строк в ХК</div><div class="value">@selectedCard.Items.Count</div></div>
+                            <div class="metric"><div class="label">Дата создания</div><div class="value">@selectedCard.CreatedAt.ToString("dd.MM.yyyy")</div></div>
+                        </div>
+                        <div class="note" style="margin-top:12px;">
+                            @(selectedCard.Purpose?.Length > 120 ? selectedCard.Purpose[..120] : selectedCard.Purpose)
+                        </div>
+                        <div class="btnRow" style="margin-top:12px">
+                            <button class="btn primary" @onclick="() => GoToEdit(selectedCard.Id)">Открыть</button>
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panelHeader"><h2>Мои задачи</h2><div class="hint">Рабочий процесс</div></div>
+                <div class="panelBody">
+                    <div class="alerts">
+                        @foreach (var card in cards.Where(c => c.Status == HKCardStatus.OnReview).Take(3))
+                        {
+                            <div class="alert">
+                                <div class="top"><p class="title">Согласовать @card.Code</p><span class="tag warn">до @card.CreatedAt.AddDays(7).ToString("dd.MM")</span></div>
+                                <p class="desc">Проверить состав марок ГСМ и маршрут согласования.</p>
+                            </div>
+                        }
+                        @foreach (var card in cards.Where(c => c.Status == HKCardStatus.RevisionRequired).Take(3))
+                        {
+                            <div class="alert">
+                                <div class="top"><p class="title">Замечания по @card.Code</p><span class="tag bad">критично</span></div>
+                                <p class="desc">Заполнить поля «срок действия» и «основание утверждения».</p>
+                            </div>
+                        }
+                        @if (!cards.Any(c => c.Status == HKCardStatus.OnReview || c.Status == HKCardStatus.RevisionRequired))
+                        {
+                            <div class="note">Нет активных задач</div>
+                        }
+                    </div>
+                </div>
+            </section>
+        </aside>
+    </div>
+</div>
+
+@code {
+    private List<HKCard> cards = new();
+    private List<HKCard> filteredCards = new();
+    private HKCard? selectedCard;
+    private bool loading = true;
+    private bool canCreate;
+    private bool canSendToApprove;
+    private bool canApprove;
+    private bool canVerify;
+    private bool canReturn;
+    private string userBranchId = "";
+    private System.Security.Claims.ClaimsPrincipal? _currentUser;
+
+    private string filterCode = "";
+    private string filterStatus = "";
+    private string filterVersion = "";
+    private string filterNode = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var user = authState.User;
+        _currentUser = user;
+        canCreate = user.IsInRole("Operator");
+        canSendToApprove = user.IsInRole("Operator");
+        canApprove = user.IsInRole("NormAdmin");
+        canVerify = user.IsInRole("NormAdmin");
+        canReturn = user.IsInRole("NormAdmin");
+        var claim = user.FindFirst("BranchId");
+        if (claim != null) userBranchId = claim.Value;
+        await LoadCards();
+    }
+
+    private async Task LoadCards()
+    {
+        loading = true;
+        try
+        {
+            cards = await HKCardService.GetAllAsync();
+            ApplyFilters();
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        var q = cards.AsEnumerable();
+
+        if (!string.IsNullOrEmpty(filterCode))
+            q = q.Where(c => c.Code.Contains(filterCode, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(filterStatus))
+            q = q.Where(c => c.Status.ToString() == filterStatus);
+        if (!string.IsNullOrEmpty(filterVersion))
+            q = q.Where(c => c.Version.Contains(filterVersion, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(filterNode))
+            q = q.Where(c => (c.Node?.Name?.Contains(filterNode, StringComparison.OrdinalIgnoreCase) ?? false)
+                          || (c.Node?.Code?.Contains(filterNode, StringComparison.OrdinalIgnoreCase) ?? false));
+
+        filteredCards = q.ToList();
+    }
+
+    private void SelectCard(Guid id)
+    {
+        selectedCard = cards.FirstOrDefault(c => c.Id == id);
+    }
+
+    private void GoToCreate() => Nav.NavigateTo("/хк/создать");
+    private void GoToEdit(Guid id) => Nav.NavigateTo($"/хк/{id}");
+
+    private bool CanDeleteCard(HKCard card)
+    {
+        if (_currentUser?.IsInRole("SystemAdmin") == true) return card.Status == HKCardStatus.Archived;
+        if (_currentUser?.IsInRole("Operator") == true)
+            return card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired
+                   && card.BranchId.ToString() == userBranchId;
+        return false;
+    }
+
+    private async Task DeleteCard(Guid id)
+    {
+        var card = cards.FirstOrDefault(c => c.Id == id);
+        if (card == null || !CanDeleteCard(card)) return;
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return;
+        if (!Guid.TryParse(userId, out var actorId)) return;
+
+        var user = await UserManager.FindByIdAsync(userId);
+        if (user == null) return;
+
+        UserRole actorRole;
+        if (await UserManager.IsInRoleAsync(user, "SystemAdmin")) actorRole = UserRole.SystemAdmin;
+        else if (await UserManager.IsInRoleAsync(user, "NormAdmin")) actorRole = UserRole.NormAdmin;
+        else if (await UserManager.IsInRoleAsync(user, "DepartmentHead")) actorRole = UserRole.DepartmentHead;
+        else actorRole = UserRole.Operator;
+
+        var (success, error) = await HKCardService.DeleteAsync(id, actorId, actorRole);
+        if (!success)
+        {
+            // TODO: show error to user
+        }
+        await LoadCards();
+    }
+}

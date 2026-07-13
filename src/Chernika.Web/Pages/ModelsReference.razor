@@ -1,0 +1,125 @@
+@page "/справочник-моделей"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочник моделей техники</h2>
+            <div class="hint">Модели / образцы</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Индекс</label><input @bind="newModel.Index" /></div>
+                <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
+                <div class="field"><label>Вид техники</label><input @bind="newModel.Type" /></div>
+                <div class="field"><label>Марка</label><input @bind="newModel.Brand" /></div>
+                <div class="field"><label>Модификация</label><input @bind="newModel.Modification" /></div>
+                <div class="field"><label>Описание</label><input @bind="newModel.Description" /></div>
+                <div class="formActions">
+                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                    @if (canEdit) { <button class="btn primary" @onclick="SaveModel">@(editing ? "Сохранить" : "Добавить")</button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список моделей</h2>
+            <div class="hint">@models.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!models.Any())
+            {
+                <div class="empty-state">Нет моделей техники</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr><th>Индекс</th><th>Наименование</th><th>Вид</th><th>Марка</th><th>Модификация</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in models)
+                        {
+                            <tr>
+                                <td class="mono">@m.Index</td>
+                                <td>@m.Name</td>
+                                <td>@m.Type</td>
+                                <td>@m.Brand</td>
+                                <td>@m.Modification</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditModel(m)">Изменить</button> }
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteModel(m.Id)">Удалить</button> }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<EquipmentModel> models = new();
+    private EquipmentModel newModel = new();
+    private bool editing = false;
+    private bool loading = true;
+    private bool canEdit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canEdit = authState.User.IsInRole("NormAdmin");
+        await LoadModels();
+    }
+
+    async Task LoadModels()
+    {
+        loading = true;
+        models = await EquipService.GetModelsAsync();
+        loading = false;
+    }
+
+    async Task SaveModel()
+    {
+        if (string.IsNullOrWhiteSpace(newModel.Name)) return;
+        if (editing)
+            await EquipService.UpdateModelAsync(newModel);
+        else
+            await EquipService.CreateModelAsync(newModel);
+        ResetForm();
+        await LoadModels();
+    }
+
+    void EditModel(EquipmentModel m)
+    {
+        newModel = new EquipmentModel
+        {
+            Id = m.Id, Index = m.Index, Name = m.Name, Type = m.Type,
+            Brand = m.Brand, Modification = m.Modification, Description = m.Description
+        };
+        editing = true;
+    }
+
+    async Task DeleteModel(Guid id)
+    {
+        await EquipService.DeleteModelAsync(id);
+        await LoadModels();
+    }
+
+    void ResetForm()
+    {
+        newModel = new EquipmentModel();
+        editing = false;
+    }
+}

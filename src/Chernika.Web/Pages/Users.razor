@@ -1,0 +1,261 @@
+@page "/пользователи"
+@attribute [Authorize(Policy = "ManageUsers")]
+@using Chernika.Domain.Entities
+@using Chernika.Domain.Enums
+@inject UserManager<ApplicationUser> UserManager
+@inject RoleManager<Microsoft.AspNetCore.Identity.IdentityRole> RoleManager
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Управление пользователями</h2>
+            <div class="hint">@users.Count зарегистрировано</div>
+        </div>
+        <div class="panelBody">
+            <div class="btnRow" style="margin-bottom:16px">
+                <button class="btn primary" @onclick="OpenCreate">+ Новый пользователь</button>
+            </div>
+
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!users.Any())
+            {
+                <div class="empty-state">Нет пользователей</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Логин</th>
+                            <th>ФИО</th>
+                            <th>Должность</th>
+                            <th>Роль</th>
+                            <th>Статус</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in users)
+                        {
+                            <tr>
+                                <td class="mono">@user.UserName</td>
+                                <td>@user.FullName</td>
+                                <td>@user.Position</td>
+                                <td><span class="badge">@GetUserRole(user)</span></td>
+                                <td>
+                                    <span class="badge" style="background:@(user.IsActive ? "var(--ok)" : "var(--warn)")">
+                                        @(user.IsActive ? "Активен" : "Заблокирован")
+                                    </span>
+                                </td>
+                                <td>
+                                    <button class="linkBtn" @onclick="() => OpenEdit(user)">Изменить</button>
+                                    <button class="linkBtn" style="color:var(--warn)" @onclick="() => ToggleBlock(user)">
+                                        @(user.IsActive ? "Заблокировать" : "Разблокировать")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+
+    @if (showModal)
+    {
+        <div class="modalOverlay" @onclick="CloseModal">
+            <div class="modal" @onclick:stopPropagation="true">
+                <div class="modalHeader">
+                    <h3>@(isEdit ? "Редактирование" : "Новый пользователь")</h3>
+                    <button class="linkBtn" @onclick="CloseModal">✕</button>
+                </div>
+                <div class="modalBody">
+                    <div class="form">
+                        <div class="field"><label>Логин *</label>
+                            <input type="text" @bind="formUsername" class="fieldInput" disabled="isEdit" />
+                        </div>
+                        <div class="field"><label>ФИО</label>
+                            <input type="text" @bind="formFullName" class="fieldInput" />
+                        </div>
+                        <div class="field"><label>Должность</label>
+                            <input type="text" @bind="formPosition" class="fieldInput" />
+                        </div>
+                        @if (!isEdit)
+                        {
+                            <div class="field"><label>Пароль *</label>
+                                <input type="password" @bind="formPassword" class="fieldInput" />
+                            </div>
+                        }
+                        <div class="field"><label>Роль</label>
+                            <select @bind="formRole" class="field-select">
+                                @foreach (var role in allRoles)
+                                {
+                                    <option value="@role">@GetRoleDisplayName(role)</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(formError))
+                    {
+                        <div class="loginError" style="margin-top:12px">@formError</div>
+                    }
+                </div>
+                <div class="modalFooter">
+                    <button class="btn" @onclick="CloseModal">Отмена</button>
+                    <button class="btn primary" @onclick="SaveUser">Сохранить</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<ApplicationUser> users = new();
+    private List<string> allRoles = new();
+    private bool loading = true;
+    private bool showModal = false;
+    private bool isEdit = false;
+    private string formError = "";
+
+    private string formUsername = "";
+    private string formFullName = "";
+    private string formPosition = "";
+    private string formPassword = "";
+    private string formRole = "";
+    private ApplicationUser? editingUser;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsers();
+        var roles = await RoleManager.Roles.ToListAsync();
+        allRoles = roles.Select(r => r.Name ?? "").Where(n => !string.IsNullOrEmpty(n)).ToList();
+    }
+
+    async Task LoadUsers()
+    {
+        loading = true;
+        users = await UserManager.Users.ToListAsync();
+        loading = false;
+    }
+
+    string GetUserRole(ApplicationUser user)
+    {
+        var roles = UserManager.GetRolesAsync(user).Result;
+        return roles.FirstOrDefault() ?? "—";
+    }
+
+    string GetRoleDisplayName(string role)
+    {
+        return role switch
+        {
+            "SystemAdmin" => "Системный администратор",
+            "NormAdmin" => "Нормировщик",
+            "Operator" => "Оператор",
+            "DepartmentHead" => "Начальник филиала",
+            _ => role
+        };
+    }
+
+    void OpenCreate()
+    {
+        isEdit = false;
+        editingUser = null;
+        formUsername = "";
+        formFullName = "";
+        formPosition = "";
+        formPassword = "";
+        formRole = allRoles.FirstOrDefault() ?? "";
+        formError = "";
+        showModal = true;
+    }
+
+    void OpenEdit(ApplicationUser user)
+    {
+        isEdit = true;
+        editingUser = user;
+        formUsername = user.UserName ?? "";
+        formFullName = user.FullName ?? "";
+        formPosition = user.Position ?? "";
+        formPassword = "";
+        var roles = UserManager.GetRolesAsync(user).Result;
+        formRole = roles.FirstOrDefault() ?? allRoles.FirstOrDefault() ?? "";
+        formError = "";
+        showModal = true;
+    }
+
+    void CloseModal()
+    {
+        showModal = false;
+        formError = "";
+    }
+
+    async Task SaveUser()
+    {
+        formError = "";
+
+        if (string.IsNullOrWhiteSpace(formUsername) && !isEdit)
+        {
+            formError = "Логин обязателен";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(formPassword) && !isEdit)
+        {
+            formError = "Пароль обязателен";
+            return;
+        }
+
+        if (isEdit && editingUser != null)
+        {
+            editingUser.FullName = formFullName;
+            editingUser.Position = formPosition;
+            var updateResult = await UserManager.UpdateAsync(editingUser);
+            if (!updateResult.Succeeded)
+            {
+                formError = string.Join(", ", updateResult.Errors.Select(e => e.Description));
+                return;
+            }
+
+            var currentRoles = await UserManager.GetRolesAsync(editingUser);
+            await UserManager.RemoveFromRolesAsync(editingUser, currentRoles);
+            await UserManager.AddToRoleAsync(editingUser, formRole);
+        }
+        else
+        {
+            var newUser = new ApplicationUser
+            {
+                UserName = formUsername,
+                FullName = formFullName,
+                Position = formPosition,
+                IsActive = true,
+                EmailConfirmed = true,
+            };
+            var createResult = await UserManager.CreateAsync(newUser, formPassword);
+            if (!createResult.Succeeded)
+            {
+                formError = string.Join(", ", createResult.Errors.Select(e => e.Description));
+                return;
+            }
+            await UserManager.AddToRoleAsync(newUser, formRole);
+        }
+
+        showModal = false;
+        await LoadUsers();
+    }
+
+    async Task ToggleBlock(ApplicationUser user)
+    {
+        user.IsActive = !user.IsActive;
+        await UserManager.SetLockoutEnabledAsync(user, !user.IsActive);
+        if (user.IsActive)
+        {
+            await UserManager.SetLockoutEndDateAsync(user, null);
+        }
+        await UserManager.UpdateAsync(user);
+        await LoadUsers();
+    }
+}

@@ -1,0 +1,239 @@
+using Chernika.Domain.Entities;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace Chernika.Infrastructure.Data;
+
+public class AppDbContext : IdentityDbContext<ApplicationUser>
+{
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    public DbSet<Branch> Branches => Set<Branch>();
+    public DbSet<Node> Nodes => Set<Node>();
+    public DbSet<AssemblyUnit> AssemblyUnits => Set<AssemblyUnit>();
+    public DbSet<GsmMaterial> GsmMaterials => Set<GsmMaterial>();
+    public DbSet<EquipmentModel> EquipmentModels => Set<EquipmentModel>();
+    public DbSet<EquipmentInstance> EquipmentInstances => Set<EquipmentInstance>();
+    public DbSet<ProductComposition> ProductCompositions => Set<ProductComposition>();
+    public DbSet<ProductCompositionPart> ProductCompositionParts => Set<ProductCompositionPart>();
+    public DbSet<ProductCompositionNode> ProductCompositionNodes => Set<ProductCompositionNode>();
+    public DbSet<HKCard> HKCards => Set<HKCard>();
+    public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
+    public DbSet<HKCardItemMaterial> HKCardItemMaterials => Set<HKCardItemMaterial>();
+    public DbSet<HKCardStatusLog> HKCardStatusLogs => Set<HKCardStatusLog>();
+    public DbSet<CoefficientType> CoefficientTypes => Set<CoefficientType>();
+    public DbSet<Coefficient> Coefficients => Set<Coefficient>();
+    public DbSet<IndividualCard> IndividualCards => Set<IndividualCard>();
+    public DbSet<IndividualCardItem> IndividualCardItems => Set<IndividualCardItem>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<ApplicationUser>(e =>
+        {
+            e.ToTable("Users");
+            e.Property(x => x.FullName).HasMaxLength(256);
+            e.Property(x => x.Position).HasMaxLength(256);
+            e.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<IdentityRole>(e =>
+        {
+            e.ToTable("Roles");
+            e.Property(x => x.Name).HasMaxLength(256);
+            e.Property(x => x.NormalizedName).HasMaxLength(256);
+        });
+
+        modelBuilder.Entity<IdentityUserRole<string>>(e => e.ToTable("UserRoles"));
+        modelBuilder.Entity<IdentityUserClaim<string>>(e => e.ToTable("UserClaims"));
+        modelBuilder.Entity<IdentityUserLogin<string>>(e => e.ToTable("UserLogins"));
+        modelBuilder.Entity<IdentityRoleClaim<string>>(e => e.ToTable("RoleClaims"));
+        modelBuilder.Entity<IdentityUserToken<string>>(e => e.ToTable("UserTokens"));
+
+        modelBuilder.Entity<Branch>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Code).HasMaxLength(50);
+        });
+
+        modelBuilder.Entity<Node>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.HasIndex(x => x.Code).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<AssemblyUnit>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.HasIndex(x => x.Code).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<GsmMaterial>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Type).HasMaxLength(128).IsRequired();
+            e.Property(x => x.Gost).HasMaxLength(128);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<EquipmentModel>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Index).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Type).HasMaxLength(128);
+            e.Property(x => x.Brand).HasMaxLength(128);
+            e.Property(x => x.Modification).HasMaxLength(128);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<EquipmentInstance>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.SerialNumber).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Index).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.HasOne(x => x.EquipmentModel).WithMany(x => x.Instances).HasForeignKey(x => x.EquipmentModelId);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<ProductComposition>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasOne(x => x.EquipmentModel).WithMany(x => x.ProductCompositions).HasForeignKey(x => x.EquipmentModelId);
+            e.HasIndex(x => new { x.EquipmentModelId, x.IsActive });
+        });
+
+        modelBuilder.Entity<ProductCompositionPart>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.HasOne(x => x.ProductComposition).WithMany(x => x.Parts).HasForeignKey(x => x.ProductCompositionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.ProductCompositionId, x.SortOrder });
+        });
+
+        modelBuilder.Entity<ProductCompositionNode>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasOne(x => x.Part).WithMany(x => x.Nodes).HasForeignKey(x => x.PartId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Node).WithMany(x => x.ProductCompositionNodes).HasForeignKey(x => x.NodeId);
+        });
+
+        modelBuilder.Entity<HKCard>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Version).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Purpose).HasMaxLength(2000);
+            e.Property(x => x.NormativeBasis).HasMaxLength(2000);
+            e.Property(x => x.Notes).HasMaxLength(4000);
+            e.HasOne(x => x.Branch).WithMany(x => x.HKCards).HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Node).WithMany(x => x.HKCards).HasForeignKey(x => x.NodeId);
+            e.HasIndex(x => new { x.Code, x.Version }).IsUnique();
+            e.HasQueryFilter(x => x.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
+        });
+
+        modelBuilder.Entity<HKCardItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UnitOfMeasure).HasMaxLength(20);
+            e.Property(x => x.Periodicity).HasMaxLength(256);
+            e.Property(x => x.Notes).HasMaxLength(2000);
+            e.Property(x => x.Volume).HasPrecision(18, 6);
+            e.HasOne(x => x.HKCard).WithMany(x => x.Items).HasForeignKey(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.AssemblyUnit).WithMany(x => x.HKCardItems).HasForeignKey(x => x.AssemblyUnitId);
+        });
+
+        modelBuilder.Entity<HKCardItemMaterial>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Category).HasConversion<string>().HasMaxLength(20);
+            e.HasOne(x => x.HKCardItem).WithMany(x => x.Materials).HasForeignKey(x => x.HKCardItemId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.GsmMaterial).WithMany(x => x.HKCardItemMaterials).HasForeignKey(x => x.GsmMaterialId);
+        });
+
+        modelBuilder.Entity<HKCardStatusLog>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.FromStatus).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ToStatus).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Comment).HasMaxLength(2000);
+            e.HasOne(x => x.HKCard).WithMany(x => x.StatusLog).HasForeignKey(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CoefficientType>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Group).HasConversion<string>().HasMaxLength(30);
+        });
+
+        modelBuilder.Entity<Coefficient>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.ConditionDescription).HasMaxLength(2000);
+            e.Property(x => x.Value).HasPrecision(18, 6);
+            e.HasOne(x => x.CoefficientType).WithMany(x => x.Coefficients).HasForeignKey(x => x.CoefficientTypeId);
+        });
+
+        modelBuilder.Entity<IndividualCard>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Version).HasMaxLength(10).IsRequired();
+            e.Property(x => x.TotalNorm).HasPrecision(18, 6);
+            e.Property(x => x.Notes).HasMaxLength(4000);
+            e.HasOne(x => x.EquipmentInstance).WithMany(x => x.IndividualCards).HasForeignKey(x => x.EquipmentInstanceId);
+            e.HasOne(x => x.HKCard).WithMany().HasForeignKey(x => x.HKCardId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId);
+            e.HasMany(x => x.AppliedCoefficients).WithMany(x => x.IndividualCards);
+        });
+
+        modelBuilder.Entity<IndividualCardItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.BaseVolume).HasPrecision(18, 6);
+            e.Property(x => x.CalculatedVolume).HasPrecision(18, 6);
+            e.HasOne(x => x.IndividualCard).WithMany(x => x.Items).HasForeignKey(x => x.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.HKCardItem).WithMany(x => x.IndividualCardItems).HasForeignKey(x => x.HKCardItemId);
+        });
+
+        modelBuilder.Entity<AuditLog>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.EntityType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.EntityId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Action).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Details).HasMaxLength(4000);
+            e.HasIndex(x => new { x.EntityType, x.EntityId });
+        });
+
+        modelBuilder.Entity<WorkTask>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Title).HasMaxLength(512).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(4000);
+            e.Property(x => x.EntityType).HasMaxLength(100);
+            e.Property(x => x.EntityId).HasMaxLength(100);
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.AssigneeId);
+        });
+    }
+}

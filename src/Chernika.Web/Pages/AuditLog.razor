@@ -1,0 +1,188 @@
+@page "/журнал-аудита"
+@attribute [Authorize(Policy = "ViewAuditLog")]
+@using Chernika.Infrastructure.Dtos
+@inject AuditService AuditService
+@inject NavigationManager Nav
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Журнал событий</h2>
+            <div class="hint">@totalCount записей</div>
+        </div>
+        <div class="panelBody">
+            <div class="form" style="grid-template-columns:1fr 1fr 1fr auto">
+                <div class="field"><label>Тип сущности</label>
+                    <select @bind="filterEntityType" class="field-select">
+                        <option value="">Все</option>
+                        <option value="HKCard">ХК</option>
+                        <option value="EquipmentModel">Модель</option>
+                        <option value="EquipmentInstance">Экземпляр</option>
+                        <option value="IndividualCard">Инд. карта</option>
+                    </select>
+                </div>
+                <div class="field"><label>Действие</label>
+                    <select @bind="filterAction" class="field-select">
+                        <option value="">Все</option>
+                        <option value="Create">Создание</option>
+                        <option value="Update">Изменение</option>
+                        <option value="Delete">Удаление</option>
+                        <option value="StatusChange">Смена статуса</option>
+                    </select>
+                </div>
+                <div class="field"><label>Период</label>
+                    <select @bind="filterPeriod" class="field-select">
+                        <option value="7">Последние 7 дней</option>
+                        <option value="30">Последние 30 дней</option>
+                        <option value="90">Последние 90 дней</option>
+                        <option value="0">Все время</option>
+                    </select>
+                </div>
+                <div class="field" style="display:flex;align-items:flex-end">
+                    <button class="btn" @onclick="ApplyFilters">Применить</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Записи журнала</h2>
+            <div class="hint">Страница @currentPage из @totalPages</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!logs.Any())
+            {
+                <div class="empty-state">Нет записей</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Дата</th>
+                            <th>Действие</th>
+                            <th>Сущность</th>
+                            <th>Объект</th>
+                            <th>Детали</th>
+                            <th>ID</th>
+                            <th>Пользователь</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var log in logs)
+                        {
+                            <tr>
+                                <td class="mono">@log.CreatedAt.ToString("dd.MM.yyyy HH:mm")</td>
+                                <td><span class="badge">@TranslateAction(log.Action)</span></td>
+                                <td>@TranslateEntityType(log.EntityType)</td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(log.EntityDisplayName))
+                                    {
+                                        @log.EntityDisplayName
+                                    }
+                                    else
+                                    {
+                                        <em class="muted">Запись удалена</em>
+                                    }
+                                </td>
+                                <td>@(string.IsNullOrEmpty(log.Details) ? "—" : log.Details.Length > 50 ? log.Details[..50] + "…" : log.Details)</td>
+                                <td class="mono">@log.EntityId.Substring(0, Math.Min(8, log.EntityId.Length))…</td>
+                                <td class="mono">@log.UserId.ToString().Substring(0, 8)…</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <div class="footer">
+                    <div>
+                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
+                        <span style="margin:0 8px">Стр. @currentPage</span>
+                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
+                    </div>
+                    <div class="mono">Показано @logs.Count из @totalCount</div>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<AuditLogDisplayDto> logs = new();
+    private bool loading = true;
+    private int totalCount = 0;
+    private int currentPage = 1;
+    private int totalPages = 1;
+    private const int PageSize = 50;
+
+    private string filterEntityType = "";
+    private string filterAction = "";
+    private string filterPeriod = "7";
+
+    protected override async Task OnInitializedAsync() => await LoadLogs();
+
+    static string TranslateAction(string action) => action switch
+    {
+        "Create" or "Created" => "Создание",
+        "Update" or "Updated" => "Изменение",
+        "Delete" => "Удаление",
+        _ when action.StartsWith("Status:") => ParseStatusAction(action),
+        _ => action
+    };
+
+    static string ParseStatusAction(string action)
+    {
+        var statusStr = action["Status:".Length..];
+        if (Enum.TryParse<HKCardStatus>(statusStr, out var status))
+        {
+            return status switch
+            {
+                HKCardStatus.Draft => "Статус: Черновик",
+                HKCardStatus.OnReview => "Статус: На проверке",
+                HKCardStatus.RevisionRequired => "Статус: Требует доработки",
+                HKCardStatus.Approved => "Статус: Утверждено",
+                HKCardStatus.Archived => "Статус: Архив",
+                HKCardStatus.Deleted => "Статус: Удалено",
+                _ => action
+            };
+        }
+        return action;
+    }
+
+    static string TranslateEntityType(string entityType) => entityType switch
+    {
+        "HKCard" => "Химмотологическая карта",
+        "Node" => "Изделие",
+        "EquipmentModel" => "Модель техники",
+        "EquipmentInstance" => "Экземпляр техники",
+        "IndividualCard" => "Индивидуальная карта",
+        "GsmMaterial" => "Горюче-смазочный материал",
+        "AssemblyUnit" => "Сборочная единица",
+        "Branch" => "Филиал",
+        "Coefficient" => "Коэффициент",
+        "CoefficientType" => "Тип коэффициента",
+        "WorkTask" => "Задача",
+        _ => entityType
+    };
+
+    async Task LoadLogs()
+    {
+        loading = true;
+        logs = await AuditService.GetLogsWithEntityNamesAsync(currentPage, PageSize, filterEntityType, filterAction, filterPeriod);
+        totalCount = await AuditService.GetTotalCountAsync(filterEntityType, filterAction, filterPeriod);
+        totalPages = Math.Max(1, (int)Math.Ceiling(totalCount / (double)PageSize));
+        loading = false;
+    }
+
+    async Task ApplyFilters()
+    {
+        currentPage = 1;
+        await LoadLogs();
+    }
+
+    async Task PrevPage() { if (currentPage > 1) { currentPage--; await LoadLogs(); } }
+    async Task NextPage() { if (currentPage < totalPages) { currentPage++; await LoadLogs(); } }
+}

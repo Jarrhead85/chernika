@@ -1,0 +1,43 @@
+# Temporary & log files
+run_err*.txt
+*stderr.txt
+*stdout.txt
+start_app.cmd
+test_run.ps1
+~$*.docx
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.sln.docstates
+*.userprefs
+[Dd]ebug/
+[Rr]elease/
+*.log
+*.vs/
+*.csproj.user
+
+# ASP.NET Core
+appsettings.Development.json
+appsettings.*.local.json
+**/Properties/launchSettings.json
+wwwroot/lib/
+
+# Secret Manager
+secrets.json
+appsettings.secrets.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# NuGet
+packages/
+*.nupkg

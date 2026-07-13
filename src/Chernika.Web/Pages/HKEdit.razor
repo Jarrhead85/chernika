@@ -1,0 +1,864 @@
+@page "/хк/создать"
+@page "/хк/{Id:guid}"
+@attribute [Authorize(Policy = "ViewHK")]
+@implements IAsyncDisposable
+@inject HKCardService HKCardService
+@inject NavigationManager Nav
+@inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthState
+@inject UserManager<ApplicationUser> UserManager
+@inject IJSRuntime JS
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>@(IsNew ? "Создание новой ХК" : "Редактирование ХК")</h2>
+            <div class="hint">@card.Version</div>
+        </div>
+        <div class="panelBody">
+            <EditForm Model="@card" OnValidSubmit="SaveCard">
+                <DataAnnotationsValidator />
+                <div class="form">
+                    <div class="field"><label>Номер ХК</label><InputText @bind-Value="card.Code" readonly class="field" /></div>
+                    <div class="field"><label>Изделие</label>
+                        @{
+                            var node = selectedNodeId != Guid.Empty ? nodes.FirstOrDefault(n => n.Id == selectedNodeId) : null;
+                            var modelDropId = "model-drop";
+                            var modelBtnId = "model-btn";
+                        }
+                        @if (canEdit)
+                        {
+                            <div id="@modelBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" @onclick="() => ToggleModelDropdown(modelDropId, modelBtnId)">
+                                <span style="flex:1">@(node != null ? $"{node.Code} — {node.Name}" : "Выбрать изделие...")</span>
+                                @if (node != null)
+                                {
+                                    <button type="button" style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:16px;line-height:1;padding:0;flex-shrink:0" @onclick="ClearNode" @onclick:stopPropagation="true">×</button>
+                                }
+                            </div>
+                            @if (_modelDropOpen)
+                            {
+                                <div id="@modelDropId" class="gsm-dropdown">
+                                    <input class="gsm-dropdown-search" @bind="_modelSearch" @oninput="() => { }" placeholder="Поиск..." />
+                                    @foreach (var n in FilteredModels())
+                                    {
+                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectNode(n)">@n.Code — @n.Name</div>
+                                    }
+                                    @if (!FilteredModels().Any())
+                                    {
+                                        <div class="hki-search-empty">Нет совпадений</div>
+                                    }
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <span class="field-select" style="cursor:default;display:block;opacity:.7">@(node != null ? $"{node.Code} — {node.Name}" : "")</span>
+                        }
+                        @if (!string.IsNullOrEmpty(_activeCardWarning) && _existingActiveCard != null)
+                        {
+                            <div class="note" style="margin-top:6px;font-size:12px;color:var(--warn)">
+                                ⚠ @_activeCardWarning
+                                <button type="button" class="linkBtn" @onclick="GoToExistingCard" style="text-decoration:underline;margin-left:4px;font-size:12px">Перейти к существующей ХК</button>
+                            </div>
+                        }
+                    </div>
+                    <div class="field"><label>Статус</label>
+                        <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+                            <StatusBadge Status="@card.Status" />
+                            @if (card.Status == HKCardStatus.Draft && canSendToApprove)
+                            {
+                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
+                            }
+                            @if (card.Status == HKCardStatus.RevisionRequired && canSendToApprove)
+                            {
+                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
+                            }
+                            @if (card.Status == HKCardStatus.OnReview && canApprove)
+                            {
+                                <button type="button" class="btn primary" @onclick="ApproveCard">✓ Утвердить</button>
+                                <button type="button" class="btn ghost" @onclick="ReturnForRevision">↩ Вернуть на доработку</button>
+                            }
+                            @if (card.Status == HKCardStatus.Approved && canArchive)
+                            {
+                                <button type="button" class="btn ghost" @onclick="ArchiveCard">В архив</button>
+                            }
+                        </div>
+                    </div>
+                    <div class="field full-width"><label>Назначение ХК</label><InputTextArea @bind-Value="card.Purpose" /></div>
+                    <div class="field full-width"><label>Основание для разработки</label><InputTextArea @bind-Value="card.NormativeBasis" /></div>
+                    <div class="field full-width"><label>Примечание</label><InputTextArea @bind-Value="card.Notes" /></div>
+                    <div class="field"><label>Дата начала действия</label><InputDate @bind-Value="card.EffectiveDate" /></div>
+                    <div class="field"><label>Дата окончания действия</label><InputDate @bind-Value="card.ExpirationDate"
+                        AdditionalAttributes="@(card.EffectiveDate.HasValue
+                            ? new Dictionary<string, object> { ["min"] = card.EffectiveDate.Value.ToString("yyyy-MM-dd") }
+                            : null)" /></div>
+
+                    <div class="full-width" style="margin-top:8px">
+                        <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Строки ХК</h3>
+
+                        <div class="hk-items-table-wrapper">
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th rowspan="2" class="col-num" style="width:40px">№</th>
+                                    <th rowspan="2" style="width:160px">Сборочная единица</th>
+                                    <th rowspan="2" style="width:55px" class="col-wrap">Кол-во изделий</th>
+                                    <th colspan="4" style="width:600px">Наименование и обозначение марок ГСМ</th>
+                                    <th rowspan="2" style="width:65px" class="col-wrap">Масса/Объём</th>
+                                    <th rowspan="2" style="width:36px" class="col-wrap">Ед. изм.</th>
+                                    <th rowspan="2" style="width:110px">Периодичность</th>
+                                    <th rowspan="2" style="width:180px">Примечание</th>
+                                    <th rowspan="2" class="col-actions" style="width:60px"></th>
+                                </tr>
+                                <tr>
+                                    <th style="width:150px">Основные</th>
+                                    <th style="width:150px">Дублирующие</th>
+                                    <th style="width:150px">Резервные</th>
+                                    <th style="width:150px">Зарубежные</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @{
+                                    var idx = 0;
+                                }
+                                @foreach (var item in card.Items.OrderBy(i => i.SortOrder))
+                                {
+                                    idx++;
+                                    <tr @key="item.Id" class="@(_focusItemId == item.Id ? "hki-focus" : "")">
+                                        <td class="col-num">@idx</td>
+                                        <td class="gsm-selector-cell">
+                                            @if (canEdit)
+                                            {
+                                                var au = item.AssemblyUnitId != Guid.Empty ? assemblyUnits.FirstOrDefault(a => a.Id == item.AssemblyUnitId) : null;
+                                                var auDropId = $"au-drop-{item.Id:N}";
+                                                var auBtnId = $"au-btn-{item.Id:N}";
+                                                var auKey = item.Id;
+                                                @if (au != null)
+                                                {
+                                                    <div id="@auBtnId" class="hki-mat-tag" @onclick="() => ToggleAuDropdown(auKey, auDropId, auBtnId)" style="cursor:pointer">
+                                                        <span>@au.Code — @au.Name</span>
+                                                        <button type="button" class="hki-tag-remove" @onclick="() => ClearAssemblyUnit(item)" @onclick:stopPropagation="true">×</button>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <button type="button" id="@auBtnId" class="btn ghost hki-add-mat" @onclick="() => ToggleAuDropdown(auKey, auDropId, auBtnId)">— не выбрано —</button>
+                                                }
+                                                @if (_auOpen.GetValueOrDefault(auKey))
+                                                {
+                                                    <div id="@auDropId" class="gsm-dropdown">
+                                                        <input class="gsm-dropdown-search" @bind="_auSearch[auKey]" @oninput="() => { }" placeholder="Поиск..." />
+                                                        @foreach (var a in FilteredAssemblyUnits(auKey))
+                                                        {
+                                                            <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectAu(item, a)">@a.Code — @a.Name</div>
+                                                        }
+                                                        @if (!FilteredAssemblyUnits(auKey).Any())
+                                                        {
+                                                            <div class="hki-search-empty">Нет совпадений</div>
+                                                        }
+                                                    </div>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                var au = assemblyUnits.FirstOrDefault(a => a.Id == item.AssemblyUnitId);
+                                                <span>@(au != null ? $"{au.Code} — {au.Name}" : "")</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (canEdit)
+                                            {
+                                                <input type="number" @bind="item.Quantity" class="hki-td-input" />
+                                            }
+                                            else
+                                            {
+                                                <span>@item.Quantity</span>
+                                            }
+                                        </td>
+                                        @foreach (var cat in new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign })
+                                        {
+                                            <td class="hki-mat-cell gsm-selector-cell">
+                                                @{
+                                                    var matsInCat = item.Materials.Where(m => m.Category == cat).ToList();
+                                                }
+                                                @foreach (var mat in matsInCat)
+                                                {
+                                                    var matName = gsmMaterials.FirstOrDefault(g => g.Id == mat.GsmMaterialId)?.Name ?? "—";
+                                                    <div class="hki-mat-tag">
+                                                        <span>@matName</span>
+                                                        @if (canEdit)
+                                                        {
+                                                            <button type="button" class="hki-tag-remove" @onclick="() => RemoveMaterial(item, mat)">×</button>
+                                                        }
+                                                    </div>
+                                                }
+                                                @if (canEdit)
+                                                {
+                                                    var pickerKey = (item.Id, cat);
+                                                    var dropId = $"gsm-drop-{item.Id:N}-{cat}";
+                                                    var btnId = $"gsm-btn-{item.Id:N}-{cat}";
+                                                    <div>
+                                                        <button type="button" id="@btnId" class="btn ghost hki-add-mat" @onclick="() => ToggleMatDrop(pickerKey, dropId, btnId)">+ Добавить</button>
+                                                        @if (_matOpen.GetValueOrDefault(pickerKey))
+                                                        {
+                                                            <div id="@dropId" class="gsm-dropdown">
+                                                                <input class="gsm-dropdown-search" @bind="_matSearch[pickerKey]"
+                                                                       @oninput="() => { }"
+                                                                       placeholder="Поиск..." />
+                                                                @foreach (var group in FilteredGsmMaterials(cat, item).GroupBy(m => m.Type))
+                                                                {
+                                                                    <div class="gsm-dropdown-group-label">@group.Key</div>
+                                                                    @foreach (var mat in group)
+                                                                    {
+                                                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMaterial(item, cat, mat.Id)">@mat.Name</div>
+                                                                    }
+                                                                }
+                                                                @if (!FilteredGsmMaterials(cat, item).Any())
+                                                                {
+                                                                    <div class="hki-search-empty">Нет совпадений</div>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                }
+                                            </td>
+                                        }
+                                        <td>
+                                            @if (canEdit)
+                                            {
+                                                <input type="number" @bind="item.Volume" step="0.001" class="hki-td-input" />
+                                            }
+                                            else
+                                            {
+                                                <span>@item.Volume</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (canEdit)
+                                            {
+                                                <input @bind="item.UnitOfMeasure" class="hki-td-input" />
+                                            }
+                                            else
+                                            {
+                                                <span>@item.UnitOfMeasure</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (canEdit)
+                                            {
+                                                <textarea @bind="item.Periodicity" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
+                                            }
+                                            else
+                                            {
+                                                <span>@item.Periodicity</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (canEdit)
+                                            {
+                                                <textarea @bind="item.Notes" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
+                                            }
+                                            else
+                                            {
+                                                <span>@item.Notes</span>
+                                            }
+                                        </td>
+                                        <td class="hki-actions col-actions">
+                                            @if (canEdit)
+                                            {
+                                                <button type="button" class="linkBtn" @onclick="() => MoveItem(item, -1)" disabled="@(idx <= 1)" title="Вверх">↑</button>
+                                                <button type="button" class="linkBtn" @onclick="() => MoveItem(item, 1)" disabled="@(idx >= card.Items.Count)" title="Вниз">↓</button>
+                                                <button type="button" class="linkBtn" @onclick="() => RemoveItem(item)" style="color:var(--bad)" title="Удалить">🗑</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                        </div>
+
+                        @if (canEdit)
+                        {
+                            <button type="button" class="btn" @onclick="AddItem" style="margin-top:4px">+ Добавить строку</button>
+                        }
+                    </div>
+
+                    <div class="formActions">
+                        <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
+                        <button type="submit" class="btn primary" disabled="@(!canEdit && !IsNew)">@(IsNew ? "Создать ХК" : "Сохранить")</button>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="error" style="margin-top:10px;color:var(--bad);font-size:13px">@errorMessage</div>
+                    }
+                    <ValidationSummary />
+                </div>
+            </EditForm>
+        </div>
+    </section>
+</div>
+
+@if (showReturnModal)
+{
+    <div class="modalOverlay" @onclick="() => showReturnModal = false">
+        <div class="modal" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3>Вернуть на доработку</h3>
+                <button type="button" class="linkBtn" @onclick="() => showReturnModal = false">✕</button>
+            </div>
+            <div class="modalBody">
+                <textarea @bind="returnComment"
+                          placeholder="Укажите причину возврата для автора..."
+                          rows="3"
+                          style="width:100%;resize:vertical;padding:8px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:14px"></textarea>
+                @if (returnCommentError != null)
+                {
+                    <div style="color:var(--bad);font-size:13px;margin-top:6px">@returnCommentError</div>
+                }
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="() => showReturnModal = false">Отмена</button>
+                <button type="button" class="btn primary" @onclick="ConfirmReturn">Подтвердить</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "nodeId")] public Guid? NodeId { get; set; }
+
+    private HKCard card = new()
+    {
+        Id = Guid.NewGuid(),
+        Version = "v" + DateTime.UtcNow.ToString("MMyy"),
+        Items = new List<HKCardItem>(),
+        BranchId = Guid.Empty,
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+    };
+
+    private string statusStr = "Draft";
+    private Guid selectedNodeId;
+    private List<Node> nodes = new();
+    private List<AssemblyUnit> assemblyUnits = new();
+    private string? _activeCardWarning;
+    private HKCard? _existingActiveCard;
+    private bool IsNew => Id == null || Id == Guid.Empty;
+    private bool canEdit;
+    private bool canSendToApprove;
+    private bool canApprove;
+    private bool canReturn;
+    private bool canArchive;
+    private string currentUserId = "";
+    private string? errorMessage;
+    private bool showReturnModal;
+    private string returnComment = string.Empty;
+    private string? returnCommentError;
+
+    private List<GsmMaterial> gsmMaterials = new();
+    private Guid? _focusItemId;
+    private Dictionary<Guid, string> _auSearch = new();
+    private Dictionary<Guid, bool> _auOpen = new();
+    private Dictionary<(Guid, GsmCategory), bool> _matOpen = new();
+    private Dictionary<(Guid, GsmCategory), string> _matSearch = new();
+    private string? _activeDropdownId;
+    private bool _disposed;
+    private DotNetObjectReference<HKEdit> _dotNetRef = null!; // created in OnInitialized
+
+    private bool _modelDropOpen;
+    private string _modelSearch = "";
+
+    protected override void OnInitialized()
+    {
+        _dotNetRef = DotNetObjectReference.Create(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        try
+        {
+            await JS.InvokeVoidAsync("dropdownPortal.cleanup");
+        }
+        catch { /* ignore — page is unloading */ }
+        finally
+        {
+            _dotNetRef?.Dispose();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var isOperator = user.IsInRole("Operator");
+        canSendToApprove = user.IsInRole("Operator");
+        canApprove = user.IsInRole("NormAdmin");
+        canReturn = user.IsInRole("NormAdmin");
+        canArchive = user.IsInRole("NormAdmin");
+        currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+
+        using var scope = ScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        nodes = await db.Nodes.OrderBy(n => n.Code).ToListAsync();
+        assemblyUnits = await db.AssemblyUnits.OrderBy(a => a.Code).ToListAsync();
+        gsmMaterials = await db.GsmMaterials.OrderBy(m => m.Name).ToListAsync();
+
+        if (NodeId.HasValue && NodeId.Value != Guid.Empty)
+            selectedNodeId = NodeId.Value;
+        else if (IsNew)
+            selectedNodeId = Guid.Empty;
+        else if (selectedNodeId == Guid.Empty && nodes.Any())
+            selectedNodeId = nodes[0].Id;
+
+        if (IsNew && selectedNodeId != Guid.Empty)
+        {
+            card.Code = await HKCardService.GenerateCodeAsync(selectedNodeId);
+            _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(selectedNodeId);
+            if (_existingActiveCard != null)
+            {
+                var n = nodes.FirstOrDefault(x => x.Id == selectedNodeId);
+                _activeCardWarning = n != null
+                    ? $"Для изделия «{n.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
+                    : $"Для выбранного изделия уже есть активная ХК «{_existingActiveCard.Code}».";
+            }
+        }
+
+        if (!IsNew && Id.HasValue)
+        {
+            var existing = await HKCardService.GetByIdAsync(Id.Value);
+            if (existing != null)
+            {
+                card = existing;
+                selectedNodeId = card.NodeId;
+                statusStr = card.Status.ToString();
+            }
+        }
+
+        canEdit = isOperator && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
+
+        if (!card.Items.Any())
+        {
+            card.Items.Add(new HKCardItem
+            {
+                Id = Guid.NewGuid(),
+                HKCardId = card.Id,
+                AssemblyUnitId = Guid.Empty,
+                Quantity = 1,
+                Volume = 1.000m,
+                UnitOfMeasure = "кг",
+                SortOrder = 1
+            });
+        }
+
+        InitItemDicts();
+    }
+
+    private async Task CloseActiveDropdownAsync()
+    {
+        if (_activeDropdownId != null)
+        {
+            await JS.InvokeVoidAsync("dropdownPortal.detach", _activeDropdownId);
+            _activeDropdownId = null;
+        }
+        _modelDropOpen = false;
+        foreach (var key in _matOpen.Keys.ToList())
+            _matOpen[key] = false;
+        foreach (var key in _auOpen.Keys.ToList())
+            _auOpen[key] = false;
+    }
+
+    [JSInvokable]
+    public void CloseDropdown()
+    {
+        if (_disposed) return;
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                if (_disposed) return;
+                await CloseActiveDropdownAsync();
+                StateHasChanged();
+            }
+            catch
+            {
+                // ignore — circuit may be shutting down
+            }
+        });
+    }
+
+    private void InitItemDicts()
+    {
+        _auSearch = card.Items.ToDictionary(i => i.Id, i => "");
+        _auOpen = card.Items.ToDictionary(i => i.Id, _ => false);
+        _matOpen = card.Items.SelectMany(i => new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign }.Select(c => (i.Id, c))).ToDictionary(k => k, _ => false);
+        _matSearch = card.Items.SelectMany(i => new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign }.Select(c => (i.Id, c))).ToDictionary(k => k, _ => "");
+    }
+
+    private void AddItem()
+    {
+        var maxOrder = card.Items.Any() ? card.Items.Max(i => i.SortOrder) : 0;
+        var item = new HKCardItem
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = card.Id,
+            AssemblyUnitId = Guid.Empty,
+            Quantity = 1,
+            Volume = 1.000m,
+            UnitOfMeasure = "кг",
+            SortOrder = maxOrder + 1
+        };
+        card.Items.Add(item);
+        _auSearch[item.Id] = "";
+        _auOpen[item.Id] = false;
+        foreach (var cat in new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign })
+        {
+            _matOpen[(item.Id, cat)] = false;
+            _matSearch[(item.Id, cat)] = "";
+        }
+        _focusItemId = item.Id;
+    }
+
+    private void MoveItem(HKCardItem item, int direction)
+    {
+        var sorted = card.Items.OrderBy(i => i.SortOrder).ToList();
+        var idx = sorted.IndexOf(item);
+        if (idx < 0) return;
+        var target = idx + direction;
+        if (target < 0 || target >= sorted.Count) return;
+        (sorted[target].SortOrder, item.SortOrder) = (item.SortOrder, sorted[target].SortOrder);
+    }
+
+    private void GoBack() => Nav.NavigateTo("/реестр-хк");
+
+    private async Task SendToApprove()
+    {
+        if (string.IsNullOrEmpty(currentUserId)) return;
+        var userId = Guid.Parse(currentUserId);
+        var (sent, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, userId, "Отправлена на проверку");
+        if (sent) card.Status = HKCardStatus.OnReview;
+    }
+
+    private async Task ApproveCard()
+    {
+        if (string.IsNullOrEmpty(currentUserId)) return;
+        var userId = Guid.Parse(currentUserId);
+        var (approved, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Approved, userId, "Утверждена");
+        if (approved) card.Status = HKCardStatus.Approved;
+    }
+
+    private void ReturnForRevision()
+    {
+        returnComment = string.Empty;
+        returnCommentError = null;
+        showReturnModal = true;
+    }
+
+    private async Task ConfirmReturn()
+    {
+        if (string.IsNullOrWhiteSpace(returnComment))
+        {
+            returnCommentError = "Укажите причину возврата";
+            return;
+        }
+
+        showReturnModal = false;
+
+        if (string.IsNullOrEmpty(currentUserId)) return;
+        var userId = Guid.Parse(currentUserId);
+        var (returned, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.RevisionRequired, userId, returnComment.Trim());
+        if (returned)
+        {
+            card.Status = HKCardStatus.RevisionRequired;
+            var existing = await HKCardService.GetByIdAsync(card.Id);
+            if (existing != null)
+            {
+                card = existing;
+                statusStr = card.Status.ToString();
+            }
+        }
+    }
+
+    private async Task ArchiveCard()
+    {
+        if (string.IsNullOrEmpty(currentUserId)) return;
+        var userId = Guid.Parse(currentUserId);
+        var (archived, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Archived, userId, "Переведена в архив");
+        if (archived) card.Status = HKCardStatus.Archived;
+    }
+
+    private async Task SaveCard()
+    {
+        if (!canEdit) return;
+
+        errorMessage = null;
+
+        card.NodeId = selectedNodeId;
+        card.Status = IsNew ? HKCardStatus.Draft : card.Status;
+
+        if (string.IsNullOrWhiteSpace(card.Code))
+        {
+            errorMessage = "Поле «Номер ХК» обязательно для заполнения.";
+            return;
+        }
+        if (selectedNodeId == Guid.Empty)
+        {
+            errorMessage = "Необходимо выбрать изделие.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(card.Version))
+        {
+            errorMessage = "Поле «Версия» обязательно для заполнения.";
+            return;
+        }
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (!string.IsNullOrEmpty(userId))
+        {
+            var user = await UserManager.FindByIdAsync(userId);
+            if (user?.BranchId != null)
+                card.BranchId = user.BranchId.Value;
+        }
+
+        if (card.BranchId == Guid.Empty)
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var branch = await db.Branches.FirstOrDefaultAsync();
+            card.BranchId = branch?.Id ?? Guid.Empty;
+        }
+
+        foreach (var item in card.Items)
+        {
+            if (string.IsNullOrEmpty(item.UnitOfMeasure)) item.UnitOfMeasure = "кг";
+        }
+
+        var emptyAu = card.Items.FirstOrDefault(i => i.AssemblyUnitId == Guid.Empty);
+        if (emptyAu != null)
+        {
+            errorMessage = "Укажите сборочную единицу во всех строках таблицы.";
+            return;
+        }
+
+        if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
+            && card.ExpirationDate.Value < card.EffectiveDate.Value)
+        {
+            errorMessage = "Дата окончания действия не может быть раньше даты начала действия.";
+            return;
+        }
+
+        // renumber sort order based on current list position
+        var order = 1;
+        foreach (var item in card.Items)
+            item.SortOrder = order++;
+
+        var actorId = !string.IsNullOrEmpty(userId) && Guid.TryParse(userId, out var uid)
+            ? uid
+            : Guid.Empty;
+
+        try
+        {
+            if (IsNew)
+                await HKCardService.CreateAsync(card, actorId);
+            else
+                await HKCardService.UpdateAsync(card, actorId);
+        }
+        catch (ArgumentException ex)
+        {
+            errorMessage = ex.Message;
+            return;
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+            return;
+        }
+        catch (DbUpdateException)
+        {
+            errorMessage = "Не удалось сохранить ХК. Проверьте заполнение " +
+                "всех обязательных полей и повторите попытку.";
+            return;
+        }
+
+        Nav.NavigateTo("/реестр-хк");
+    }
+
+    // ---- searchable select helpers ----
+
+    private IEnumerable<AssemblyUnit> FilteredAssemblyUnits(Guid itemId)
+    {
+        var search = _auSearch.GetValueOrDefault(itemId, "")?.Trim().ToLower() ?? "";
+        if (string.IsNullOrEmpty(search)) return assemblyUnits;
+        return assemblyUnits.Where(a => (a.Code?.ToLower().Contains(search) ?? false) || (a.Name?.ToLower().Contains(search) ?? false));
+    }
+
+    private async Task ToggleAuDropdown(Guid itemId, string dropId, string btnId)
+    {
+        if (_auOpen.GetValueOrDefault(itemId))
+        {
+            await CloseActiveDropdownAsync();
+            StateHasChanged();
+        }
+        else
+        {
+            await CloseActiveDropdownAsync();
+            _auOpen[itemId] = true;
+            _auSearch[itemId] = "";
+            _activeDropdownId = dropId;
+            StateHasChanged();
+            await Task.Delay(50);
+            if (_disposed) return;
+            await JS.InvokeVoidAsync("dropdownPortal.attach", dropId, btnId);
+            await JS.InvokeVoidAsync("dropdownPortal.onClickOutside", dropId, _dotNetRef);
+        }
+    }
+
+    private async Task SelectAu(HKCardItem item, AssemblyUnit au)
+    {
+        item.AssemblyUnitId = au.Id;
+        _auSearch[item.Id] = $"{au.Code} — {au.Name}";
+        await CloseActiveDropdownAsync();
+        StateHasChanged();
+    }
+
+    private async Task ClearAssemblyUnit(HKCardItem item)
+    {
+        item.AssemblyUnitId = Guid.Empty;
+        _auSearch[item.Id] = "";
+        await CloseActiveDropdownAsync();
+        StateHasChanged();
+    }
+
+    private async Task ToggleMatDrop((Guid, GsmCategory) key, string dropId, string btnId)
+    {
+        if (_matOpen.GetValueOrDefault(key))
+        {
+            await CloseActiveDropdownAsync();
+            StateHasChanged();
+        }
+        else
+        {
+            await CloseActiveDropdownAsync();
+
+            _matOpen[key] = true;
+            _matSearch[key] = "";
+            _activeDropdownId = dropId;
+
+            StateHasChanged();
+            await Task.Delay(50);
+            if (_disposed) return;
+            await JS.InvokeVoidAsync("dropdownPortal.attach", dropId, btnId);
+            await JS.InvokeVoidAsync("dropdownPortal.onClickOutside", dropId, _dotNetRef);
+        }
+    }
+
+    private async Task AddMaterial(HKCardItem item, GsmCategory cat, Guid materialId)
+    {
+        if (item.Materials.Any(m => m.GsmMaterialId == materialId && m.Category == cat)) return;
+        item.Materials.Add(new HKCardItemMaterial
+        {
+            Id = Guid.NewGuid(),
+            HKCardItemId = item.Id,
+            GsmMaterialId = materialId,
+            Category = cat
+        });
+        await CloseActiveDropdownAsync();
+        StateHasChanged();
+    }
+
+    private void RemoveMaterial(HKCardItem item, HKCardItemMaterial mat)
+    {
+        item.Materials.Remove(mat);
+    }
+
+    private async Task ToggleModelDropdown(string dropId, string btnId)
+    {
+        if (_modelDropOpen)
+        {
+            await CloseActiveDropdownAsync();
+            StateHasChanged();
+        }
+        else
+        {
+            await CloseActiveDropdownAsync();
+            _modelDropOpen = true;
+            _modelSearch = "";
+            _activeDropdownId = dropId;
+            StateHasChanged();
+            await Task.Delay(50);
+            if (_disposed) return;
+            await JS.InvokeVoidAsync("dropdownPortal.attach", dropId, btnId);
+            await JS.InvokeVoidAsync("dropdownPortal.onClickOutside", dropId, _dotNetRef);
+        }
+    }
+
+    private async Task SelectNode(Node node)
+    {
+        selectedNodeId = node.Id;
+        card.NodeId = node.Id;
+        _modelSearch = $"{node.Code} — {node.Name}";
+        await CloseActiveDropdownAsync();
+        if (IsNew)
+        {
+            card.Code = await HKCardService.GenerateCodeAsync(node.Id);
+            _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(node.Id);
+            _activeCardWarning = _existingActiveCard != null
+                ? $"Для изделия «{node.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
+                : null;
+        }
+        StateHasChanged();
+    }
+
+    private void ClearNode()
+    {
+        selectedNodeId = Guid.Empty;
+        card.NodeId = Guid.Empty;
+        _modelSearch = "";
+        _activeCardWarning = null;
+        _existingActiveCard = null;
+        _ = CloseActiveDropdownAsync();
+        StateHasChanged();
+    }
+
+    private IEnumerable<Node> FilteredModels()
+    {
+        var search = _modelSearch?.Trim().ToLower() ?? "";
+        if (string.IsNullOrEmpty(search)) return nodes;
+        return nodes.Where(n => (n.Code?.ToLower().Contains(search) ?? false) || (n.Name?.ToLower().Contains(search) ?? false));
+    }
+
+    private IEnumerable<GsmMaterial> FilteredGsmMaterials(GsmCategory cat, HKCardItem item)
+    {
+        var search = _matSearch.GetValueOrDefault((item.Id, cat), "")?.Trim().ToLower() ?? "";
+        var existingIds = item.Materials.Where(m => m.Category == cat).Select(m => m.GsmMaterialId).ToHashSet();
+        var available = gsmMaterials.Where(m => !existingIds.Contains(m.Id));
+        if (string.IsNullOrEmpty(search)) return available;
+        return available.Where(m => (m.Name?.ToLower().Contains(search) ?? false) || (m.Type?.ToLower().Contains(search) ?? false));
+    }
+
+    private void RemoveItem(HKCardItem item) => card.Items.Remove(item);
+
+    private static string TranslateStatus(HKCardStatus status) => status switch
+    {
+        HKCardStatus.Draft => "Черновик",
+        HKCardStatus.OnReview => "На проверке",
+        HKCardStatus.RevisionRequired => "На доработке",
+        HKCardStatus.Approved => "Утверждена",
+        HKCardStatus.Archived => "Архивная",
+        HKCardStatus.Deleted => "Удалена",
+        _ => status.ToString()
+    };
+
+    private async Task GoToExistingCard()
+    {
+        await CloseActiveDropdownAsync();
+        if (!_disposed)
+        {
+            try { await JS.InvokeVoidAsync("dropdownPortal.cleanup"); } catch { }
+        }
+        Nav.NavigateTo($"/хк/{_existingActiveCard!.Id}", forceLoad: true);
+    }
+}

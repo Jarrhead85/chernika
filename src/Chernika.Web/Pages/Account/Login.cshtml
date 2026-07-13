@@ -1,0 +1,69 @@
+@page "/вход"
+@using Chernika.Web.Pages.Account
+@model LoginModel
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Вход — АИС «ИСБ ГСМ»</title>
+    <link href="css/site.css" rel="stylesheet" />
+    <script>document.documentElement.setAttribute("data-theme",localStorage.getItem("theme")||"dark")</script>
+    <style>
+        .loginContainer{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)}
+        .loginCard{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:40px;width:100%;max-width:400px}
+        .loginHeader{text-align:center;margin-bottom:32px}
+        .loginHeader h1{font-size:24px;margin:0 0 8px;color:var(--text)}
+        .loginHeader p{margin:0;color:var(--muted);font-size:14px}
+        .loginField{margin-bottom:16px}
+        .loginField label{display:block;margin-bottom:6px;font-size:13px;color:var(--muted)}
+        .loginInput{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--text);font-size:14px;outline:none;box-sizing:border-box}
+        .loginInput:focus{border-color:var(--accent)}
+        .loginBtn{width:100%;padding:12px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:15px;cursor:pointer;margin-top:8px}
+        .loginBtn:hover{filter:brightness(0.9)}
+        .loginBtn:disabled{opacity:.6;cursor:not-allowed}
+        .loginError{background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);color:#ff4757;padding:10px 12px;border-radius:8px;margin-bottom:16px;font-size:13px}
+        .loginHint{margin-top:24px;padding-top:16px;border-top:1px dashed var(--line);font-size:12px;color:var(--muted)}
+        .loginHint p{margin:4px 0}
+    </style>
+</head>
+<body>
+    <div class="loginContainer">
+        <div class="loginCard">
+            <div class="loginHeader">
+                <h1>АИС «ИСБ ГСМ»</h1>
+                <p>Система нормирования и назначения ГСМ</p>
+            </div>
+
+            <form method="post">
+                <div class="loginField">
+                    <label>Логин</label>
+                    <input type="text" name="Username" class="loginInput" placeholder="Введите логин" value="@Model.Username" autofocus />
+                </div>
+                <div class="loginField">
+                    <label>Пароль</label>
+                    <input type="password" name="Password" class="loginInput" placeholder="Введите пароль" />
+                </div>
+
+                @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                {
+                    <div class="loginError">@Model.ErrorMessage</div>
+                }
+
+                <button type="submit" class="loginBtn">Войти</button>
+            </form>
+
+            <div class="loginHint">
+                <p>Тестовые аккаунты:</p>
+                <p><strong>admin</strong> / Admin@12345 — Администратор</p>
+                <p><strong>head</strong> / Head@12345 — Начальник отдела</p>
+                <p><strong>normadmin</strong> / Norm@12345 — Нормировщик</p>
+                <p><strong>operator</strong> / Op@12345 — Оператор</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

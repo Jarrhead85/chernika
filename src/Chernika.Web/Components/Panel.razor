@@ -1,0 +1,22 @@
+<section class="panel" style="@Style">
+    @if (!string.IsNullOrEmpty(Title))
+    {
+        <div class="panelHeader">
+            <h2>@Title</h2>
+            @if (!string.IsNullOrEmpty(Hint))
+            {
+                <div class="hint">@Hint</div>
+            }
+        </div>
+    }
+    <div class="panelBody">
+        @ChildContent
+    </div>
+</section>
+
+@code {
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public string? Style { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

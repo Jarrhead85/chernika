@@ -1,0 +1,28 @@
+@* Status badge component *@
+<span class="tag @CssClass">@Label</span>
+
+@code {
+    [Parameter] public HKCardStatus Status { get; set; }
+
+    string CssClass => Status switch
+    {
+        HKCardStatus.Approved => "ok",
+        HKCardStatus.Archived => "",
+        HKCardStatus.Deleted => "bad",
+        HKCardStatus.Draft => "",
+        HKCardStatus.OnReview => "warn",
+        HKCardStatus.RevisionRequired => "bad",
+        _ => ""
+    };
+
+    string Label => Status switch
+    {
+        HKCardStatus.Draft => "Черновик",
+        HKCardStatus.OnReview => "На проверке",
+        HKCardStatus.RevisionRequired => "На доработке",
+        HKCardStatus.Approved => "Утверждена",
+        HKCardStatus.Archived => "Архивная",
+        HKCardStatus.Deleted => "Удалена",
+        _ => Status.ToString()
+    };
+}

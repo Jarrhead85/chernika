@@ -1,0 +1,116 @@
+@page "/справочник-узлов"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочник изделий</h2>
+            <div class="hint">Общесистемный справочник</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Код изделия</label><input @bind="newNode.Code" /></div>
+                <div class="field"><label>Наименование</label><input @bind="newNode.Name" /></div>
+                <div class="field full-width"><label>Описание</label><input @bind="newNode.Description" /></div>
+                <div class="formActions">
+                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                    @if (canEdit) { <button class="btn primary" @onclick="SaveNode">@(editing ? "Сохранить" : "Добавить")</button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список изделий</h2>
+            <div class="hint">@nodes.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!nodes.Any())
+            {
+                <div class="empty-state">Нет изделий</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr><th>Код</th><th>Наименование</th><th>Описание</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var n in nodes)
+                        {
+                            <tr>
+                                <td class="mono">@n.Code</td>
+                                <td>@n.Name</td>
+                                <td>@n.Description</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditNode(n)">Изменить</button> }
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteNode(n.Id)">Удалить</button> }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<Node> nodes = new();
+    private Node newNode = new();
+    private bool editing = false;
+    private bool loading = true;
+    private bool canEdit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canEdit = authState.User.IsInRole("NormAdmin");
+        await LoadNodes();
+    }
+
+    async Task LoadNodes()
+    {
+        loading = true;
+        nodes = await EquipService.GetNodesAsync();
+        loading = false;
+    }
+
+    async Task SaveNode()
+    {
+        if (string.IsNullOrWhiteSpace(newNode.Name)) return;
+        if (editing)
+            await EquipService.UpdateNodeAsync(newNode);
+        else
+            await EquipService.CreateNodeAsync(newNode);
+        ResetForm();
+        await LoadNodes();
+    }
+
+    void EditNode(Node n)
+    {
+        newNode = new Node { Id = n.Id, Code = n.Code, Name = n.Name, Description = n.Description };
+        editing = true;
+    }
+
+    async Task DeleteNode(Guid id)
+    {
+        await EquipService.DeleteNodeAsync(id);
+        await LoadNodes();
+    }
+
+    void ResetForm()
+    {
+        newNode = new Node();
+        editing = false;
+    }
+}

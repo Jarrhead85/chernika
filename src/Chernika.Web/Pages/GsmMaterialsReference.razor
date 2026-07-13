@@ -1,0 +1,116 @@
+@page "/справочник-гсм"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочник смазочных материалов</h2>
+            <div class="hint">Горюче-смазочные материалы</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Наименование</label><input @bind="newGsm.Name" /></div>
+                <div class="field"><label>Тип</label><input @bind="newGsm.Type" /></div>
+                <div class="field"><label>ГОСТ</label><input @bind="newGsm.Gost" /></div>
+                <div class="formActions">
+                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                    @if (canEdit) { <button class="btn primary" @onclick="SaveGsm">@(editing ? "Сохранить" : "Добавить")</button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список материалов</h2>
+            <div class="hint">@gsms.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!gsms.Any())
+            {
+                <div class="empty-state">Нет материалов</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr><th>Наименование</th><th>Тип</th><th>ГОСТ</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in gsms)
+                        {
+                            <tr>
+                                <td>@m.Name</td>
+                                <td>@m.Type</td>
+                                <td>@m.Gost</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditGsm(m)">Изменить</button> }
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteGsm(m.Id)">Удалить</button> }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<GsmMaterial> gsms = new();
+    private GsmMaterial newGsm = new();
+    private bool editing = false;
+    private bool loading = true;
+    private bool canEdit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canEdit = authState.User.IsInRole("NormAdmin");
+        await LoadGsms();
+    }
+
+    async Task LoadGsms()
+    {
+        loading = true;
+        gsms = await EquipService.GetGsmMaterialsAsync();
+        loading = false;
+    }
+
+    async Task SaveGsm()
+    {
+        if (string.IsNullOrWhiteSpace(newGsm.Name) || string.IsNullOrWhiteSpace(newGsm.Type)) return;
+        if (editing)
+            await EquipService.UpdateGsmMaterialAsync(newGsm);
+        else
+            await EquipService.CreateGsmMaterialAsync(newGsm);
+        ResetForm();
+        await LoadGsms();
+    }
+
+    void EditGsm(GsmMaterial m)
+    {
+        newGsm = new GsmMaterial { Id = m.Id, Name = m.Name, Type = m.Type, Gost = m.Gost };
+        editing = true;
+    }
+
+    async Task DeleteGsm(Guid id)
+    {
+        var ok = await EquipService.DeleteGsmMaterialAsync(id);
+        if (ok) await LoadGsms();
+    }
+
+    void ResetForm()
+    {
+        newGsm = new GsmMaterial();
+        editing = false;
+    }
+}

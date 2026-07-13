@@ -1,0 +1,330 @@
+@page "/инд-карты"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject IndividualCardService IndCardService
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Индивидуальная карта</h2>
+            <div class="hint">Производный расчёт по ХК</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Экземпляр техники</label>
+                    <select @bind="selectedInstanceId" class="field-select">
+                        <option value="">— Выберите экземпляр —</option>
+                        @foreach (var i in instances)
+                        {
+                            <option value="@i.Id">@i.Name • зав. № @i.SerialNumber</option>
+                        }
+                    </select>
+                </div>
+                <div class="field" style="display:flex;align-items:flex-end;gap:8px">
+                    <button class="btn" @onclick="LoadCards">Загрузить карты</button>
+                    @if (canManage) { <button class="btn primary" @onclick="GenerateCards" disabled="@(!canGenerate)">
+                        Сформировать карты по всем изделиям
+                    </button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    @if (selectedInstanceId != Guid.Empty)
+    {
+        <div class="grid">
+            <div class="stack">
+                <section class="panel">
+                    <div class="panelHeader">
+                        <h2>Индивидуальные карты</h2>
+                        <div class="hint">@cards.Count карт</div>
+                    </div>
+                    <div class="panelBody">
+                        @if (loading)
+                        {
+                            <div class="loading-state">Загрузка...</div>
+                        }
+                        else if (!cards.Any())
+                        {
+                            <div class="empty-state">
+                                Нет индивидуальных карт. Нажмите «Сформировать карты» для автогенерации.
+                            </div>
+                        }
+                        else
+                        {
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Изделие</th>
+                                        <th>Базовая ХК</th>
+                                        <th>Версия</th>
+                                        <th>Норма</th>
+                                        <th>Коэфф.</th>
+                                        <th>Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var card in cards)
+                                    {
+                                        <tr @onclick="() => SelectCard(card.Id)" style="cursor:pointer">
+                                            <td>@card.Node?.Name<br /><span class="mono">@card.Node?.Code</span></td>
+                                            <td class="mono">@card.HKCard?.Code</td>
+                                            <td class="mono">@card.Version</td>
+                                            <td><strong>@card.TotalNorm.ToString("F3") кг</strong></td>
+                                            <td><span class="tag ok">@card.AppliedCoefficients.Count</span></td>
+                                            <td>
+                                                <div class="rowActions">
+                                                    <button class="linkBtn" @onclick="() => SelectCard(card.Id)">Открыть</button>
+                                                    @if (canManage) { <button class="linkBtn" @onclick="() => DeleteCard(card.Id)">Удалить</button> }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                </section>
+
+                @if (selectedCard != null)
+                {
+                    <section class="panel">
+                        <div class="panelHeader">
+                            <h2>Строки индивидуальной карты</h2>
+                            <div class="hint">@selectedCard.Items.Count записей</div>
+                        </div>
+                        <div class="panelBody" style="overflow-x:auto">
+                            <table class="ik-items-table">
+                                <thead>
+                                    <tr>
+                                        <th rowspan="2" class="col-num">№</th>
+                                        <th rowspan="2">Сборочная единица</th>
+                                        <th rowspan="2">Кол-во</th>
+                                        <th colspan="4">Наименование и обозначение марок ГСМ</th>
+                                        <th rowspan="2">Базовый объём</th>
+                                        <th rowspan="2">Расч. объём</th>
+                                        <th rowspan="2">Ед. изм.</th>
+                                        <th rowspan="2">Периодичность</th>
+                                        <th rowspan="2">Примечание</th>
+                                    </tr>
+                                    <tr>
+                                        <th>Основные</th>
+                                        <th>Дублирующие</th>
+                                        <th>Резервные</th>
+                                        <th>Зарубежные</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{
+                                        var itemIdx = 0;
+                                    }
+                                    @foreach (var item in selectedCard.Items.OrderBy(i => i.HKCardItem?.SortOrder ?? 0))
+                                    {
+                                        itemIdx++;
+                                        var hkItem = item.HKCardItem;
+                                        <tr>
+                                            <td class="col-num">@itemIdx</td>
+                                            <td>
+                                                @if (hkItem == null)
+                                                {
+                                                    <span class="ik-warn">⚠ Строка ХК удалена</span>
+                                                }
+                                                else
+                                                {
+                                                    <span>@(hkItem.AssemblyUnit?.Code ?? "—") — @(hkItem.AssemblyUnit?.Name ?? "")</span>
+                                                }
+                                            </td>
+                                            <td class="ik-num">@item.Quantity</td>
+                                            @foreach (var cat in new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign })
+                                            {
+                                                <td class="ik-mat-cell">
+                                                    @if (hkItem == null)
+                                                    {
+                                                        <span class="ik-empty">—</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        var mats = hkItem.Materials.Where(m => m.Category == cat).ToList();
+                                                        if (mats.Any())
+                                                        {
+                                                            @foreach (var mat in mats)
+                                                            {
+                                                                <span class="ik-mat-tag">@(mat.GsmMaterial?.Name ?? "—")</span>
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="ik-empty">—</span>
+                                                        }
+                                                    }
+                                                </td>
+                                            }
+                                            <td class="ik-num ik-mono">@item.BaseVolume.ToString("F3")</td>
+                                            <td class="ik-num ik-mono"><strong>@item.CalculatedVolume.ToString("F3")</strong></td>
+                                            <td>@(hkItem?.UnitOfMeasure ?? "—")</td>
+                                            <td>@(hkItem?.Periodicity ?? "—")</td>
+                                            <td>@(hkItem?.Notes ?? "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                            <div class="footer" style="margin-top:10px">
+                                <div>Разрешённые марки: @gsmMarks</div>
+                                <div class="mono">Источник: @selectedCard.HKCard?.Code</div>
+                            </div>
+                        </div>
+                    </section>
+                }
+            </div>
+
+            <aside class="stack">
+                <section class="panel">
+                    <div class="panelHeader"><h2>Коэффициенты</h2><div class="hint">Ручной выбор</div></div>
+                    <div class="panelBody">
+                        <div class="coefGrid">
+                            @foreach (var typeGroup in coeffByType)
+                            {
+                                <div class="coef">
+                                    <div class="coefTop">
+                                        <div>
+                                            <h4>@typeGroup.Key.Name</h4>
+                                            <p>@typeGroup.Value.FirstOrDefault()?.ConditionDescription</p>
+                                        </div>
+                                    </div>
+                                    @foreach (var coeff in typeGroup.Value)
+                                    {
+                                        <label class="toggle" style="margin-top:4px">
+                                            <input type="checkbox" @bind="selectedCoefficients" value="@coeff.Id" />
+                                            @coeff.Name (@coeff.Value)
+                                        </label>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <div class="formula" style="margin-top:12px">
+                            <div class="label mono">Произведение коэффициентов</div>
+                            <div class="big">@coefficientProduct.ToString("F4")</div>
+                            <div class="mono">@formulaText</div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panelHeader"><h2>Сводка расчёта</h2><div class="hint">Контроль</div></div>
+                    <div class="panelBody">
+                        <div class="metrics2">
+                            <div class="metric">
+                                <div class="label">Карт создано</div>
+                                <div class="value">@cards.Count</div>
+                            </div>
+                            <div class="metric">
+                                <div class="label">Коэффициентов</div>
+                                <div class="value">@selectedCoefficients.Count</div>
+                            </div>
+                            <div class="metric">
+                                <div class="label">Основание версии</div>
+                                <div class="value">Автопересчёт</div>
+                            </div>
+                            <div class="metric">
+                                <div class="label">Статус</div>
+                                <div class="value">@(cards.Any() ? "Готово" : "—")</div>
+                            </div>
+                        </div>
+                        <div class="note" style="margin-top:12px">
+                            Итоговая норма = база × k₁ × k₂ × … × kₙ. Округление до граммов.
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </div>
+    }
+</div>
+
+@code {
+    private List<EquipmentInstance> instances = new();
+    private List<IndividualCard> cards = new();
+    private IndividualCard? selectedCard;
+    private List<CoefficientType> coeffTypes = new();
+    private Dictionary<CoefficientType, List<Coefficient>> coeffByType = new();
+    private List<Guid> selectedCoefficients = new();
+    private decimal coefficientProduct = 1.0m;
+    private string formulaText = "1.00";
+    private string gsmMarks = "—";
+    private bool loading = true;
+    private bool canManage;
+    private bool canGenerate => selectedInstanceId != Guid.Empty && canManage;
+
+    private Guid selectedInstanceId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canManage = authState.User.IsInRole("Operator");
+        instances = await EquipService.GetInstancesAsync();
+        var allCoeffs = await IndCardService.GetAvailableCoefficientsAsync();
+        coeffTypes = await IndCardService.GetCoefficientTypesAsync();
+
+        foreach (var type in coeffTypes)
+        {
+            coeffByType[type] = allCoeffs.Where(c => c.CoefficientTypeId == type.Id).ToList();
+        }
+    }
+
+    async Task LoadCards()
+    {
+        loading = true;
+        cards = await IndCardService.GetCardsByInstanceAsync(selectedInstanceId);
+        loading = false;
+    }
+
+    async Task GenerateCards()
+    {
+        if (selectedInstanceId == Guid.Empty) return;
+
+        RecalculateCoefficients();
+        await IndCardService.GenerateCardsForInstanceAsync(selectedInstanceId, selectedCoefficients);
+        await LoadCards();
+    }
+
+    async Task SelectCard(Guid id)
+    {
+        selectedCard = await IndCardService.GetCardAsync(id);
+        if (selectedCard != null)
+        {
+            gsmMarks = string.Join(", ",
+                selectedCard.HKCard?.Items
+                    .SelectMany(i => i.Materials.Select(m => m.GsmMaterial.Name))
+                    .Distinct() ?? Enumerable.Empty<string>());
+        }
+    }
+
+    async Task DeleteCard(Guid id)
+    {
+        await IndCardService.DeleteCardAsync(id);
+        cards.RemoveAll(c => c.Id == id);
+        if (selectedCard?.Id == id) selectedCard = null;
+    }
+
+    void RecalculateCoefficients()
+    {
+        coefficientProduct = 1.0m;
+        var factors = new List<string>();
+
+        foreach (var coeffId in selectedCoefficients)
+        {
+            var coeff = coeffByType.Values
+                .SelectMany(v => v)
+                .FirstOrDefault(c => c.Id == coeffId);
+            if (coeff != null)
+            {
+                coefficientProduct *= coeff.Value;
+                factors.Add(coeff.Value.ToString("F2"));
+            }
+        }
+
+        formulaText = factors.Any()
+            ? string.Join(" × ", factors)
+            : "1.00";
+    }
+}

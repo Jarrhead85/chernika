@@ -1,0 +1,138 @@
+@page "/задачи"
+@attribute [Authorize(Policy = "ViewTasks")]
+@inject TaskService TaskService
+@inject NavigationManager Nav
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Входящие задачи</h2>
+            <div class="hint">@activeCount активных</div>
+        </div>
+        <div class="panelBody">
+            <div class="form" style="grid-template-columns:1fr auto">
+                <div class="field"><label>Фильтр</label>
+                    <select @bind="filter" class="field-select">
+                        <option value="all">Все задачи</option>
+                        <option value="hk_review">На проверку ХК</option>
+                        <option value="hk_revision">На доработку ХК</option>
+                        <option value="recalculate">Пересчёт инд. карт</option>
+                    </select>
+                </div>
+                <div class="field" style="display:flex;align-items:flex-end">
+                    <button class="btn primary" @onclick="LoadTasks">Обновить</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Активные задачи</h2>
+            <div class="hint">@activeTasks.Count</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!activeTasks.Any())
+            {
+                <div class="empty-state">Нет активных задач</div>
+            }
+            else
+            {
+                <div class="alerts">
+                    @foreach (var task in activeTasks)
+                    {
+                        var isUrgent = task.DueDate.HasValue && task.DueDate.Value < DateTime.UtcNow.AddDays(2);
+                        <div class="alert">
+                            <div class="top">
+                                <p class="title">@task.Title</p>
+                                <span class="tag @(isUrgent ? "bad" : task.DueDate.HasValue ? "warn" : "ok")">
+                                    @(task.DueDate?.ToString("dd.MM") ?? "Без срока")
+                                </span>
+                            </div>
+                            <p class="desc">@task.Description</p>
+                            <div class="rowActions" style="margin-top:8px">
+                                <button class="linkBtn" @onclick="() => CompleteTask(task.Id)">✓ Выполнено</button>
+                                @if (!string.IsNullOrEmpty(task.EntityId))
+                                {
+                                    <button class="linkBtn" @onclick="() => OpenEntity(task)">Открыть</button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Выполненные</h2>
+            <div class="hint">Последние @completedTasks.Count</div>
+        </div>
+        <div class="panelBody">
+            @if (completedTasks.Any())
+            {
+                <table>
+                    <thead>
+                        <tr><th>Задача</th><th>Выполнена</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var task in completedTasks)
+                        {
+                            <tr>
+                                <td>@task.Title</td>
+                                <td class="mono">@task.CompletedAt?.ToString("dd.MM.yyyy HH:mm")</td>
+                                <td><button class="linkBtn" @onclick="() => DeleteTask(task.Id)">Удалить</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <div class="empty-state">Нет выполненных задач</div>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<WorkTask> activeTasks = new();
+    private List<WorkTask> completedTasks = new();
+    private bool loading = true;
+    private int activeCount = 0;
+    private string filter = "all";
+
+    protected override async Task OnInitializedAsync() => await LoadTasks();
+
+    async Task LoadTasks()
+    {
+        loading = true;
+        activeTasks = await TaskService.GetActiveTasksAsync();
+        completedTasks = await TaskService.GetCompletedTasksAsync();
+        activeCount = await TaskService.GetActiveCountAsync();
+        loading = false;
+    }
+
+    async Task CompleteTask(Guid id)
+    {
+        await TaskService.CompleteTaskAsync(id);
+        await LoadTasks();
+    }
+
+    async Task DeleteTask(Guid id)
+    {
+        await TaskService.DeleteTaskAsync(id);
+        await LoadTasks();
+    }
+
+    void OpenEntity(WorkTask task)
+    {
+        if (task.EntityType == "HKCard" && Guid.TryParse(task.EntityId, out var hkId))
+            Nav.NavigateTo($"/хк/{hkId}");
+    }
+}

@@ -1,0 +1,270 @@
+.hk-items-table-wrapper {
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    overflow: hidden;
+}
+
+.hk-items-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    border: none;
+    background: var(--panel);
+}
+
+.hk-items-table thead th {
+    background: var(--panel2);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    font-weight: 600;
+    white-space: nowrap;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.hk-items-table thead th[colspan] {
+    border-bottom: none;
+}
+
+.hk-items-table thead th.col-wrap {
+    white-space: normal;
+    word-break: break-word;
+}
+
+.hk-items-table thead th.col-actions {
+    border-right: none;
+}
+
+.hk-items-table tbody tr {
+    background: var(--panel);
+}
+
+.hk-items-table tbody tr:nth-child(even) {
+    background: var(--panel2);
+}
+
+.hk-items-table tbody tr:hover {
+    background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.hk-items-table tbody tr.hki-focus {
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.hk-items-table tbody td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    color: var(--text);
+    font-size: 13px;
+    vertical-align: middle;
+    text-align: center;
+    word-break: break-word;
+}
+
+.hk-items-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.hk-items-table tbody td.col-actions {
+    border-right: none;
+}
+
+/* Mass/Volume column — shrink input to fit 65px column */
+.hk-items-table tbody td:nth-child(8) .hki-td-input {
+    padding: 5px 4px;
+    min-width: 0;
+}
+
+/* Quantity column — fit 55px */
+.hk-items-table tbody td:nth-child(3) .hki-td-input {
+    padding: 5px 4px;
+    min-width: 0;
+}
+
+/* Hide number input spin buttons for all table inputs */
+.hk-items-table .hki-td-input::-webkit-inner-spin-button,
+.hk-items-table .hki-td-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.hk-items-table .hki-td-input[type=number] {
+    -moz-appearance: textfield;
+}
+
+/* Unit of Measure column — fit 36px */
+.hk-items-table tbody td:nth-child(9) .hki-td-input {
+    padding: 5px 2px;
+    min-width: 0;
+}
+
+.hk-items-table td.col-num,
+.hk-items-table th.col-num {
+    color: var(--muted);
+}
+
+.hki-actions {
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* ── Поле поиска сборочной единицы (контейнер) ── */
+.hki-search-select {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+    min-width: 140px;
+}
+
+.hki-search-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 1000;
+    min-width: 240px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 4px 0;
+}
+
+/* ---- GSM material dropdown ---- */
+
+.gsm-selector-cell {
+    position: relative;
+}
+
+.gsm-dropdown {
+    position: absolute;
+    z-index: 1000;
+    top: 100%;
+    left: 0;
+    min-width: 240px;
+    max-height: 280px;
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    box-shadow: var(--shadow);
+    padding: 4px 0;
+    margin-top: 2px;
+}
+
+.gsm-dropdown-search {
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel2);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    font-family: var(--font);
+    box-sizing: border-box;
+}
+
+.gsm-dropdown-search::placeholder {
+    color: var(--muted);
+}
+
+.gsm-dropdown-item {
+    padding: 7px 12px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.gsm-dropdown-item:hover {
+    background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+
+.gsm-dropdown-group-label {
+    padding: 6px 12px 2px;
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+/* ---- shared dropdown helpers ---- */
+
+.hki-search-empty {
+    padding: 6px 10px;
+    color: var(--muted);
+    font-size: 11px;
+    font-style: italic;
+}
+
+.hki-mat-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    margin: 2px 4px 2px 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+    color: var(--text);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.hki-tag-remove {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--muted);
+}
+
+.hki-tag-remove:hover {
+    color: var(--bad);
+}
+
+.hki-add-mat {
+    background: transparent;
+    border: 1px dashed var(--line);
+    color: var(--muted);
+    font-size: 11px;
+    padding: 3px 8px;
+    margin-top: 2px;
+    border-radius: var(--radius2);
+    cursor: pointer;
+    transition: .15s ease;
+}
+
+.hki-add-mat:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.hki-actions .linkBtn {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 2px 5px;
+    font-size: 15px;
+    color: var(--accent);
+}
+
+.hki-actions .linkBtn:hover {
+    opacity: 0.7;
+}
+
+.hki-actions .linkBtn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}

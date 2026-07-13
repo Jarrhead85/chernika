@@ -1,0 +1,133 @@
+@page "/справочник-экземпляров"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочник экземпляров техники</h2>
+            <div class="hint">Конкретные единицы</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Заводской номер</label><input @bind="newInst.SerialNumber" /></div>
+                <div class="field"><label>Индекс</label><input @bind="newInst.Index" /></div>
+                <div class="field"><label>Наименование</label><input @bind="newInst.Name" /></div>
+                <div class="field"><label>Модель</label>
+                    <select @bind="newInst.EquipmentModelId" class="field-select">
+                        <option value="">— Выберите —</option>
+                        @foreach (var m in models)
+                        {
+                            <option value="@m.Id">@m.Index — @m.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="field full-width"><label>Описание</label><input @bind="newInst.Description" /></div>
+                <div class="formActions">
+                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                    @if (canEdit) { <button class="btn primary" @onclick="SaveInst">@(editing ? "Сохранить" : "Добавить")</button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список экземпляров</h2>
+            <div class="hint">@instances.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!instances.Any())
+            {
+                <div class="empty-state">Нет экземпляров техники</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr><th>Зав. №</th><th>Индекс</th><th>Наименование</th><th>Модель</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var i in instances)
+                        {
+                            <tr>
+                                <td class="mono">@i.SerialNumber</td>
+                                <td>@i.Index</td>
+                                <td>@i.Name</td>
+                                <td>@i.EquipmentModel?.Name</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditInst(i)">Изменить</button> }
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteInst(i.Id)">Удалить</button> }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<EquipmentInstance> instances = new();
+    private List<EquipmentModel> models = new();
+    private EquipmentInstance newInst = new();
+    private bool editing = false;
+    private bool loading = true;
+    private bool canEdit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canEdit = authState.User.IsInRole("NormAdmin");
+        models = await EquipService.GetModelsAsync();
+        await LoadInstances();
+    }
+
+    async Task LoadInstances()
+    {
+        loading = true;
+        instances = await EquipService.GetInstancesAsync();
+        loading = false;
+    }
+
+    async Task SaveInst()
+    {
+        if (string.IsNullOrWhiteSpace(newInst.SerialNumber)) return;
+        if (editing)
+            await EquipService.UpdateInstanceAsync(newInst);
+        else
+            await EquipService.CreateInstanceAsync(newInst);
+        ResetForm();
+        await LoadInstances();
+    }
+
+    void EditInst(EquipmentInstance i)
+    {
+        newInst = new EquipmentInstance
+        {
+            Id = i.Id, SerialNumber = i.SerialNumber, Index = i.Index, Name = i.Name,
+            EquipmentModelId = i.EquipmentModelId, Description = i.Description
+        };
+        editing = true;
+    }
+
+    async Task DeleteInst(Guid id)
+    {
+        await EquipService.DeleteInstanceAsync(id);
+        await LoadInstances();
+    }
+
+    void ResetForm()
+    {
+        newInst = new EquipmentInstance();
+        editing = false;
+    }
+}

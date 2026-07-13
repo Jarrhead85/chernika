@@ -1,0 +1,59 @@
+@page "/доступ-запрещен"
+@layout LoginLayout
+@attribute [AllowAnonymous]
+
+<PageTitle>Доступ запрещён</PageTitle>
+
+<style>
+    .loginContainer {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: var(--bg);
+    }
+    .loginCard {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 40px;
+        width: 100%;
+        max-width: 400px;
+        text-align: center;
+    }
+    .loginHeader h1 {
+        font-size: 24px;
+        margin: 0 0 8px;
+        color: var(--fg);
+    }
+    .loginHeader p {
+        margin: 0 0 24px;
+        color: var(--muted);
+        font-size: 14px;
+    }
+    .loginBtn {
+        display: inline-block;
+        width: 100%;
+        padding: 12px;
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 15px;
+        cursor: pointer;
+        text-decoration: none;
+        text-align: center;
+        box-sizing: border-box;
+    }
+    .loginBtn:hover {
+        background: var(--accent-hover);
+    }
+</style>
+
+<div class="loginCard">
+    <div class="loginHeader">
+        <h1>Доступ запрещён</h1>
+        <p>У вас нет прав для просмотра этой страницы</p>
+    </div>
+    <a href="/реестр-хк" class="loginBtn">Вернуться на главную</a>
+</div>

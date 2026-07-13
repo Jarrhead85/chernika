@@ -1,0 +1,237 @@
+﻿@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthStateProvider
+@inject SearchService SearchSvc
+@using Chernika.Domain.Entities
+@using Chernika.Domain.Models
+@using Microsoft.AspNetCore.Identity
+@inherits LayoutComponentBase
+
+<div class="bgParallax" aria-hidden="true"></div>
+<div class="app">
+    <aside class="sidebar" aria-label="Навигация">
+        <div class="sideHeader">
+            <div class="title">Навигация</div>
+        </div>
+        <nav class="nav">
+            <a class="@GetActive("реестр-хк")" href="реестр-хк">
+                <span>Реестр ХК</span>
+                @*<span class="badge">Ctrl+1</span>*@
+            </a>
+            <a class="@GetActive("состав-изделия")" href="состав-изделия">
+                <span>Состав изделия</span>
+                @*<span class="badge">Ctrl+2</span>*@
+            </a>
+            <a class="@GetActive("инд-карты")" href="инд-карты">
+                <span>Индивидуальная карта</span>
+                @*<span class="badge">Ctrl+3</span>*@
+            </a>
+            <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
+            <a class="@GetActive("справочник-моделей")" href="справочник-моделей">
+                <span>Модели техники</span>
+            </a>
+            <a class="@GetActive("справочник-экземпляров")" href="справочник-экземпляров">
+                <span>Экземпляры</span>
+            </a>
+            <a class="@GetActive("справочник-узлов")" href="справочник-узлов">
+                <span>Изделия</span>
+            </a>
+            <a class="@GetActive("справочник-гсм")" href="справочник-гсм">
+                <span>Смазочные материалы</span>
+            </a>
+            <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
+            <a class="@GetActive("задачи")" href="задачи">
+                <span> Задачи</span>
+            </a>
+            @if (canViewAudit)
+            {
+                <a class="@GetActive("журнал-аудита")" href="журнал-аудита">
+                    <span>Журнал аудита</span>
+                </a>
+            }
+            @if (isAdmin)
+            {
+                <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
+                <a class="@GetActive("пользователи")" href="пользователи">
+                    <span>Пользователи</span>
+                </a>
+            }
+        </nav>
+        <section class="sideCard" aria-label="Статус">
+            @*<h3>Контур и безопасность</h3>*@
+            <p>АИС «ИСБ ГСМ» — ведение химмотологических карт, нормирование ГСМ и индивидуальные нормы.</p>
+            <div class="mini">
+                @*<span class="pill" id="themeLabel">Тёмная</span>*@
+                @*<span class="pill">Panel-based</span>*@
+                <span class="pill">Версия интерфейса: 1.0.0 2026.05</span>
+            </div>
+        </section>
+    </aside>
+
+    <header class="topbar">
+        <div class="brand">
+            <div class="logo">ИС</div>
+            <div>
+                <h1>АИС «ИСБ ГСМ»</h1>
+                <div class="sub">Реестр ХК • Состав изделия • Индивидуальная карта</div>
+            </div>
+        </div>
+        <div class="actions">
+            <div class="env" title="Окружение и состояние">
+                <span class="dot" aria-hidden="true"></span>Контур: Тестовый • БД: OK
+            </div>
+            <div class="searchTop" role="search">
+                <div class="searchTopInner">
+                    <input placeholder="Поиск: ВВСТ, марка ГСМ, номер ХК…"
+                           value="@searchQuery"
+                           @oninput="OnSearchInput"
+                           @onfocus="OnSearchFocus"
+                           @onblur="OnSearchBlur"
+                           id="globalSearchInput" />
+                    <button @onclick="DoSearch">Поиск</button>
+                </div>
+                @if (showSearchDropdown)
+                {
+                    <div class="searchDropdown" @onmouseenter="() => searchHover = true" @onmouseleave="() => searchHover = false">
+                        @foreach (var r in searchResults.Take(4))
+                        {
+                            <a href="@r.Url" class="searchDropdownItem">
+                                <div class="sdiTop">
+                                    <span class="sdiType">@r.EntityTypeDisplay</span>
+                                </div>
+                                <div class="sdiTitle">@r.Title</div>
+                                @if (!string.IsNullOrEmpty(r.Subtitle))
+                                {
+                                    <div class="sdiSub">@r.Subtitle</div>
+                                }
+                                @if (!string.IsNullOrEmpty(r.ContextInfo))
+                                {
+                                    <div class="sdiCtx">@r.ContextInfo</div>
+                                }
+                            </a>
+                        }
+                        @if (searchTotalCount > 4)
+                        {
+                            <a href="/поиск?q=@Uri.EscapeDataString(searchQuery)" class="searchDropdownAll">
+                                Показать все результаты (@searchTotalCount) →
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+            <button class="iconBtn" title="Уведомления">🔔</button>
+            <button class="modeBtn" @onclick="ToggleTheme" id="themeToggle">☀</button>
+            <div class="user" title="Профиль пользователя">
+                <div class="avatar">@userInitial</div>
+                <div class="meta">
+                    <div class="name">@userName</div>
+                    <div class="role">@userRole</div>
+                </div>
+                <a href="/выход" class="linkBtn" style="margin-left:8px" title="Выйти">→</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="stack">
+            @Body
+            <div class="footer" style="padding:10px 2px 0">
+                <div>Версия интерфейса: <span class="mono">1.0.0</span> • <span class="mono">2026.05</span></div>
+                <div>© АИС «ИСБ ГСМ»</div>
+            </div>
+        </div>
+    </main>
+</div>
+
+@code {
+    string searchQuery = "";
+    string userName = "Гость";
+    string userRole = "";
+    string userInitial = "?";
+    bool isAdmin = false;
+    bool canViewAudit = false;
+    bool _isDark = true;
+
+    List<SearchResultItem> searchResults = [];
+    int searchTotalCount = 0;
+    bool searchFocused = false;
+    bool searchHover = false;
+    bool showSearchDropdown => searchFocused && searchResults.Count > 0;
+    CancellationTokenSource? searchCts;
+
+    [Inject] NavigationManager Nav { get; set; } = null!;
+
+    string GetActive(string path) =>
+        Nav.Uri.Contains(path, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+
+    async Task OnSearchInput(ChangeEventArgs e)
+    {
+        searchQuery = e.Value?.ToString() ?? "";
+        searchCts?.Cancel();
+        searchCts = new CancellationTokenSource();
+        var token = searchCts.Token;
+        try
+        {
+            await Task.Delay(300, token);
+            if (!token.IsCancellationRequested)
+                await PerformSearch();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    async Task PerformSearch()
+    {
+        if (searchQuery.Length < 2)
+        {
+            searchResults = [];
+            searchTotalCount = 0;
+            return;
+        }
+        searchResults = await SearchSvc.SearchAsync(searchQuery, 20);
+        searchTotalCount = searchResults.Count;
+    }
+
+    void OnSearchFocus() { searchFocused = true; }
+    async Task OnSearchBlur()
+    {
+        await Task.Delay(200);
+        if (!searchHover)
+        {
+            searchFocused = false;
+            StateHasChanged();
+        }
+    }
+    void GoToSearchPage() => Nav.NavigateTo($"/поиск?q={Uri.EscapeDataString(searchQuery)}");
+    void DoSearch() { if (!string.IsNullOrWhiteSpace(searchQuery)) GoToSearchPage(); }
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (first)
+        {
+            var stored = await JS.InvokeAsync<string>("getTheme");
+            _isDark = stored != "light";
+            await JS.InvokeVoidAsync("applyTheme", _isDark);
+            await LoadUserInfo();
+            StateHasChanged();
+        }
+    }
+
+    async Task LoadUserInfo()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            userName = user.FindFirst("FullName")?.Value ?? user.Identity.Name ?? "Пользователь";
+            userRole = user.FindFirst("Position")?.Value ?? "";
+            userInitial = userName.Length > 0 ? userName[0].ToString().ToUpper() : "?";
+            isAdmin = user.IsInRole("SystemAdmin");
+            canViewAudit = user.IsInRole("SystemAdmin") || user.IsInRole("NormAdmin") || user.IsInRole("DepartmentHead");
+        }
+    }
+
+    async Task ToggleTheme()
+    {
+        _isDark = !_isDark;
+        await JS.InvokeVoidAsync("applyTheme", _isDark);
+    }
+}

@@ -1,0 +1,61 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.Components.Web
+@namespace Chernika.Web.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="~/" />
+    <link href="css/site.css" rel="stylesheet" />
+    <link href="Chernika.Web.styles.css" rel="stylesheet" />
+    <link rel="icon" type="image/png" href="favicon.png"/>
+    <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
+</head>
+<body>
+    <component type="typeof(App)" render-mode="Server" />
+
+    <div id="blazor-error-ui">
+        <environment include="Staging,Production">
+            Произошла ошибка. Приложение будет перезагружено.
+        </environment>
+        <environment include="Development">
+            Произошла ошибка. Подробности в консоли браузера.
+        </environment>
+        <a href="" class="reload">Перезагрузить</a>
+        <a class="dismiss">🗙</a>
+    </div>
+
+    <script>
+        window.getTheme = function () {
+            var t = localStorage.getItem('theme');
+            if (!t) { t = 'dark'; localStorage.setItem('theme', t); }
+            document.documentElement.setAttribute('data-theme', t);
+            return t;
+        };
+        window.applyTheme = function (isDark) {
+            var t = isDark ? 'dark' : 'light';
+            localStorage.setItem('theme', t);
+            document.documentElement.setAttribute('data-theme', t);
+            var btn = document.getElementById('themeToggle');
+            var lbl = document.getElementById('themeLabel');
+            if (btn) btn.textContent = isDark ? '\u2600' : '\u263E';
+            if (lbl) lbl.textContent = isDark ? '\u0422\u0451\u043C\u043D\u0430\u044F' : '\u0421\u0432\u0435\u0442\u043B\u0430\u044F';
+        };
+        window.downloadFile = function (filename, contentType, base64) {
+            var link = document.createElement('a');
+            link.download = filename;
+            link.href = 'data:' + contentType + ';base64,' + base64;
+            link.click();
+        };
+        (function () {
+            var t = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <script src="~/js/dropdown-portal.js"></script>
+    <script src="_framework/blazor.server.js"></script>
+</body>
+</html>

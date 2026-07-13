@@ -1,0 +1,125 @@
+@page "/поиск"
+@attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain.Models
+@inject SearchService SearchSvc
+@inject NavigationManager Nav
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Результаты поиска</h2>
+            <div class="hint">@results.Count совпадений</div>
+        </div>
+        <div class="panelBody">
+            <div class="form" style="grid-template-columns:1fr auto">
+                <div class="field">
+                    <input class="field-input" placeholder="Введите запрос..."
+                           value="@query" @oninput="OnQueryChange"
+                           @onkeydown="OnKeyDown" />
+                </div>
+                <div class="field" style="display:flex;align-items:flex-end">
+                    <button class="btn primary" @onclick="DoSearch">Найти</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    @if (string.IsNullOrEmpty(query))
+    {
+        <section class="panel">
+            <div class="panelBody">
+                <div class="empty-state">Введите поисковый запрос</div>
+            </div>
+        </section>
+    }
+    else if (loading)
+    {
+        <section class="panel">
+            <div class="panelBody">
+                <div class="loading-state">Поиск...</div>
+            </div>
+        </section>
+    }
+    else if (!results.Any())
+    {
+        <section class="panel">
+            <div class="panelBody">
+                <div class="empty-state">По запросу «@query» ничего не найдено</div>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>Все результаты</h2>
+                <div class="hint">@results.Count совпадений по запросу «@query»</div>
+            </div>
+            <div class="panelBody">
+                <div class="searchResultList">
+                    @foreach (var r in results)
+                    {
+                        <a href="@r.Url" class="searchResultCard" @onclick:preventDefault @onclick="() => NavigateTo(r.Url)">
+                            <div class="searchResultTop">
+                                <span class="sdiType">@r.EntityTypeDisplay</span>
+                                @if (!string.IsNullOrEmpty(r.ContextInfo))
+                                {
+                                    <span class="searchResultCtx">@r.ContextInfo</span>
+                                }
+                            </div>
+                            <div class="searchResultTitle">@r.Title</div>
+                            @if (!string.IsNullOrEmpty(r.Subtitle))
+                            {
+                                <div class="searchResultSub">@r.Subtitle</div>
+                            }
+                            <div class="searchResultMeta">
+                                <span class="mono">Перейти →</span>
+                            </div>
+                        </a>
+                    }
+                </div>
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    private string query = "";
+    private List<SearchResultItem> results = [];
+    private bool loading = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(Nav.Uri);
+        var q = System.Web.HttpUtility.ParseQueryString(uri.Query).Get("q");
+        if (!string.IsNullOrEmpty(q))
+        {
+            query = q;
+            await DoSearch();
+        }
+    }
+
+    void OnQueryChange(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? "";
+    }
+
+    async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await DoSearch();
+    }
+
+    async Task DoSearch()
+    {
+        if (string.IsNullOrWhiteSpace(query) || query.Length < 2) return;
+        loading = true;
+        results = await SearchSvc.SearchAsync(query.Trim(), 100);
+        loading = false;
+    }
+
+    void NavigateTo(string url)
+    {
+        Nav.NavigateTo(url);
+    }
+}
