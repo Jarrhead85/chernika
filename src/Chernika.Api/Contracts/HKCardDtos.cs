@@ -1,17 +1,8 @@
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
+using Chernika.Domain.Models;
 
 namespace Chernika.Api.Contracts;
-
-public record HKCardListItemDto(
-    Guid Id,
-    string Code,
-    string Version,
-    HKCardStatus Status,
-    string? BranchName,
-    string? NodeName,
-    DateTime CreatedAt,
-    DateTime? ApprovedDate);
 
 public record GsmMaterialRefDto(
     Guid Id,
@@ -72,17 +63,12 @@ public record UpdateHKCardRequest(
     string? Notes,
     DateTime? EffectiveDate,
     DateTime? ExpirationDate,
-    uint RowVersion = 0);
+    uint RowVersion);
 
 public record StatusChangeRequest(HKCardStatus NewStatus, string? Comment = null);
 
 public static class HKCardMapper
 {
-    public static HKCardListItemDto ToListItem(HKCard c) => new(
-        c.Id, c.Code, c.Version, c.Status,
-        c.Branch?.Name, c.Node?.Name,
-        c.CreatedAt, c.ApprovedDate);
-
     public static HKCardDetailDto ToDetail(HKCard c) => new(
         c.Id, c.Code, c.Version, c.Status,
         c.BranchId, c.Branch?.Name,

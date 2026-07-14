@@ -12,69 +12,92 @@ namespace Chernika.Infrastructure.Services;
 public class HKCardService
 {
     private readonly AppDbContext _db;
-    private readonly AuditService _audit;
     private readonly TaskService _tasks;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ICurrentUserService _currentUser;
 
     public HKCardService(
         AppDbContext db,
-        AuditService audit,
         TaskService tasks,
         UserManager<ApplicationUser> userManager,
         ICurrentUserService currentUser)
     {
         _db = db;
-        _audit = audit;
         _tasks = tasks;
         _userManager = userManager;
         _currentUser = currentUser;
     }
 
-    public Task<PagedResult<HKCard>> GetPagedAsync(int page = 1, int pageSize = 50, HKCardStatus? status = null, Guid? branchId = null)
+    public async Task<List<HKCard>> GetFilteredForExportAsync(
+        HKCardStatus? status = null, Guid? branchId = null)
+    {
+        var query = BuildFilteredQuery(status, branchId);
+        return await query.ToListAsync();
+    }
+
+    public async Task<List<HKCard>> GetAllAsync()
+    {
+        return await _db.HKCards.AsNoTracking()
+            .Include(x => x.Branch)
+            .Include(x => x.Node)
+            .ToListAsync();
+    }
+
+    public async Task<PagedResult<HKCardListItemDto>> GetPagedAsync(
+        int page = 1, int pageSize = 50, HKCardStatus? status = null, Guid? branchId = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var query = _db.HKCards.AsNoTracking()
-            .Include(x => x.Branch)
-            .Include(x => x.Node)
-            .AsQueryable();
+        var query = _db.HKCards.AsNoTracking().AsQueryable();
 
         if (status.HasValue)
             query = query.Where(x => x.Status == status.Value);
         if (branchId.HasValue)
             query = query.Where(x => x.BranchId == branchId.Value);
 
-        return GetPagedInternalAsync(query, page, pageSize);
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(x => new HKCardListItemDto
+            {
+                Id = x.Id,
+                Code = x.Code,
+                Version = x.Version,
+                Status = x.Status,
+                BranchId = x.BranchId,
+                BranchName = x.Branch.Name,
+                NodeCode = x.Node.Code,
+                NodeName = x.Node.Name,
+                CreatedAt = x.CreatedAt,
+                ApprovedDate = x.ApprovedDate
+            })
+            .ToListAsync();
+
+        return new PagedResult<HKCardListItemDto>
+        {
+            Items = items,
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize
+        };
     }
 
-    public IQueryable<HKCard> GetFilteredQuery(HKCardStatus? status = null, Guid? branchId = null)
-    {
-        var query = _db.HKCards.AsNoTracking()
-            .Include(x => x.Branch)
-            .Include(x => x.Node)
-            .AsQueryable();
-
-        if (status.HasValue)
-            query = query.Where(x => x.Status == status.Value);
-        if (branchId.HasValue)
-            query = query.Where(x => x.BranchId == branchId.Value);
-
-        return query.OrderByDescending(x => x.CreatedAt);
-    }
-
-    public async Task<List<HKCard>> GetFilteredAsync(
+    public async Task<PagedResult<HKCardListItemDto>> GetFilteredAsync(
         string? code = null,
         HKCardStatus? status = null,
         string? version = null,
         string? nodeSearch = null,
-        Guid? branchId = null)
+        Guid? branchId = null,
+        int page = 1,
+        int pageSize = 50)
     {
-        var query = _db.HKCards.AsNoTracking()
-            .Include(x => x.Branch)
-            .Include(x => x.Node)
-            .AsQueryable();
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
+        var query = _db.HKCards.AsNoTracking().AsQueryable();
 
         if (branchId.HasValue)
             query = query.Where(x => x.BranchId == branchId.Value);
@@ -92,7 +115,62 @@ public class HKCardService
                 EF.Functions.ILike(x.Node.Code, term));
         }
 
-        return await query.OrderByDescending(x => x.CreatedAt).ToListAsync();
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(x => new HKCardListItemDto
+            {
+                Id = x.Id,
+                Code = x.Code,
+                Version = x.Version,
+                Status = x.Status,
+                BranchId = x.BranchId,
+                BranchName = x.Branch.Name,
+                NodeCode = x.Node.Code,
+                NodeName = x.Node.Name,
+                CreatedAt = x.CreatedAt,
+                ApprovedDate = x.ApprovedDate
+            })
+            .ToListAsync();
+
+        return new PagedResult<HKCardListItemDto>
+        {
+            Items = items,
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
+    public async Task<List<HKCardListItemDto>> GetTaskCardsAsync(
+        HKCardStatus status, Guid? branchId = null)
+    {
+        var query = _db.HKCards.AsNoTracking()
+            .Where(x => x.Status == status)
+            .AsQueryable();
+
+        if (branchId.HasValue)
+            query = query.Where(x => x.BranchId == branchId.Value);
+
+        return await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(3)
+            .Select(x => new HKCardListItemDto
+            {
+                Id = x.Id,
+                Code = x.Code,
+                Version = x.Version,
+                Status = x.Status,
+                BranchId = x.BranchId,
+                BranchName = x.Branch.Name,
+                NodeCode = x.Node.Code,
+                NodeName = x.Node.Name,
+                CreatedAt = x.CreatedAt,
+                ApprovedDate = x.ApprovedDate
+            })
+            .ToListAsync();
     }
 
     public async Task<Dictionary<HKCardStatus, int>> GetStatusCountsAsync(Guid? branchId = null)
@@ -106,12 +184,6 @@ public class HKCardService
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count);
     }
-
-    public async Task<List<HKCard>> GetAllAsync() =>
-        await _db.HKCards.AsNoTracking()
-            .Include(x => x.Branch)
-            .Include(x => x.Node)
-            .ToListAsync();
 
     public Task<HKCard?> GetByIdAsync(Guid id)
     {
@@ -139,7 +211,7 @@ public class HKCardService
     public async Task<string> GenerateCodeAsync(Guid nodeId)
     {
         var node = await _db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId)
-            ?? throw new ArgumentException("Изделие не найдено", nameof(nodeId));
+            ?? throw new ArgumentException("Изделие не найдено");
 
         var year = DateTime.UtcNow.Year.ToString();
         var baseCode = $"ХК-{node.Code}-{year}";
@@ -177,12 +249,23 @@ public class HKCardService
                 (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired))
             .FirstOrDefaultAsync();
 
-    public async Task<HKCard> CreateAsync(HKCard card, Guid userId)
+    public async Task<HKCard> CreateAsync(HKCard card)
     {
         var actorId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null || !await _userManager.IsInRoleAsync(actor, "Operator"))
             throw new UnauthorizedAccessException("Недостаточно прав для создания ХК.");
+
+        if (card.NodeId == Guid.Empty)
+            throw new ArgumentException("Необходимо выбрать изделие.");
+
+        if (actor.BranchId == null || actor.BranchId.Value == Guid.Empty)
+            throw new InvalidOperationException("У пользователя не указан филиал. Создание ХК невозможно.");
+
+        if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
+            && card.ExpirationDate.Value < card.EffectiveDate.Value)
+            throw new ArgumentException(
+                "Дата окончания действия не может быть раньше даты начала действия.");
 
         card.Id = Guid.NewGuid();
         card.Code = await GenerateCodeAsync(card.NodeId);
@@ -191,13 +274,7 @@ public class HKCardService
         card.UpdatedAt = DateTime.UtcNow;
         card.Status = HKCardStatus.Draft;
         card.AuthorId = actorId;
-        card.BranchId = actor.BranchId ?? card.BranchId;
-
-        if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
-            && card.ExpirationDate.Value < card.EffectiveDate.Value)
-            throw new ArgumentException(
-                "Дата окончания действия не может быть раньше даты начала действия.",
-                nameof(card));
+        card.BranchId = actor.BranchId.Value;
 
         var hasActiveDuplicate = await _db.HKCards.AnyAsync(x =>
             x.NodeId == card.NodeId &&
@@ -209,6 +286,16 @@ public class HKCardService
                 "Завершите или архивируйте существующую карточку перед созданием новой.");
 
         _db.HKCards.Add(card);
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCard",
+            EntityId = card.Id.ToString(),
+            Action = "Created",
+            UserId = actorId,
+            CreatedAt = DateTime.UtcNow
+        });
+
         try
         {
             await _db.SaveChangesAsync();
@@ -220,19 +307,21 @@ public class HKCardService
                 "Завершите или архивируйте существующую карточку перед созданием новой.");
         }
 
-        await _audit.LogAsync("HKCard", card.Id.ToString(), "Created", actorId);
         return card;
     }
 
-    public async Task<HKCard> UpdateAsync(HKCard card, Guid userId)
+    public async Task<HKCard> UpdateAsync(HKCard card)
     {
         var actorId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
         var roles = await _userManager.GetRolesAsync(actor);
-        if (!roles.Contains("Operator") && !roles.Contains("NormAdmin"))
+        if (!roles.Contains("Operator"))
             throw new UnauthorizedAccessException("Недостаточно прав для редактирования ХК.");
+
+        if (card.RowVersion == 0)
+            throw new InvalidOperationException("Версия карточки не указана. Обновите страницу и повторите попытку.");
 
         if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
             && card.ExpirationDate.Value < card.EffectiveDate.Value)
@@ -250,7 +339,7 @@ public class HKCardService
         if (existing.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
             throw new InvalidOperationException("Редактирование недоступно для карточки в текущем статусе.");
 
-        if (card.RowVersion != 0 && card.RowVersion != existing.RowVersion)
+        if (card.RowVersion != existing.RowVersion)
             throw new InvalidOperationException("Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
 
         existing.Purpose = card.Purpose;
@@ -332,6 +421,16 @@ public class HKCardService
             }
         }
 
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCard",
+            EntityId = card.Id.ToString(),
+            Action = "Updated",
+            UserId = actorId,
+            CreatedAt = DateTime.UtcNow
+        });
+
         try
         {
             await _db.SaveChangesAsync();
@@ -341,12 +440,11 @@ public class HKCardService
             throw new InvalidOperationException("Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
         }
 
-        await _audit.LogAsync("HKCard", card.Id.ToString(), "Updated", actorId);
-
         return existing;
     }
 
-    public async Task<(bool Success, string? Error)> ChangeStatusAsync(Guid id, HKCardStatus newStatus, Guid userId, string? comment = null)
+    public async Task<(bool Success, string? Error)> ChangeStatusAsync(
+        Guid id, HKCardStatus newStatus, string? comment = null)
     {
         var actorId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
@@ -361,7 +459,7 @@ public class HKCardService
         if (actor.BranchId != card.BranchId && !roles.Contains("SystemAdmin"))
             return (false, "Нет прав для изменения карточки другого филиала");
 
-        var roleError = ValidateStatusChangeRole(oldStatus: card.Status, newStatus, roles);
+        var roleError = ValidateStatusChangeRole(card.Status, newStatus, roles);
         if (roleError != null)
             return (false, roleError);
 
@@ -378,12 +476,6 @@ public class HKCardService
             card.ReviewerId = actorId;
             if (!card.EffectiveDate.HasValue)
                 card.EffectiveDate = card.ApprovedDate;
-
-            if (card.ExpirationDate.HasValue && card.ApprovedDate.Value > card.ExpirationDate.Value)
-            {
-                await _audit.LogAsync("HKCard", id.ToString(), "Approved",
-                    userId, "Card approved after its own ExpirationDate");
-            }
         }
 
         _db.HKCardStatusLogs.Add(new HKCardStatusLog
@@ -392,10 +484,38 @@ public class HKCardService
             HKCardId = id,
             FromStatus = oldStatus,
             ToStatus = newStatus,
-            ChangedByUserId = userId,
+            ChangedByUserId = actorId,
             Comment = comment,
             ChangedAt = DateTime.UtcNow
         });
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCard",
+            EntityId = id.ToString(),
+            Action = $"Status:{newStatus}",
+            UserId = actorId,
+            CreatedAt = DateTime.UtcNow,
+            Details = comment
+        });
+
+        if (newStatus == HKCardStatus.Approved
+            && card.ExpirationDate.HasValue
+            && card.ApprovedDate.HasValue
+            && card.ApprovedDate.Value > card.ExpirationDate.Value)
+        {
+            _db.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                EntityType = "HKCard",
+                EntityId = id.ToString(),
+                Action = "ApprovedAfterExpiration",
+                UserId = actorId,
+                CreatedAt = DateTime.UtcNow,
+                Details = "Card approved after its own ExpirationDate"
+            });
+        }
 
         try
         {
@@ -406,16 +526,15 @@ public class HKCardService
             return (false, "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
         }
 
-        await _audit.LogAsync("HKCard", id.ToString(), $"Status:{newStatus}", userId, comment);
-        await CreateTasksForStatusChangeAsync(card, oldStatus, newStatus, userId);
+        await CreateTasksForStatusChangeAsync(card, oldStatus, newStatus, actorId);
 
         if (newStatus == HKCardStatus.Approved)
-            await ArchivePreviousApprovedVersionsAsync(card, userId);
+            await ArchivePreviousApprovedVersionsAsync(card, actorId);
 
         return (true, null);
     }
 
-    public async Task<(bool Success, string? Error)> DeleteAsync(Guid id, Guid userId, UserRole actorRole)
+    public async Task<(bool Success, string? Error)> DeleteAsync(Guid id)
     {
         var actorId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
@@ -431,12 +550,13 @@ public class HKCardService
         if (!isSysAdmin && actor.BranchId != card.BranchId)
             return (false, "Нет доступа к карточке другого филиала");
 
+        var actorRole = ResolveUserRole(roles);
         if (!HKCardStatusTransitions.CanDelete(card.Status, actorRole))
             return (false,
                 $"Нельзя удалить карточку со статусом «{card.Status}». " +
                 "Утверждённые карточки можно только архивировать.");
 
-        return await ChangeStatusAsync(id, HKCardStatus.Deleted, userId, null);
+        return await ChangeStatusAsync(id, HKCardStatus.Deleted, null);
     }
 
     private async Task CreateTasksForStatusChangeAsync(HKCard card, HKCardStatus _, HKCardStatus to, Guid actorUserId)
@@ -522,7 +642,7 @@ public class HKCardService
         await _tasks.CreateTasksAsync(tasks);
     }
 
-    private async Task ArchivePreviousApprovedVersionsAsync(HKCard card, Guid userId)
+    private async Task ArchivePreviousApprovedVersionsAsync(HKCard card, Guid actorUserId)
     {
         var previousApproved = await _db.HKCards
             .Where(h => h.Code == card.Code
@@ -547,13 +667,21 @@ public class HKCardService
                 HKCardId = prev.Id,
                 FromStatus = HKCardStatus.Approved,
                 ToStatus = HKCardStatus.Archived,
-                ChangedByUserId = userId,
+                ChangedByUserId = actorUserId,
                 Comment = comment,
                 ChangedAt = now
             });
 
-            await _audit.LogAsync("HKCard", prev.Id.ToString(),
-                $"Status:{HKCardStatus.Archived}", userId, comment);
+            _db.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                EntityType = "HKCard",
+                EntityId = prev.Id.ToString(),
+                Action = $"Status:{HKCardStatus.Archived}",
+                UserId = actorUserId,
+                CreatedAt = now,
+                Details = comment
+            });
         }
 
         try
@@ -562,7 +690,7 @@ public class HKCardService
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Concurrency conflict during archival is non-fatal — cards simply won't be archived this round
+            // Concurrency conflict during archival is non-fatal
         }
     }
 
@@ -590,6 +718,21 @@ public class HKCardService
         var users = await _userManager.GetUsersInRoleAsync(role);
         var user = users.FirstOrDefault(u => u.IsActive);
         return user?.Id;
+    }
+
+    private IQueryable<HKCard> BuildFilteredQuery(HKCardStatus? status = null, Guid? branchId = null)
+    {
+        var query = _db.HKCards.AsNoTracking()
+            .Include(x => x.Branch)
+            .Include(x => x.Node)
+            .AsQueryable();
+
+        if (status.HasValue)
+            query = query.Where(x => x.Status == status.Value);
+        if (branchId.HasValue)
+            query = query.Where(x => x.BranchId == branchId.Value);
+
+        return query.OrderByDescending(x => x.CreatedAt);
     }
 
     private static string? ValidateStatusChangeRole(HKCardStatus oldStatus, HKCardStatus newStatus, IList<string> roles)
@@ -620,23 +763,5 @@ public class HKCardService
         if (roles.Contains("NormAdmin")) return UserRole.NormAdmin;
         if (roles.Contains("DepartmentHead")) return UserRole.DepartmentHead;
         return UserRole.Operator;
-    }
-
-    private static async Task<PagedResult<HKCard>> GetPagedInternalAsync(IQueryable<HKCard> query, int page, int pageSize)
-    {
-        var total = await query.CountAsync();
-        var items = await query
-            .OrderByDescending(x => x.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync();
-
-        return new PagedResult<HKCard>
-        {
-            Items = items,
-            TotalCount = total,
-            Page = page,
-            PageSize = pageSize
-        };
     }
 }

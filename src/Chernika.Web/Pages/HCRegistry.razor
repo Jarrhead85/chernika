@@ -1,5 +1,6 @@
 @page "/реестр-хк"
 @attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain.Models
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
@@ -114,14 +115,14 @@
                                 {
                                     <tr @onclick="() => SelectCard(card.Id)" @ondblclick="() => GoToEdit(card.Id)" style="cursor:pointer">
                                         <td class="mono">@card.Code</td>
-                                        <td>@card.Node?.Name<br /><span class="mono">@card.Node?.Code</span></td>
+                                        <td>@card.NodeName<br /><span class="mono">@card.NodeCode</span></td>
                                         <td><StatusBadge Status="@card.Status" /></td>
                                         <td class="mono">@card.Version</td>
-                                        <td>@card.Branch?.Name</td>
+                                        <td>@card.BranchName</td>
                                         <td>
                                             <div class="rowActions">
-                                                <button class="linkBtn" @onclick="() => GoToEdit(card.Id)">Открыть</button>
-                                                @if (CanDeleteCard(card)) { <button class="linkBtn" @onclick="() => DeleteCard(card.Id)">Удалить</button> }
+                                                <button class="linkBtn" @onclick="() => GoToEdit(card.Id)" @onclick:stopPropagation="true">Открыть</button>
+                                                @if (CanDeleteCard(card)) { <button class="linkBtn" @onclick="() => DeleteCard(card.Id)" @onclick:stopPropagation="true">Удалить</button> }
                                             </div>
                                         </td>
                                     </tr>
@@ -193,9 +194,9 @@
 </div>
 
 @code {
-    private List<HKCard> filteredCards = new();
-    private List<HKCard> taskCardsOnReview = new();
-    private List<HKCard> taskCardsRevision = new();
+    private List<HKCardListItemDto> filteredCards = new();
+    private List<HKCardListItemDto> taskCardsOnReview = new();
+    private List<HKCardListItemDto> taskCardsRevision = new();
     private Dictionary<HKCardStatus, int> statusCounts = new();
     private int totalCount;
     private HKCard? selectedCard;
@@ -241,22 +242,18 @@
             if (!string.IsNullOrEmpty(filterStatus) && Enum.TryParse<HKCardStatus>(filterStatus, out var parsedStatus))
                 statusFilter = parsedStatus;
 
-            filteredCards = await HKCardService.GetFilteredAsync(
-                code: filterCode,
+            var paged = await HKCardService.GetFilteredAsync(
+                code: string.IsNullOrWhiteSpace(filterCode) ? null : filterCode,
                 status: statusFilter,
-                version: filterVersion,
-                nodeSearch: filterNode,
-                branchId: branchFilter);
+                version: string.IsNullOrWhiteSpace(filterVersion) ? null : filterVersion,
+                nodeSearch: string.IsNullOrWhiteSpace(filterNode) ? null : filterNode,
+                branchId: branchFilter,
+                page: 1,
+                pageSize: 200);
+            filteredCards = paged.Items.ToList();
 
-            taskCardsOnReview = await HKCardService.GetFilteredAsync(
-                status: HKCardStatus.OnReview,
-                branchId: branchFilter);
-            taskCardsOnReview = taskCardsOnReview.Take(3).ToList();
-
-            taskCardsRevision = await HKCardService.GetFilteredAsync(
-                status: HKCardStatus.RevisionRequired,
-                branchId: branchFilter);
-            taskCardsRevision = taskCardsRevision.Take(3).ToList();
+            taskCardsOnReview = await HKCardService.GetTaskCardsAsync(HKCardStatus.OnReview, branchFilter);
+            taskCardsRevision = await HKCardService.GetTaskCardsAsync(HKCardStatus.RevisionRequired, branchFilter);
         }
         finally
         {
@@ -277,7 +274,7 @@
     private void GoToCreate() => Nav.NavigateTo("/хк/создать");
     private void GoToEdit(Guid id) => Nav.NavigateTo($"/хк/{id}");
 
-    private bool CanDeleteCard(HKCard card)
+    private bool CanDeleteCard(HKCardListItemDto card)
     {
         if (_currentUser?.IsInRole("SystemAdmin") == true) return card.Status == HKCardStatus.Archived;
         if (_currentUser?.IsInRole("Operator") == true)
@@ -290,25 +287,16 @@
     {
         var card = filteredCards.FirstOrDefault(c => c.Id == id);
         if (card == null || !CanDeleteCard(card)) return;
-        var authState = await AuthState.GetAuthenticationStateAsync();
-        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(userId)) return;
-        if (!Guid.TryParse(userId, out var actorId)) return;
 
-        var user = await UserManager.FindByIdAsync(userId);
-        if (user == null) return;
-
-        UserRole actorRole;
-        if (await UserManager.IsInRoleAsync(user, "SystemAdmin")) actorRole = UserRole.SystemAdmin;
-        else if (await UserManager.IsInRoleAsync(user, "NormAdmin")) actorRole = UserRole.NormAdmin;
-        else if (await UserManager.IsInRoleAsync(user, "DepartmentHead")) actorRole = UserRole.DepartmentHead;
-        else actorRole = UserRole.Operator;
-
-        var (success, error) = await HKCardService.DeleteAsync(id, actorId, actorRole);
+        var (success, error) = await HKCardService.DeleteAsync(id);
         if (!success)
         {
-            // TODO: show error to user
+            errorMessage = error ?? "Не удалось удалить ХК.";
+            return;
         }
+        errorMessage = null;
         await LoadCards();
     }
+
+    private string? errorMessage;
 }

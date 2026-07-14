@@ -570,17 +570,13 @@
 
     private async Task SendToApprove()
     {
-        if (string.IsNullOrEmpty(currentUserId)) return;
-        var userId = Guid.Parse(currentUserId);
-        var (sent, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, userId, "Отправлена на проверку");
+        var (sent, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, "Отправлена на проверку");
         if (sent) card.Status = HKCardStatus.OnReview;
     }
 
     private async Task ApproveCard()
     {
-        if (string.IsNullOrEmpty(currentUserId)) return;
-        var userId = Guid.Parse(currentUserId);
-        var (approved, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Approved, userId, "Утверждена");
+        var (approved, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Approved, "Утверждена");
         if (approved) card.Status = HKCardStatus.Approved;
     }
 
@@ -601,9 +597,7 @@
 
         showReturnModal = false;
 
-        if (string.IsNullOrEmpty(currentUserId)) return;
-        var userId = Guid.Parse(currentUserId);
-        var (returned, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.RevisionRequired, userId, returnComment.Trim());
+        var (returned, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.RevisionRequired, returnComment.Trim());
         if (returned)
         {
             card.Status = HKCardStatus.RevisionRequired;
@@ -618,9 +612,7 @@
 
     private async Task ArchiveCard()
     {
-        if (string.IsNullOrEmpty(currentUserId)) return;
-        var userId = Guid.Parse(currentUserId);
-        var (archived, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Archived, userId, "Переведена в архив");
+        var (archived, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Archived, "Переведена в архив");
         if (archived) card.Status = HKCardStatus.Archived;
     }
 
@@ -689,16 +681,12 @@
         foreach (var item in card.Items)
             item.SortOrder = order++;
 
-        var actorId = !string.IsNullOrEmpty(userId) && Guid.TryParse(userId, out var uid)
-            ? uid
-            : Guid.Empty;
-
         try
         {
             if (IsNew)
-                await HKCardService.CreateAsync(card, actorId);
+                await HKCardService.CreateAsync(card);
             else
-                await HKCardService.UpdateAsync(card, actorId);
+                await HKCardService.UpdateAsync(card);
         }
         catch (ArgumentException ex)
         {

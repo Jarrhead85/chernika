@@ -1,6 +1,7 @@
 using Chernika.Api.Contracts;
 using Chernika.Domain;
 using Chernika.Domain.Enums;
+using Chernika.Domain.Models;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,16 +14,13 @@ namespace Chernika.Api.Controllers;
 public class HKCardsController : ControllerBase
 {
     private readonly HKCardService _hkCards;
-    private readonly ICurrentUserService _currentUser;
     private readonly IAuthorizationService _authorization;
 
     public HKCardsController(
         HKCardService hkCards,
-        ICurrentUserService currentUser,
         IAuthorizationService authorization)
     {
         _hkCards = hkCards;
-        _currentUser = currentUser;
         _authorization = authorization;
     }
 
@@ -36,7 +34,7 @@ public class HKCardsController : ControllerBase
         pageSize = Math.Clamp(pageSize, 1, 200);
         var result = await _hkCards.GetPagedAsync(page, pageSize, status, branchId);
         return Ok(new PagedResponse<HKCardListItemDto>(
-            result.Items.Select(HKCardMapper.ToListItem).ToList(),
+            result.Items.ToList(),
             result.TotalCount, result.Page, result.PageSize, result.TotalPages));
     }
 
@@ -55,7 +53,7 @@ public class HKCardsController : ControllerBase
         var card = HKCardMapper.FromCreate(request);
         try
         {
-            var created = await _hkCards.CreateAsync(card, _currentUser.GetRequiredUserId());
+            var created = await _hkCards.CreateAsync(card);
             var loaded = await _hkCards.GetByIdAsync(created.Id);
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, HKCardMapper.ToDetail(loaded!));
         }
@@ -77,7 +75,7 @@ public class HKCardsController : ControllerBase
         HKCardMapper.ApplyUpdate(card, request);
         try
         {
-            await _hkCards.UpdateAsync(card, _currentUser.GetRequiredUserId());
+            await _hkCards.UpdateAsync(card);
         }
         catch (ArgumentException ex)
         {
@@ -111,7 +109,7 @@ public class HKCardsController : ControllerBase
         }
 
         var (success, error) = await _hkCards.ChangeStatusAsync(
-            id, request.NewStatus, _currentUser.GetRequiredUserId(), request.Comment);
+            id, request.NewStatus, request.Comment);
 
         if (!success)
             return BadRequest(error);
@@ -123,13 +121,7 @@ public class HKCardsController : ControllerBase
     [Authorize(Policy = "DeleteHK")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        UserRole role;
-        if (User.IsInRole("SystemAdmin")) role = UserRole.SystemAdmin;
-        else if (User.IsInRole("NormAdmin")) role = UserRole.NormAdmin;
-        else if (User.IsInRole("DepartmentHead")) role = UserRole.DepartmentHead;
-        else role = UserRole.Operator;
-
-        var (success, error) = await _hkCards.DeleteAsync(id, _currentUser.GetRequiredUserId(), role);
+        var (success, error) = await _hkCards.DeleteAsync(id);
         if (!success) return BadRequest(error ?? "Невозможно удалить карточку в текущем статусе.");
         return NoContent();
     }

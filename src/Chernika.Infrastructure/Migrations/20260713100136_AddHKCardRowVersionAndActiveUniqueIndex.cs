@@ -4,12 +4,26 @@
 
 namespace Chernika.Infrastructure.Migrations
 {
-    /// <inheritdoc />
     public partial class AddHKCardRowVersionAndActiveUniqueIndex : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql(@"
+DO $$
+DECLARE
+    cnt INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO cnt FROM (
+        SELECT ""NodeId"" FROM ""HKCards""
+        WHERE ""Status"" IN ('Draft', 'OnReview', 'RevisionRequired')
+        GROUP BY ""NodeId"" HAVING COUNT(*) > 1
+    ) d;
+    IF cnt > 0 THEN
+        RAISE EXCEPTION 'Cannot create UX_HKCards_OneActivePerNode: % nodes have more than one active HK card. Resolve duplicates first.', cnt;
+    END IF;
+END;
+$$;");
+
             migrationBuilder.DropIndex(
                 name: "IX_HKCards_NodeId",
                 table: "HKCards");
@@ -17,12 +31,11 @@ namespace Chernika.Infrastructure.Migrations
             migrationBuilder.CreateIndex(
                 name: "UX_HKCards_OneActivePerNode",
                 table: "HKCards",
-                column: "NodeId",
+                columns: new[] { "NodeId", "Status" },
                 unique: true,
                 filter: "\"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')");
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(

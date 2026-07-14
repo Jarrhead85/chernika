@@ -24,7 +24,8 @@ public class ReportsController : ControllerBase
         [FromQuery] HKCardStatus? status = null,
         [FromQuery] Guid? branchId = null)
     {
-        var query = _hkCards.GetFilteredQuery(status, branchId);
+        var cards = await _hkCards.GetFilteredForExportAsync(status, branchId);
+        var query = cards.AsQueryable();
         var stream = await _reports.GenerateHKRegistryExcelAsync(query);
         return File(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "hk-registry.xlsx");
     }
