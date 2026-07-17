@@ -1,0 +1,116 @@
+@page "/справочник-сборочных-единиц"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочник сборочных единиц</h2>
+            <div class="hint">Сборочные единицы изделий</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Код</label><input @bind="newUnit.Code" /></div>
+                <div class="field"><label>Наименование</label><input @bind="newUnit.Name" /></div>
+                <div class="field full-width"><label>Описание</label><input @bind="newUnit.Description" /></div>
+                <div class="formActions">
+                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                    @if (canEdit) { <button class="btn primary" @onclick="SaveUnit">@(editing ? "Сохранить" : "Добавить")</button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список сборочных единиц</h2>
+            <div class="hint">@units.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!units.Any())
+            {
+                <div class="empty-state">Нет сборочных единиц</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr><th>Код</th><th>Наименование</th><th>Описание</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var u in units)
+                        {
+                            <tr>
+                                <td class="mono">@u.Code</td>
+                                <td>@u.Name</td>
+                                <td>@u.Description</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditUnit(u)">Изменить</button> }
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteUnit(u.Id)">Удалить</button> }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<AssemblyUnit> units = new();
+    private AssemblyUnit newUnit = new();
+    private bool editing = false;
+    private bool loading = true;
+    private bool canEdit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canEdit = authState.User.IsInRole("NormAdmin");
+        await LoadUnits();
+    }
+
+    async Task LoadUnits()
+    {
+        loading = true;
+        units = await EquipService.GetAssemblyUnitsAsync();
+        loading = false;
+    }
+
+    async Task SaveUnit()
+    {
+        if (string.IsNullOrWhiteSpace(newUnit.Name)) return;
+        if (editing)
+            await EquipService.UpdateAssemblyUnitAsync(newUnit);
+        else
+            await EquipService.CreateAssemblyUnitAsync(newUnit);
+        ResetForm();
+        await LoadUnits();
+    }
+
+    void EditUnit(AssemblyUnit u)
+    {
+        newUnit = new AssemblyUnit { Id = u.Id, Code = u.Code, Name = u.Name, Description = u.Description };
+        editing = true;
+    }
+
+    async Task DeleteUnit(Guid id)
+    {
+        await EquipService.DeleteAssemblyUnitAsync(id);
+        await LoadUnits();
+    }
+
+    void ResetForm()
+    {
+        newUnit = new AssemblyUnit();
+        editing = false;
+    }
+}

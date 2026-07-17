@@ -9,6 +9,8 @@ public class IndividualCard
     public HKCard HKCard { get; set; } = null!;
     public Guid NodeId { get; set; }
     public Node Node { get; set; } = null!;
+    public Guid ProductCompositionId { get; set; }
+    public ProductComposition ProductComposition { get; set; } = null!;
     public string Version { get; set; } = string.Empty;
     public decimal TotalNorm { get; set; }
     public string? Notes { get; set; }

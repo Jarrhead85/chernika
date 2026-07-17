@@ -1,5 +1,6 @@
 using Chernika.Domain;
 using Chernika.Domain.Entities;
+using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
 using Chernika.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -11,12 +12,14 @@ public class IndividualCardService
     private readonly AppDbContext _db;
     private readonly AuditService _audit;
     private readonly ICurrentUserService _currentUser;
+    private readonly TimeProvider _time;
 
-    public IndividualCardService(AppDbContext db, AuditService audit, ICurrentUserService currentUser)
+    public IndividualCardService(AppDbContext db, AuditService audit, ICurrentUserService currentUser, TimeProvider time)
     {
         _db = db;
         _audit = audit;
         _currentUser = currentUser;
+        _time = time;
     }
 
     public Task<PagedResult<IndividualCard>> GetPagedAsync(int page = 1, int pageSize = 50, Guid? instanceId = null)
@@ -62,12 +65,12 @@ public class IndividualCardService
             .Where(c => c.EquipmentInstanceId == instanceId)
             .OrderBy(c => c.Node.Code).ToListAsync();
 
-    public async Task<IndividualCard> CreateCardAsync(IndividualCard card)
+    public async Task<IndividualCard> CreateCardAsync(IndividualCard card, CancellationToken ct = default)
     {
         card.Id = Guid.NewGuid();
-        card.CreatedAt = DateTime.UtcNow;
+        card.CreatedAt = _time.GetUtcNow().UtcDateTime;
         _db.IndividualCards.Add(card);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(ct);
         return card;
     }
 
@@ -96,65 +99,59 @@ public class IndividualCardService
         return true;
     }
 
-    public async Task<List<IndividualCard>> GenerateCardsForInstanceAsync(Guid instanceId, List<Guid> coefficientIds)
+    public async Task<List<IndividualCard>> GenerateCardsForInstanceAsync(Guid instanceId, List<Guid> coefficientIds, CancellationToken ct = default)
     {
         var instance = await _db.EquipmentInstances
             .Include(i => i.EquipmentModel)
-            .Include(i => i.EquipmentModel).ThenInclude(m => m.ProductCompositions)
-                .ThenInclude(pc => pc.Parts).ThenInclude(part => part.Nodes).ThenInclude(pcn => pcn.Node)
-            .Include(i => i.EquipmentModel).ThenInclude(m => m.ProductCompositions)
-                .ThenInclude(pc => pc.Parts).ThenInclude(part => part.Nodes)
-            .FirstOrDefaultAsync(i => i.Id == instanceId);
+            .FirstOrDefaultAsync(i => i.Id == instanceId, ct);
 
         if (instance == null)
             throw new InvalidOperationException($"Экземпляр {instanceId} не найден");
 
-        var composition = instance.EquipmentModel.ProductCompositions
-            .FirstOrDefault(pc => pc.IsActive)
-            ?? instance.EquipmentModel.ProductCompositions
-                .OrderByDescending(pc => pc.CreatedAt).FirstOrDefault();
+        var composition = await _db.ProductCompositions
+            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
+            .Where(c => c.EquipmentModelId == instance.EquipmentModelId
+                     && c.IsActive
+                     && c.Status == ProductCompositionStatus.Approved)
+            .FirstOrDefaultAsync(ct);
 
         if (composition == null)
-            throw new InvalidOperationException($"Состав изделия для модели {instance.EquipmentModel.Name} не найден");
+            throw new InvalidOperationException(
+                $"Для модели «{instance.EquipmentModel.Name}» нет действующего утверждённого конструктивного состава. " +
+                "Создайте и утвердите состав перед генерацией индивидуальных карт.");
 
         var coefficientProduct = await GetCoefficientProductAsync(coefficientIds);
         var appliedCoefficients = await LoadActiveCoefficientsAsync(coefficientIds);
-        var version = "v" + DateTime.UtcNow.ToString("MMyy");
+        var version = "v" + _time.GetUtcNow().ToString("MMyy");
         var newCards = new List<IndividualCard>();
-
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
 
         foreach (var compNode in composition.Parts.SelectMany(p => p.Nodes))
         {
-            // ХК привязана к узлу (Node), а не к вхождению узла в изделие.
-            // Берём актуальную утверждённую ХК по узлу: Approved + попадает в интервал действия.
             var hkCard = await _db.HKCards
                 .Include(h => h.Items).ThenInclude(hi => hi.AssemblyUnit)
                 .Include(h => h.Items).ThenInclude(hi => hi.Materials).ThenInclude(m => m.GsmMaterial)
                 .Where(h =>
                     h.NodeId == compNode.NodeId &&
-                    h.Status == Domain.Enums.HKCardStatus.Approved &&
+                    h.Status == HKCardStatus.Approved &&
                     (!h.EffectiveDate.HasValue || h.EffectiveDate.Value <= now) &&
                     (!h.ExpirationDate.HasValue || h.ExpirationDate.Value >= now))
                 .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(ct);
 
             if (hkCard == null)
                 throw new InvalidOperationException(
                     $"Для узла {compNode.Node?.Code ?? compNode.NodeId.ToString()} не найдена действующая утверждённая ХК.");
 
-            if (hkCard.Status != Domain.Enums.HKCardStatus.Approved)
-                throw new InvalidOperationException(
-                    $"ХК {hkCard.Code} (v{hkCard.Version}) находится в статусе «{hkCard.Status}». Генерация индивидуальных карт разрешена только для утверждённых ХК.");
-
             var card = new IndividualCard
             {
                 Id = Guid.NewGuid(),
                 EquipmentInstanceId = instanceId,
+                ProductCompositionId = composition.Id,
                 HKCardId = hkCard.Id,
                 NodeId = compNode.NodeId,
                 Version = version,
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = now,
                 AppliedCoefficients = appliedCoefficients
             };
 
@@ -179,7 +176,7 @@ public class IndividualCardService
         if (newCards.Count != 0)
         {
             _db.IndividualCards.AddRange(newCards);
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(ct);
         }
 
         return newCards;

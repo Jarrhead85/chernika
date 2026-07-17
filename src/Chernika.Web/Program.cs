@@ -17,6 +17,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(DatabaseConnection.Build(builder.Configuration)));
 
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 

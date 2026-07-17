@@ -1,7 +1,9 @@
 using Chernika.Domain;
 using Chernika.Domain.Entities;
+using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
 using Chernika.Infrastructure.Data;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace Chernika.Infrastructure.Services;
@@ -11,12 +13,16 @@ public class EquipmentService
     private readonly AppDbContext _db;
     private readonly AuditService _audit;
     private readonly ICurrentUserService _currentUser;
+    private readonly TimeProvider _time;
+    private readonly UserManager<ApplicationUser> _userManager;
 
-    public EquipmentService(AppDbContext db, AuditService audit, ICurrentUserService currentUser)
+    public EquipmentService(AppDbContext db, AuditService audit, ICurrentUserService currentUser, TimeProvider time, UserManager<ApplicationUser> userManager)
     {
         _db = db;
         _audit = audit;
         _currentUser = currentUser;
+        _time = time;
+        _userManager = userManager;
     }
 
     public Task<List<EquipmentModel>> GetModelsAsync() =>
@@ -162,152 +168,367 @@ public class EquipmentService
         return true;
     }
 
-    public Task<List<ProductComposition>> GetCompositionsAsync() =>
-        _db.ProductCompositions.Include(c => c.EquipmentModel)
-            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
-            .OrderByDescending(c => c.CreatedAt).ToListAsync();
+    private async Task EnsureCanEditCompositionAsync(CancellationToken ct = default)
+    {
+        var userId = _currentUser.GetRequiredUserId();
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+        if (user == null)
+            throw new UnauthorizedAccessException("Пользователь не найден.");
+        var roles = await _userManager.GetRolesAsync(user);
+        if (!roles.Contains("NormAdmin") && !roles.Contains("SystemAdmin"))
+            throw new UnauthorizedAccessException("Недостаточно прав для редактирования конструктивного состава.");
+    }
 
-    public Task<ProductComposition?> GetCompositionAsync(Guid id) =>
-        _db.ProductCompositions
+    // ── Product Composition ──────────────────────────────────────────────
+
+    public async Task<List<ProductComposition>> GetCompositionsAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
+    {
+        var query = _db.ProductCompositions
+            .Include(c => c.EquipmentModel)
+            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
+            .AsQueryable();
+
+        if (equipmentModelId.HasValue)
+            query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
+
+        return await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+    }
+
+    public async Task<ProductComposition?> GetCompositionAsync(Guid id, CancellationToken ct = default) =>
+        await _db.ProductCompositions
             .Include(c => c.EquipmentModel)
             .Include(c => c.Parts.OrderBy(p => p.SortOrder))
                 .ThenInclude(p => p.Nodes.OrderBy(n => n.Node.Code))
                     .ThenInclude(n => n.Node)
-            .FirstOrDefaultAsync(c => c.Id == id);
+            .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-    public Task<ProductCompositionPart?> GetCompositionPartAsync(Guid partId) =>
-        _db.ProductCompositionParts
+    public async Task<List<ProductComposition>> GetCompositionsWithCoverageAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
+    {
+        var query = _db.ProductCompositions
+            .Include(c => c.EquipmentModel)
+            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
+                .ThenInclude(n => n.HKCards)
+            .AsQueryable();
+
+        if (equipmentModelId.HasValue)
+            query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
+
+        return await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+    }
+
+    public async Task<ProductCompositionPart?> GetCompositionPartAsync(Guid partId, CancellationToken ct = default) =>
+        await _db.ProductCompositionParts
             .Include(p => p.Nodes.OrderBy(n => n.Node.Code))
                 .ThenInclude(n => n.Node)
-            .FirstOrDefaultAsync(p => p.Id == partId);
+            .FirstOrDefaultAsync(p => p.Id == partId, ct);
 
-    public Task<ProductCompositionNode?> GetCompositionNodeAsync(Guid nodeId) =>
-        _db.ProductCompositionNodes
+    public async Task<ProductCompositionNode?> GetCompositionNodeAsync(Guid nodeId, CancellationToken ct = default) =>
+        await _db.ProductCompositionNodes
             .Include(n => n.Node)
-            .FirstOrDefaultAsync(n => n.Id == nodeId);
+            .FirstOrDefaultAsync(n => n.Id == nodeId, ct);
 
-    public async Task<ProductComposition> CreateCompositionAsync(ProductComposition comp)
+    public async Task<ProductComposition> CreateCompositionDraftAsync(CreateCompositionRequest request, CancellationToken ct = default)
     {
-        comp.Id = Guid.NewGuid();
-        comp.CreatedAt = DateTime.UtcNow;
-        comp.IsActive = true;
-        var old = await _db.ProductCompositions
-            .Where(pc => pc.EquipmentModelId == comp.EquipmentModelId && pc.IsActive)
-            .ToListAsync();
-        foreach (var pc in old) pc.IsActive = false;
+        await EnsureCanEditCompositionAsync(ct);
+        if (request.EquipmentModelId == Guid.Empty)
+            throw new ArgumentException("EquipmentModelId is required.");
+
+        var now = _time.GetUtcNow();
+        var comp = new ProductComposition
+        {
+            Id = Guid.NewGuid(),
+            EquipmentModelId = request.EquipmentModelId,
+            Status = ProductCompositionStatus.Draft,
+            Version = "v" + now.ToString("MMyy"),
+            CreatedAt = now.UtcDateTime,
+            UpdatedAt = now.UtcDateTime,
+            AuthorId = _currentUser.GetRequiredUserId().ToString(),
+            Comment = request.Comment,
+            IsActive = false
+        };
+
         _db.ProductCompositions.Add(comp);
-        await _db.SaveChangesAsync();
-        return await _db.ProductCompositions
-            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
-            .FirstAsync(c => c.Id == comp.Id);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId());
+        return comp;
     }
 
-    public async Task<bool> UpdateCompositionPropertiesAsync(Guid id, Guid equipmentModelId, string? comment)
+    public async Task<bool> UpdateCompositionDraftAsync(UpdateCompositionDraftRequest request, CancellationToken ct = default)
     {
-        var comp = await _db.ProductCompositions.FindAsync(id);
+        await EnsureCanEditCompositionAsync(ct);
+        var comp = await _db.ProductCompositions.FindAsync(new object[] { request.Id }, ct);
         if (comp == null) return false;
-        comp.EquipmentModelId = equipmentModelId;
-        comp.Comment = comment;
-        await _db.SaveChangesAsync();
+        if (comp.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
+        if (request.EffectiveDate.HasValue && request.ExpirationDate.HasValue && request.ExpirationDate < request.EffectiveDate)
+            throw new InvalidOperationException("Дата окончания действия не может быть раньше даты начала.");
+
+        comp.Comment = request.Comment;
+        comp.EffectiveDate = request.EffectiveDate;
+        comp.ExpirationDate = request.ExpirationDate;
+        comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductComposition", comp.Id.ToString(), "UpdateDraft", _currentUser.GetRequiredUserId());
         return true;
     }
 
-    public async Task<bool> SetActiveCompositionAsync(Guid id)
+    public async Task<bool> DeleteCompositionDraftAsync(Guid id, CancellationToken ct = default)
     {
-        var target = await _db.ProductCompositions.FindAsync(id);
-        if (target == null) return false;
-        var old = await _db.ProductCompositions
-            .Where(pc => pc.EquipmentModelId == target.EquipmentModelId && pc.IsActive)
-            .ToListAsync();
-        foreach (var pc in old) pc.IsActive = false;
-        target.IsActive = true;
-        await _db.SaveChangesAsync();
+        await EnsureCanEditCompositionAsync(ct);
+        var comp = await _db.ProductCompositions.FindAsync(new object[] { id }, ct);
+        if (comp == null) return false;
+        if (comp.Status == ProductCompositionStatus.Approved || comp.Status == ProductCompositionStatus.Archived)
+            throw new InvalidOperationException("Нельзя удалить утверждённый или архивный состав.");
+        if (comp.Status == ProductCompositionStatus.OnReview)
+            throw new InvalidOperationException("Нельзя удалить состав на проверке. Верните его в черновик.");
+
+        _db.ProductCompositions.Remove(comp);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductComposition", id.ToString(), "DeleteDraft", _currentUser.GetRequiredUserId());
         return true;
     }
 
-    public async Task<bool> DeleteCompositionAsync(Guid id)
+    public async Task<bool> SubmitForReviewAsync(Guid id, CancellationToken ct = default)
     {
-        var c = await _db.ProductCompositions.FindAsync(id);
-        if (c == null) return false;
-        _db.ProductCompositions.Remove(c);
-        await _db.SaveChangesAsync();
+        await EnsureCanEditCompositionAsync(ct);
+        return await ChangeCompositionStatusInternalAsync(id, ProductCompositionStatus.OnReview, null, ct);
+    }
+
+    public async Task<bool> ReturnToDraftAsync(Guid id, string? comment, CancellationToken ct = default)
+    {
+        await EnsureCanEditCompositionAsync(ct);
+        return await ChangeCompositionStatusInternalAsync(id, ProductCompositionStatus.Draft, comment, ct);
+    }
+
+    public async Task<bool> ApproveCompositionAsync(Guid id, string? comment, CancellationToken ct = default)
+    {
+        await EnsureCanEditCompositionAsync(ct);
+        var comp = await _db.ProductCompositions
+            .Include(c => c.Parts).ThenInclude(p => p.Nodes)
+            .FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (comp == null) return false;
+        if (comp.Status != ProductCompositionStatus.OnReview)
+            throw new InvalidOperationException("Утверждение возможно только для состава в статусе «На проверке».");
+        if (!comp.Parts.Any() || !comp.Parts.SelectMany(p => p.Nodes).Any())
+            throw new InvalidOperationException("Нельзя утвердить пустой состав.");
+
+        var now = _time.GetUtcNow().UtcDateTime;
+
+        var previous = await _db.ProductCompositions
+            .Where(c => c.EquipmentModelId == comp.EquipmentModelId
+                     && c.Id != comp.Id
+                     && c.IsActive)
+            .ToListAsync(ct);
+        foreach (var p in previous)
+        {
+            p.Status = ProductCompositionStatus.Archived;
+            p.IsActive = false;
+            p.UpdatedAt = now;
+        }
+
+        comp.Status = ProductCompositionStatus.Approved;
+        comp.ApprovedByUserId = _currentUser.GetRequiredUserId().ToString();
+        comp.ApprovedAt = now;
+        comp.EffectiveDate ??= now;
+        comp.IsActive = true;
+        comp.UpdatedAt = now;
+        comp.Comment = comment ?? comp.Comment;
+
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductComposition", id.ToString(), "Approve", _currentUser.GetRequiredUserId());
         return true;
     }
 
-    public async Task<ProductCompositionPart> AddPartAsync(Guid compositionId, string name, int sortOrder = 0, string? description = null)
+    public async Task<bool> ArchiveCompositionAsync(Guid id, CancellationToken ct = default)
     {
+        await EnsureCanEditCompositionAsync(ct);
+        var comp = await _db.ProductCompositions.FindAsync(new object[] { id }, ct);
+        if (comp == null) return false;
+        if (comp.Status != ProductCompositionStatus.Approved)
+            throw new InvalidOperationException("Архивирование разрешено только для утверждённого состава.");
+
+        comp.Status = ProductCompositionStatus.Archived;
+        comp.IsActive = false;
+        comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductComposition", id.ToString(), "Archive", _currentUser.GetRequiredUserId());
+        return true;
+    }
+
+    private async Task<bool> ChangeCompositionStatusInternalAsync(Guid id, ProductCompositionStatus newStatus, string? comment, CancellationToken ct)
+    {
+        var comp = await _db.ProductCompositions.FindAsync(new object[] { id }, ct);
+        if (comp == null) return false;
+
+        var allowed = (comp.Status, newStatus) switch
+        {
+            (ProductCompositionStatus.Draft, ProductCompositionStatus.OnReview) => true,
+            (ProductCompositionStatus.OnReview, ProductCompositionStatus.Draft) => true,
+            _ => false
+        };
+        if (!allowed)
+            throw new InvalidOperationException($"Переход из «{comp.Status}» в «{newStatus}» не допускается.");
+
+        comp.Status = newStatus;
+        comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        comp.Comment = comment ?? comp.Comment;
+        await _db.SaveChangesAsync(ct);
+
+        var action = newStatus == ProductCompositionStatus.OnReview ? "SubmitForReview" : "ReturnToDraft";
+        await _audit.LogAsync("ProductComposition", id.ToString(), action, _currentUser.GetRequiredUserId());
+        return true;
+    }
+
+    // ── Parts ────────────────────────────────────────────────────────────
+
+    public async Task<ProductCompositionPart> AddPartAsync(AddPartRequest request, CancellationToken ct = default)
+    {
+        await EnsureCanEditCompositionAsync(ct);
+        var comp = await _db.ProductCompositions.FindAsync(new object[] { request.CompositionId }, ct);
+        if (comp == null) throw new InvalidOperationException("Состав не найден.");
+        if (comp.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new ArgumentException("Наименование части обязательно.");
+
         var part = new ProductCompositionPart
         {
             Id = Guid.NewGuid(),
-            ProductCompositionId = compositionId,
-            Name = name,
-            Description = description,
-            SortOrder = sortOrder
+            ProductCompositionId = request.CompositionId,
+            Name = request.Name.Trim(),
+            Description = request.Description,
+            SortOrder = request.SortOrder
         };
+
         _db.ProductCompositionParts.Add(part);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync("ProductCompositionPart", part.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
         return await _db.ProductCompositionParts
             .Include(p => p.Nodes).ThenInclude(n => n.Node)
-            .FirstAsync(p => p.Id == part.Id);
+            .FirstAsync(p => p.Id == part.Id, ct);
     }
 
-    public async Task<ProductCompositionNode> AddNodeAsync(Guid partId, Guid nodeId, int quantity)
+    public async Task<bool> UpdatePartAsync(UpdatePartRequest request, CancellationToken ct = default)
     {
-        var node = new ProductCompositionNode
-        {
-            Id = Guid.NewGuid(),
-            PartId = partId,
-            NodeId = nodeId,
-            Quantity = quantity
-        };
-        _db.ProductCompositionNodes.Add(node);
-        await _db.SaveChangesAsync();
-        return await _db.ProductCompositionNodes
-            .Include(n => n.Node)
-            .FirstAsync(n => n.Id == node.Id);
-    }
+        await EnsureCanEditCompositionAsync(ct);
+        var part = await _db.ProductCompositionParts
+            .Include(p => p.ProductComposition)
+            .FirstOrDefaultAsync(p => p.Id == request.PartId, ct);
+        if (part == null) return false;
+        if (part.ProductComposition.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
 
-    public async Task<bool> UpdateNodeAsync(ProductCompositionNode node)
-    {
-        _db.ProductCompositionNodes.Update(node);
-        await _db.SaveChangesAsync();
+        part.Name = request.Name.Trim();
+        part.Description = request.Description;
+        part.SortOrder = request.SortOrder;
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductCompositionPart", request.PartId.ToString(), "Update", _currentUser.GetRequiredUserId());
         return true;
     }
 
-    public async Task<bool> IsCompositionActiveByNodeAsync(Guid nodeId)
+    public async Task<bool> RemovePartAsync(Guid partId, CancellationToken ct = default)
+    {
+        await EnsureCanEditCompositionAsync(ct);
+        var part = await _db.ProductCompositionParts
+            .Include(p => p.ProductComposition)
+            .FirstOrDefaultAsync(p => p.Id == partId, ct);
+        if (part == null) return false;
+        if (part.ProductComposition.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Удаление частей разрешено только в статусе «Черновик».");
+
+        _db.ProductCompositionParts.Remove(part);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductCompositionPart", partId.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        return true;
+    }
+
+    // ── Nodes ────────────────────────────────────────────────────────────
+
+    public async Task<ProductCompositionNode> AddNodeAsync(AddNodeRequest request, CancellationToken ct = default)
+    {
+        await EnsureCanEditCompositionAsync(ct);
+        if (request.PartId == Guid.Empty)
+            throw new ArgumentException("PartId is required.");
+        if (request.NodeId == Guid.Empty)
+            throw new ArgumentException("NodeId is required.");
+        if (request.Quantity <= 0)
+            throw new ArgumentException("Количество должно быть больше 0.");
+
+        var part = await _db.ProductCompositionParts
+            .Include(p => p.ProductComposition)
+            .Include(p => p.Nodes)
+            .FirstOrDefaultAsync(p => p.Id == request.PartId, ct);
+        if (part == null) throw new InvalidOperationException("Часть состава не найдена.");
+        if (part.ProductComposition.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
+
+        var nodeExists = await _db.Nodes.AnyAsync(n => n.Id == request.NodeId && !n.IsDeleted, ct);
+        if (!nodeExists) throw new InvalidOperationException("Узел не найден.");
+
+        if (part.Nodes.Any(n => n.NodeId == request.NodeId))
+            throw new InvalidOperationException("Узел уже добавлен в эту часть.");
+
+        var pcn = new ProductCompositionNode
+        {
+            Id = Guid.NewGuid(),
+            PartId = request.PartId,
+            NodeId = request.NodeId,
+            Quantity = request.Quantity
+        };
+
+        _db.ProductCompositionNodes.Add(pcn);
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync("ProductCompositionNode", pcn.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        return await _db.ProductCompositionNodes
+            .Include(n => n.Node)
+            .FirstAsync(n => n.Id == pcn.Id, ct);
+    }
+
+    public async Task<bool> UpdateNodeQuantityAsync(UpdateNodeQuantityRequest request, CancellationToken ct = default)
+    {
+        await EnsureCanEditCompositionAsync(ct);
+        if (request.Quantity <= 0)
+            throw new ArgumentException("Количество должно быть больше 0.");
+
+        var pcn = await _db.ProductCompositionNodes
+            .Include(n => n.Part).ThenInclude(p => p.ProductComposition)
+            .FirstOrDefaultAsync(n => n.Id == request.NodeId, ct);
+        if (pcn == null) return false;
+        if (pcn.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
+
+        pcn.Quantity = request.Quantity;
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductCompositionNode", request.NodeId.ToString(), "UpdateQuantity", _currentUser.GetRequiredUserId());
+        return true;
+    }
+
+    public async Task<bool> RemoveNodeAsync(Guid nodeId, CancellationToken ct = default)
+    {
+        await EnsureCanEditCompositionAsync(ct);
+        var pcn = await _db.ProductCompositionNodes
+            .Include(n => n.Part).ThenInclude(p => p.ProductComposition)
+            .FirstOrDefaultAsync(n => n.Id == nodeId, ct);
+        if (pcn == null) return false;
+        if (pcn.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Удаление узлов разрешено только в статусе «Черновик».");
+
+        _db.ProductCompositionNodes.Remove(pcn);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ProductCompositionNode", nodeId.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        return true;
+    }
+
+    public async Task<bool> IsCompositionActiveByNodeAsync(Guid nodeId, CancellationToken ct = default)
     {
         return await _db.ProductCompositionNodes
             .Include(n => n.Part)
                 .ThenInclude(p => p.ProductComposition)
             .AnyAsync(n => n.Id == nodeId
-                        && n.Part.ProductComposition.IsActive);
-    }
-
-    public async Task<bool> UpdateNodeQuantityAsync(Guid nodeId, int quantity)
-    {
-        var n = await _db.ProductCompositionNodes.FindAsync(nodeId);
-        if (n == null) return false;
-        n.Quantity = quantity;
-        await _db.SaveChangesAsync();
-        return true;
-    }
-
-    public async Task<bool> RemoveNodeAsync(Guid nodeId)
-    {
-        var n = await _db.ProductCompositionNodes.FindAsync(nodeId);
-        if (n == null) return false;
-        _db.ProductCompositionNodes.Remove(n);
-        await _db.SaveChangesAsync();
-        return true;
-    }
-
-    public async Task<bool> RemovePartAsync(Guid partId)
-    {
-        var p = await _db.ProductCompositionParts.FindAsync(partId);
-        if (p == null) return false;
-        _db.ProductCompositionParts.Remove(p);
-        await _db.SaveChangesAsync();
-        return true;
+                        && n.Part.ProductComposition.IsActive, ct);
     }
 
     public Task<List<Branch>> GetBranchesAsync() =>

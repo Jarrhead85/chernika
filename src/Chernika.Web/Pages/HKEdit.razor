@@ -20,7 +20,7 @@
                 <DataAnnotationsValidator />
                 <div class="form">
                     <div class="field"><label>Номер ХК</label><InputText @bind-Value="card.Code" readonly class="field" /></div>
-                    <div class="field"><label>Изделие</label>
+                    <div class="field"><label>Узел</label>
                         @{
                             var node = selectedNodeId != Guid.Empty ? nodes.FirstOrDefault(n => n.Id == selectedNodeId) : null;
                             var modelDropId = "model-drop";
@@ -29,7 +29,7 @@
                         @if (canEdit)
                         {
                             <div id="@modelBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" @onclick="() => ToggleModelDropdown(modelDropId, modelBtnId)">
-                                <span style="flex:1">@(node != null ? $"{node.Code} — {node.Name}" : "Выбрать изделие...")</span>
+                                <span style="flex:1">@(node != null ? $"{node.Code} — {node.Name}" : "Выбрать узел...")</span>
                                 @if (node != null)
                                 {
                                     <button type="button" style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:16px;line-height:1;padding:0;flex-shrink:0" @onclick="ClearNode" @onclick:stopPropagation="true">×</button>
@@ -420,8 +420,8 @@
             {
                 var n = nodes.FirstOrDefault(x => x.Id == selectedNodeId);
                 _activeCardWarning = n != null
-                    ? $"Для изделия «{n.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
-                    : $"Для выбранного изделия уже есть активная ХК «{_existingActiveCard.Code}».";
+                    ? $"Для узла «{n.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
+                    : $"Для выбранного узла уже есть активная ХК «{_existingActiveCard.Code}».";
             }
         }
 
@@ -632,7 +632,7 @@
         }
         if (selectedNodeId == Guid.Empty)
         {
-            errorMessage = "Необходимо выбрать изделие.";
+                errorMessage = "Необходимо выбрать узел.";
             return;
         }
         if (string.IsNullOrWhiteSpace(card.Version))
@@ -833,7 +833,7 @@
             card.Code = await HKCardService.GenerateCodeAsync(node.Id);
             _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(node.Id);
             _activeCardWarning = _existingActiveCard != null
-                ? $"Для изделия «{node.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
+                ? $"Для узла «{node.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
                 : null;
         }
         StateHasChanged();

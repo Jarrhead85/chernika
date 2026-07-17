@@ -1,15 +1,15 @@
 @page "/состав-изделия"
 @attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain.Models
 @inject EquipmentService EquipService
-@inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
-            <h2>Состав изделия</h2>
-            <div class="hint">Изделие → состав → количество</div>
+            <h2>Конструктивный состав изделия</h2>
+            <div class="hint">Изделие → составные части → узлы → количество</div>
         </div>
         <div class="panelBody">
             <div class="form">
@@ -22,12 +22,10 @@
                         }
                     </select>
                 </div>
-                <div class="field"><label>Модификация</label><input @bind="modification" /></div>
-                <div class="field"><label>Экземпляр (зав. №)</label><input @bind="serialNumber" /></div>
                 <div class="field"><label>Комментарий</label><input @bind="comment" /></div>
                 <div class="formActions">
                     <button class="btn" @onclick="LoadCompositions">Обновить список</button>
-                    @if (canEdit) { <button class="btn primary" @onclick="CreateComposition">Создать состав</button> }
+                    @if (canEdit) { <button class="btn primary" @onclick="CreateComposition">Создать черновик</button> }
                 </div>
             </div>
         </div>
@@ -37,7 +35,7 @@
         <div class="stack">
             <section class="panel">
                 <div class="panelHeader">
-                    <h2>Список составов</h2>
+                    <h2>Реестр составов</h2>
                     <div class="hint">@compositions.Count записей</div>
                 </div>
                 <div class="panelBody">
@@ -47,17 +45,19 @@
                     }
                     else if (!compositions.Any())
                     {
-                        <div class="empty-state">Нет составов изделий</div>
+                        <div class="empty-state">Нет конструктивных составов. Выберите модель и нажмите «Создать черновик».</div>
                     }
                     else
                     {
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Модель</th>
-                                    <th>Изделий</th>
-                                    <th>Покрыто ХК</th>
-                                    <th>Дата</th>
+                                    <th>Версия</th>
+                                    <th>Статус</th>
+                                    <th>Дата создания</th>
+                                    <th>Период действия</th>
+                                    <th>Узлов</th>
+                                    <th>Покрытие ХК</th>
                                     <th>Действия</th>
                                 </tr>
                             </thead>
@@ -65,16 +65,21 @@
                                 @foreach (var comp in compositions)
                                 {
                                     var allNodes = comp.Parts.SelectMany(p => p.Nodes).ToList();
-                                    var covered = allNodes.Count(n => n.Node?.HKCards?.Any(h => h.Status == HKCardStatus.Approved) == true);
+                                    var covered = allNodes.Count(n => HasApprovedHK(n.Node));
                                     <tr @onclick="() => SelectComposition(comp.Id)" style="cursor:pointer">
-                                        <td>@comp.EquipmentModel?.Name<br /><span class="mono">@comp.EquipmentModel?.Index</span></td>
-                                        <td>@allNodes.Count</td>
-                                        <td><span class="tag @(covered == allNodes.Count ? "ok" : "warn")">@covered / @allNodes.Count</span></td>
+                                        <td class="mono">@comp.Version</td>
+                                        <td><span class="tag @StatusTag(comp.Status)">@StatusLabel(comp.Status)</span></td>
                                         <td class="mono">@comp.CreatedAt.ToString("dd.MM.yyyy")</td>
+                                        <td class="mono">@FormatPeriod(comp.EffectiveDate, comp.ExpirationDate)</td>
+                                        <td>@allNodes.Count</td>
+                                        <td><span class="tag @(covered == allNodes.Count && allNodes.Count > 0 ? "ok" : "warn")">@covered / @allNodes.Count</span></td>
                                         <td>
                                             <div class="rowActions">
                                                 <button class="linkBtn" @onclick="() => SelectComposition(comp.Id)">Открыть</button>
-                                                @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteComposition(comp.Id)">Удалить</button> }
+                                                @if (CanEditComposition(comp.Status))
+                                                {
+                                                    <button class="linkBtn" @onclick="() => DeleteComposition(comp.Id)">Удалить</button>
+                                                }
                                             </div>
                                         </td>
                                     </tr>
@@ -89,10 +94,41 @@
             {
                 <section class="panel">
                     <div class="panelHeader">
-                        <h2>Состав изделия</h2>
-                        <div class="hint">@selectedComposition.Parts.SelectMany(p => p.Nodes).Count() изделий</div>
+                        <h2>@selectedComposition.Version — @StatusLabel(selectedComposition.Status)</h2>
+                        <div class="hint">@selectedComposition.EquipmentModel?.Name</div>
                     </div>
                     <div class="panelBody">
+                        @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="field full-width"><label>Комментарий</label><input @bind="editComment" /></div>
+                                <div class="field"><label>Дата начала действия</label><input type="date" @bind="editEffectiveDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
+                                <div class="field"><label>Дата окончания</label><input type="date" @bind="editExpirationDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
+                                <div class="formActions">
+                                    <button class="btn primary" @onclick="SaveCompositionDraft">Сохранить</button>
+                                    <button class="btn" @onclick="SubmitForReview">Отправить на проверку</button>
+                                </div>
+                            </div>
+                        }
+                        else if (selectedComposition.Status == ProductCompositionStatus.OnReview && canEdit)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="field full-width"><label>Комментарий</label><input @bind="reviewComment" /></div>
+                                <div class="formActions">
+                                    <button class="btn primary" @onclick="ApproveComposition">Утвердить</button>
+                                    <button class="btn" @onclick="ReturnToDraft">Вернуть в черновик</button>
+                                </div>
+                            </div>
+                        }
+                        else if (selectedComposition.Status == ProductCompositionStatus.Approved && canEdit)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="formActions">
+                                    <button class="btn" @onclick="ArchiveComposition">Архивировать</button>
+                                </div>
+                            </div>
+                        }
+
                         <div class="form" style="margin-bottom:12px">
                             <div class="field"><label>Составная часть</label>
                                 <select @bind="selectedPartId" class="field-select">
@@ -103,59 +139,122 @@
                                     }
                                 </select>
                             </div>
-                            <div class="field"><label>Новая часть</label><input @bind="newPartName" placeholder="Напр. Силовая установка" /></div>
-                            <div class="field"><label>Порядок</label><input type="number" @bind="newPartSortOrder" class="field-input" /></div>
-                            <div class="field" style="display:flex;align-items:flex-end">
-                                @if (canEdit) { <button class="btn" @onclick="AddPart">+ Добавить часть</button> }
-                            </div>
-                        </div>
-
-                        <div class="form" style="margin-bottom:12px">
-                            <div class="field"><label>Изделие</label>
-                                <select @bind="newNodeNodeId" class="field-select">
-                                    <option value="">— Выберите изделие —</option>
-                                    @foreach (var n in nodes)
-                                    {
-                                        <option value="@n.Id">@n.Code — @n.Name</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="field"><label>Количество</label><input type="number" @bind="newNodeQty" min="1" class="field-input" /></div>
-                            <div class="field" style="display:flex;align-items:flex-end">
-                                @if (canEdit) { <button class="btn primary" @onclick="AddNode" disabled="@(selectedPartId == Guid.Empty)">+ Добавить изделие</button> }
-                            </div>
-                        </div>
-                        <div class="listRows">
-                            @foreach (var part in selectedComposition.Parts.OrderBy(p => p.SortOrder))
+                            @if (selectedComposition.Status == ProductCompositionStatus.Draft)
                             {
-                                <div style="margin-bottom:10px">
-                                    <div class="hint" style="margin:6px 0;font-weight:700">@part.Name</div>
-                                    @foreach (var node in part.Nodes.OrderBy(n => n.Node.Code))
-                                    {
-                                        var hk = node.Node?.HKCards?
-                                            .Where(h => h.Status == HKCardStatus.Approved)
-                                            .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
-                                            .FirstOrDefault();
-                                        <div class="rowCard" @onclick="() => SelectNode(node)" style="cursor:pointer">
-                                            <div class="top">
-                                                <div>
-                                                    <div class="name">@node.Node?.Name</div>
-                                                    <div class="sub">@node.Node?.Code • ХК: @(hk?.Code ?? "не привязана")</div>
-                                                </div>
-                                                <div class="qty">@node.Quantity</div>
-                                            </div>
-                                            <div class="chips">
-                                                <span class="tag @(hk != null ? "ok" : "bad")">@(hk != null ? "Покрыто" : "Нет покрытия")</span>
-                                                @if (hk != null)
-                                                {
-                                                    <span class="pill">@hk.Version</span>
-                                                }
-                                            </div>
-                                        </div>
-                                    }
+                                <div class="field"><label>Новая часть</label><input @bind="newPartName" placeholder="Напр. Силовая установка" /></div>
+                                <div class="field"><label>Порядок</label><input type="number" @bind="newPartSortOrder" class="field-input" /></div>
+                                <div class="field" style="display:flex;align-items:flex-end">
+                                    <button class="btn" @onclick="AddPart">+ Добавить часть</button>
                                 </div>
                             }
                         </div>
+
+                        @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="field"><label>Узел</label>
+                                    <select @bind="newNodeId" class="field-select">
+                                        <option value="">— Выберите узел —</option>
+                                        @foreach (var n in nodes)
+                                        {
+                                            <option value="@n.Id">@n.Code — @n.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="field"><label>Количество</label><input type="number" @bind="newNodeQty" min="1" class="field-input" /></div>
+                                <div class="field" style="display:flex;align-items:flex-end">
+                                    <button class="btn primary" @onclick="AddNode" disabled="@(selectedPartId == Guid.Empty || selectedComposition.Status != ProductCompositionStatus.Draft)">+ Добавить узел</button>
+                                </div>
+                            </div>
+                        }
+
+                        @if (!selectedComposition.Parts.Any())
+                        {
+                            <div class="empty-state">Нет составных частей. Добавьте часть и узлы.</div>
+                        }
+                        else
+                        {
+                            <div class="form" style="margin-bottom:8px">
+                                <div class="field" style="max-width:300px"><label>Фильтр узлов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
+                            </div>
+                            @foreach (var part in selectedComposition.Parts.OrderBy(p => p.SortOrder))
+                            {
+                                <div style="margin-bottom:10px">
+                                    <div class="hint" style="margin:6px 0;font-weight:700">
+                                        @part.Name
+                                        @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                                        {
+                                            <button class="linkBtn" style="margin-left:8px" @onclick="() => RemovePart(part.Id)">✕</button>
+                                        }
+                                    </div>
+                                    @{
+                                        var filteredNodes = part.Nodes
+                                            .Where(n => n.Node != null && (string.IsNullOrWhiteSpace(nodeFilter)
+                                                || (n.Node.Code?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)
+                                                || (n.Node.Name?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)))
+                                            .OrderBy(n => n.Node.Code)
+                                            .ToList();
+                                    }
+                                    @if (!filteredNodes.Any())
+                                    {
+                                        <div class="empty-state" style="padding:4px 0">Нет узлов</div>
+                                    }
+                                    else
+                                    {
+                                        <table>
+                                            <thead>
+                                                <tr><th>Код узла</th><th>Наименование</th><th>Количество</th><th>Действующая ХК</th><th>Версия ХК</th><th>Утверждена</th><th>Покрытие</th><th>Действия</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var pcn in filteredNodes)
+                                                {
+                                                    var hk = GetApprovedHK(pcn.Node);
+                                                    var coverage = GetCoverageStatus(pcn.Node);
+                                                    <tr>
+                                                        <td class="mono">@pcn.Node?.Code</td>
+                                                        <td>@pcn.Node?.Name</td>
+                                                        <td>
+                                                            @if (editingNodeId == pcn.Id && selectedComposition.Status == ProductCompositionStatus.Draft)
+                                                            {
+                                                                <input type="number" @bind="editNodeQty" class="field-input" style="width:70px" min="1" />
+                                                                <button class="linkBtn" @onclick="() => SaveNodeQuantity(pcn.Id)">✓</button>
+                                                                <button class="linkBtn" @onclick="() => CancelEditNode()">✕</button>
+                                                            }
+                                                            else
+                                                            {
+                                                                <span>@pcn.Quantity</span>
+                                                            }
+                                                        </td>
+                                                        <td>@(hk != null ? $"{hk.Code}" : "—")</td>
+                                                        <td class="mono">@(hk != null ? hk.Version : "—")</td>
+                                                        <td class="mono">@(hk?.ApprovedDate?.ToString("dd.MM.yyyy") ?? "—")</td>
+                                                        <td><span class="tag @coverage.Tag">@coverage.Label</span></td>
+                                                        <td>
+                                                            <div class="rowActions">
+                                                                @if (hk != null)
+                                                                {
+                                                                    <button class="linkBtn" @onclick="() => OpenHK(hk.Id)">Открыть ХК</button>
+                                                                }
+                                                                else if (canEdit)
+                                                                {
+                                                                    <button class="linkBtn" @onclick="() => CreateHKForNode(pcn.NodeId)">Создать ХК</button>
+                                                                }
+                                                                @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                                                                {
+                                                                    <button class="linkBtn" @onclick="() => StartEditNodeQty(pcn.Id, pcn.Quantity)">Изменить кол-во</button>
+                                                                    <button class="linkBtn" @onclick="() => PromptReplaceNode(pcn)">Заменить</button>
+                                                                    <button class="linkBtn" @onclick="() => RemoveNode(pcn.Id)">Удалить</button>
+                                                                }
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    }
+                                </div>
+                            }
+                        }
                     </div>
                 </section>
             }
@@ -163,41 +262,7 @@
 
         <aside class="stack">
             <section class="panel">
-                <div class="panelHeader"><h2>Привязка изделия</h2><div class="hint">Правый редактор</div></div>
-                <div class="panelBody">
-                    @if (selectedNode == null)
-                    {
-                        <div class="empty-state">Выберите изделие из списка</div>
-                    }
-                    else
-                    {
-                        <div class="form" style="grid-template-columns:1fr">
-                            <div class="field"><label>Изделие</label><input value="@selectedNode.Node?.Name" readonly style="opacity:.7" /></div>
-                            <div class="field"><label>Количество</label><input type="number" @bind="selectedNode.Quantity" min="1" class="field-input" /></div>
-                            @{
-                                var hk = selectedNode.Node?.HKCards?
-                                    .Where(h => h.Status == HKCardStatus.Approved)
-                                    .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
-                                    .FirstOrDefault();
-                            }
-                            <div class="field"><label>Актуальная ХК по изделию</label>
-                                <input value="@(hk != null ? $"{hk.Code} • {hk.Version}" : "— Нет утвержденной ХК —")" readonly style="opacity:.8" />
-                            </div>
-                            <div class="field"><label>Статус покрытия</label>
-                                <span class="tag @(hk != null ? "ok" : "bad")">@(hk != null ? "Покрыто" : "Нет утвержденной ХК")</span>
-                            </div>
-                            <div class="formActions" style="grid-column:auto;justify-content:stretch;flex-direction:column">
-                                @if (canEdit) { <button class="btn primary" @onclick="SaveNode">Сохранить привязку</button> }
-                                @if (canEdit) { <button class="btn" @onclick="CreateHKForNode">Создать ХК</button> }
-                                @if (canEdit) { <button class="btn ghost" @onclick="() => RemoveNode(selectedNode.Id)">Удалить изделие</button> }
-                            </div>
-                        </div>
-                    }
-                </div>
-            </section>
-
-            <section class="panel">
-                <div class="panelHeader"><h2>Сводка по изделию</h2><div class="hint">Готовность</div></div>
+                <div class="panelHeader"><h2>Сводка готовности ХК</h2><div class="hint">Контроль покрытия</div></div>
                 <div class="panelBody">
                     @if (selectedComposition == null)
                     {
@@ -207,48 +272,138 @@
                     {
                         var allNodes = selectedComposition.Parts.SelectMany(p => p.Nodes).ToList();
                         var total = allNodes.Count;
-                        var covered = allNodes.Count(n => n.Node?.HKCards?.Any(h => h.Status == HKCardStatus.Approved) == true);
-                        var dupes = allNodes.Count(n => n.Quantity > 1);
-                        var readiness = total == 0 ? "—" : covered == total ? "Полная" : covered > 0 ? "Частичная" : "Нет";
+                        var covered = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "ok");
+                        var pending = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "warn");
+                        var expired = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "bad");
+                        var future = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "future");
+
                         <div class="metrics2">
-                            <div class="metric"><div class="label">Изделий в составе</div><div class="value">@total</div></div>
-                            <div class="metric"><div class="label">ХК привязано</div><div class="value">@covered / @total</div></div>
-                            <div class="metric"><div class="label">Повторяющихся</div><div class="value">@dupes</div></div>
-                            <div class="metric"><div class="label">Готовность</div><div class="value">@readiness</div></div>
+                            <div class="metric"><div class="label">Всего узлов</div><div class="value">@total</div></div>
+                            <div class="metric"><div class="label">Покрыто ХК</div><div class="value">@covered</div></div>
+                            <div class="metric"><div class="label">Без ХК</div><div class="value">@pending</div></div>
+                            <div class="metric"><div class="label">ХК просрочена</div><div class="value">@expired</div></div>
+                            <div class="metric"><div class="label">ХК не вступила</div><div class="value">@future</div></div>
                         </div>
-                        <div class="note" style="margin-top:12px">
-                            @(covered == total && total > 0 ? "Все изделия покрыты ХК. Можно формировать индивидуальные карты." : "До завершения расчёта необходимо закрыть изделия без актуальных ХК.")
-                        </div>
+
+                        @if (selectedComposition.Status == ProductCompositionStatus.OnReview || selectedComposition.Status == ProductCompositionStatus.Approved)
+                        {
+                            <div class="note">Контроль покрытия в режиме чтения.</div>
+                        }
+                        @if (selectedComposition.Status == ProductCompositionStatus.Draft && total > 0 && covered < total)
+                        {
+                            <div class="note" style="color:var(--warn)">
+                                Внимание: не для всех узлов есть действующая утверждённая ХК.
+                            </div>
+                        }
                     }
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panelHeader"><h2>Информация</h2><div class="hint">Детали состава</div></div>
+                <div class="panelBody">
+                    @if (selectedComposition == null)
+                    {
+                        <div class="empty-state">—</div>
+                    }
+                    else
+                    {
+                        <div class="field"><label>Автор</label><div>@selectedComposition.AuthorId</div></div>
+                        <div class="field"><label>Версия</label><div class="mono">@selectedComposition.Version</div></div>
+                        <div class="field"><label>Статус</label><span class="tag @StatusTag(selectedComposition.Status)">@StatusLabel(selectedComposition.Status)</span></div>
+                        <div class="field"><label>Создан</label><div class="mono">@selectedComposition.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        <div class="field"><label>Обновлён</label><div class="mono">@selectedComposition.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        @if (selectedComposition.ApprovedAt.HasValue)
+                        {
+                            <div class="field"><label>Утверждён</label><div class="mono">@selectedComposition.ApprovedAt.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        }
+                        @if (selectedComposition.EffectiveDate.HasValue)
+                        {
+                            <div class="field"><label>Действует с</label><div class="mono">@selectedComposition.EffectiveDate.Value.ToString("dd.MM.yyyy")</div></div>
+                        }
+                        @if (selectedComposition.ExpirationDate.HasValue)
+                        {
+                            <div class="field"><label>Действует до</label><div class="mono">@selectedComposition.ExpirationDate.Value.ToString("dd.MM.yyyy")</div></div>
+                        }
+                    }
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panelHeader"><h2>Журнал аудита</h2><div class="hint">События состава</div></div>
+                <div class="panelBody">
+                    <div class="empty-state">
+                        <a href="/журнал-аудита?entity=ProductComposition&id=@(selectedComposition?.Id)" class="linkBtn">Перейти к журналу аудита</a>
+                    </div>
                 </div>
             </section>
         </aside>
     </div>
 </div>
 
+@if (replacingNodeId.HasValue)
+{
+    <div class="modalOverlay" @onclick="CancelReplaceNode">
+        <div class="modal" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3>Замена узла</h3>
+                <button type="button" class="linkBtn" @onclick="CancelReplaceNode">✕</button>
+            </div>
+            <div class="modalBody">
+                <div class="field"><label>Новый узел</label>
+                    <select @bind="replaceWithNodeId" class="field-select">
+                        <option value="">— Выберите узел —</option>
+                        @foreach (var n in nodes.OrderBy(n => n.Code))
+                        {
+                            <option value="@n.Id">@n.Code — @n.Name</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="CancelReplaceNode">Отмена</button>
+                <button type="button" class="btn primary" disabled="@(replaceWithNodeId == Guid.Empty)" @onclick="ConfirmReplaceNode">Заменить</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<EquipmentModel> models = new();
     private List<Node> nodes = new();
     private List<ProductComposition> compositions = new();
     private ProductComposition? selectedComposition;
-    private ProductCompositionNode? selectedNode;
     private bool loading = true;
     private bool canEdit;
 
     private Guid selectedModelId;
-    private string modification = "";
-    private string serialNumber = "";
     private string comment = "";
+
     private Guid selectedPartId;
     private string newPartName = "Основная часть";
     private int newPartSortOrder = 1;
-    private Guid newNodeNodeId;
+    private Guid newNodeId;
     private int newNodeQty = 1;
+
+    private string editComment = "";
+    private DateTime? editEffectiveDate;
+    private DateTime? editExpirationDate;
+    private string reviewComment = "";
+
+    private Guid? editingNodeId;
+    private int editNodeQty;
+
+    private string nodeFilter = "";
+    private Guid? replacingNodeId;
+    private Guid replaceWithNodeId = Guid.Empty;
+
+    [Inject] private TimeProvider TimeProvider { get; set; } = null!;
+    private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
-        canEdit = authState.User.IsInRole("NormAdmin");
+        canEdit = authState.User.IsInRole("NormAdmin") || authState.User.IsInRole("SystemAdmin");
         await LoadData();
     }
 
@@ -262,19 +417,15 @@
 
     async Task LoadCompositions()
     {
-        compositions = await EquipService.GetCompositionsAsync();
+        compositions = await EquipService.GetCompositionsWithCoverageAsync(selectedModelId != Guid.Empty ? selectedModelId : null);
         loading = false;
     }
 
     async Task CreateComposition()
     {
         if (selectedModelId == Guid.Empty) return;
-        var comp = new ProductComposition
-        {
-            EquipmentModelId = selectedModelId,
-            Comment = comment
-        };
-        await EquipService.CreateCompositionAsync(comp);
+        var comp = await EquipService.CreateCompositionDraftAsync(
+            new CreateCompositionRequest(selectedModelId, string.IsNullOrWhiteSpace(comment) ? null : comment));
         await LoadCompositions();
         SelectComposition(comp.Id);
     }
@@ -282,38 +433,109 @@
     void SelectComposition(Guid id)
     {
         selectedComposition = compositions.FirstOrDefault(c => c.Id == id);
-        selectedNode = null;
-        selectedPartId = selectedComposition?.Parts.OrderBy(p => p.SortOrder).FirstOrDefault()?.Id ?? Guid.Empty;
+        if (selectedComposition != null)
+        {
+            editComment = selectedComposition.Comment ?? "";
+            editEffectiveDate = selectedComposition.EffectiveDate;
+            editExpirationDate = selectedComposition.ExpirationDate;
+            selectedPartId = selectedComposition.Parts.OrderBy(p => p.SortOrder).FirstOrDefault()?.Id ?? Guid.Empty;
+            editingNodeId = null;
+        }
+    }
+
+    async Task SaveCompositionDraft()
+    {
+        if (selectedComposition == null || !canEdit) return;
+
+        await EquipService.UpdateCompositionDraftAsync(
+            new UpdateCompositionDraftRequest(selectedComposition.Id,
+                string.IsNullOrWhiteSpace(editComment) ? null : editComment,
+                editEffectiveDate?.ToUniversalTime(),
+                editExpirationDate?.ToUniversalTime()));
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task SubmitForReview()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.SubmitForReviewAsync(selectedComposition.Id);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task ApproveComposition()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.ApproveCompositionAsync(selectedComposition.Id,
+            string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task ReturnToDraft()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.ReturnToDraftAsync(selectedComposition.Id,
+            string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task ArchiveComposition()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.ArchiveCompositionAsync(selectedComposition.Id);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
     }
 
     async Task AddPart()
     {
-        if (!canEdit || selectedComposition == null) return;
+        if (selectedComposition == null || !canEdit) return;
         if (string.IsNullOrWhiteSpace(newPartName)) return;
-        await EquipService.AddPartAsync(selectedComposition.Id, newPartName.Trim(), newPartSortOrder);
+        await EquipService.AddPartAsync(new AddPartRequest(selectedComposition.Id, newPartName.Trim(), null, newPartSortOrder));
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task RemovePart(Guid partId)
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.RemovePartAsync(partId);
         await LoadCompositions();
         SelectComposition(selectedComposition.Id);
     }
 
     async Task AddNode()
     {
-        if (selectedComposition == null || newNodeNodeId == Guid.Empty) return;
+        if (selectedComposition == null || newNodeId == Guid.Empty) return;
         if (selectedPartId == Guid.Empty) return;
-        var node = await EquipService.AddNodeAsync(selectedPartId, newNodeNodeId, newNodeQty);
-        var part = selectedComposition.Parts.FirstOrDefault(p => p.Id == selectedPartId);
-        part?.Nodes.Add(node);
-        newNodeNodeId = Guid.Empty;
+        await EquipService.AddNodeAsync(new AddNodeRequest(selectedPartId, newNodeId, newNodeQty));
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+        newNodeId = Guid.Empty;
         newNodeQty = 1;
     }
 
-    void SelectNode(ProductCompositionNode node) => selectedNode = node;
-
-    async Task SaveNode()
+    void StartEditNodeQty(Guid nodeId, int qty)
     {
-        if (selectedNode == null || !canEdit) return;
-        await EquipService.UpdateNodeAsync(selectedNode);
+        editingNodeId = nodeId;
+        editNodeQty = qty;
+    }
+
+    void CancelEditNode()
+    {
+        editingNodeId = null;
+    }
+
+    async Task SaveNodeQuantity(Guid nodeId)
+    {
+        if (!canEdit) return;
+        await EquipService.UpdateNodeQuantityAsync(new UpdateNodeQuantityRequest(nodeId, editNodeQty));
         await LoadCompositions();
         SelectComposition(selectedComposition!.Id);
+        editingNodeId = null;
     }
 
     async Task RemoveNode(Guid nodeId)
@@ -321,25 +543,102 @@
         await EquipService.RemoveNodeAsync(nodeId);
         if (selectedComposition != null)
         {
-            foreach (var part in selectedComposition.Parts)
-            {
-                var node = part.Nodes.FirstOrDefault(n => n.Id == nodeId);
-                if (node != null) { part.Nodes.Remove(node); break; }
-            }
+            await LoadCompositions();
+            SelectComposition(selectedComposition.Id);
         }
-        selectedNode = null;
     }
 
-    void CreateHKForNode()
+    void PromptReplaceNode(ProductCompositionNode pcn)
     {
-        if (selectedNode != null)
-            Nav.NavigateTo($"/хк/создать?nodeId={selectedNode.NodeId}");
+        replacingNodeId = pcn.Id;
+        replaceWithNodeId = Guid.Empty;
+    }
+
+    void CancelReplaceNode()
+    {
+        replacingNodeId = null;
+        replaceWithNodeId = Guid.Empty;
+    }
+
+    async Task ConfirmReplaceNode()
+    {
+        if (!replacingNodeId.HasValue || replaceWithNodeId == Guid.Empty || selectedComposition == null) return;
+        var oldNode = selectedComposition.Parts
+            .SelectMany(p => p.Nodes)
+            .FirstOrDefault(n => n.Id == replacingNodeId.Value);
+        if (oldNode == null) return;
+
+        await EquipService.RemoveNodeAsync(replacingNodeId.Value);
+        await EquipService.AddNodeAsync(new AddNodeRequest(oldNode.PartId, replaceWithNodeId, oldNode.Quantity));
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+        replacingNodeId = null;
+        replaceWithNodeId = Guid.Empty;
     }
 
     async Task DeleteComposition(Guid id)
     {
-        await EquipService.DeleteCompositionAsync(id);
+        await EquipService.DeleteCompositionDraftAsync(id);
         compositions.RemoveAll(c => c.Id == id);
-        if (selectedComposition?.Id == id) { selectedComposition = null; selectedNode = null; }
+        if (selectedComposition?.Id == id) { selectedComposition = null; selectedPartId = Guid.Empty; }
+    }
+
+    void OpenHK(Guid hkId) => Nav.NavigateTo($"/хк/{hkId}");
+
+    void CreateHKForNode(Guid nodeId) => Nav.NavigateTo($"/хк/создать?nodeId={nodeId}");
+
+    // ── Coverage helpers ─────────────────────────────────────────────────
+
+    private bool HasApprovedHK(Node? node)
+    {
+        return GetCoverageStatus(node) is var c && c.Tag == "ok";
+    }
+
+    private (string Tag, string Label) GetCoverageStatus(Node? node)
+    {
+        var hk = GetApprovedHK(node);
+        if (hk == null) return ("bad", "Нет ХК");
+        if (hk.EffectiveDate.HasValue && hk.EffectiveDate.Value > _now) return ("future", "Ожидает");
+        if (hk.ExpirationDate.HasValue && hk.ExpirationDate.Value < _now) return ("bad", "Просрочена");
+        return ("ok", "Покрыто");
+    }
+
+    private HKCard? GetApprovedHK(Node? node)
+    {
+        return node?.HKCards
+            ?.Where(h => h.Status == HKCardStatus.Approved)
+            .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
+            .FirstOrDefault();
+    }
+
+    // ── Status helpers ───────────────────────────────────────────────────
+
+    private static string StatusLabel(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "Черновик",
+        ProductCompositionStatus.OnReview => "На проверке",
+        ProductCompositionStatus.Approved => "Утверждён",
+        ProductCompositionStatus.Archived => "Архивный",
+        _ => status.ToString()
+    };
+
+    private static string StatusTag(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "warn",
+        ProductCompositionStatus.OnReview => "warn",
+        ProductCompositionStatus.Approved => "ok",
+        ProductCompositionStatus.Archived => "",
+        _ => ""
+    };
+
+    private bool CanEditComposition(ProductCompositionStatus status) =>
+        canEdit && (status == ProductCompositionStatus.Draft);
+
+    private static string FormatPeriod(DateTime? from, DateTime? to)
+    {
+        if (!from.HasValue && !to.HasValue) return "—";
+        if (from.HasValue && to.HasValue) return $"{from.Value:dd.MM.yy}–{to.Value:dd.MM.yy}";
+        if (from.HasValue) return $"с {from.Value:dd.MM.yy}";
+        return $"до {to!.Value:dd.MM.yy}";
     }
 }

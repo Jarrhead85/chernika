@@ -112,7 +112,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<ProductComposition>(e =>
         {
             e.HasKey(x => x.Id);
+            e.Property(x => x.Version).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Comment).HasMaxLength(2000);
             e.HasOne(x => x.EquipmentModel).WithMany(x => x.ProductCompositions).HasForeignKey(x => x.EquipmentModelId);
+            e.HasIndex(x => new { x.EquipmentModelId, x.Status });
+            e.HasIndex(x => new { x.Status, x.EffectiveDate });
             e.HasIndex(x => new { x.EquipmentModelId, x.IsActive });
         });
 
@@ -132,6 +137,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasOne(x => x.Part).WithMany(x => x.Nodes).HasForeignKey(x => x.PartId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Node).WithMany(x => x.ProductCompositionNodes).HasForeignKey(x => x.NodeId);
+            e.HasIndex(x => new { x.PartId, x.NodeId }).IsUnique();
         });
 
         modelBuilder.Entity<HKCard>(e =>
@@ -212,6 +218,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasOne(x => x.HKCard).WithMany().HasForeignKey(x => x.HKCardId)
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId);
+            e.HasOne(x => x.ProductComposition).WithMany().HasForeignKey(x => x.ProductCompositionId)
+                .OnDelete(DeleteBehavior.Restrict);
             e.HasMany(x => x.AppliedCoefficients).WithMany(x => x.IndividualCards);
         });
 
