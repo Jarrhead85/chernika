@@ -241,6 +241,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasDatabaseName("UX_HKCards_OneActivePerNode")
                 .HasFilter("\"ObjectLevel\" = 4 AND \"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')")
                 .IsUnique();
+            e.HasIndex(x => x.AggregateId)
+                .HasDatabaseName("UX_HKCards_OneActivePerAggregate")
+                .HasFilter("\"ObjectLevel\" = 3 AND \"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')")
+                .IsUnique();
+            e.HasIndex(x => x.EquipmentModelId)
+                .HasDatabaseName("UX_HKCards_OneActivePerEquipmentModel")
+                .HasFilter("\"ObjectLevel\" = 2 AND \"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')")
+                .IsUnique();
+            e.HasIndex(x => x.ComplexId)
+                .HasDatabaseName("UX_HKCards_OneActivePerComplex")
+                .HasFilter("\"ObjectLevel\" = 1 AND \"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')")
+                .IsUnique();
             e.HasQueryFilter(x => x.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 

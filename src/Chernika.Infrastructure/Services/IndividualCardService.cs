@@ -120,13 +120,54 @@ public class IndividualCardService
                 $"Для модели «{instance.EquipmentModel.Name}» нет действующего утверждённого конструктивного состава. " +
                 "Создайте и утвердите состав перед генерацией индивидуальных карт.");
 
+        var now = _time.GetUtcNow().UtcDateTime;
+
+        var equipmentModelHK = await _db.HKCards.AnyAsync(h =>
+            h.ObjectLevel == HKObjectLevel.EquipmentModel &&
+            h.EquipmentModelId == instance.EquipmentModelId &&
+            h.Status == HKCardStatus.Approved &&
+            (!h.EffectiveDate.HasValue || h.EffectiveDate.Value <= now) &&
+            (!h.ExpirationDate.HasValue || h.ExpirationDate.Value >= now), ct);
+
+        if (!equipmentModelHK)
+            throw new InvalidOperationException(
+                $"Для изделия «{instance.EquipmentModel.Name}» не найдена действующая утверждённая ХК на уровне изделия. " +
+                "Создайте и утвердите ХК изделия перед генерацией индивидуальных карт.");
+
+        var aggregateIds = composition.Parts.SelectMany(p => p.Aggregates).Select(a => a.AggregateId).ToList();
+        if (aggregateIds.Count != 0)
+        {
+            var approvedAggregateHKCount = await _db.HKCards.CountAsync(h =>
+                h.ObjectLevel == HKObjectLevel.Aggregate &&
+                aggregateIds.Contains(h.AggregateId!.Value) &&
+                h.Status == HKCardStatus.Approved &&
+                (!h.EffectiveDate.HasValue || h.EffectiveDate.Value <= now) &&
+                (!h.ExpirationDate.HasValue || h.ExpirationDate.Value >= now), ct);
+
+            if (approvedAggregateHKCount != aggregateIds.Count)
+            {
+                var aggregatesWithHK = await _db.HKCards
+                    .Where(h => h.ObjectLevel == HKObjectLevel.Aggregate && aggregateIds.Contains(h.AggregateId!.Value)
+                        && h.Status == HKCardStatus.Approved)
+                    .Select(h => h.AggregateId!.Value)
+                    .ToListAsync(ct);
+                var missingAggregateIds = aggregateIds.Except(aggregatesWithHK).ToList();
+                var missingNames = await _db.Aggregates
+                    .Where(a => missingAggregateIds.Contains(a.Id))
+                    .Select(a => $"{a.Code} ({a.Name})")
+                    .ToListAsync(ct);
+                throw new InvalidOperationException(
+                    "Не для всех агрегатов конструктивного состава найдена действующая утверждённая ХК на уровне агрегата. " +
+                    "Отсутствуют ХК для агрегатов: " + string.Join(", ", missingNames) + ". " +
+                    "Создайте и утвердите ХК агрегатов перед генерацией индивидуальных карт.");
+            }
+        }
+
         var coefficientProduct = await GetCoefficientProductAsync(coefficientIds);
         var appliedCoefficients = await LoadActiveCoefficientsAsync(coefficientIds);
         var version = "v" + _time.GetUtcNow().ToString("MMyy");
         var newCards = new List<IndividualCard>();
-        var now = _time.GetUtcNow().UtcDateTime;
 
-        var aggregateIds = composition.Parts.SelectMany(p => p.Aggregates).Select(a => a.AggregateId).ToList();
         var compositionNodes = await _db.AggregateCompositionNodes
             .Include(acn => acn.AggregateComposition)
             .Include(acn => acn.Node)
