@@ -1,7 +1,10 @@
+@using Chernika.Domain
 @page "/задачи"
 @attribute [Authorize(Policy = "ViewTasks")]
 @inject TaskService TaskService
 @inject NavigationManager Nav
+@inject IPermissionService PermSvc
+@inject AuthenticationStateProvider AuthState
 
 <div class="stack">
     <section class="panel">
@@ -55,7 +58,10 @@
                             </div>
                             <p class="desc">@task.Description</p>
                             <div class="rowActions" style="margin-top:8px">
-                                <button class="linkBtn" @onclick="() => CompleteTask(task.Id)">✓ Выполнено</button>
+                                @if (_canManage)
+                                {
+                                    <button class="linkBtn" @onclick="() => CompleteTask(task.Id)">✓ Выполнено</button>
+                                }
                                 @if (!string.IsNullOrEmpty(task.EntityId))
                                 {
                                     <button class="linkBtn" @onclick="() => OpenEntity(task)">Открыть</button>
@@ -86,7 +92,12 @@
                             <tr>
                                 <td>@task.Title</td>
                                 <td class="mono">@task.CompletedAt?.ToString("dd.MM.yyyy HH:mm")</td>
-                                <td><button class="linkBtn" @onclick="() => DeleteTask(task.Id)">Удалить</button></td>
+                                <td>
+                                    @if (_canManage)
+                                    {
+                                        <button class="linkBtn" @onclick="() => DeleteTask(task.Id)">Удалить</button>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -106,8 +117,15 @@
     private bool loading = true;
     private int activeCount = 0;
     private string filter = "all";
+    private bool _canManage;
 
-    protected override async Task OnInitializedAsync() => await LoadTasks();
+    protected override async Task OnInitializedAsync()
+    {
+        var userId = (await AuthState.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userId != null)
+            _canManage = await PermSvc.HasPermissionAsync(userId, PermissionCodes.TaskManage);
+        await LoadTasks();
+    }
 
     async Task LoadTasks()
     {

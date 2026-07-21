@@ -15,14 +15,16 @@ public class EquipmentService
     private readonly ICurrentUserService _currentUser;
     private readonly TimeProvider _time;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly IPermissionService _permissions;
 
-    public EquipmentService(AppDbContext db, AuditService audit, ICurrentUserService currentUser, TimeProvider time, UserManager<ApplicationUser> userManager)
+    public EquipmentService(AppDbContext db, AuditService audit, ICurrentUserService currentUser, TimeProvider time, UserManager<ApplicationUser> userManager, IPermissionService permissions)
     {
         _db = db;
         _audit = audit;
         _currentUser = currentUser;
         _time = time;
         _userManager = userManager;
+        _permissions = permissions;
     }
 
     public Task<List<EquipmentModel>> GetModelsAsync() =>
@@ -176,11 +178,7 @@ public class EquipmentService
     private async Task EnsureCanEditCompositionAsync(CancellationToken ct = default)
     {
         var userId = _currentUser.GetRequiredUserId();
-        var user = await _userManager.FindByIdAsync(userId.ToString());
-        if (user == null)
-            throw new UnauthorizedAccessException("Пользователь не найден.");
-        var roles = await _userManager.GetRolesAsync(user);
-        if (!roles.Contains("NormAdmin") && !roles.Contains("SystemAdmin"))
+        if (!await _permissions.HasPermissionAsync(userId.ToString(), PermissionCodes.CompositionEdit))
             throw new UnauthorizedAccessException("Недостаточно прав для редактирования конструктивного состава.");
     }
 

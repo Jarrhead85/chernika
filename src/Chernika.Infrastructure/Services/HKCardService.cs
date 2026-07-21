@@ -17,6 +17,7 @@ public class HKCardService
     private readonly TaskService _tasks;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ICurrentUserService _currentUser;
+    private readonly IPermissionService _permissions;
     private readonly ILogger<HKCardService> _logger;
 
     public HKCardService(
@@ -24,25 +25,26 @@ public class HKCardService
         TaskService tasks,
         UserManager<ApplicationUser> userManager,
         ICurrentUserService currentUser,
+        IPermissionService permissions,
         ILogger<HKCardService> logger)
     {
         _db = db;
         _tasks = tasks;
         _userManager = userManager;
         _currentUser = currentUser;
+        _permissions = permissions;
         _logger = logger;
     }
 
     private async Task<Guid?> GetAccessibleBranchIdAsync(Guid? requestedBranchId, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
+        if (await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig))
+            return requestedBranchId;
+
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor is null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
-
-        var roles = await _userManager.GetRolesAsync(actor);
-        if (roles.Contains("SystemAdmin"))
-            return requestedBranchId;
 
         if (actor.BranchId is null || actor.BranchId == Guid.Empty)
             throw new UnauthorizedAccessException("У пользователя не указан филиал.");
@@ -663,7 +665,17 @@ public class HKCardService
     {
         var actorId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
-        if (actor == null || !await _userManager.IsInRoleAsync(actor, "Operator"))
+        if (actor == null)
+            throw new UnauthorizedAccessException("Пользователь не найден.");
+        var createPerm = card.ObjectLevel switch
+        {
+            Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeCreate,
+            Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateCreate,
+            Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentCreate,
+            Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexCreate,
+            _ => throw new ArgumentException("Неизвестный уровень объекта.")
+        };
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), createPerm))
             throw new UnauthorizedAccessException("Недостаточно прав для создания ХК.");
 
         if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (!card.NodeId.HasValue || card.NodeId == Guid.Empty))
@@ -755,8 +767,15 @@ public class HKCardService
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
-        var roles = await _userManager.GetRolesAsync(actor);
-        if (!roles.Contains("Operator"))
+        var editPerm = card.ObjectLevel switch
+        {
+            Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeEditDraft,
+            Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateEditDraft,
+            Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentEditDraft,
+            Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexEditDraft,
+            _ => throw new ArgumentException("Неизвестный уровень объекта.")
+        };
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), editPerm))
             throw new UnauthorizedAccessException("Недостаточно прав для редактирования ХК.");
 
         if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (!card.NodeId.HasValue || card.NodeId == Guid.Empty))
@@ -897,18 +916,17 @@ public class HKCardService
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             return (false, "Пользователь не найден");
-        var roles = await _userManager.GetRolesAsync(actor);
 
         var card = await _db.HKCards.FindAsync(id, ct);
         if (card == null)
             return (false, "Карточка не найдена");
 
-        if (actor.BranchId != card.BranchId && !roles.Contains("SystemAdmin"))
+        if (actor.BranchId != card.BranchId && !await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig))
             return (false, "Нет прав для изменения карточки другого филиала");
 
-        var roleError = ValidateStatusChangeRole(card.Status, newStatus, roles);
-        if (roleError != null)
-            return (false, roleError);
+        var permError = await CheckStatusChangePermissionAsync(card, newStatus);
+        if (permError != null)
+            return (false, permError);
 
         var oldStatus = card.Status;
         if (!HKCardStatusTransitions.IsAllowed(oldStatus, newStatus))
@@ -1012,8 +1030,7 @@ public class HKCardService
         if (card == null)
             return (false, "Карточка не найдена");
 
-        bool isSysAdmin = roles.Contains("SystemAdmin");
-        if (!isSysAdmin && actor.BranchId != card.BranchId)
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig) && actor.BranchId != card.BranchId)
             return (false, "Нет доступа к карточке другого филиала");
 
         var actorRole = ResolveUserRole(roles);
@@ -1212,33 +1229,59 @@ public class HKCardService
         return query.OrderByDescending(x => x.CreatedAt);
     }
 
-    private static string? ValidateStatusChangeRole(HKCardStatus oldStatus, HKCardStatus newStatus, IList<string> roles)
+    private async Task<string?> CheckStatusChangePermissionAsync(HKCard card, HKCardStatus newStatus)
     {
-        var isOperator = roles.Contains("Operator");
-        var isNormAdmin = roles.Contains("NormAdmin");
-        var isSysAdmin = roles.Contains("SystemAdmin");
+        var actorId = _currentUser.GetRequiredUserId();
 
-        return newStatus switch
+        switch (newStatus)
         {
-            HKCardStatus.OnReview when !isOperator && !isSysAdmin =>
-                "Недостаточно прав для отправки ХК на проверку.",
-            HKCardStatus.Approved when !isNormAdmin && !isSysAdmin =>
-                "Недостаточно прав для утверждения ХК.",
-            HKCardStatus.RevisionRequired when !isNormAdmin && !isSysAdmin =>
-                "Недостаточно прав для возврата ХК на доработку.",
-            HKCardStatus.Archived when !isNormAdmin && !isSysAdmin =>
-                "Недостаточно прав для архивации ХК.",
-            HKCardStatus.Deleted when !HKCardStatusTransitions.CanDelete(oldStatus, ResolveUserRole(roles)) =>
-                "Недостаточно прав для удаления ХК в текущем статусе.",
-            _ => null
-        };
+            case HKCardStatus.OnReview:
+                var submitPerm = card.ObjectLevel switch
+                {
+                    Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeSubmit,
+                    Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateSubmit,
+                    Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentSubmit,
+                    Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexSubmit,
+                    _ => null
+                };
+                if (submitPerm != null && !await _permissions.HasPermissionAsync(actorId.ToString(), submitPerm))
+                    return "Недостаточно прав для отправки ХК на проверку.";
+                break;
+
+            case HKCardStatus.Approved:
+                if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKApprove))
+                    return "Недостаточно прав для утверждения ХК.";
+                break;
+
+            case HKCardStatus.RevisionRequired:
+                if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKReview))
+                    return "Недостаточно прав для возврата ХК на доработку.";
+                break;
+
+            case HKCardStatus.Archived:
+                if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKArchive))
+                    return "Недостаточно прав для архивации ХК.";
+                break;
+
+            case HKCardStatus.Deleted:
+                if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKDelete))
+                    return "Недостаточно прав для удаления ХК.";
+                var actor = await _userManager.FindByIdAsync(actorId.ToString());
+                var roles = actor != null ? await _userManager.GetRolesAsync(actor) : [];
+                if (!HKCardStatusTransitions.CanDelete(card.Status, ResolveUserRole(roles)))
+                    return "Нельзя удалить карточку в текущем статусе.";
+                break;
+        }
+
+        return null;
     }
 
     private static UserRole ResolveUserRole(IList<string> roles)
     {
-        if (roles.Contains("SystemAdmin")) return UserRole.SystemAdmin;
-        if (roles.Contains("NormAdmin")) return UserRole.NormAdmin;
-        if (roles.Contains("DepartmentHead")) return UserRole.DepartmentHead;
+        if (roles.Contains(nameof(UserRole.SystemAdmin))) return UserRole.SystemAdmin;
+        if (roles.Contains(nameof(UserRole.NormAdmin))) return UserRole.NormAdmin;
+        if (roles.Contains(nameof(UserRole.HeadOfDepartment))) return UserRole.HeadOfDepartment;
+        if (roles.Contains(nameof(UserRole.Guest))) return UserRole.Guest;
         return UserRole.Operator;
     }
 }

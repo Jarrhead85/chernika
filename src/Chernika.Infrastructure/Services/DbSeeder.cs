@@ -1,3 +1,4 @@
+using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Infrastructure.Data;
@@ -13,8 +14,55 @@ public static class DbSeeder
         ("admin", "Admin@12345", "Администратор системы", "Системный администратор", UserRole.SystemAdmin),
         ("normadmin", "Norm@12345", "Нормировщик", "Нормировщик ГСМ", UserRole.NormAdmin),
         ("operator", "Op@12345", "А. Оператор", "Оператор-эксперт", UserRole.Operator),
-        ("head", "Head@12345", "Начальник отдела", "Начальник отдела нормирования", UserRole.DepartmentHead),
+        ("head", "Head@12345", "Начальник отдела", "Начальник отдела нормирования", UserRole.HeadOfDepartment),
+        ("guest", "Guest@12345", "В. Гость", "Внешний наблюдатель", UserRole.Guest),
     ];
+
+    private static readonly Dictionary<string, string[]> RolePermissions = new()
+    {
+        [nameof(UserRole.SystemAdmin)] = PermissionCodes.All.ToArray(),
+        [nameof(UserRole.NormAdmin)] =
+        [
+            PermissionCodes.HKView,
+            PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
+            PermissionCodes.HKAggregateCreate, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKAggregateSubmit,
+            PermissionCodes.HKEquipmentCreate, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKEquipmentSubmit,
+            PermissionCodes.HKComplexCreate, PermissionCodes.HKComplexEditDraft, PermissionCodes.HKComplexSubmit,
+            PermissionCodes.HKReview, PermissionCodes.HKApprove, PermissionCodes.HKArchive, PermissionCodes.HKDelete,
+            PermissionCodes.ReferenceView, PermissionCodes.ReferenceEdit,
+            PermissionCodes.CompositionView, PermissionCodes.CompositionEdit,
+            PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
+            PermissionCodes.ReportExport,
+            PermissionCodes.AuditView,
+        ],
+        [nameof(UserRole.Operator)] =
+        [
+            PermissionCodes.HKView,
+            PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
+            PermissionCodes.ReferenceView,
+            PermissionCodes.CompositionView,
+            PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
+            PermissionCodes.ReportExport,
+            PermissionCodes.TaskViewOwn,
+        ],
+        [nameof(UserRole.HeadOfDepartment)] =
+        [
+            PermissionCodes.HKView,
+            PermissionCodes.ReferenceView,
+            PermissionCodes.CompositionView,
+            PermissionCodes.IndividualCardView,
+            PermissionCodes.ReportExport,
+            PermissionCodes.AuditView,
+            PermissionCodes.TaskViewOwn,
+        ],
+        [nameof(UserRole.Guest)] =
+        [
+            PermissionCodes.HKView,
+            PermissionCodes.ReferenceView,
+            PermissionCodes.CompositionView,
+            PermissionCodes.IndividualCardView,
+        ],
+    };
 
     public static async Task SeedAsync(AppDbContext db, UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
     {
@@ -47,6 +95,23 @@ public static class DbSeeder
             }
             if (!await userManager.IsInRoleAsync(user, role.ToString()))
                 await userManager.AddToRoleAsync(user, role.ToString());
+        }
+
+        foreach (var (roleName, permissions) in RolePermissions)
+        {
+            foreach (var perm in permissions)
+            {
+                var exists = await db.RolePermissionTemplates.AnyAsync(x => x.RoleName == roleName && x.PermissionCode == perm);
+                if (!exists)
+                {
+                    db.RolePermissionTemplates.Add(new RolePermissionTemplate
+                    {
+                        Id = Guid.NewGuid(),
+                        RoleName = roleName,
+                        PermissionCode = perm,
+                    });
+                }
+            }
         }
 
         var branch = await db.Branches.OrderBy(b => b.Code).FirstOrDefaultAsync();

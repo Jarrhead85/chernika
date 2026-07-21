@@ -35,6 +35,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<IndividualCardItem> IndividualCardItems => Set<IndividualCardItem>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
+    public DbSet<RolePermissionTemplate> RolePermissionTemplates => Set<RolePermissionTemplate>();
+    public DbSet<UserPermissionOverride> UserPermissionOverrides => Set<UserPermissionOverride>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -355,6 +357,31 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.EntityType).HasMaxLength(100);
             e.Property(x => x.EntityId).HasMaxLength(100);
             e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.AssigneeId);
+        });
+
+        modelBuilder.Entity<RolePermissionTemplate>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.RoleName).HasMaxLength(100).IsRequired();
+            e.Property(x => x.PermissionCode).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.RoleName, x.PermissionCode }).IsUnique()
+                .HasDatabaseName("UX_RolePermissionTemplates_RoleName_PermissionCode");
+        });
+
+        modelBuilder.Entity<UserPermissionOverride>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UserId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.PermissionCode).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.GrantedByUserId).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.UserId, x.PermissionCode }).IsUnique()
+                .HasDatabaseName("UX_UserPermissionOverrides_UserId_PermissionCode");
+            e.HasIndex(x => x.UserId).HasDatabaseName("IX_UserPermissionOverrides_UserId");
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.GrantedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

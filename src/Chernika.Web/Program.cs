@@ -4,6 +4,7 @@ using Chernika.Infrastructure;
 using Chernika.Infrastructure.Data;
 using Chernika.Infrastructure.Services;
 using Chernika.Web.Auth;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +19,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddMemoryCache();
+builder.Services.AddScoped<IPermissionService, PermissionService>();
+builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
@@ -44,22 +48,22 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("ViewHK", policy => policy.RequireAuthenticatedUser());
-    options.AddPolicy("CreateHK", policy => policy.RequireRole("Operator"));
-    options.AddPolicy("EditHK", policy => policy.RequireRole("Operator"));
-    options.AddPolicy("DeleteHK", policy => policy.RequireRole("Operator"));
-    options.AddPolicy("ArchiveHK", policy => policy.RequireRole("NormAdmin"));
-    options.AddPolicy("SendToApprove", policy => policy.RequireRole("Operator"));
-    options.AddPolicy("CreateIndividualCard", policy => policy.RequireRole("Operator"));
-    options.AddPolicy("VerifyHK", policy => policy.RequireRole("NormAdmin"));
-    options.AddPolicy("ApproveHK", policy => policy.RequireRole("NormAdmin"));
-    options.AddPolicy("ReturnHK", policy => policy.RequireRole("NormAdmin"));
-    options.AddPolicy("ManageCoefficients", policy => policy.RequireRole("NormAdmin"));
-    options.AddPolicy("ManageUsers", policy => policy.RequireRole("SystemAdmin"));
-    options.AddPolicy("ManageRoles", policy => policy.RequireRole("SystemAdmin"));
-    options.AddPolicy("SystemConfig", policy => policy.RequireRole("SystemAdmin"));
-    options.AddPolicy("ViewAuditLog", policy => policy.RequireRole("SystemAdmin", "NormAdmin", "DepartmentHead"));
-    options.AddPolicy("ViewTasks", policy => policy.RequireAuthenticatedUser());
+    options.AddPolicy("ViewHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKView)));
+    options.AddPolicy("CreateHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeCreate, PermissionCodes.HKAggregateCreate, PermissionCodes.HKEquipmentCreate, PermissionCodes.HKComplexCreate)));
+    options.AddPolicy("EditHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeEditDraft, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKComplexEditDraft)));
+    options.AddPolicy("DeleteHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKDelete)));
+    options.AddPolicy("ArchiveHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKArchive)));
+    options.AddPolicy("SendToApprove", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeSubmit, PermissionCodes.HKAggregateSubmit, PermissionCodes.HKEquipmentSubmit, PermissionCodes.HKComplexSubmit)));
+    options.AddPolicy("CreateIndividualCard", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
+    options.AddPolicy("VerifyHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKReview)));
+    options.AddPolicy("ApproveHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKApprove)));
+    options.AddPolicy("ReturnHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKReview)));
+    options.AddPolicy("ManageCoefficients", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
+    options.AddPolicy("ManageUsers", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.UsersManage)));
+    options.AddPolicy("ManageRoles", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.PermissionsManage)));
+    options.AddPolicy("SystemConfig", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.SystemConfig)));
+    options.AddPolicy("ViewAuditLog", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.AuditView)));
+    options.AddPolicy("ViewTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskViewOwn)));
 });
 
 builder.Services.AddScoped<HKCardService>();
@@ -70,6 +74,7 @@ builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<TaskService>();
 builder.Services.AddScoped<ReportService>();
 builder.Services.AddScoped<SearchService>();
+builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<AuthenticationStateProvider, RevalidatingIdentityAuthenticationStateProvider<ApplicationUser>>();
 
 var app = builder.Build();

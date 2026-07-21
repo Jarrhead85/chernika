@@ -5,5 +5,6 @@ public enum UserRole
     SystemAdmin,
     NormAdmin,
     Operator,
-    DepartmentHead
+    HeadOfDepartment,
+    Guest
 }

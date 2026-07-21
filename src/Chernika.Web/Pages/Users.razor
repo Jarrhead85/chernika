@@ -1,9 +1,12 @@
 @page "/пользователи"
 @attribute [Authorize(Policy = "ManageUsers")]
+@using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
+@inject UserManagementService UserMgmt
 @inject UserManager<ApplicationUser> UserManager
 @inject RoleManager<Microsoft.AspNetCore.Identity.IdentityRole> RoleManager
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -44,7 +47,7 @@
                                 <td class="mono">@user.UserName</td>
                                 <td>@user.FullName</td>
                                 <td>@user.Position</td>
-                                <td><span class="badge">@GetUserRole(user)</span></td>
+                                <td><span class="badge">@GetRoleDisplayName(user.RoleName)</span></td>
                                 <td>
                                     <span class="badge" style="background:@(user.IsActive ? "var(--ok)" : "var(--warn)")">
                                         @(user.IsActive ? "Активен" : "Заблокирован")
@@ -52,6 +55,7 @@
                                 </td>
                                 <td>
                                     <button class="linkBtn" @onclick="() => OpenEdit(user)">Изменить</button>
+                                    <button class="linkBtn" @onclick="() => OpenOverrides(user)">Права</button>
                                     <button class="linkBtn" style="color:var(--warn)" @onclick="() => ToggleBlock(user)">
                                         @(user.IsActive ? "Заблокировать" : "Разблокировать")
                                     </button>
@@ -64,18 +68,18 @@
         </div>
     </section>
 
-    @if (showModal)
+    @if (showUserModal)
     {
-        <div class="modalOverlay" @onclick="CloseModal">
+        <div class="modalOverlay" @onclick="CloseUserModal">
             <div class="modal" @onclick:stopPropagation="true">
                 <div class="modalHeader">
                     <h3>@(isEdit ? "Редактирование" : "Новый пользователь")</h3>
-                    <button class="linkBtn" @onclick="CloseModal">✕</button>
+                    <button class="linkBtn" @onclick="CloseUserModal">✕</button>
                 </div>
                 <div class="modalBody">
                     <div class="form">
                         <div class="field"><label>Логин *</label>
-                            <input type="text" @bind="formUsername" class="fieldInput" disabled="isEdit" />
+                            <input type="text" @bind="formUsername" class="fieldInput" disabled="@isEdit" />
                         </div>
                         <div class="field"><label>ФИО</label>
                             <input type="text" @bind="formFullName" class="fieldInput" />
@@ -105,8 +109,102 @@
                     }
                 </div>
                 <div class="modalFooter">
-                    <button class="btn" @onclick="CloseModal">Отмена</button>
+                    <button class="btn" @onclick="CloseUserModal">Отмена</button>
                     <button class="btn primary" @onclick="SaveUser">Сохранить</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (showOverridesModal)
+    {
+        <div class="modalOverlay" @onclick="CloseOverridesModal">
+            <div class="modal wide" @onclick:stopPropagation="true">
+                <div class="modalHeader">
+                    <h3>Переопределения прав — @overridesUserName</h3>
+                    <button class="linkBtn" @onclick="CloseOverridesModal">✕</button>
+                </div>
+                <div class="modalBody">
+                    @if (overridesLoading)
+                    {
+                        <div class="loading-state">Загрузка...</div>
+                    }
+                    else
+                    {
+                        <div class="btnRow" style="margin-bottom:12px">
+                            <button class="btn primary" @onclick="OpenAddOverride">+ Добавить</button>
+                        </div>
+                        @if (overrides.Count == 0)
+                        {
+                            <div class="empty-state">Нет переопределений</div>
+                        }
+                        else
+                        {
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Разрешение</th>
+                                        <th>Тип</th>
+                                        <th>Причина</th>
+                                        <th>Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var o in overrides)
+                                    {
+                                        <tr>
+                                            <td class="mono">@o.PermissionCode</td>
+                                            <td>
+                                                <span class="badge" style="background:@(o.IsGranted ? "var(--ok)" : "var(--warn)")">
+                                                    @(o.IsGranted ? "Разрешено" : "Запрещено")
+                                                </span>
+                                            </td>
+                                            <td>@o.Reason</td>
+                                            <td>
+                                                <button class="linkBtn" style="color:var(--warn)" @onclick="() => RemoveOverride(o)">Удалить</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    }
+
+                    @if (showAddOverrideForm)
+                    {
+                        <div class="form" style="margin-top:16px;border-top:1px dashed var(--line);padding-top:16px">
+                            <div class="field"><label>Код разрешения</label>
+                                <select @bind="overridePermissionCode" class="field-select">
+                                    @foreach (var pc in allPermissionCodes)
+                                    {
+                                        <option value="@pc">@pc</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="field"><label>Тип</label>
+                                <select @bind="overrideIsGranted" class="field-select">
+                                    <option value="true">Разрешить</option>
+                                    <option value="false">Запретить</option>
+                                </select>
+                            </div>
+                            <div class="field"><label>Причина</label>
+                                <input type="text" @bind="overrideReason" class="fieldInput" />
+                            </div>
+                            @if (!string.IsNullOrEmpty(overrideError))
+                            {
+                                <div class="loginError">@overrideError</div>
+                            }
+                            <div class="btnRow">
+                                <button class="btn" @onclick="CancelAddOverride">Отмена</button>
+                                <button class="btn primary" @onclick="SaveOverride">Сохранить</button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(overrideError))
+                    {
+                        <div class="loginError" style="margin-top:12px">@overrideError</div>
+                    }
                 </div>
             </div>
         </div>
@@ -114,82 +212,87 @@
 </div>
 
 @code {
-    private List<ApplicationUser> users = new();
+    private List<UserListItem> users = new();
     private List<string> allRoles = new();
+    private List<string> allPermissionCodes = new();
     private bool loading = true;
-    private bool showModal = false;
+
+    private bool showUserModal = false;
     private bool isEdit = false;
     private string formError = "";
+    private string editingUserId = "";
 
     private string formUsername = "";
     private string formFullName = "";
     private string formPosition = "";
     private string formPassword = "";
     private string formRole = "";
-    private ApplicationUser? editingUser;
+
+    private bool showOverridesModal = false;
+    private bool overridesLoading = false;
+    private string overridesUserId = "";
+    private string overridesUserName = "";
+    private List<UserPermissionOverrideDto> overrides = new();
+    private bool showAddOverrideForm = false;
+    private string overridePermissionCode = "";
+    private bool overrideIsGranted = true;
+    private string overrideReason = "";
+    private string overrideError = "";
 
     protected override async Task OnInitializedAsync()
     {
         await LoadUsers();
-        var roles = await RoleManager.Roles.ToListAsync();
-        allRoles = roles.Select(r => r.Name ?? "").Where(n => !string.IsNullOrEmpty(n)).ToList();
+        allRoles = (await RoleManager.Roles.ToListAsync()).Select(r => r.Name ?? "").Where(n => !string.IsNullOrEmpty(n)).ToList();
+        allPermissionCodes = PermissionCodes.All.OrderBy(x => x).ToList();
     }
 
     async Task LoadUsers()
     {
         loading = true;
-        users = await UserManager.Users.ToListAsync();
+        users = await UserMgmt.GetUsersAsync();
         loading = false;
+        StateHasChanged();
     }
 
-    string GetUserRole(ApplicationUser user)
+    string GetRoleDisplayName(string role) => role switch
     {
-        var roles = UserManager.GetRolesAsync(user).Result;
-        return roles.FirstOrDefault() ?? "—";
-    }
-
-    string GetRoleDisplayName(string role)
-    {
-        return role switch
-        {
-            "SystemAdmin" => "Системный администратор",
-            "NormAdmin" => "Нормировщик",
-            "Operator" => "Оператор",
-            "DepartmentHead" => "Начальник филиала",
-            _ => role
-        };
-    }
+        "SystemAdmin" => "Системный администратор",
+        "NormAdmin" => "Нормировщик",
+        "Operator" => "Оператор",
+        "HeadOfDepartment" => "Начальник отдела",
+        "Guest" => "Гость",
+        _ => role
+    };
 
     void OpenCreate()
     {
         isEdit = false;
-        editingUser = null;
+        editingUserId = "";
         formUsername = "";
         formFullName = "";
         formPosition = "";
         formPassword = "";
         formRole = allRoles.FirstOrDefault() ?? "";
         formError = "";
-        showModal = true;
+        showUserModal = true;
     }
 
-    void OpenEdit(ApplicationUser user)
+    void OpenEdit(UserListItem user)
     {
         isEdit = true;
-        editingUser = user;
-        formUsername = user.UserName ?? "";
-        formFullName = user.FullName ?? "";
-        formPosition = user.Position ?? "";
+        editingUserId = user.Id;
+        formUsername = user.UserName;
+        formFullName = user.FullName;
+        formPosition = user.Position;
         formPassword = "";
-        var roles = UserManager.GetRolesAsync(user).Result;
-        formRole = roles.FirstOrDefault() ?? allRoles.FirstOrDefault() ?? "";
+        formRole = user.RoleName;
         formError = "";
-        showModal = true;
+        showUserModal = true;
     }
 
-    void CloseModal()
+    void CloseUserModal()
     {
-        showModal = false;
+        showUserModal = false;
         formError = "";
     }
 
@@ -197,65 +300,84 @@
     {
         formError = "";
 
-        if (string.IsNullOrWhiteSpace(formUsername) && !isEdit)
+        if (isEdit)
         {
-            formError = "Логин обязателен";
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(formPassword) && !isEdit)
-        {
-            formError = "Пароль обязателен";
-            return;
-        }
-
-        if (isEdit && editingUser != null)
-        {
-            editingUser.FullName = formFullName;
-            editingUser.Position = formPosition;
-            var updateResult = await UserManager.UpdateAsync(editingUser);
-            if (!updateResult.Succeeded)
-            {
-                formError = string.Join(", ", updateResult.Errors.Select(e => e.Description));
-                return;
-            }
-
-            var currentRoles = await UserManager.GetRolesAsync(editingUser);
-            await UserManager.RemoveFromRolesAsync(editingUser, currentRoles);
-            await UserManager.AddToRoleAsync(editingUser, formRole);
+            var (success, error) = await UserMgmt.UpdateUserAsync(editingUserId, formFullName, formPosition, formRole);
+            if (!success) { formError = error ?? ""; return; }
         }
         else
         {
-            var newUser = new ApplicationUser
-            {
-                UserName = formUsername,
-                FullName = formFullName,
-                Position = formPosition,
-                IsActive = true,
-                EmailConfirmed = true,
-            };
-            var createResult = await UserManager.CreateAsync(newUser, formPassword);
-            if (!createResult.Succeeded)
-            {
-                formError = string.Join(", ", createResult.Errors.Select(e => e.Description));
-                return;
-            }
-            await UserManager.AddToRoleAsync(newUser, formRole);
+            if (string.IsNullOrWhiteSpace(formUsername)) { formError = "Логин обязателен"; return; }
+            if (string.IsNullOrWhiteSpace(formPassword)) { formError = "Пароль обязателен"; return; }
+            var (success, error) = await UserMgmt.CreateUserAsync(formUsername, formPassword, formFullName, formPosition, formRole);
+            if (!success) { formError = error ?? ""; return; }
         }
 
-        showModal = false;
+        showUserModal = false;
         await LoadUsers();
     }
 
-    async Task ToggleBlock(ApplicationUser user)
+    async Task ToggleBlock(UserListItem user)
     {
-        user.IsActive = !user.IsActive;
-        await UserManager.SetLockoutEnabledAsync(user, !user.IsActive);
-        if (user.IsActive)
+        var (success, error) = await UserMgmt.ToggleBlockAsync(user.Id);
+        if (!success)
         {
-            await UserManager.SetLockoutEndDateAsync(user, null);
+            formError = error ?? "";
+            StateHasChanged();
+            return;
         }
-        await UserManager.UpdateAsync(user);
         await LoadUsers();
     }
+
+    async Task OpenOverrides(UserListItem user)
+    {
+        overridesUserId = user.Id;
+        overridesUserName = $"{user.FullName} ({user.UserName})";
+        overridesLoading = true;
+        showOverridesModal = true;
+        showAddOverrideForm = false;
+        overrides = await UserMgmt.GetOverridesAsync(user.Id);
+        overridesLoading = false;
+        StateHasChanged();
+    }
+
+    void CloseOverridesModal()
+    {
+        showOverridesModal = false;
+        overrideError = "";
+    }
+
+    void OpenAddOverride()
+    {
+        showAddOverrideForm = true;
+        overridePermissionCode = allPermissionCodes.FirstOrDefault() ?? "";
+        overrideIsGranted = true;
+        overrideReason = "";
+        overrideError = "";
+    }
+
+    void CancelAddOverride()
+    {
+        showAddOverrideForm = false;
+        overrideError = "";
+    }
+
+    async Task SaveOverride()
+    {
+        overrideError = "";
+        var (success, error) = await UserMgmt.SetOverrideAsync(overridesUserId, overridePermissionCode, overrideIsGranted, overrideReason);
+        if (!success) { overrideError = error ?? ""; return; }
+        showAddOverrideForm = false;
+        overrides = await UserMgmt.GetOverridesAsync(overridesUserId);
+        StateHasChanged();
+    }
+
+    async Task RemoveOverride(UserPermissionOverrideDto o)
+    {
+        await UserMgmt.RemoveOverrideAsync(overridesUserId, o.PermissionCode);
+        overrides = await UserMgmt.GetOverridesAsync(overridesUserId);
+        StateHasChanged();
+    }
+
+    public void Dispose() { }
 }

@@ -1,6 +1,8 @@
 ﻿@inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthStateProvider
 @inject SearchService SearchSvc
+@inject IPermissionService PermSvc
+@using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Models
 @using Microsoft.AspNetCore.Identity
@@ -63,7 +65,7 @@
                     <span>Журнал аудита</span>
                 </a>
             }
-            @if (isAdmin)
+            @if (canManageUsers)
             {
                 <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
                 <a class="@GetActive("пользователи")" href="пользователи">
@@ -162,8 +164,8 @@
     string userName = "Гость";
     string userRole = "";
     string userInitial = "?";
-    bool isAdmin = false;
-    bool canViewAudit = false;
+    bool canViewAudit;
+    bool canManageUsers;
     bool _isDark = true;
 
     List<SearchResultItem> searchResults = [];
@@ -239,8 +241,12 @@
             userName = user.FindFirst("FullName")?.Value ?? user.Identity.Name ?? "Пользователь";
             userRole = user.FindFirst("Position")?.Value ?? "";
             userInitial = userName.Length > 0 ? userName[0].ToString().ToUpper() : "?";
-            isAdmin = user.IsInRole("SystemAdmin");
-            canViewAudit = user.IsInRole("SystemAdmin") || user.IsInRole("NormAdmin") || user.IsInRole("DepartmentHead");
+            var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (userId != null)
+            {
+                canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
+                canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
+            }
         }
     }
 

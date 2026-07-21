@@ -301,9 +301,12 @@
                     <div class="full-width" style="margin-top:8px">
                         <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Состав ХК</h3>
 
+                        @if (canEdit)
+                        {
                         <div style="margin-bottom:12px">
                             <button type="button" class="btn" @onclick="ToggleAddChild">+ Добавить дочернюю ХК</button>
                         </div>
+                        }
 
                         @if (_addChildOpen)
                         {
