@@ -68,7 +68,7 @@ public class SearchService
         }
 
         var models = await _db.EquipmentModels
-            .Include(m => m.ProductCompositions).ThenInclude(pc => pc.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node).ThenInclude(n => n.HKCards)
+            .Include(m => m.ProductCompositions).ThenInclude(pc => pc.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
             .Where(m => EF.Functions.ILike(m.Index, $"%{q}%") ||
                         EF.Functions.ILike(m.Name, $"%{q}%") ||
                         EF.Functions.ILike(m.Type ?? "", $"%{q}%") ||
@@ -79,12 +79,6 @@ public class SearchService
 
         foreach (var m in models)
         {
-            var hk = m.ProductCompositions?
-                .SelectMany(pc => pc.Parts)
-                .SelectMany(p => p.Nodes)
-                .SelectMany(n => n.Node.HKCards)
-                .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
-                .FirstOrDefault();
             results.Add(new SearchResultItem
             {
                 EntityType = "EquipmentModel",
@@ -92,13 +86,13 @@ public class SearchService
                 EntityId = m.Id,
                 Title = $"{m.Index} — {m.Name}",
                 Subtitle = $"{m.Brand} / {m.Type}",
-                ContextInfo = hk != null ? $"Применяется в ХК: {hk.Code}" : "",
-                Url = hk != null ? $"/хк/{hk.Id}" : "/справочник-моделей"
+                ContextInfo = "",
+                Url = "/справочник-моделей"
             });
         }
 
         var instances = await _db.EquipmentInstances
-            .Include(i => i.EquipmentModel).ThenInclude(m => m.ProductCompositions).ThenInclude(pc => pc.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node).ThenInclude(n => n.HKCards)
+            .Include(i => i.EquipmentModel).ThenInclude(m => m.ProductCompositions).ThenInclude(pc => pc.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
             .Where(i => EF.Functions.ILike(i.SerialNumber, $"%{q}%") ||
                         EF.Functions.ILike(i.Index, $"%{q}%") ||
                         EF.Functions.ILike(i.Name, $"%{q}%") ||
@@ -108,21 +102,15 @@ public class SearchService
 
         foreach (var i in instances)
         {
-            var hk = i.EquipmentModel?.ProductCompositions?
-                .SelectMany(pc => pc.Parts)
-                .SelectMany(p => p.Nodes)
-                .SelectMany(n => n.Node.HKCards)
-                .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
-                .FirstOrDefault();
             results.Add(new SearchResultItem
             {
                 EntityType = "EquipmentInstance",
                 EntityTypeDisplay = "Экземпляр техники",
                 EntityId = i.Id,
                 Title = $"{i.SerialNumber} — {i.Name}",
-                Subtitle = i.EquipmentModel?.Name ?? "",
-                ContextInfo = hk != null ? $"Привязан к ХК: {hk.Code}" : "",
-                Url = hk != null ? $"/хк/{hk.Id}" : "/справочник-экземпляров"
+                Subtitle = i.EquipmentModel?.Index ?? "",
+                ContextInfo = "",
+                Url = $"/экземпляры/{i.Id}"
             });
         }
 

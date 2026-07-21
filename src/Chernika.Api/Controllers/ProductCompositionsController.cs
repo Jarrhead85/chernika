@@ -1,4 +1,5 @@
 using Chernika.Api.Contracts;
+using Chernika.Domain.Models;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,36 +11,19 @@ namespace Chernika.Api.Controllers;
 [Route("api/[controller]")]
 public class ProductCompositionsController : ControllerBase
 {
+    public record ReturnToDraftRequest(string? Comment);
+    public record ApproveRequest(string? Comment);
+
     private readonly EquipmentService _equipService;
 
     public ProductCompositionsController(EquipmentService equipService) =>
         _equipService = equipService;
-
-    public record AddPartRequest(string Name, int SortOrder = 0, string? Description = null);
-    public record AddNodeRequest(Guid NodeId, int Quantity);
-    public record UpdateNodeRequest(int Quantity);
 
     [HttpGet]
     public async Task<ActionResult<List<ProductCompositionDto>>> GetAll()
     {
         var comps = await _equipService.GetCompositionsAsync();
         return Ok(comps.Select(ProductCompositionMapper.ToDetail).ToList());
-    }
-
-    [HttpGet("parts/{partId}")]
-    public async Task<ActionResult<ProductCompositionPartDto>> GetPartById(Guid partId)
-    {
-        var part = await _equipService.GetCompositionPartAsync(partId);
-        if (part == null) return NotFound();
-        return Ok(ProductCompositionMapper.ToPartDto(part));
-    }
-
-    [HttpGet("nodes/{nodeId}")]
-    public async Task<ActionResult<ProductCompositionNodeDto>> GetNodeById(Guid nodeId)
-    {
-        var node = await _equipService.GetCompositionNodeAsync(nodeId);
-        if (node == null) return NotFound();
-        return Ok(ProductCompositionMapper.ToNodeDto(node));
     }
 
     [HttpGet("{id}")]
@@ -52,70 +36,47 @@ public class ProductCompositionsController : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = "ManageComposition")]
-    public async Task<ActionResult<ProductCompositionDto>> Create([FromBody] CreateProductCompositionRequest request)
+    public async Task<ActionResult<ProductCompositionDto>> Create([FromBody] CreateCompositionRequest request)
     {
-        var comp = ProductCompositionMapper.FromCreate(request);
-        var created = await _equipService.CreateCompositionAsync(comp);
+        var created = await _equipService.CreateCompositionDraftAsync(request);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, ProductCompositionMapper.ToDetail(created));
     }
 
     [HttpPut("{id}")]
     [Authorize(Policy = "ManageComposition")]
-    public async Task<ActionResult> Update(Guid id, [FromBody] CreateProductCompositionRequest request)
+    public async Task<ActionResult> Update(Guid id, [FromBody] UpdateCompositionDraftRequest request)
     {
-        var success = await _equipService.UpdateCompositionPropertiesAsync(id, request.EquipmentModelId, request.Comment);
+        var req = request with { Id = id };
+        var success = await _equipService.UpdateCompositionDraftAsync(req);
         if (!success) return NotFound();
         return NoContent();
     }
 
-    [HttpPost("{id}/activate")]
-    [Authorize(Policy = "ManageComposition")]
-    public async Task<ActionResult> Activate(Guid id)
+    // ── Parts ───────────────────────────────────────────────────────────
+
+    [HttpGet("parts/{partId}")]
+    public async Task<ActionResult<ProductCompositionPartDto>> GetPartById(Guid partId)
     {
-        if (!await _equipService.SetActiveCompositionAsync(id)) return NotFound();
-        return NoContent();
+        var part = await _equipService.GetCompositionPartAsync(partId);
+        if (part == null) return NotFound();
+        return Ok(ProductCompositionMapper.ToPartDto(part));
     }
 
     [HttpPost("{id}/parts")]
     [Authorize(Policy = "ManageComposition")]
     public async Task<ActionResult<ProductCompositionPartDto>> AddPart(Guid id, [FromBody] AddPartRequest req)
     {
-        var part = await _equipService.AddPartAsync(id, req.Name, req.SortOrder, req.Description);
-        return CreatedAtAction(
-            nameof(GetPartById),
-            new { partId = part.Id },
-            ProductCompositionMapper.ToPartDto(part));
+        var request = req with { CompositionId = id };
+        var part = await _equipService.AddPartAsync(request);
+        return CreatedAtAction(nameof(GetPartById), new { partId = part.Id }, ProductCompositionMapper.ToPartDto(part));
     }
 
-    [HttpPost("parts/{partId}/nodes")]
+    [HttpPut("parts/{partId}")]
     [Authorize(Policy = "ManageComposition")]
-    public async Task<ActionResult<ProductCompositionNodeDto>> AddNode(Guid partId, [FromBody] AddNodeRequest req)
+    public async Task<ActionResult> UpdatePart(Guid partId, [FromBody] UpdatePartRequest request)
     {
-        var node = await _equipService.AddNodeAsync(partId, req.NodeId, req.Quantity);
-        return CreatedAtAction(
-            nameof(GetNodeById),
-            new { nodeId = node.Id },
-            ProductCompositionMapper.ToNodeDto(node));
-    }
-
-    [HttpPut("nodes/{nodeId}")]
-    [Authorize(Policy = "ManageComposition")]
-    public async Task<ActionResult> UpdateNode(Guid nodeId, [FromBody] UpdateNodeRequest req)
-    {
-        var isActive = await _equipService.IsCompositionActiveByNodeAsync(nodeId);
-        if (isActive)
-            return BadRequest("Нельзя изменить количество узла в активном составе изделия. Создайте новую версию состава.");
-
-        var success = await _equipService.UpdateNodeQuantityAsync(nodeId, req.Quantity);
-        if (!success) return NotFound();
-        return NoContent();
-    }
-
-    [HttpDelete("nodes/{nodeId}")]
-    [Authorize(Policy = "ManageComposition")]
-    public async Task<ActionResult> RemoveNode(Guid nodeId)
-    {
-        var success = await _equipService.RemoveNodeAsync(nodeId);
+        var req = request with { PartId = partId };
+        var success = await _equipService.UpdatePartAsync(req);
         if (!success) return NotFound();
         return NoContent();
     }
@@ -129,11 +90,87 @@ public class ProductCompositionsController : ControllerBase
         return NoContent();
     }
 
+    // ── Aggregates ──────────────────────────────────────────────────────
+
+    [HttpGet("aggregates/{id}")]
+    public async Task<ActionResult<ProductCompositionAggregateDto>> GetAggregateById(Guid id)
+    {
+        var agg = await _equipService.GetCompositionAggregateAsync(id);
+        if (agg == null) return NotFound();
+        return Ok(ProductCompositionMapper.ToAggregateDto(agg));
+    }
+
+    [HttpPost("parts/{partId}/aggregates")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult<ProductCompositionAggregateDto>> AddAggregate(Guid partId, [FromBody] AddProductCompositionAggregateRequest req)
+    {
+        var request = req with { PartId = partId };
+        var agg = await _equipService.AddAggregateAsync(request);
+        return CreatedAtAction(nameof(GetAggregateById), new { id = agg.Id }, ProductCompositionMapper.ToAggregateDto(agg));
+    }
+
+    [HttpPut("aggregates/{id}")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult> UpdateAggregate(Guid id, [FromBody] UpdateProductCompositionAggregateRequest req)
+    {
+        var request = req with { Id = id };
+        var isActive = await _equipService.IsCompositionActiveByAggregateAsync(id);
+        if (isActive)
+            return BadRequest("Нельзя изменить количество агрегата в активном составе изделия. Создайте новую версию состава.");
+
+        var success = await _equipService.UpdateAggregateQuantityAsync(request);
+        if (!success) return NotFound();
+        return NoContent();
+    }
+
+    [HttpDelete("aggregates/{id}")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult> RemoveAggregate(Guid id)
+    {
+        var success = await _equipService.RemoveAggregateAsync(id);
+        if (!success) return NotFound();
+        return NoContent();
+    }
+
+    // ── Status transitions ─────────────────────────────────────────────
+
+    [HttpPost("{id}/submit")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult> SubmitForReview(Guid id)
+    {
+        if (!await _equipService.SubmitForReviewAsync(id)) return NotFound();
+        return NoContent();
+    }
+
+    [HttpPost("{id}/return")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult> ReturnToDraft(Guid id, [FromBody] ReturnToDraftRequest? req)
+    {
+        if (!await _equipService.ReturnToDraftAsync(id, req?.Comment)) return NotFound();
+        return NoContent();
+    }
+
+    [HttpPost("{id}/approve")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult> Approve(Guid id, [FromBody] ApproveRequest? req)
+    {
+        if (!await _equipService.ApproveCompositionAsync(id, req?.Comment)) return NotFound();
+        return NoContent();
+    }
+
+    [HttpPost("{id}/archive")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult> Archive(Guid id)
+    {
+        if (!await _equipService.ArchiveCompositionAsync(id)) return NotFound();
+        return NoContent();
+    }
+
     [HttpDelete("{id}")]
     [Authorize(Policy = "ManageComposition")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        var success = await _equipService.DeleteCompositionAsync(id);
+        var success = await _equipService.DeleteCompositionDraftAsync(id);
         if (!success) return NotFound();
         return NoContent();
     }

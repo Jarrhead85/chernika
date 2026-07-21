@@ -36,16 +36,16 @@ public record ProductCompositionPartDto(
     string Name,
     string? Description,
     int SortOrder,
-    IReadOnlyList<ProductCompositionNodeDto> Nodes);
+    IReadOnlyList<ProductCompositionAggregateDto> Aggregates);
 
-public record ProductCompositionNodeDto(
+public record ProductCompositionAggregateDto(
     Guid Id,
     Guid PartId,
-    Guid NodeId,
+    Guid AggregateId,
     int Quantity,
-    NodeRefDto Node);
+    AggregateRefDto Aggregate);
 
-public record NodeRefDto(
+public record AggregateRefDto(
     Guid Id,
     string Code,
     string Name,
@@ -90,11 +90,11 @@ public static class EquipmentModelMapper
 
     public static ProductCompositionPartDto ToPartDto(ProductCompositionPart p) => new(
         p.Id, p.ProductCompositionId, p.Name, p.Description, p.SortOrder,
-        p.Nodes.Select(ToNodeDto).ToList());
+        p.Aggregates.Select(ToAggregateDto).ToList());
 
-    public static ProductCompositionNodeDto ToNodeDto(ProductCompositionNode n) => new(
-        n.Id, n.PartId, n.NodeId, n.Quantity,
-        new NodeRefDto(n.Node.Id, n.Node.Code, n.Node.Name, n.Node.Description));
+    public static ProductCompositionAggregateDto ToAggregateDto(ProductCompositionAggregate a) => new(
+        a.Id, a.PartId, a.AggregateId, a.Quantity,
+        new AggregateRefDto(a.Aggregate.Id, a.Aggregate.Code, a.Aggregate.Name, a.Aggregate.Description));
 
     public static EquipmentModel FromCreate(CreateEquipmentModelRequest r) => new()
     {
@@ -125,8 +125,8 @@ public static class ProductCompositionMapper
     public static ProductCompositionPartDto ToPartDto(ProductCompositionPart p) =>
         EquipmentModelMapper.ToPartDto(p);
 
-    public static ProductCompositionNodeDto ToNodeDto(ProductCompositionNode n) =>
-        EquipmentModelMapper.ToNodeDto(n);
+    public static ProductCompositionAggregateDto ToAggregateDto(ProductCompositionAggregate a) =>
+        EquipmentModelMapper.ToAggregateDto(a);
 
     public static ProductComposition FromCreate(CreateProductCompositionRequest r) => new()
     {

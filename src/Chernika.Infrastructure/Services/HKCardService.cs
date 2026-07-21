@@ -723,10 +723,10 @@ public class HKCardService
             .ToListAsync();
 
         var modelIds = await (
-            from n in _db.ProductCompositionNodes
-            join p in _db.ProductCompositionParts on n.PartId equals p.Id
+            from a in _db.ProductCompositionAggregates
+            join p in _db.ProductCompositionParts on a.PartId equals p.Id
             join pc in _db.ProductCompositions on p.ProductCompositionId equals pc.Id
-            where n.NodeId == card.NodeId
+            where a.AggregateId == card.NodeId
             select pc.EquipmentModelId).Distinct().ToListAsync();
 
         if (modelIds.Count != 0)

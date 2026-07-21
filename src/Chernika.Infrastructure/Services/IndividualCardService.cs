@@ -109,7 +109,7 @@ public class IndividualCardService
             throw new InvalidOperationException($"Экземпляр {instanceId} не найден");
 
         var composition = await _db.ProductCompositions
-            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
+            .Include(c => c.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
             .Where(c => c.EquipmentModelId == instance.EquipmentModelId
                      && c.IsActive
                      && c.Status == ProductCompositionStatus.Approved)
@@ -126,34 +126,47 @@ public class IndividualCardService
         var newCards = new List<IndividualCard>();
         var now = _time.GetUtcNow().UtcDateTime;
 
-        foreach (var compNode in composition.Parts.SelectMany(p => p.Nodes))
+        var aggregateIds = composition.Parts.SelectMany(p => p.Aggregates).Select(a => a.AggregateId).ToList();
+        var compositionNodes = await _db.AggregateCompositionNodes
+            .Include(acn => acn.AggregateComposition)
+            .Include(acn => acn.Node)
+            .Where(acn => aggregateIds.Contains(acn.AggregateComposition.AggregateId)
+                       && acn.AggregateComposition.IsActive)
+            .ToListAsync(ct);
+
+        var nodeGroups = compositionNodes.GroupBy(acn => acn.AggregateComposition.AggregateId);
+
+        foreach (var group in nodeGroups)
         {
-            var hkCard = await _db.HKCards
-                .Include(h => h.Items).ThenInclude(hi => hi.AssemblyUnit)
-                .Include(h => h.Items).ThenInclude(hi => hi.Materials).ThenInclude(m => m.GsmMaterial)
-                .Where(h =>
-                    h.NodeId == compNode.NodeId &&
-                    h.Status == HKCardStatus.Approved &&
-                    (!h.EffectiveDate.HasValue || h.EffectiveDate.Value <= now) &&
-                    (!h.ExpirationDate.HasValue || h.ExpirationDate.Value >= now))
-                .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
-                .FirstOrDefaultAsync(ct);
-
-            if (hkCard == null)
-                throw new InvalidOperationException(
-                    $"Для узла {compNode.Node?.Code ?? compNode.NodeId.ToString()} не найдена действующая утверждённая ХК.");
-
-            var card = new IndividualCard
+            foreach (var acn in group)
             {
-                Id = Guid.NewGuid(),
-                EquipmentInstanceId = instanceId,
-                ProductCompositionId = composition.Id,
-                HKCardId = hkCard.Id,
-                NodeId = compNode.NodeId,
-                Version = version,
-                CreatedAt = now,
-                AppliedCoefficients = appliedCoefficients
-            };
+                var node = acn.Node;
+                var hkCard = await _db.HKCards
+                    .Include(h => h.Items).ThenInclude(hi => hi.AssemblyUnit)
+                    .Include(h => h.Items).ThenInclude(hi => hi.Materials).ThenInclude(m => m.GsmMaterial)
+                    .Where(h =>
+                        h.NodeId == node.Id &&
+                        h.Status == HKCardStatus.Approved &&
+                        (!h.EffectiveDate.HasValue || h.EffectiveDate.Value <= now) &&
+                        (!h.ExpirationDate.HasValue || h.ExpirationDate.Value >= now))
+                    .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+
+                if (hkCard == null)
+                    throw new InvalidOperationException(
+                        $"Для узла {node.Code ?? node.Id.ToString()} не найдена действующая утверждённая ХК.");
+
+                var card = new IndividualCard
+                {
+                    Id = Guid.NewGuid(),
+                    EquipmentInstanceId = instanceId,
+                    ProductCompositionId = composition.Id,
+                    HKCardId = hkCard.Id,
+                    NodeId = node.Id,
+                    Version = version,
+                    CreatedAt = now,
+                    AppliedCoefficients = appliedCoefficients
+                };
 
             var totalNorm = SumCalculatedNorms(hkCard.Items, coefficientProduct);
             foreach (var hkItem in hkCard.Items)
@@ -169,9 +182,10 @@ public class IndividualCardService
                 });
             }
 
-            card.TotalNorm = NormCalculation.RoundToGrams(totalNorm * compNode.Quantity);
+            card.TotalNorm = NormCalculation.RoundToGrams(totalNorm * acn.Quantity);
             newCards.Add(card);
-        }
+                }
+            }
 
         if (newCards.Count != 0)
         {

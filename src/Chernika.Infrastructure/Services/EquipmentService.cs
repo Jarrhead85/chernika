@@ -185,7 +185,7 @@ public class EquipmentService
     {
         var query = _db.ProductCompositions
             .Include(c => c.EquipmentModel)
-            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
+            .Include(c => c.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
             .AsQueryable();
 
         if (equipmentModelId.HasValue)
@@ -198,16 +198,15 @@ public class EquipmentService
         await _db.ProductCompositions
             .Include(c => c.EquipmentModel)
             .Include(c => c.Parts.OrderBy(p => p.SortOrder))
-                .ThenInclude(p => p.Nodes.OrderBy(n => n.Node.Code))
-                    .ThenInclude(n => n.Node)
+                .ThenInclude(p => p.Aggregates.OrderBy(a => a.Aggregate.Code))
+                    .ThenInclude(a => a.Aggregate)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
     public async Task<List<ProductComposition>> GetCompositionsWithCoverageAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
     {
         var query = _db.ProductCompositions
             .Include(c => c.EquipmentModel)
-            .Include(c => c.Parts).ThenInclude(p => p.Nodes).ThenInclude(n => n.Node)
-                .ThenInclude(n => n.HKCards)
+            .Include(c => c.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
             .AsQueryable();
 
         if (equipmentModelId.HasValue)
@@ -218,14 +217,14 @@ public class EquipmentService
 
     public async Task<ProductCompositionPart?> GetCompositionPartAsync(Guid partId, CancellationToken ct = default) =>
         await _db.ProductCompositionParts
-            .Include(p => p.Nodes.OrderBy(n => n.Node.Code))
-                .ThenInclude(n => n.Node)
+            .Include(p => p.Aggregates.OrderBy(a => a.Aggregate.Code))
+                .ThenInclude(a => a.Aggregate)
             .FirstOrDefaultAsync(p => p.Id == partId, ct);
 
-    public async Task<ProductCompositionNode?> GetCompositionNodeAsync(Guid nodeId, CancellationToken ct = default) =>
-        await _db.ProductCompositionNodes
-            .Include(n => n.Node)
-            .FirstOrDefaultAsync(n => n.Id == nodeId, ct);
+    public async Task<ProductCompositionAggregate?> GetCompositionAggregateAsync(Guid id, CancellationToken ct = default) =>
+        await _db.ProductCompositionAggregates
+            .Include(a => a.Aggregate)
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
 
     public async Task<ProductComposition> CreateCompositionDraftAsync(CreateCompositionRequest request, CancellationToken ct = default)
     {
@@ -305,12 +304,12 @@ public class EquipmentService
     {
         await EnsureCanEditCompositionAsync(ct);
         var comp = await _db.ProductCompositions
-            .Include(c => c.Parts).ThenInclude(p => p.Nodes)
+            .Include(c => c.Parts).ThenInclude(p => p.Aggregates)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
         if (comp == null) return false;
         if (comp.Status != ProductCompositionStatus.OnReview)
             throw new InvalidOperationException("Утверждение возможно только для состава в статусе «На проверке».");
-        if (!comp.Parts.Any() || !comp.Parts.SelectMany(p => p.Nodes).Any())
+        if (!comp.Parts.Any() || !comp.Parts.SelectMany(p => p.Aggregates).Any())
             throw new InvalidOperationException("Нельзя утвердить пустой состав.");
 
         var now = _time.GetUtcNow().UtcDateTime;
@@ -406,7 +405,7 @@ public class EquipmentService
 
         await _audit.LogAsync("ProductCompositionPart", part.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
         return await _db.ProductCompositionParts
-            .Include(p => p.Nodes).ThenInclude(n => n.Node)
+            .Include(p => p.Aggregates).ThenInclude(a => a.Aggregate)
             .FirstAsync(p => p.Id == part.Id, ct);
     }
 
@@ -444,91 +443,89 @@ public class EquipmentService
         return true;
     }
 
-    // ── Nodes ────────────────────────────────────────────────────────────
+    // ── Aggregates ────────────────────────────────────────────────────────
 
-    public async Task<ProductCompositionNode> AddNodeAsync(AddNodeRequest request, CancellationToken ct = default)
+    public async Task<ProductCompositionAggregate> AddAggregateAsync(AddProductCompositionAggregateRequest request, CancellationToken ct = default)
     {
         await EnsureCanEditCompositionAsync(ct);
         if (request.PartId == Guid.Empty)
             throw new ArgumentException("PartId is required.");
-        if (request.NodeId == Guid.Empty)
-            throw new ArgumentException("NodeId is required.");
+        if (request.AggregateId == Guid.Empty)
+            throw new ArgumentException("AggregateId is required.");
         if (request.Quantity <= 0)
             throw new ArgumentException("Количество должно быть больше 0.");
 
         var part = await _db.ProductCompositionParts
             .Include(p => p.ProductComposition)
-            .Include(p => p.Nodes)
+            .Include(p => p.Aggregates)
             .FirstOrDefaultAsync(p => p.Id == request.PartId, ct);
         if (part == null) throw new InvalidOperationException("Часть состава не найдена.");
         if (part.ProductComposition.Status != ProductCompositionStatus.Draft)
             throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
 
-        var nodeExists = await _db.Nodes.AnyAsync(n => n.Id == request.NodeId && !n.IsDeleted, ct);
-        if (!nodeExists) throw new InvalidOperationException("Узел не найден.");
+        var aggregateExists = await _db.Aggregates.AnyAsync(a => a.Id == request.AggregateId && !a.IsDeleted, ct);
+        if (!aggregateExists) throw new InvalidOperationException("Агрегат не найден.");
 
-        if (part.Nodes.Any(n => n.NodeId == request.NodeId))
-            throw new InvalidOperationException("Узел уже добавлен в эту часть.");
+        if (part.Aggregates.Any(a => a.AggregateId == request.AggregateId))
+            throw new InvalidOperationException("Агрегат уже добавлен в эту часть.");
 
-        var pcn = new ProductCompositionNode
+        var pca = new ProductCompositionAggregate
         {
             Id = Guid.NewGuid(),
             PartId = request.PartId,
-            NodeId = request.NodeId,
+            AggregateId = request.AggregateId,
             Quantity = request.Quantity
         };
 
-        _db.ProductCompositionNodes.Add(pcn);
+        _db.ProductCompositionAggregates.Add(pca);
         await _db.SaveChangesAsync(ct);
 
-        await _audit.LogAsync("ProductCompositionNode", pcn.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
-        return await _db.ProductCompositionNodes
-            .Include(n => n.Node)
-            .FirstAsync(n => n.Id == pcn.Id, ct);
+        await _audit.LogAsync("ProductCompositionAggregate", pca.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        return await _db.ProductCompositionAggregates
+            .Include(a => a.Aggregate)
+            .FirstAsync(a => a.Id == pca.Id, ct);
     }
 
-    public async Task<bool> UpdateNodeQuantityAsync(UpdateNodeQuantityRequest request, CancellationToken ct = default)
+    public async Task<bool> UpdateAggregateQuantityAsync(UpdateProductCompositionAggregateRequest request, CancellationToken ct = default)
     {
         await EnsureCanEditCompositionAsync(ct);
         if (request.Quantity <= 0)
             throw new ArgumentException("Количество должно быть больше 0.");
 
-        var pcn = await _db.ProductCompositionNodes
-            .Include(n => n.Part).ThenInclude(p => p.ProductComposition)
-            .FirstOrDefaultAsync(n => n.Id == request.NodeId, ct);
-        if (pcn == null) return false;
-        if (pcn.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
+        var pca = await _db.ProductCompositionAggregates
+            .Include(a => a.Part).ThenInclude(p => p.ProductComposition)
+            .FirstOrDefaultAsync(a => a.Id == request.Id, ct);
+        if (pca == null) return false;
+        if (pca.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
             throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
 
-        pcn.Quantity = request.Quantity;
+        pca.Quantity = request.Quantity;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductCompositionNode", request.NodeId.ToString(), "UpdateQuantity", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync("ProductCompositionAggregate", request.Id.ToString(), "UpdateQuantity", _currentUser.GetRequiredUserId());
         return true;
     }
 
-    public async Task<bool> RemoveNodeAsync(Guid nodeId, CancellationToken ct = default)
+    public async Task<bool> RemoveAggregateAsync(Guid id, CancellationToken ct = default)
     {
         await EnsureCanEditCompositionAsync(ct);
-        var pcn = await _db.ProductCompositionNodes
-            .Include(n => n.Part).ThenInclude(p => p.ProductComposition)
-            .FirstOrDefaultAsync(n => n.Id == nodeId, ct);
-        if (pcn == null) return false;
-        if (pcn.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
-            throw new InvalidOperationException("Удаление узлов разрешено только в статусе «Черновик».");
+        var pca = await _db.ProductCompositionAggregates
+            .Include(a => a.Part).ThenInclude(p => p.ProductComposition)
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
+        if (pca == null) return false;
+        if (pca.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
+            throw new InvalidOperationException("Удаление агрегатов разрешено только в статусе «Черновик».");
 
-        _db.ProductCompositionNodes.Remove(pcn);
+        _db.ProductCompositionAggregates.Remove(pca);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductCompositionNode", nodeId.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync("ProductCompositionAggregate", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
         return true;
     }
 
-    public async Task<bool> IsCompositionActiveByNodeAsync(Guid nodeId, CancellationToken ct = default)
+    public async Task<bool> IsCompositionActiveByAggregateAsync(Guid id, CancellationToken ct = default)
     {
-        return await _db.ProductCompositionNodes
-            .Include(n => n.Part)
-                .ThenInclude(p => p.ProductComposition)
-            .AnyAsync(n => n.Id == nodeId
-                        && n.Part.ProductComposition.IsActive, ct);
+        return await _db.ProductCompositionAggregates
+            .Include(a => a.Part).ThenInclude(p => p.ProductComposition)
+            .AnyAsync(a => a.Id == id && a.Part.ProductComposition.IsActive, ct);
     }
 
     public Task<List<Branch>> GetBranchesAsync() =>
@@ -570,6 +567,12 @@ public class EquipmentService
         await _audit.LogAsync("Branch", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
         return (true, null);
     }
+
+    public Task<List<Aggregate>> GetAggregatesAsync() =>
+        _db.Aggregates.OrderBy(a => a.Code).ToListAsync();
+
+    public Task<Aggregate?> GetAggregateAsync(Guid id) =>
+        _db.Aggregates.FirstOrDefaultAsync(a => a.Id == id);
 
     public Task<List<AssemblyUnit>> GetAssemblyUnitsAsync() =>
         _db.AssemblyUnits.OrderBy(a => a.Code).ToListAsync();

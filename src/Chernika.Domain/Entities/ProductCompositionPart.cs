@@ -14,6 +14,6 @@ public class ProductCompositionPart
     /// <summary>Порядок отображения внутри состава.</summary>
     public int SortOrder { get; set; }
 
-    public ICollection<ProductCompositionNode> Nodes { get; set; } = new List<ProductCompositionNode>();
+    public ICollection<ProductCompositionAggregate> Aggregates { get; set; } = new List<ProductCompositionAggregate>();
 }
 

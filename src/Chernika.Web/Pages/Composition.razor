@@ -64,8 +64,8 @@
                             <tbody>
                                 @foreach (var comp in compositions)
                                 {
-                                    var allNodes = comp.Parts.SelectMany(p => p.Nodes).ToList();
-                                    var covered = allNodes.Count(n => HasApprovedHK(n.Node));
+                                    var allNodes = comp.Parts.SelectMany(p => p.Aggregates).ToList();
+                                    var covered = allNodes.Count(a => HasApprovedHK(a.Aggregate));
                                     <tr @onclick="() => SelectComposition(comp.Id)" style="cursor:pointer">
                                         <td class="mono">@comp.Version</td>
                                         <td><span class="tag @StatusTag(comp.Status)">@StatusLabel(comp.Status)</span></td>
@@ -152,18 +152,18 @@
                         @if (selectedComposition.Status == ProductCompositionStatus.Draft)
                         {
                             <div class="form" style="margin-bottom:12px">
-                                <div class="field"><label>Узел</label>
-                                    <select @bind="newNodeId" class="field-select">
-                                        <option value="">— Выберите узел —</option>
-                                        @foreach (var n in nodes)
+                                <div class="field"><label>Агрегат</label>
+                                    <select @bind="newAggregateId" class="field-select">
+                                        <option value="">— Выберите агрегат —</option>
+                                        @foreach (var a in aggregates)
                                         {
-                                            <option value="@n.Id">@n.Code — @n.Name</option>
+                                            <option value="@a.Id">@a.Code — @a.Name</option>
                                         }
                                     </select>
                                 </div>
-                                <div class="field"><label>Количество</label><input type="number" @bind="newNodeQty" min="1" class="field-input" /></div>
+                                <div class="field"><label>Количество</label><input type="number" @bind="newAggregateQty" min="1" class="field-input" /></div>
                                 <div class="field" style="display:flex;align-items:flex-end">
-                                    <button class="btn primary" @onclick="AddNode" disabled="@(selectedPartId == Guid.Empty || selectedComposition.Status != ProductCompositionStatus.Draft)">+ Добавить узел</button>
+                                    <button class="btn primary" @onclick="AddAggregate" disabled="@(selectedPartId == Guid.Empty || selectedComposition.Status != ProductCompositionStatus.Draft)">+ Добавить агрегат</button>
                                 </div>
                             </div>
                         }
@@ -188,62 +188,48 @@
                                         }
                                     </div>
                                     @{
-                                        var filteredNodes = part.Nodes
-                                            .Where(n => n.Node != null && (string.IsNullOrWhiteSpace(nodeFilter)
-                                                || (n.Node.Code?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)
-                                                || (n.Node.Name?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)))
-                                            .OrderBy(n => n.Node.Code)
+                                        var filteredAggregates = part.Aggregates
+                                            .Where(a => a.Aggregate != null && (string.IsNullOrWhiteSpace(nodeFilter)
+                                                || (a.Aggregate.Code?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)
+                                                || (a.Aggregate.Name?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)))
+                                            .OrderBy(a => a.Aggregate.Code)
                                             .ToList();
                                     }
-                                    @if (!filteredNodes.Any())
+                                    @if (!filteredAggregates.Any())
                                     {
-                                        <div class="empty-state" style="padding:4px 0">Нет узлов</div>
+                                        <div class="empty-state" style="padding:4px 0">Нет агрегатов</div>
                                     }
                                     else
                                     {
                                         <table>
                                             <thead>
-                                                <tr><th>Код узла</th><th>Наименование</th><th>Количество</th><th>Действующая ХК</th><th>Версия ХК</th><th>Утверждена</th><th>Покрытие</th><th>Действия</th></tr>
+                                                <tr><th>Код агрегата</th><th>Наименование</th><th>Количество</th><th>Действия</th></tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var pcn in filteredNodes)
+                                                @foreach (var pca in filteredAggregates)
                                                 {
-                                                    var hk = GetApprovedHK(pcn.Node);
-                                                    var coverage = GetCoverageStatus(pcn.Node);
                                                     <tr>
-                                                        <td class="mono">@pcn.Node?.Code</td>
-                                                        <td>@pcn.Node?.Name</td>
+                                                        <td class="mono">@pca.Aggregate?.Code</td>
+                                                        <td>@pca.Aggregate?.Name</td>
                                                         <td>
-                                                            @if (editingNodeId == pcn.Id && selectedComposition.Status == ProductCompositionStatus.Draft)
+                                                            @if (editingAggregateId == pca.Id && selectedComposition.Status == ProductCompositionStatus.Draft)
                                                             {
-                                                                <input type="number" @bind="editNodeQty" class="field-input" style="width:70px" min="1" />
-                                                                <button class="linkBtn" @onclick="() => SaveNodeQuantity(pcn.Id)">✓</button>
-                                                                <button class="linkBtn" @onclick="() => CancelEditNode()">✕</button>
+                                                                <input type="number" @bind="editAggregateQty" class="field-input" style="width:70px" min="1" />
+                                                                <button class="linkBtn" @onclick="() => SaveAggregateQuantity(pca.Id)">✓</button>
+                                                                <button class="linkBtn" @onclick="() => CancelEditAggregate()">✕</button>
                                                             }
                                                             else
                                                             {
-                                                                <span>@pcn.Quantity</span>
+                                                                <span>@pca.Quantity</span>
                                                             }
                                                         </td>
-                                                        <td>@(hk != null ? $"{hk.Code}" : "—")</td>
-                                                        <td class="mono">@(hk != null ? hk.Version : "—")</td>
-                                                        <td class="mono">@(hk?.ApprovedDate?.ToString("dd.MM.yyyy") ?? "—")</td>
-                                                        <td><span class="tag @coverage.Tag">@coverage.Label</span></td>
                                                         <td>
                                                             <div class="rowActions">
-                                                                @if (hk != null)
-                                                                {
-                                                                    <button class="linkBtn" @onclick="() => OpenHK(hk.Id)">Открыть ХК</button>
-                                                                }
-                                                                else if (canEdit)
-                                                                {
-                                                                    <button class="linkBtn" @onclick="() => CreateHKForNode(pcn.NodeId)">Создать ХК</button>
-                                                                }
                                                                 @if (selectedComposition.Status == ProductCompositionStatus.Draft)
                                                                 {
-                                                                    <button class="linkBtn" @onclick="() => StartEditNodeQty(pcn.Id, pcn.Quantity)">Изменить кол-во</button>
-                                                                    <button class="linkBtn" @onclick="() => PromptReplaceNode(pcn)">Заменить</button>
-                                                                    <button class="linkBtn" @onclick="() => RemoveNode(pcn.Id)">Удалить</button>
+                                                                    <button class="linkBtn" @onclick="() => StartEditAggregateQty(pca.Id, pca.Quantity)">Изменить кол-во</button>
+                                                                    <button class="linkBtn" @onclick="() => PromptReplaceAggregate(pca)">Заменить</button>
+                                                                    <button class="linkBtn" @onclick="() => RemoveAggregate(pca.Id)">Удалить</button>
                                                                 }
                                                             </div>
                                                         </td>
@@ -270,31 +256,12 @@
                     }
                     else
                     {
-                        var allNodes = selectedComposition.Parts.SelectMany(p => p.Nodes).ToList();
-                        var total = allNodes.Count;
-                        var covered = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "ok");
-                        var pending = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "warn");
-                        var expired = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "bad");
-                        var future = allNodes.Count(n => GetCoverageStatus(n.Node) is var c && c.Tag == "future");
+                        var allAggregates = selectedComposition.Parts.SelectMany(p => p.Aggregates).ToList();
+                        var total = allAggregates.Count;
 
                         <div class="metrics2">
-                            <div class="metric"><div class="label">Всего узлов</div><div class="value">@total</div></div>
-                            <div class="metric"><div class="label">Покрыто ХК</div><div class="value">@covered</div></div>
-                            <div class="metric"><div class="label">Без ХК</div><div class="value">@pending</div></div>
-                            <div class="metric"><div class="label">ХК просрочена</div><div class="value">@expired</div></div>
-                            <div class="metric"><div class="label">ХК не вступила</div><div class="value">@future</div></div>
+                            <div class="metric"><div class="label">Всего агрегатов</div><div class="value">@total</div></div>
                         </div>
-
-                        @if (selectedComposition.Status == ProductCompositionStatus.OnReview || selectedComposition.Status == ProductCompositionStatus.Approved)
-                        {
-                            <div class="note">Контроль покрытия в режиме чтения.</div>
-                        }
-                        @if (selectedComposition.Status == ProductCompositionStatus.Draft && total > 0 && covered < total)
-                        {
-                            <div class="note" style="color:var(--warn)">
-                                Внимание: не для всех узлов есть действующая утверждённая ХК.
-                            </div>
-                        }
                     }
                 </div>
             </section>
@@ -341,28 +308,28 @@
     </div>
 </div>
 
-@if (replacingNodeId.HasValue)
+@if (replacingAggregateId.HasValue)
 {
-    <div class="modalOverlay" @onclick="CancelReplaceNode">
+    <div class="modalOverlay" @onclick="CancelReplaceAggregate">
         <div class="modal" @onclick:stopPropagation>
             <div class="modalHeader">
-                <h3>Замена узла</h3>
-                <button type="button" class="linkBtn" @onclick="CancelReplaceNode">✕</button>
+                <h3>Замена агрегата</h3>
+                <button type="button" class="linkBtn" @onclick="CancelReplaceAggregate">✕</button>
             </div>
             <div class="modalBody">
-                <div class="field"><label>Новый узел</label>
-                    <select @bind="replaceWithNodeId" class="field-select">
-                        <option value="">— Выберите узел —</option>
-                        @foreach (var n in nodes.OrderBy(n => n.Code))
+                <div class="field"><label>Новый агрегат</label>
+                    <select @bind="replaceWithAggregateId" class="field-select">
+                        <option value="">— Выберите агрегат —</option>
+                        @foreach (var a in aggregates.OrderBy(a => a.Code))
                         {
-                            <option value="@n.Id">@n.Code — @n.Name</option>
+                            <option value="@a.Id">@a.Code — @a.Name</option>
                         }
                     </select>
                 </div>
             </div>
             <div class="modalFooter">
-                <button type="button" class="btn ghost" @onclick="CancelReplaceNode">Отмена</button>
-                <button type="button" class="btn primary" disabled="@(replaceWithNodeId == Guid.Empty)" @onclick="ConfirmReplaceNode">Заменить</button>
+                <button type="button" class="btn ghost" @onclick="CancelReplaceAggregate">Отмена</button>
+                <button type="button" class="btn primary" disabled="@(replaceWithAggregateId == Guid.Empty)" @onclick="ConfirmReplaceAggregate">Заменить</button>
             </div>
         </div>
     </div>
@@ -370,7 +337,7 @@
 
 @code {
     private List<EquipmentModel> models = new();
-    private List<Node> nodes = new();
+    private List<Aggregate> aggregates = new();
     private List<ProductComposition> compositions = new();
     private ProductComposition? selectedComposition;
     private bool loading = true;
@@ -382,20 +349,20 @@
     private Guid selectedPartId;
     private string newPartName = "Основная часть";
     private int newPartSortOrder = 1;
-    private Guid newNodeId;
-    private int newNodeQty = 1;
+    private Guid newAggregateId;
+    private int newAggregateQty = 1;
 
     private string editComment = "";
     private DateTime? editEffectiveDate;
     private DateTime? editExpirationDate;
     private string reviewComment = "";
 
-    private Guid? editingNodeId;
-    private int editNodeQty;
+    private Guid? editingAggregateId;
+    private int editAggregateQty;
 
     private string nodeFilter = "";
-    private Guid? replacingNodeId;
-    private Guid replaceWithNodeId = Guid.Empty;
+    private Guid? replacingAggregateId;
+    private Guid replaceWithAggregateId = Guid.Empty;
 
     [Inject] private TimeProvider TimeProvider { get; set; } = null!;
     private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
@@ -411,7 +378,7 @@
     {
         loading = true;
         models = await EquipService.GetModelsAsync();
-        nodes = await EquipService.GetNodesAsync();
+        aggregates = await EquipService.GetAggregatesAsync();
         await LoadCompositions();
     }
 
@@ -439,7 +406,7 @@
             editEffectiveDate = selectedComposition.EffectiveDate;
             editExpirationDate = selectedComposition.ExpirationDate;
             selectedPartId = selectedComposition.Parts.OrderBy(p => p.SortOrder).FirstOrDefault()?.Id ?? Guid.Empty;
-            editingNodeId = null;
+            editingAggregateId = null;
         }
     }
 
@@ -507,40 +474,40 @@
         SelectComposition(selectedComposition.Id);
     }
 
-    async Task AddNode()
+    async Task AddAggregate()
     {
-        if (selectedComposition == null || newNodeId == Guid.Empty) return;
+        if (selectedComposition == null || newAggregateId == Guid.Empty) return;
         if (selectedPartId == Guid.Empty) return;
-        await EquipService.AddNodeAsync(new AddNodeRequest(selectedPartId, newNodeId, newNodeQty));
+        await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(selectedPartId, newAggregateId, newAggregateQty));
         await LoadCompositions();
         SelectComposition(selectedComposition.Id);
-        newNodeId = Guid.Empty;
-        newNodeQty = 1;
+        newAggregateId = Guid.Empty;
+        newAggregateQty = 1;
     }
 
-    void StartEditNodeQty(Guid nodeId, int qty)
+    void StartEditAggregateQty(Guid id, int qty)
     {
-        editingNodeId = nodeId;
-        editNodeQty = qty;
+        editingAggregateId = id;
+        editAggregateQty = qty;
     }
 
-    void CancelEditNode()
+    void CancelEditAggregate()
     {
-        editingNodeId = null;
+        editingAggregateId = null;
     }
 
-    async Task SaveNodeQuantity(Guid nodeId)
+    async Task SaveAggregateQuantity(Guid id)
     {
         if (!canEdit) return;
-        await EquipService.UpdateNodeQuantityAsync(new UpdateNodeQuantityRequest(nodeId, editNodeQty));
+        await EquipService.UpdateAggregateQuantityAsync(new UpdateProductCompositionAggregateRequest(id, editAggregateQty, 0, null));
         await LoadCompositions();
         SelectComposition(selectedComposition!.Id);
-        editingNodeId = null;
+        editingAggregateId = null;
     }
 
-    async Task RemoveNode(Guid nodeId)
+    async Task RemoveAggregate(Guid id)
     {
-        await EquipService.RemoveNodeAsync(nodeId);
+        await EquipService.RemoveAggregateAsync(id);
         if (selectedComposition != null)
         {
             await LoadCompositions();
@@ -548,68 +515,50 @@
         }
     }
 
-    void PromptReplaceNode(ProductCompositionNode pcn)
+    void PromptReplaceAggregate(ProductCompositionAggregate pca)
     {
-        replacingNodeId = pcn.Id;
-        replaceWithNodeId = Guid.Empty;
+        replacingAggregateId = pca.Id;
+        replaceWithAggregateId = Guid.Empty;
     }
 
-    void CancelReplaceNode()
+    void CancelReplaceAggregate()
     {
-        replacingNodeId = null;
-        replaceWithNodeId = Guid.Empty;
+        replacingAggregateId = null;
+        replaceWithAggregateId = Guid.Empty;
     }
 
-    async Task ConfirmReplaceNode()
+    async Task ConfirmReplaceAggregate()
     {
-        if (!replacingNodeId.HasValue || replaceWithNodeId == Guid.Empty || selectedComposition == null) return;
-        var oldNode = selectedComposition.Parts
-            .SelectMany(p => p.Nodes)
-            .FirstOrDefault(n => n.Id == replacingNodeId.Value);
-        if (oldNode == null) return;
+        if (!replacingAggregateId.HasValue || replaceWithAggregateId == Guid.Empty || selectedComposition == null) return;
+        var oldAggregate = selectedComposition.Parts
+            .SelectMany(p => p.Aggregates)
+            .FirstOrDefault(a => a.Id == replacingAggregateId.Value);
+        if (oldAggregate == null) return;
 
-        await EquipService.RemoveNodeAsync(replacingNodeId.Value);
-        await EquipService.AddNodeAsync(new AddNodeRequest(oldNode.PartId, replaceWithNodeId, oldNode.Quantity));
+        await EquipService.RemoveAggregateAsync(replacingAggregateId.Value);
+        await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(oldAggregate.PartId, replaceWithAggregateId, oldAggregate.Quantity));
         await LoadCompositions();
         SelectComposition(selectedComposition.Id);
-        replacingNodeId = null;
-        replaceWithNodeId = Guid.Empty;
+        replacingAggregateId = null;
+        replaceWithAggregateId = Guid.Empty;
     }
 
     async Task DeleteComposition(Guid id)
     {
         await EquipService.DeleteCompositionDraftAsync(id);
         compositions.RemoveAll(c => c.Id == id);
-        if (selectedComposition?.Id == id) { selectedComposition = null; selectedPartId = Guid.Empty; }
+        if (selectedComposition?.Id == id) { selectedComposition = null; selectedPartId = Guid.Empty; editingAggregateId = null; }
     }
 
     void OpenHK(Guid hkId) => Nav.NavigateTo($"/хк/{hkId}");
 
-    void CreateHKForNode(Guid nodeId) => Nav.NavigateTo($"/хк/создать?nodeId={nodeId}");
+    void CreateHKForAggregate(Guid aggregateId) => Nav.NavigateTo($"/хк/создать?aggregateId={aggregateId}");
 
-    // ── Coverage helpers ─────────────────────────────────────────────────
+    // ── Coverage helpers (TBD: re-enable when Aggregate → Node → HK chain is available) ──
 
-    private bool HasApprovedHK(Node? node)
-    {
-        return GetCoverageStatus(node) is var c && c.Tag == "ok";
-    }
+    private bool HasApprovedHK(Aggregate? _) => false;
 
-    private (string Tag, string Label) GetCoverageStatus(Node? node)
-    {
-        var hk = GetApprovedHK(node);
-        if (hk == null) return ("bad", "Нет ХК");
-        if (hk.EffectiveDate.HasValue && hk.EffectiveDate.Value > _now) return ("future", "Ожидает");
-        if (hk.ExpirationDate.HasValue && hk.ExpirationDate.Value < _now) return ("bad", "Просрочена");
-        return ("ok", "Покрыто");
-    }
-
-    private HKCard? GetApprovedHK(Node? node)
-    {
-        return node?.HKCards
-            ?.Where(h => h.Status == HKCardStatus.Approved)
-            .OrderByDescending(h => h.ApprovedDate ?? h.CreatedAt)
-            .FirstOrDefault();
-    }
+    private (string Tag, string Label) GetCoverageStatus(Aggregate? _) => ("bad", "Нет ХК");
 
     // ── Status helpers ───────────────────────────────────────────────────
 

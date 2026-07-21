@@ -10,6 +10,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
     public DbSet<Branch> Branches => Set<Branch>();
+    public DbSet<Complex> Complexes => Set<Complex>();
+    public DbSet<Aggregate> Aggregates => Set<Aggregate>();
     public DbSet<Node> Nodes => Set<Node>();
     public DbSet<AssemblyUnit> AssemblyUnits => Set<AssemblyUnit>();
     public DbSet<GsmMaterial> GsmMaterials => Set<GsmMaterial>();
@@ -17,7 +19,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<EquipmentInstance> EquipmentInstances => Set<EquipmentInstance>();
     public DbSet<ProductComposition> ProductCompositions => Set<ProductComposition>();
     public DbSet<ProductCompositionPart> ProductCompositionParts => Set<ProductCompositionPart>();
-    public DbSet<ProductCompositionNode> ProductCompositionNodes => Set<ProductCompositionNode>();
+    public DbSet<ProductCompositionAggregate> ProductCompositionAggregates => Set<ProductCompositionAggregate>();
+    public DbSet<AggregateComposition> AggregateCompositions => Set<AggregateComposition>();
+    public DbSet<AggregateCompositionNode> AggregateCompositionNodes => Set<AggregateCompositionNode>();
+    public DbSet<ComplexComposition> ComplexCompositions => Set<ComplexComposition>();
+    public DbSet<ComplexCompositionItem> ComplexCompositionItems => Set<ComplexCompositionItem>();
     public DbSet<HKCard> HKCards => Set<HKCard>();
     public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
     public DbSet<HKCardItemMaterial> HKCardItemMaterials => Set<HKCardItemMaterial>();
@@ -59,6 +65,26 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
             e.Property(x => x.Code).HasMaxLength(50);
+        });
+
+        modelBuilder.Entity<Complex>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.HasIndex(x => x.Code).IsUnique();
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<Aggregate>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.HasIndex(x => x.Code).IsUnique().HasFilter("\"IsDeleted\" = false");
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         modelBuilder.Entity<Node>(e =>
@@ -131,13 +157,55 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => new { x.ProductCompositionId, x.SortOrder });
         });
 
-        modelBuilder.Entity<ProductCompositionNode>(e =>
+        modelBuilder.Entity<ProductCompositionAggregate>(e =>
         {
             e.HasKey(x => x.Id);
-            e.HasOne(x => x.Part).WithMany(x => x.Nodes).HasForeignKey(x => x.PartId)
+            e.HasOne(x => x.Part).WithMany(x => x.Aggregates).HasForeignKey(x => x.PartId)
                 .OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.Node).WithMany(x => x.ProductCompositionNodes).HasForeignKey(x => x.NodeId);
-            e.HasIndex(x => new { x.PartId, x.NodeId }).IsUnique();
+            e.HasOne(x => x.Aggregate).WithMany(x => x.ProductCompositionAggregates).HasForeignKey(x => x.AggregateId);
+            e.HasIndex(x => new { x.PartId, x.AggregateId }).IsUnique();
+        });
+
+        modelBuilder.Entity<AggregateComposition>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Version).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Comment).HasMaxLength(2000);
+            e.HasOne(x => x.Aggregate).WithMany(x => x.AggregateCompositions).HasForeignKey(x => x.AggregateId);
+            e.HasIndex(x => new { x.AggregateId, x.Status });
+            e.HasIndex(x => new { x.Status, x.EffectiveDate });
+            e.HasIndex(x => new { x.AggregateId, x.IsActive });
+        });
+
+        modelBuilder.Entity<AggregateCompositionNode>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasOne(x => x.AggregateComposition).WithMany(x => x.Nodes).HasForeignKey(x => x.AggregateCompositionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Node).WithMany(x => x.AggregateCompositionNodes).HasForeignKey(x => x.NodeId);
+            e.HasIndex(x => new { x.AggregateCompositionId, x.NodeId }).IsUnique();
+        });
+
+        modelBuilder.Entity<ComplexComposition>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Version).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Comment).HasMaxLength(2000);
+            e.HasOne(x => x.Complex).WithMany(x => x.ComplexCompositions).HasForeignKey(x => x.ComplexId);
+            e.HasIndex(x => new { x.ComplexId, x.Status });
+            e.HasIndex(x => new { x.Status, x.EffectiveDate });
+            e.HasIndex(x => new { x.ComplexId, x.IsActive });
+        });
+
+        modelBuilder.Entity<ComplexCompositionItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasOne(x => x.ComplexComposition).WithMany(x => x.Items).HasForeignKey(x => x.ComplexCompositionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.EquipmentModel).WithMany(x => x.ComplexCompositionItems).HasForeignKey(x => x.EquipmentModelId);
+            e.HasIndex(x => new { x.ComplexCompositionId, x.EquipmentModelId }).IsUnique();
         });
 
         modelBuilder.Entity<HKCard>(e =>
