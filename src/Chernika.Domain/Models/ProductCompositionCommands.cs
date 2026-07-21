@@ -34,6 +34,12 @@ public record UpdateAggregateCompositionNodeRequest(Guid Id, int Quantity, int S
 
 public record ChangeAggregateCompositionStatusRequest(Guid CompositionId, ProductCompositionStatus NewStatus, string? Comment);
 
+// ── Complex commands ───────────────────────────────────────────
+
+public record CreateComplexRequest(string Code, string Name, string? Description);
+
+public record UpdateComplexRequest(Guid Id, string Code, string Name, string? Description);
+
 // ── Complex Composition commands ────────────────────────────────
 
 public record CreateComplexCompositionRequest(Guid ComplexId, string? Comment);

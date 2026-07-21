@@ -2,6 +2,8 @@
 @page "/хк/{Id:guid}"
 @attribute [Authorize(Policy = "ViewHK")]
 @implements IAsyncDisposable
+@using Chernika.Domain.Models
+@using Chernika.Domain.Enums
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject EquipmentService EquipmentService
@@ -20,30 +22,39 @@
                 <DataAnnotationsValidator />
                 <div class="form">
                     <div class="field"><label>Номер ХК</label><InputText @bind-Value="card.Code" readonly class="field" /></div>
-                    <div class="field"><label>Узел</label>
+                    <div class="field"><label>Уровень объекта</label>
+                        <div class="level-selector" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+                            @foreach (var lvl in new[] { HKObjectLevel.Complex, HKObjectLevel.EquipmentModel, HKObjectLevel.Aggregate, HKObjectLevel.Node })
+                            {
+                                var active = selectedLevel == lvl;
+                                <button type="button" class="btn @(active ? "primary" : "ghost")" @onclick="() => SelectLevel(lvl)" style="font-size:13px;padding:4px 12px">@LevelName(lvl)</button>
+                            }
+                        </div>
+                    </div>
+                    <div class="field"><label>@ObjectFieldLabel()</label>
                         @{
-                            var node = selectedNodeId != Guid.Empty ? nodes.FirstOrDefault(n => n.Id == selectedNodeId) : null;
-                            var modelDropId = "model-drop";
-                            var modelBtnId = "model-btn";
+                            var objectEntity = GetSelectedObject();
+                            var objDropId = "obj-drop";
+                            var objBtnId = "obj-btn";
                         }
                         @if (canEdit)
                         {
-                            <div id="@modelBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" @onclick="() => ToggleModelDropdown(modelDropId, modelBtnId)">
-                                <span style="flex:1">@(node != null ? $"{node.Code} — {node.Name}" : "Выбрать узел...")</span>
-                                @if (node != null)
+                            <div id="@objBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" @onclick="() => ToggleObjectDropdown(objDropId, objBtnId)">
+                                <span style="flex:1">@(objectEntity != null ? objectEntity : "Выбрать...")</span>
+                                @if (objectEntity != null)
                                 {
-                                    <button type="button" style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:16px;line-height:1;padding:0;flex-shrink:0" @onclick="ClearNode" @onclick:stopPropagation="true">×</button>
+                                    <button type="button" style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:16px;line-height:1;padding:0;flex-shrink:0" @onclick="ClearObject" @onclick:stopPropagation="true">×</button>
                                 }
                             </div>
-                            @if (_modelDropOpen)
+                            @if (_objectDropOpen)
                             {
-                                <div id="@modelDropId" class="gsm-dropdown">
-                                    <input class="gsm-dropdown-search" @bind="_modelSearch" @oninput="() => { }" placeholder="Поиск..." />
-                                    @foreach (var n in FilteredModels())
+                                <div id="@objDropId" class="gsm-dropdown">
+                                    <input class="gsm-dropdown-search" @bind="_objectSearch" @oninput="() => { }" placeholder="Поиск..." />
+                                    @foreach (var obj in GetFilteredObjects())
                                     {
-                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectNode(n)">@n.Code — @n.Name</div>
+                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectObject(obj)">@obj</div>
                                     }
-                                    @if (!FilteredModels().Any())
+                                    @if (!GetFilteredObjects().Any())
                                     {
                                         <div class="hki-search-empty">Нет совпадений</div>
                                     }
@@ -52,7 +63,7 @@
                         }
                         else
                         {
-                            <span class="field-select" style="cursor:default;display:block;opacity:.7">@(node != null ? $"{node.Code} — {node.Name}" : "")</span>
+                            <span class="field-select" style="cursor:default;display:block;opacity:.7">@(objectEntity ?? "")</span>
                         }
                         @if (!string.IsNullOrEmpty(_activeCardWarning) && _existingActiveCard != null)
                         {
@@ -93,6 +104,8 @@
                             ? new Dictionary<string, object> { ["min"] = card.EffectiveDate.Value.ToString("yyyy-MM-dd") }
                             : null)" /></div>
 
+                    @if (selectedLevel == HKObjectLevel.Node)
+                    {
                     <div class="full-width" style="margin-top:8px">
                         <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Строки ХК</h3>
 
@@ -282,6 +295,117 @@
                             <button type="button" class="btn" @onclick="AddItem" style="margin-top:4px">+ Добавить строку</button>
                         }
                     </div>
+                    }
+                    @if (selectedLevel != HKObjectLevel.Node && !IsNew)
+                    {
+                    <div class="full-width" style="margin-top:8px">
+                        <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Состав ХК</h3>
+
+                        <div style="margin-bottom:12px">
+                            <button type="button" class="btn" @onclick="ToggleAddChild">+ Добавить дочернюю ХК</button>
+                        </div>
+
+                        @if (_addChildOpen)
+                        {
+                            <div style="margin-bottom:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)">
+                                <div style="display:flex;gap:8px;align-items:center">
+                                    <input @bind="_addChildSearch" placeholder="Поиск по коду или объекту..." style="flex:1;padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px" />
+                                    <button type="button" class="btn primary" @onclick="ConfirmAddChild" disabled="@(string.IsNullOrWhiteSpace(_addChildSearch))">Добавить</button>
+                                    <button type="button" class="btn ghost" @onclick="ToggleAddChild">Отмена</button>
+                                </div>
+                                @if (_availableChildCards.Any())
+                                {
+                                    <div style="margin-top:8px;max-height:200px;overflow-y:auto">
+                                        @foreach (var child in _availableChildCards)
+                                        {
+                                            <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectAvailableChild(child)" style="padding:6px 10px">
+                                                <span class="mono">@child.Code</span> — @child.ObjectName (@LevelName(child.ObjectLevel))
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(_addChildSearch))
+                                {
+                                    <div class="note" style="margin-top:8px;font-size:12px">Нет доступных утверждённых ХК</div>
+                                }
+                            </div>
+                        }
+
+                        @if (_components.Count == 0)
+                        {
+                            <div class="note">Состав пуст. Добавьте утверждённые дочерние ХК.</div>
+                        }
+                        else
+                        {
+                            <table class="hk-items-table" style="margin-bottom:12px">
+                                <thead>
+                                    <tr>
+                                        <th style="width:40px">№</th>
+                                        <th>ХК-источник</th>
+                                        <th>Версия</th>
+                                        <th>Объект</th>
+                                        <th>Утверждена</th>
+                                        <th class="col-actions" style="width:60px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{ var compIdx = 0; }
+                                    @foreach (var comp in _components.OrderBy(c => c.SortOrder))
+                                    {
+                                        compIdx++;
+                                        <tr>
+                                            <td>@compIdx</td>
+                                            <td class="mono">@comp.ChildCode</td>
+                                            <td>@comp.ChildVersion</td>
+                                            <td>@comp.ChildObjectName</td>
+                                            <td>@comp.ChildApprovedAt?.ToString("dd.MM.yyyy")</td>
+                                            <td class="hki-actions col-actions">
+                                                @if (canEdit)
+                                                {
+                                                    <button type="button" class="linkBtn" @onclick="() => RemoveComponent(comp.Id)" style="color:var(--bad)" title="Удалить">🗑</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+
+                        <h4 style="font-size:13px;font-weight:600;margin:12px 0 8px">Агрегированные строки</h4>
+                        @if (_aggregatedRows.Count == 0)
+                        {
+                            <div class="note">Нет данных</div>
+                        }
+                        else
+                        {
+                            <table class="hk-items-table">
+                                <thead>
+                                    <tr>
+                                        <th>ХК-источник</th>
+                                        <th>Сборочная единица</th>
+                                        <th>Масса/объём</th>
+                                        <th>Ед.изм.</th>
+                                        <th>Марка ГСМ</th>
+                                        <th>Категория</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in _aggregatedRows)
+                                    {
+                                        <tr>
+                                            <td class="mono">@row.SourceCardCode</td>
+                                            <td>@row.AssemblyUnitName</td>
+                                            <td>@row.Volume.ToString("F3")</td>
+                                            <td>@(row.UnitOfMeasure ?? "кг")</td>
+                                            <td>@row.GsmMaterialName</td>
+                                            <td>@row.Category</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                    }
 
                     <div class="formActions">
                         <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
@@ -340,7 +464,14 @@
     };
 
     private string statusStr = "Draft";
+    private HKObjectLevel selectedLevel = HKObjectLevel.Node;
+    private Guid selectedComplexId;
+    private Guid selectedModelId;
+    private Guid selectedAggregateId;
     private Guid selectedNodeId;
+    private List<Complex> complexes = new();
+    private List<EquipmentModel> models = new();
+    private List<Aggregate> aggregates = new();
     private List<Node> nodes = new();
     private List<AssemblyUnit> assemblyUnits = new();
     private string? _activeCardWarning;
@@ -365,11 +496,18 @@
     private Dictionary<(Guid, GsmCategory), string> _matSearch = new();
     private string? _activeDropdownId;
     private bool _disposed;
-    private DotNetObjectReference<HKEdit> _dotNetRef = null!; // created in OnInitialized
+    private DotNetObjectReference<HKEdit> _dotNetRef = null!;
 
-    private bool _modelDropOpen;
-    private string _modelSearch = "";
+    private bool _objectDropOpen;
+    private string _objectSearch = "";
     private Guid? _loadedCardId;
+
+    private List<HKCardComponentDto> _components = new();
+    private List<AggregatedRowDto> _aggregatedRows = new();
+    private bool _addChildOpen;
+    private string _addChildSearch = "";
+    private List<HKCardListItemDto> _availableChildCards = new();
+    private Guid? _pendingChildId;
 
     protected override void OnInitialized()
     {
@@ -401,28 +539,22 @@
         canArchive = user.IsInRole("NormAdmin");
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
 
+        complexes = await EquipmentService.GetComplexesAsync();
+        models = await EquipmentService.GetModelsAsync();
+        aggregates = await EquipmentService.GetAggregatesAsync();
         nodes = await EquipmentService.GetNodesAsync();
         assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
         gsmMaterials = await EquipmentService.GetGsmMaterialsAsync();
 
         if (NodeId.HasValue && NodeId.Value != Guid.Empty)
-            selectedNodeId = NodeId.Value;
-        else if (IsNew)
-            selectedNodeId = Guid.Empty;
-        else if (selectedNodeId == Guid.Empty && nodes.Any())
-            selectedNodeId = nodes[0].Id;
-
-        if (IsNew && selectedNodeId != Guid.Empty)
         {
-            card.Code = await HKCardService.GenerateCodeAsync(selectedNodeId);
-            _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(selectedNodeId);
-            if (_existingActiveCard != null)
-            {
-                var n = nodes.FirstOrDefault(x => x.Id == selectedNodeId);
-                _activeCardWarning = n != null
-                    ? $"Для узла «{n.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
-                    : $"Для выбранного узла уже есть активная ХК «{_existingActiveCard.Code}».";
-            }
+            selectedLevel = HKObjectLevel.Node;
+            selectedNodeId = NodeId.Value;
+        }
+        else if (IsNew)
+        {
+            selectedLevel = HKObjectLevel.Node;
+            selectedNodeId = Guid.Empty;
         }
 
         if (!IsNew && Id.HasValue)
@@ -434,7 +566,7 @@
         {
             canEdit = isOperator && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
 
-            if (!card.Items.Any())
+            if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
             {
                 card.Items.Add(new HKCardItem
                 {
@@ -467,14 +599,18 @@
         if (existing == null) return;
 
         card = existing;
-        selectedNodeId = card.NodeId;
+        selectedLevel = card.ObjectLevel;
+        selectedComplexId = card.ComplexId ?? Guid.Empty;
+        selectedModelId = card.EquipmentModelId ?? Guid.Empty;
+        selectedAggregateId = card.AggregateId ?? Guid.Empty;
+        selectedNodeId = card.NodeId ?? Guid.Empty;
         statusStr = card.Status.ToString();
 
         var authState = await AuthState.GetAuthenticationStateAsync();
         var isOperator = authState.User.IsInRole("Operator");
         canEdit = isOperator && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
 
-        if (!card.Items.Any())
+        if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
         {
             card.Items.Add(new HKCardItem
             {
@@ -489,6 +625,12 @@
         }
 
         InitItemDicts();
+
+        if (selectedLevel != HKObjectLevel.Node)
+        {
+            _components = await HKCardService.GetComponentsAsync(cardId);
+            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(cardId);
+        }
     }
 
     private async Task CloseActiveDropdownAsync()
@@ -498,7 +640,7 @@
             await JS.InvokeVoidAsync("dropdownPortal.detach", _activeDropdownId);
             _activeDropdownId = null;
         }
-        _modelDropOpen = false;
+        _objectDropOpen = false;
         foreach (var key in _matOpen.Keys.ToList())
             _matOpen[key] = false;
         foreach (var key in _auOpen.Keys.ToList())
@@ -622,7 +764,11 @@
 
         errorMessage = null;
 
-        card.NodeId = selectedNodeId;
+        card.ObjectLevel = selectedLevel;
+        card.ComplexId = selectedLevel == HKObjectLevel.Complex ? selectedComplexId : null;
+        card.EquipmentModelId = selectedLevel == HKObjectLevel.EquipmentModel ? selectedModelId : null;
+        card.AggregateId = selectedLevel == HKObjectLevel.Aggregate ? selectedAggregateId : null;
+        card.NodeId = selectedLevel == HKObjectLevel.Node ? selectedNodeId : null;
         card.Status = IsNew ? HKCardStatus.Draft : card.Status;
 
         if (string.IsNullOrWhiteSpace(card.Code))
@@ -630,9 +776,18 @@
             errorMessage = "Поле «Номер ХК» обязательно для заполнения.";
             return;
         }
-        if (selectedNodeId == Guid.Empty)
+
+        var hasObject = selectedLevel switch
         {
-                errorMessage = "Необходимо выбрать узел.";
+            HKObjectLevel.Complex => selectedComplexId != Guid.Empty,
+            HKObjectLevel.EquipmentModel => selectedModelId != Guid.Empty,
+            HKObjectLevel.Aggregate => selectedAggregateId != Guid.Empty,
+            HKObjectLevel.Node => selectedNodeId != Guid.Empty,
+            _ => false
+        };
+        if (!hasObject)
+        {
+            errorMessage = "Необходимо выбрать объект нормирования.";
             return;
         }
         if (string.IsNullOrWhiteSpace(card.Version))
@@ -657,16 +812,23 @@
             card.BranchId = branch?.Id ?? Guid.Empty;
         }
 
-        foreach (var item in card.Items)
+        if (selectedLevel == HKObjectLevel.Node)
         {
-            if (string.IsNullOrEmpty(item.UnitOfMeasure)) item.UnitOfMeasure = "кг";
-        }
+            foreach (var item in card.Items)
+            {
+                if (string.IsNullOrEmpty(item.UnitOfMeasure)) item.UnitOfMeasure = "кг";
+            }
 
-        var emptyAu = card.Items.FirstOrDefault(i => i.AssemblyUnitId == Guid.Empty);
-        if (emptyAu != null)
-        {
-            errorMessage = "Укажите сборочную единицу во всех строках таблицы.";
-            return;
+            var emptyAu = card.Items.FirstOrDefault(i => i.AssemblyUnitId == Guid.Empty);
+            if (emptyAu != null)
+            {
+                errorMessage = "Укажите сборочную единицу во всех строках таблицы.";
+                return;
+            }
+
+            var order = 1;
+            foreach (var item in card.Items)
+                item.SortOrder = order++;
         }
 
         if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
@@ -675,11 +837,6 @@
             errorMessage = "Дата окончания действия не может быть раньше даты начала действия.";
             return;
         }
-
-        // renumber sort order based on current list position
-        var order = 1;
-        foreach (var item in card.Items)
-            item.SortOrder = order++;
 
         try
         {
@@ -801,9 +958,9 @@
         item.Materials.Remove(mat);
     }
 
-    private async Task ToggleModelDropdown(string dropId, string btnId)
+    private async Task ToggleObjectDropdown(string dropId, string btnId)
     {
-        if (_modelDropOpen)
+        if (_objectDropOpen)
         {
             await CloseActiveDropdownAsync();
             StateHasChanged();
@@ -811,8 +968,8 @@
         else
         {
             await CloseActiveDropdownAsync();
-            _modelDropOpen = true;
-            _modelSearch = "";
+            _objectDropOpen = true;
+            _objectSearch = "";
             _activeDropdownId = dropId;
             StateHasChanged();
             await Task.Delay(50);
@@ -822,39 +979,186 @@
         }
     }
 
-    private async Task SelectNode(Node node)
+    private async Task SelectObject(string display)
     {
-        selectedNodeId = node.Id;
-        card.NodeId = node.Id;
-        _modelSearch = $"{node.Code} — {node.Name}";
-        await CloseActiveDropdownAsync();
-        if (IsNew)
+        switch (selectedLevel)
         {
-            card.Code = await HKCardService.GenerateCodeAsync(node.Id);
-            _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(node.Id);
+            case HKObjectLevel.Complex:
+                var c = complexes.FirstOrDefault(x => $"{x.Code} — {x.Name}" == display);
+                if (c != null) { selectedComplexId = c.Id; card.ComplexId = c.Id; }
+                break;
+            case HKObjectLevel.EquipmentModel:
+                var m = models.FirstOrDefault(x => $"{x.Index} — {x.Name}" == display);
+                if (m != null) { selectedModelId = m.Id; card.EquipmentModelId = m.Id; }
+                break;
+            case HKObjectLevel.Aggregate:
+                var a = aggregates.FirstOrDefault(x => $"{x.Code} — {x.Name}" == display);
+                if (a != null) { selectedAggregateId = a.Id; card.AggregateId = a.Id; }
+                break;
+            case HKObjectLevel.Node:
+                var n = nodes.FirstOrDefault(x => $"{x.Code} — {x.Name}" == display);
+                if (n != null) { selectedNodeId = n.Id; card.NodeId = n.Id; }
+                break;
+        }
+        _objectSearch = display;
+        await CloseActiveDropdownAsync();
+        if (IsNew && selectedLevel == HKObjectLevel.Node && selectedNodeId != Guid.Empty)
+        {
+            card.Code = await HKCardService.GenerateCodeForNodeAsync(selectedNodeId);
+            _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(selectedNodeId);
             _activeCardWarning = _existingActiveCard != null
-                ? $"Для узла «{node.Code}» уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
+                ? $"Для узла уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
                 : null;
         }
         StateHasChanged();
     }
 
-    private void ClearNode()
+    private void ClearObject()
     {
+        selectedComplexId = Guid.Empty;
+        selectedModelId = Guid.Empty;
+        selectedAggregateId = Guid.Empty;
         selectedNodeId = Guid.Empty;
-        card.NodeId = Guid.Empty;
-        _modelSearch = "";
+        card.ComplexId = null;
+        card.EquipmentModelId = null;
+        card.AggregateId = null;
+        card.NodeId = null;
+        _objectSearch = "";
         _activeCardWarning = null;
         _existingActiveCard = null;
         _ = CloseActiveDropdownAsync();
         StateHasChanged();
     }
 
-    private IEnumerable<Node> FilteredModels()
+    private IEnumerable<string> GetFilteredObjects()
     {
-        var search = _modelSearch?.Trim().ToLower() ?? "";
-        if (string.IsNullOrEmpty(search)) return nodes;
-        return nodes.Where(n => (n.Code?.ToLower().Contains(search) ?? false) || (n.Name?.ToLower().Contains(search) ?? false));
+        var search = _objectSearch?.Trim().ToLower() ?? "";
+        IEnumerable<string> items = selectedLevel switch
+        {
+            HKObjectLevel.Complex => complexes.Select(x => $"{x.Code} — {x.Name}"),
+            HKObjectLevel.EquipmentModel => models.Select(x => $"{x.Index} — {x.Name}"),
+            HKObjectLevel.Aggregate => aggregates.Select(x => $"{x.Code} — {x.Name}"),
+            HKObjectLevel.Node => nodes.Select(x => $"{x.Code} — {x.Name}"),
+            _ => Enumerable.Empty<string>()
+        };
+        if (string.IsNullOrEmpty(search)) return items;
+        return items.Where(x => x.ToLower().Contains(search));
+    }
+
+    private string? GetSelectedObject()
+    {
+        return selectedLevel switch
+        {
+            HKObjectLevel.Complex => complexes.FirstOrDefault(x => x.Id == selectedComplexId) is { } c ? $"{c.Code} — {c.Name}" : null,
+            HKObjectLevel.EquipmentModel => models.FirstOrDefault(x => x.Id == selectedModelId) is { } m ? $"{m.Index} — {m.Name}" : null,
+            HKObjectLevel.Aggregate => aggregates.FirstOrDefault(x => x.Id == selectedAggregateId) is { } a ? $"{a.Code} — {a.Name}" : null,
+            HKObjectLevel.Node => nodes.FirstOrDefault(x => x.Id == selectedNodeId) is { } n ? $"{n.Code} — {n.Name}" : null,
+            _ => null
+        };
+    }
+
+    private void SelectLevel(HKObjectLevel level)
+    {
+        selectedLevel = level;
+        ClearObject();
+        if (IsNew)
+        {
+            card.ObjectLevel = level;
+            card.Items.Clear();
+            _focusItemId = null;
+            if (level == HKObjectLevel.Node)
+            {
+                card.Items.Add(new HKCardItem
+                {
+                    Id = Guid.NewGuid(),
+                    HKCardId = card.Id,
+                    AssemblyUnitId = Guid.Empty,
+                    Quantity = 1,
+                    Volume = 1.000m,
+                    UnitOfMeasure = "кг",
+                    SortOrder = 1
+                });
+                InitItemDicts();
+            }
+        }
+    }
+
+    private string ObjectFieldLabel() => selectedLevel switch
+    {
+        HKObjectLevel.Complex => "Комплекс",
+        HKObjectLevel.EquipmentModel => "Изделие",
+        HKObjectLevel.Aggregate => "Агрегат",
+        HKObjectLevel.Node => "Узел",
+        _ => "Объект"
+    };
+
+    private static string LevelName(HKObjectLevel level) => level switch
+    {
+        HKObjectLevel.Complex => "Комплекс",
+        HKObjectLevel.EquipmentModel => "Изделие",
+        HKObjectLevel.Aggregate => "Агрегат",
+        HKObjectLevel.Node => "Узел",
+        _ => "—"
+    };
+
+    // ---- composition methods ----
+
+    private async Task ToggleAddChild()
+    {
+        _addChildOpen = !_addChildOpen;
+        if (_addChildOpen)
+        {
+            _addChildSearch = "";
+            _availableChildCards = new();
+            _pendingChildId = null;
+            var paged = await HKCardService.GetFilteredAsync();
+            var allCards = paged.Items;
+            var existingChildIds = _components.Select(c => c.ChildHKCardId).ToHashSet();
+            existingChildIds.Add(card.Id);
+            _availableChildCards = allCards
+                .Where(c => c.Status == HKCardStatus.Approved && !existingChildIds.Contains(c.Id))
+                .OrderBy(c => c.Code)
+                .ToList();
+        }
+    }
+
+    private async Task SelectAvailableChild(HKCardListItemDto child)
+    {
+        _addChildSearch = $"{child.Code} — {child.ObjectName}";
+        _pendingChildId = child.Id;
+        await CloseActiveDropdownAsync();
+    }
+
+    private async Task ConfirmAddChild()
+    {
+        if (_pendingChildId == null || _pendingChildId.Value == Guid.Empty) return;
+        try
+        {
+            await HKCardService.AddComponentAsync(card.Id, _pendingChildId.Value);
+            _components = await HKCardService.GetComponentsAsync(card.Id);
+            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+            _addChildOpen = false;
+            _addChildSearch = "";
+            _pendingChildId = null;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private async Task RemoveComponent(Guid componentId)
+    {
+        try
+        {
+            await HKCardService.RemoveComponentAsync(componentId);
+            _components = await HKCardService.GetComponentsAsync(card.Id);
+            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
     }
 
     private IEnumerable<GsmMaterial> FilteredGsmMaterials(GsmCategory cat, HKCardItem item)

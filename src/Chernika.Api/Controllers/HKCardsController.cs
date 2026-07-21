@@ -117,6 +117,70 @@ public class HKCardsController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("{id}/components")]
+    public async Task<ActionResult<List<HKCardComponentDto>>> GetComponents(Guid id)
+    {
+        var components = await _hkCards.GetComponentsAsync(id);
+        return Ok(components);
+    }
+
+    [HttpGet("{id}/parent-components")]
+    public async Task<ActionResult<List<HKCardComponentDto>>> GetParentComponents(Guid id)
+    {
+        var components = await _hkCards.GetParentComponentsAsync(id);
+        return Ok(components);
+    }
+
+    [HttpGet("{id}/aggregated-rows")]
+    public async Task<ActionResult<List<AggregatedRowDto>>> GetAggregatedRows(Guid id)
+    {
+        try
+        {
+            var rows = await _hkCards.GetAggregatedRowsAsync(id);
+            return Ok(rows);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    [HttpPost("{id}/components")]
+    public async Task<ActionResult> AddComponent(Guid id, [FromBody] AddComponentRequest request)
+    {
+        try
+        {
+            await _hkCards.AddComponentAsync(id, request.ChildCardId);
+            return NoContent();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
+    [HttpDelete("components/{componentId}")]
+    public async Task<ActionResult> RemoveComponent(Guid componentId)
+    {
+        try
+        {
+            await _hkCards.RemoveComponentAsync(componentId);
+            return NoContent();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
     [HttpDelete("{id}")]
     [Authorize(Policy = "DeleteHK")]
     public async Task<ActionResult> Delete(Guid id)

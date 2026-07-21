@@ -11,4 +11,5 @@ public class Complex
     public DateTime? DeletedAt { get; set; }
 
     public ICollection<ComplexComposition> ComplexCompositions { get; set; } = new List<ComplexComposition>();
+    public ICollection<HKCard> HKCards { get; set; } = new List<HKCard>();
 }

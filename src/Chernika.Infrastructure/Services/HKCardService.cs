@@ -67,6 +67,9 @@ public class HKCardService
         var query = _db.HKCards.AsNoTracking()
             .Include(x => x.Branch)
             .Include(x => x.Node)
+            .Include(x => x.Aggregate)
+            .Include(x => x.EquipmentModel)
+            .Include(x => x.Complex)
             .AsQueryable();
         if (safeBranchId.HasValue)
             query = query.Where(x => x.BranchId == safeBranchId.Value);
@@ -99,10 +102,17 @@ public class HKCardService
                 Code = x.Code,
                 Version = x.Version,
                 Status = x.Status,
+                ObjectLevel = x.ObjectLevel,
                 BranchId = x.BranchId,
                 BranchName = x.Branch.Name,
-                NodeCode = x.Node.Code,
-                NodeName = x.Node.Name,
+                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
+                    : x.Complex!.Code,
+                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
+                    : x.Complex!.Name,
                 CreatedAt = x.CreatedAt,
                 ApprovedDate = x.ApprovedDate
             })
@@ -121,6 +131,7 @@ public class HKCardService
         string? code = null,
         HKCardStatus? status = null,
         string? version = null,
+        HKObjectLevel? objectLevel = null,
         string? nodeSearch = null,
         Guid? branchId = null,
         int page = 1,
@@ -138,6 +149,8 @@ public class HKCardService
             query = query.Where(x => x.BranchId == safeBranchId.Value);
         if (status.HasValue)
             query = query.Where(x => x.Status == status.Value);
+        if (objectLevel.HasValue)
+            query = query.Where(x => x.ObjectLevel == objectLevel.Value);
         if (!string.IsNullOrWhiteSpace(code))
             query = query.Where(x => EF.Functions.ILike(x.Code, $"%{code.Trim()}%"));
         if (!string.IsNullOrWhiteSpace(version))
@@ -146,8 +159,9 @@ public class HKCardService
         {
             var term = $"%{nodeSearch.Trim()}%";
             query = query.Where(x =>
-                EF.Functions.ILike(x.Node.Name, term) ||
-                EF.Functions.ILike(x.Node.Code, term));
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (
+                    EF.Functions.ILike(x.Node!.Name, term) ||
+                    EF.Functions.ILike(x.Node!.Code, term)));
         }
 
         var total = await query.CountAsync(ct);
@@ -161,10 +175,17 @@ public class HKCardService
                 Code = x.Code,
                 Version = x.Version,
                 Status = x.Status,
+                ObjectLevel = x.ObjectLevel,
                 BranchId = x.BranchId,
                 BranchName = x.Branch.Name,
-                NodeCode = x.Node.Code,
-                NodeName = x.Node.Name,
+                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
+                    : x.Complex!.Code,
+                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
+                    : x.Complex!.Name,
                 CreatedAt = x.CreatedAt,
                 ApprovedDate = x.ApprovedDate
             })
@@ -200,10 +221,17 @@ public class HKCardService
                 Code = x.Code,
                 Version = x.Version,
                 Status = x.Status,
+                ObjectLevel = x.ObjectLevel,
                 BranchId = x.BranchId,
                 BranchName = x.Branch.Name,
-                NodeCode = x.Node.Code,
-                NodeName = x.Node.Name,
+                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
+                    : x.Complex!.Code,
+                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
+                    : x.Complex!.Name,
                 CreatedAt = x.CreatedAt,
                 ApprovedDate = x.ApprovedDate
             })
@@ -230,10 +258,284 @@ public class HKCardService
             .AsSplitQuery()
             .Include(x => x.Branch)
             .Include(x => x.Node)
+            .Include(x => x.Aggregate)
+            .Include(x => x.EquipmentModel)
+            .Include(x => x.Complex)
             .Include(x => x.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.AssemblyUnit)
             .Include(x => x.Items).ThenInclude(i => i.Materials).ThenInclude(m => m.GsmMaterial)
             .Include(x => x.StatusLog.OrderByDescending(s => s.ChangedAt))
             .FirstOrDefaultAsync(x => x.Id == id, ct);
+    }
+
+    public async Task<HKCardComponent> AddComponentAsync(Guid parentCardId, Guid childCardId, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        var parent = await _db.HKCards.FirstOrDefaultAsync(x => x.Id == parentCardId, ct)
+            ?? throw new ArgumentException("Родительская ХК не найдена.");
+        var child = await _db.HKCards.FirstOrDefaultAsync(x => x.Id == childCardId, ct)
+            ?? throw new ArgumentException("Дочерняя ХК не найдена.");
+
+        if (parent.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+            throw new InvalidOperationException("Родительская ХК должна быть в статусе «Черновик» или «На доработке».");
+
+        if (child.Status != HKCardStatus.Approved)
+            throw new InvalidOperationException("Дочерняя ХК должна быть утверждена.");
+
+        var now = DateTime.UtcNow;
+        if (child.EffectiveDate.HasValue && child.EffectiveDate.Value > now)
+            throw new InvalidOperationException("Дочерняя ХК ещё не вступила в силу.");
+        if (child.ExpirationDate.HasValue && child.ExpirationDate.Value < now)
+            throw new InvalidOperationException("Срок действия дочерней ХК истёк.");
+
+        var levelError = ValidateLevelChain(parent.ObjectLevel, child.ObjectLevel);
+        if (levelError != null)
+            throw new InvalidOperationException(levelError);
+
+        var compositionError = await ValidateCompositionLinkAsync(parent, child, ct);
+        if (compositionError != null)
+            throw new InvalidOperationException(compositionError);
+
+        var hasCycle = await DetectCycleAsync(parentCardId, childCardId, ct);
+        if (hasCycle)
+            throw new InvalidOperationException("Обнаружен циклический состав: дочерняя ХК прямо или косвенно ссылается на родительскую.");
+
+        var existingComponent = await _db.HKCardComponents
+            .AnyAsync(x => x.ParentHKCardId == parentCardId && x.ChildHKCardId == childCardId, ct);
+        if (existingComponent)
+            throw new InvalidOperationException("Эта дочерняя ХК уже включена в состав родительской.");
+
+        var maxOrder = await _db.HKCardComponents
+            .Where(x => x.ParentHKCardId == parentCardId)
+            .MaxAsync(x => (int?)x.SortOrder, ct) ?? 0;
+
+        var component = new HKCardComponent
+        {
+            Id = Guid.NewGuid(),
+            ParentHKCardId = parentCardId,
+            ChildHKCardId = childCardId,
+            SortOrder = maxOrder + 1,
+            AddedAt = now,
+            AddedByUserId = actorId.ToString(),
+            ChildCode = child.Code,
+            ChildVersion = child.Version,
+            ChildApprovedAt = child.ApprovedDate
+        };
+
+        _db.HKCardComponents.Add(component);
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCardComponent",
+            EntityId = component.Id.ToString(),
+            Action = "Added",
+            UserId = actorId,
+            CreatedAt = now,
+            Details = $"Parent: {parent.Code} ({parent.Id}), Child: {child.Code} ({child.Id})"
+        });
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex)
+            when (ex.InnerException is PostgresException pg && pg.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            throw new InvalidOperationException("Эта дочерняя ХК уже включена в состав родительской.");
+        }
+
+        return component;
+    }
+
+    public async Task RemoveComponentAsync(Guid componentId, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var component = await _db.HKCardComponents
+            .Include(x => x.ParentHKCard)
+            .FirstOrDefaultAsync(x => x.Id == componentId, ct)
+            ?? throw new ArgumentException("Компонент не найден.");
+
+        if (component.ParentHKCard.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+            throw new InvalidOperationException("Нельзя изменить состав утверждённой или отправленной на проверку ХК.");
+
+        _db.HKCardComponents.Remove(component);
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCardComponent",
+            EntityId = componentId.ToString(),
+            Action = "Removed",
+            UserId = actorId,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<List<HKCardComponentDto>> GetComponentsAsync(Guid cardId, CancellationToken ct = default)
+    {
+        return await _db.HKCardComponents
+            .AsNoTracking()
+            .Where(x => x.ParentHKCardId == cardId)
+            .OrderBy(x => x.SortOrder)
+            .Select(x => new HKCardComponentDto
+            {
+                Id = x.Id,
+                ParentHKCardId = x.ParentHKCardId,
+                ChildHKCardId = x.ChildHKCardId,
+                SortOrder = x.SortOrder,
+                AddedAt = x.AddedAt,
+                ChildCode = x.ChildCode,
+                ChildVersion = x.ChildVersion,
+                ChildApprovedAt = x.ChildApprovedAt,
+                ChildObjectName = x.ChildHKCard.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.ChildHKCard.Node!.Name
+                    : x.ChildHKCard.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.ChildHKCard.Aggregate!.Name
+                    : x.ChildHKCard.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.ChildHKCard.EquipmentModel!.Name
+                    : x.ChildHKCard.Complex!.Name
+            })
+            .ToListAsync(ct);
+    }
+
+    public async Task<List<HKCardComponentDto>> GetParentComponentsAsync(Guid cardId, CancellationToken ct = default)
+    {
+        return await _db.HKCardComponents
+            .AsNoTracking()
+            .Where(x => x.ChildHKCardId == cardId)
+            .OrderBy(x => x.SortOrder)
+            .Select(x => new HKCardComponentDto
+            {
+                Id = x.Id,
+                ParentHKCardId = x.ParentHKCardId,
+                ChildHKCardId = x.ChildHKCardId,
+                SortOrder = x.SortOrder,
+                AddedAt = x.AddedAt,
+                ChildCode = x.ChildCode,
+                ChildVersion = x.ChildVersion,
+                ChildApprovedAt = x.ChildApprovedAt,
+                ChildObjectName = x.ChildHKCard.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.ChildHKCard.Node!.Name
+                    : x.ChildHKCard.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.ChildHKCard.Aggregate!.Name
+                    : x.ChildHKCard.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.ChildHKCard.EquipmentModel!.Name
+                    : x.ChildHKCard.Complex!.Name
+            })
+            .ToListAsync(ct);
+    }
+
+    public async Task<List<AggregatedRowDto>> GetAggregatedRowsAsync(Guid cardId, CancellationToken ct = default)
+    {
+        var card = await _db.HKCards.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == cardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+
+        if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node)
+            return new List<AggregatedRowDto>();
+
+        var childCardIds = await _db.HKCardComponents
+            .Where(x => x.ParentHKCardId == cardId)
+            .Select(x => x.ChildHKCardId)
+            .ToListAsync(ct);
+
+        if (childCardIds.Count == 0)
+            return new List<AggregatedRowDto>();
+
+        return await _db.HKCardItems
+            .AsNoTracking()
+            .Where(i => childCardIds.Contains(i.HKCardId))
+            .OrderBy(i => i.SortOrder)
+            .SelectMany(i => i.Materials, (i, m) => new AggregatedRowDto
+            {
+                SourceCardCode = i.HKCard.Code,
+                SourceCardVersion = i.HKCard.Version,
+                SourceCardId = i.HKCardId,
+                AssemblyUnitName = i.AssemblyUnit!.Name,
+                Volume = i.Volume,
+                UnitOfMeasure = i.UnitOfMeasure,
+                GsmMaterialName = m.GsmMaterial.Name,
+                Gost = m.GsmMaterial.Gost,
+                Category = m.Category.ToString()
+            })
+            .ToListAsync(ct);
+    }
+
+    private static string? ValidateLevelChain(HKObjectLevel parentLevel, HKObjectLevel childLevel)
+    {
+        var allowed = (parentLevel, childLevel) switch
+        {
+            (Domain.Enums.HKObjectLevel.Complex, Domain.Enums.HKObjectLevel.EquipmentModel) => true,
+            (Domain.Enums.HKObjectLevel.EquipmentModel, Domain.Enums.HKObjectLevel.Aggregate) => true,
+            (Domain.Enums.HKObjectLevel.Aggregate, Domain.Enums.HKObjectLevel.Node) => true,
+            _ => false
+        };
+        return allowed ? null
+            : $"Недопустимый уровень: ХК «{parentLevel}» может включать только ХК «{childLevel}».";
+    }
+
+    private async Task<string?> ValidateCompositionLinkAsync(HKCard parent, HKCard child, CancellationToken ct = default)
+    {
+        return (parent.ObjectLevel, child.ObjectLevel) switch
+        {
+            (Domain.Enums.HKObjectLevel.Aggregate, Domain.Enums.HKObjectLevel.Node) =>
+                await ValidateNodeInAggregateCompositionAsync(parent.AggregateId!.Value, child.NodeId!.Value, ct),
+            (Domain.Enums.HKObjectLevel.EquipmentModel, Domain.Enums.HKObjectLevel.Aggregate) =>
+                await ValidateAggregateInProductCompositionAsync(parent.EquipmentModelId!.Value, child.AggregateId!.Value, ct),
+            (Domain.Enums.HKObjectLevel.Complex, Domain.Enums.HKObjectLevel.EquipmentModel) =>
+                await ValidateEquipmentModelInComplexCompositionAsync(parent.ComplexId!.Value, child.EquipmentModelId!.Value, ct),
+            _ => "Не удалось проверить принадлежность объекта дочерней ХК конструктивному составу."
+        };
+    }
+
+    private async Task<string?> ValidateNodeInAggregateCompositionAsync(Guid aggregateId, Guid nodeId, CancellationToken ct = default)
+    {
+        var exists = await _db.AggregateCompositions
+            .Where(ac => ac.AggregateId == aggregateId && ac.Status == ProductCompositionStatus.Approved && ac.IsActive)
+            .SelectMany(ac => ac.Nodes)
+            .AnyAsync(n => n.NodeId == nodeId, ct);
+        return exists ? null : "Узел не входит в утверждённый действующий состав агрегата.";
+    }
+
+    private async Task<string?> ValidateAggregateInProductCompositionAsync(Guid equipmentModelId, Guid aggregateId, CancellationToken ct = default)
+    {
+        var exists = await _db.ProductCompositions
+            .Where(pc => pc.EquipmentModelId == equipmentModelId && pc.Status == ProductCompositionStatus.Approved && pc.IsActive)
+            .SelectMany(pc => pc.Parts)
+            .SelectMany(p => p.Aggregates)
+            .AnyAsync(a => a.AggregateId == aggregateId, ct);
+        return exists ? null : "Агрегат не входит в утверждённый действующий состав изделия.";
+    }
+
+    private async Task<string?> ValidateEquipmentModelInComplexCompositionAsync(Guid complexId, Guid equipmentModelId, CancellationToken ct = default)
+    {
+        var exists = await _db.ComplexCompositions
+            .Where(cc => cc.ComplexId == complexId && cc.Status == ProductCompositionStatus.Approved && cc.IsActive)
+            .SelectMany(cc => cc.Items)
+            .AnyAsync(i => i.EquipmentModelId == equipmentModelId, ct);
+        return exists ? null : "Изделие не входит в утверждённый действующий состав комплекса.";
+    }
+
+    private async Task<bool> DetectCycleAsync(Guid parentCardId, Guid childCardId, CancellationToken ct = default)
+    {
+        var visited = new HashSet<Guid>();
+        var queue = new Queue<Guid>();
+        queue.Enqueue(childCardId);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (current == parentCardId)
+                return true;
+
+            if (!visited.Add(current))
+                continue;
+
+            var parentIds = await _db.HKCardComponents
+                .Where(x => x.ChildHKCardId == current)
+                .Select(x => x.ParentHKCardId)
+                .ToListAsync(ct);
+
+            foreach (var id in parentIds)
+                queue.Enqueue(id);
+        }
+
+        return false;
     }
 
     private static readonly Regex VersionRegex = new(@"^v(0[1-9]|1[0-2])(\d{2})$", RegexOptions.Compiled);
@@ -248,13 +550,10 @@ public class HKCardService
     public static bool IsValidCode(string? code) =>
         !string.IsNullOrEmpty(code) && CodeRegex.IsMatch(code);
 
-    public async Task<string> GenerateCodeAsync(Guid nodeId)
+    private async Task<string> GenerateCodeAsync(string objectCode)
     {
-        var node = await _db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId)
-            ?? throw new ArgumentException("Узел не найден");
-
         var year = DateTime.UtcNow.Year.ToString();
-        var baseCode = $"ХК-{node.Code}-{year}";
+        var baseCode = $"ХК-{objectCode}-{year}";
 
         var existing = await _db.HKCards
             .IgnoreQueryFilters()
@@ -277,14 +576,36 @@ public class HKCardService
         return maxSuffix == 0 ? $"{baseCode}-2" : $"{baseCode}-{maxSuffix + 1}";
     }
 
+    private async Task<string> ResolveObjectCodeAsync(HKCard card)
+    {
+        var code = card.ObjectLevel switch
+        {
+            Domain.Enums.HKObjectLevel.Node => (await _db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == card.NodeId))?.Code,
+            Domain.Enums.HKObjectLevel.Aggregate => (await _db.Aggregates.AsNoTracking().FirstOrDefaultAsync(a => a.Id == card.AggregateId))?.Code,
+            Domain.Enums.HKObjectLevel.EquipmentModel => (await _db.EquipmentModels.AsNoTracking().FirstOrDefaultAsync(m => m.Id == card.EquipmentModelId))?.Index,
+            Domain.Enums.HKObjectLevel.Complex => (await _db.Complexes.AsNoTracking().FirstOrDefaultAsync(c => c.Id == card.ComplexId))?.Code,
+            _ => null
+        };
+        return code ?? throw new ArgumentException("Не удалось определить код объекта нормирования.");
+    }
+
+    public async Task<string> GenerateCodeForNodeAsync(Guid nodeId)
+    {
+        var node = await _db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId)
+            ?? throw new ArgumentException("Узел не найден");
+        return await GenerateCodeAsync(node.Code);
+    }
+
     public async Task<bool> HasActiveCardForNodeAsync(Guid nodeId) =>
         await _db.HKCards.AnyAsync(x =>
+            x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
             x.NodeId == nodeId &&
             (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));
 
     public async Task<HKCard?> GetActiveCardForNodeAsync(Guid nodeId) =>
         await _db.HKCards.AsNoTracking()
             .Where(x =>
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
                 x.NodeId == nodeId &&
                 (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired))
             .FirstOrDefaultAsync();
@@ -345,7 +666,7 @@ public class HKCardService
         if (actor == null || !await _userManager.IsInRoleAsync(actor, "Operator"))
             throw new UnauthorizedAccessException("Недостаточно прав для создания ХК.");
 
-        if (card.NodeId == Guid.Empty)
+        if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (!card.NodeId.HasValue || card.NodeId == Guid.Empty))
             throw new ArgumentException("Необходимо выбрать узел.");
 
         if (actor.BranchId == null || actor.BranchId.Value == Guid.Empty)
@@ -361,7 +682,7 @@ public class HKCardService
                 "Дата окончания действия не может быть раньше даты начала действия.");
 
         card.Id = Guid.NewGuid();
-        card.Code = await GenerateCodeAsync(card.NodeId);
+        card.Code = await GenerateCodeAsync(await ResolveObjectCodeAsync(card));
         card.Version = GenerateVersion();
         card.CreatedAt = DateTime.UtcNow;
         card.UpdatedAt = DateTime.UtcNow;
@@ -380,14 +701,18 @@ public class HKCardService
             }
         }
 
-        var hasActiveDuplicate = await _db.HKCards.AnyAsync(x =>
-            x.NodeId == card.NodeId &&
-            (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));
-        if (hasActiveDuplicate)
-            throw new InvalidOperationException(
-                "Для выбранного узла уже существует активная ХК " +
-                "в статусе «Черновик», «На согласовании» или «На доработке». " +
-                "Завершите или архивируйте существующую карточку перед созданием новой.");
+        if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node)
+        {
+            var hasActiveDuplicate = await _db.HKCards.AnyAsync(x =>
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
+                x.NodeId == card.NodeId &&
+                (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));
+            if (hasActiveDuplicate)
+                throw new InvalidOperationException(
+                    "Для выбранного узла уже существует активная ХК " +
+                    "в статусе «Черновик», «На согласовании» или «На доработке». " +
+                    "Завершите или архивируйте существующую карточку перед созданием новой.");
+        }
 
         _db.HKCards.Add(card);
         _db.AuditLogs.Add(new AuditLog
@@ -434,7 +759,7 @@ public class HKCardService
         if (!roles.Contains("Operator"))
             throw new UnauthorizedAccessException("Недостаточно прав для редактирования ХК.");
 
-        if (card.NodeId == Guid.Empty)
+        if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (!card.NodeId.HasValue || card.NodeId == Guid.Empty))
             throw new ArgumentException("Необходимо выбрать узел.");
 
         if (card.RowVersion == 0)
@@ -470,13 +795,14 @@ public class HKCardService
         existing.ExpirationDate = card.ExpirationDate;
         existing.UpdatedAt = DateTime.UtcNow;
 
-        if (existing.NodeId != card.NodeId)
+        if (existing.ObjectLevel == Domain.Enums.HKObjectLevel.Node && existing.NodeId != card.NodeId)
         {
             if (existing.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
                 throw new InvalidOperationException("Изменение узла недоступно для карточки в текущем статусе.");
 
             var hasActiveOnNewNode = await _db.HKCards.AnyAsync(x =>
                 x.Id != existing.Id &&
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
                 x.NodeId == card.NodeId &&
                 (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));
             if (hasActiveOnNewNode)
@@ -485,7 +811,7 @@ public class HKCardService
                     "Завершите или архивируйте существующую карточку перед сменой узла.");
 
             existing.NodeId = card.NodeId;
-            existing.Code = await GenerateCodeAsync(card.NodeId);
+            existing.Code = await GenerateCodeAsync(await ResolveObjectCodeAsync(card));
         }
 
         var incomingItems = card.Items.OrderBy(i => i.SortOrder).ToList();
@@ -587,6 +913,25 @@ public class HKCardService
         var oldStatus = card.Status;
         if (!HKCardStatusTransitions.IsAllowed(oldStatus, newStatus))
             return (false, HKCardStatusTransitions.GetErrorMessage(oldStatus, newStatus));
+
+        if (newStatus is HKCardStatus.OnReview or HKCardStatus.Approved
+            && card.ObjectLevel != Domain.Enums.HKObjectLevel.Node)
+        {
+            var now = DateTime.UtcNow;
+            var invalidChildren = await _db.HKCardComponents
+                .Where(c => c.ParentHKCardId == id)
+                .Join(_db.HKCards, comp => comp.ChildHKCardId, hk => hk.Id, (comp, hk) => hk)
+                .Where(hk => hk.Status != HKCardStatus.Approved
+                    || (hk.EffectiveDate.HasValue && hk.EffectiveDate > now)
+                    || (hk.ExpirationDate.HasValue && hk.ExpirationDate < now))
+                .Select(hk => hk.Code)
+                .ToListAsync(ct);
+
+            if (invalidChildren.Count != 0)
+                return (false,
+                    $"Невозможно изменить статус: следующие дочерние ХК недействительны: {string.Join(", ", invalidChildren)}. " +
+                    "Обновите или замените их перед отправкой.");
+        }
 
         card.Status = newStatus;
         card.UpdatedAt = DateTime.UtcNow;
@@ -722,11 +1067,19 @@ public class HKCardService
             .Distinct()
             .ToListAsync();
 
+        var objectId = card.ObjectLevel switch
+        {
+            Domain.Enums.HKObjectLevel.Node => card.NodeId,
+            Domain.Enums.HKObjectLevel.Aggregate => card.AggregateId,
+            Domain.Enums.HKObjectLevel.EquipmentModel => card.EquipmentModelId,
+            Domain.Enums.HKObjectLevel.Complex => card.ComplexId,
+            _ => null
+        };
         var modelIds = await (
             from a in _db.ProductCompositionAggregates
             join p in _db.ProductCompositionParts on a.PartId equals p.Id
             join pc in _db.ProductCompositions on p.ProductCompositionId equals pc.Id
-            where a.AggregateId == card.NodeId
+            where a.AggregateId == objectId
             select pc.EquipmentModelId).Distinct().ToListAsync();
 
         if (modelIds.Count != 0)
@@ -846,6 +1199,9 @@ public class HKCardService
         var query = _db.HKCards.AsNoTracking()
             .Include(x => x.Branch)
             .Include(x => x.Node)
+            .Include(x => x.Aggregate)
+            .Include(x => x.EquipmentModel)
+            .Include(x => x.Complex)
             .AsQueryable();
 
         if (status.HasValue)

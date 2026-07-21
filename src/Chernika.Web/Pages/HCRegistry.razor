@@ -1,5 +1,6 @@
 @page "/реестр-хк"
 @attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain.Enums
 @using Chernika.Domain.Models
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
@@ -66,6 +67,15 @@
                             </select>
                         </div>
                         <div class="field"><label>Версия</label><input @bind="filterVersion" placeholder="v0426" /></div>
+                        <div class="field"><label>Уровень</label>
+                            <select @bind="filterLevel" class="field-select">
+                                <option value="">Все</option>
+                                <option value="Complex">Комплекс</option>
+                                <option value="EquipmentModel">Изделие</option>
+                                <option value="Aggregate">Агрегат</option>
+                                <option value="Node">Узел</option>
+                            </select>
+                        </div>
                         <div class="field"><label>Изделие</label><input @bind="filterNode" placeholder="UZ-044 / двигатель" /></div>
                         <div class="formActions">
                             <button class="btn" @onclick="ApplyFilters">Применить фильтры</button>
@@ -115,7 +125,7 @@
                                 {
                                     <tr @onclick="() => SelectCard(card.Id)" @ondblclick="() => GoToEdit(card.Id)" style="cursor:pointer">
                                         <td class="mono">@card.Code</td>
-                                        <td>@card.NodeName<br /><span class="mono">@card.NodeCode</span></td>
+                                        <td>@card.ObjectName<br /><span class="mono">@card.ObjectCode</span></td>
                                         <td><StatusBadge Status="@card.Status" /></td>
                                         <td class="mono">@card.Version</td>
                                         <td>@card.BranchName</td>
@@ -151,6 +161,8 @@
                         <div class="metrics2">
                             <div class="metric"><div class="label">Статус</div><div class="value"><StatusBadge Status="@selectedCard.Status" /></div></div>
                             <div class="metric"><div class="label">Версия</div><div class="value mono">@selectedCard.Version</div></div>
+                            <div class="metric"><div class="label">Уровень</div><div class="value">@LevelName(selectedCard.ObjectLevel)</div></div>
+                            <div class="metric"><div class="label">Объект</div><div class="value">@(selectedCard.Node?.Name ?? selectedCard.Aggregate?.Name ?? selectedCard.EquipmentModel?.Name ?? selectedCard.Complex?.Name)</div></div>
                             <div class="metric"><div class="label">Строк в ХК</div><div class="value">@selectedCard.Items.Count</div></div>
                             <div class="metric"><div class="label">Дата создания</div><div class="value">@selectedCard.CreatedAt.ToString("dd.MM.yyyy")</div></div>
                         </div>
@@ -212,6 +224,7 @@
     private string filterCode = "";
     private string filterStatus = "";
     private string filterVersion = "";
+    private string filterLevel = "";
     private string filterNode = "";
 
     protected override async Task OnInitializedAsync()
@@ -242,9 +255,14 @@
             if (!string.IsNullOrEmpty(filterStatus) && Enum.TryParse<HKCardStatus>(filterStatus, out var parsedStatus))
                 statusFilter = parsedStatus;
 
+            HKObjectLevel? levelFilter = null;
+            if (!string.IsNullOrEmpty(filterLevel) && Enum.TryParse<HKObjectLevel>(filterLevel, out var parsedLevel))
+                levelFilter = parsedLevel;
+
             var paged = await HKCardService.GetFilteredAsync(
                 code: string.IsNullOrWhiteSpace(filterCode) ? null : filterCode,
                 status: statusFilter,
+                objectLevel: levelFilter,
                 version: string.IsNullOrWhiteSpace(filterVersion) ? null : filterVersion,
                 nodeSearch: string.IsNullOrWhiteSpace(filterNode) ? null : filterNode,
                 branchId: branchFilter,
@@ -282,6 +300,15 @@
                    && card.BranchId.ToString() == userBranchId;
         return false;
     }
+
+    private static string LevelName(HKObjectLevel level) => level switch
+    {
+        HKObjectLevel.Complex => "Комплекс",
+        HKObjectLevel.EquipmentModel => "Изделие",
+        HKObjectLevel.Aggregate => "Агрегат",
+        HKObjectLevel.Node => "Узел",
+        _ => "—"
+    };
 
     private async Task DeleteCard(Guid id)
     {

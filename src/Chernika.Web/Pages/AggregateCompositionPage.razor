@@ -1,0 +1,411 @@
+@page "/состав-агрегата"
+@attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@inject EquipmentService EquipService
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Конструктивный состав агрегата</h2>
+            <div class="hint">Агрегат → узлы → количество</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Агрегат</label>
+                    <select @bind="selectedAggregateId" class="field-select">
+                        <option value="">— Выберите агрегат —</option>
+                        @foreach (var a in aggregates)
+                        {
+                            <option value="@a.Id">@a.Code — @a.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="field"><label>Комментарий</label><input @bind="comment" /></div>
+                <div class="formActions">
+                    <button class="btn" @onclick="LoadCompositions">Обновить список</button>
+                    @if (canEdit) { <button class="btn primary" @onclick="CreateComposition">Создать черновик</button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="grid">
+        <div class="stack">
+            <section class="panel">
+                <div class="panelHeader">
+                    <h2>Реестр составов агрегата</h2>
+                    <div class="hint">@compositions.Count записей</div>
+                </div>
+                <div class="panelBody">
+                    @if (loading)
+                    {
+                        <div class="loading-state">Загрузка...</div>
+                    }
+                    else if (!compositions.Any())
+                    {
+                        <div class="empty-state">Нет составов. Выберите агрегат и нажмите «Создать черновик».</div>
+                    }
+                    else
+                    {
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Версия</th>
+                                    <th>Статус</th>
+                                    <th>Дата создания</th>
+                                    <th>Узлов</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var comp in compositions)
+                                {
+                                    <tr @onclick="() => SelectComposition(comp.Id)" style="cursor:pointer">
+                                        <td class="mono">@comp.Version</td>
+                                        <td><span class="tag @StatusTag(comp.Status)">@StatusLabel(comp.Status)</span></td>
+                                        <td class="mono">@comp.CreatedAt.ToString("dd.MM.yyyy")</td>
+                                        <td>@comp.Nodes.Count</td>
+                                        <td>
+                                            <div class="rowActions">
+                                                <button class="linkBtn" @onclick="() => SelectComposition(comp.Id)">Открыть</button>
+                                                @if (CanEditComposition(comp.Status))
+                                                {
+                                                    <button class="linkBtn" @onclick="() => DeleteComposition(comp.Id)">Удалить</button>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </section>
+
+            @if (selectedComposition != null)
+            {
+                <section class="panel">
+                    <div class="panelHeader">
+                        <h2>@selectedComposition.Version — @StatusLabel(selectedComposition.Status)</h2>
+                        <div class="hint">Агрегат: @aggregates.FirstOrDefault(a => a.Id == selectedComposition.AggregateId)?.Name</div>
+                    </div>
+                    <div class="panelBody">
+                        @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="field full-width"><label>Комментарий</label><input @bind="editComment" /></div>
+                                <div class="field"><label>Дата начала действия</label><input type="date" @bind="editEffectiveDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
+                                <div class="field"><label>Дата окончания</label><input type="date" @bind="editExpirationDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
+                                <div class="formActions">
+                                    <button class="btn primary" @onclick="SaveCompositionDraft">Сохранить</button>
+                                    <button class="btn" @onclick="SubmitForReview">Отправить на проверку</button>
+                                </div>
+                            </div>
+                        }
+                        else if (selectedComposition.Status == ProductCompositionStatus.OnReview && canEdit)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="field full-width"><label>Комментарий</label><input @bind="reviewComment" /></div>
+                                <div class="formActions">
+                                    <button class="btn primary" @onclick="ApproveComposition">Утвердить</button>
+                                    <button class="btn" @onclick="ReturnToDraft">Вернуть в черновик</button>
+                                </div>
+                            </div>
+                        }
+                        else if (selectedComposition.Status == ProductCompositionStatus.Approved && canEdit)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="formActions">
+                                    <button class="btn" @onclick="ArchiveComposition">Архивировать</button>
+                                </div>
+                            </div>
+                        }
+
+                        @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                        {
+                            <div class="form" style="margin-bottom:12px">
+                                <div class="field"><label>Узел</label>
+                                    <select @bind="newNodeId" class="field-select">
+                                        <option value="">— Выберите узел —</option>
+                                        @foreach (var n in nodes)
+                                        {
+                                            <option value="@n.Id">@n.Code — @n.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="field"><label>Количество</label><input type="number" @bind="newNodeQty" min="1" class="field-input" /></div>
+                                <div class="field" style="display:flex;align-items:flex-end">
+                                    <button class="btn primary" @onclick="AddNode">+ Добавить узел</button>
+                                </div>
+                            </div>
+                        }
+
+                        @if (!selectedComposition.Nodes.Any())
+                        {
+                            <div class="empty-state">Нет узлов. Добавьте узел в состав.</div>
+                        }
+                        else
+                        {
+                            <table>
+                                <thead>
+                                    <tr><th>Код узла</th><th>Наименование</th><th>Количество</th><th>Примечание</th><th>Действия</th></tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var n in selectedComposition.Nodes.OrderBy(x => x.SortOrder))
+                                    {
+                                        <tr>
+                                            <td class="mono">@n.Node?.Code</td>
+                                            <td>@n.Node?.Name</td>
+                                            <td>
+                                                @if (editingNodeId == n.Id && selectedComposition.Status == ProductCompositionStatus.Draft)
+                                                {
+                                                    <input type="number" @bind="editNodeQty" class="field-input" style="width:70px" min="1" />
+                                                    <button class="linkBtn" @onclick="() => SaveNodeQuantity(n.Id)">✓</button>
+                                                    <button class="linkBtn" @onclick="() => CancelEditNode()">✕</button>
+                                                }
+                                                else
+                                                {
+                                                    <span>@n.Quantity</span>
+                                                }
+                                            </td>
+                                            <td>@n.Notes</td>
+                                            <td>
+                                                <div class="rowActions">
+                                                    @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                                                    {
+                                                        <button class="linkBtn" @onclick="() => StartEditNodeQty(n.Id, n.Quantity)">Изменить кол-во</button>
+                                                        <button class="linkBtn" @onclick="() => RemoveNode(n.Id)">Удалить</button>
+                                                    }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                </section>
+            }
+        </div>
+
+        <aside class="stack">
+            <section class="panel">
+                <div class="panelHeader"><h2>Информация</h2><div class="hint">Детали состава</div></div>
+                <div class="panelBody">
+                    @if (selectedComposition == null)
+                    {
+                        <div class="empty-state">—</div>
+                    }
+                    else
+                    {
+                        <div class="field"><label>Автор</label><div>@selectedComposition.AuthorId</div></div>
+                        <div class="field"><label>Версия</label><div class="mono">@selectedComposition.Version</div></div>
+                        <div class="field"><label>Статус</label><span class="tag @StatusTag(selectedComposition.Status)">@StatusLabel(selectedComposition.Status)</span></div>
+                        <div class="field"><label>Создан</label><div class="mono">@selectedComposition.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        <div class="field"><label>Обновлён</label><div class="mono">@selectedComposition.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        @if (selectedComposition.ApprovedAt.HasValue)
+                        {
+                            <div class="field"><label>Утверждён</label><div class="mono">@selectedComposition.ApprovedAt.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        }
+                        @if (selectedComposition.EffectiveDate.HasValue)
+                        {
+                            <div class="field"><label>Действует с</label><div class="mono">@selectedComposition.EffectiveDate.Value.ToString("dd.MM.yyyy")</div></div>
+                        }
+                        @if (selectedComposition.ExpirationDate.HasValue)
+                        {
+                            <div class="field"><label>Действует до</label><div class="mono">@selectedComposition.ExpirationDate.Value.ToString("dd.MM.yyyy")</div></div>
+                        }
+                    }
+                </div>
+            </section>
+        </aside>
+    </div>
+</div>
+
+@code {
+    private List<Aggregate> aggregates = new();
+    private List<Node> nodes = new();
+    private List<AggregateComposition> compositions = new();
+    private AggregateComposition? selectedComposition;
+    private bool loading = true;
+    private bool canEdit;
+
+    private Guid selectedAggregateId;
+    private string comment = "";
+
+    private Guid newNodeId;
+    private int newNodeQty = 1;
+
+    private string editComment = "";
+    private DateTime? editEffectiveDate;
+    private DateTime? editExpirationDate;
+    private string reviewComment = "";
+
+    private Guid? editingNodeId;
+    private int editNodeQty;
+
+    [Inject] private TimeProvider TimeProvider { get; set; } = null!;
+    private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canEdit = authState.User.IsInRole("NormAdmin") || authState.User.IsInRole("SystemAdmin");
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        loading = true;
+        aggregates = await EquipService.GetAggregatesAsync();
+        nodes = await EquipService.GetNodesAsync();
+        await LoadCompositions();
+    }
+
+    async Task LoadCompositions()
+    {
+        compositions = selectedAggregateId != Guid.Empty
+            ? await EquipService.GetAggregateCompositionsAsync(selectedAggregateId)
+            : new();
+        loading = false;
+    }
+
+    async Task CreateComposition()
+    {
+        if (selectedAggregateId == Guid.Empty) return;
+        var comp = await EquipService.CreateAggregateCompositionAsync(
+            new CreateAggregateCompositionRequest(selectedAggregateId, string.IsNullOrWhiteSpace(comment) ? null : comment));
+        await LoadCompositions();
+        SelectComposition(comp.Id);
+    }
+
+    void SelectComposition(Guid id)
+    {
+        selectedComposition = compositions.FirstOrDefault(c => c.Id == id);
+        if (selectedComposition != null)
+        {
+            editComment = selectedComposition.Comment ?? "";
+            editEffectiveDate = selectedComposition.EffectiveDate;
+            editExpirationDate = selectedComposition.ExpirationDate;
+        }
+    }
+
+    async Task SaveCompositionDraft()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.UpdateAggregateCompositionDraftAsync(
+            new UpdateAggregateCompositionDraftRequest(selectedComposition.Id,
+                string.IsNullOrWhiteSpace(editComment) ? null : editComment,
+                editEffectiveDate?.ToUniversalTime(),
+                editExpirationDate?.ToUniversalTime()));
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task SubmitForReview()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.SubmitAggregateCompositionForReviewAsync(selectedComposition.Id);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task ApproveComposition()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.ApproveAggregateCompositionAsync(selectedComposition.Id,
+            string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task ReturnToDraft()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.ReturnAggregateCompositionToDraftAsync(selectedComposition.Id,
+            string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task ArchiveComposition()
+    {
+        if (selectedComposition == null || !canEdit) return;
+        await EquipService.ArchiveAggregateCompositionAsync(selectedComposition.Id);
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+    }
+
+    async Task AddNode()
+    {
+        if (selectedComposition == null || newNodeId == Guid.Empty) return;
+        await EquipService.AddAggregateCompositionNodeAsync(
+            new AddAggregateCompositionNodeRequest(selectedComposition.Id, newNodeId, newNodeQty, null));
+        await LoadCompositions();
+        SelectComposition(selectedComposition.Id);
+        newNodeId = Guid.Empty;
+        newNodeQty = 1;
+    }
+
+    void StartEditNodeQty(Guid id, int qty)
+    {
+        editingNodeId = id;
+        editNodeQty = qty;
+    }
+
+    void CancelEditNode()
+    {
+        editingNodeId = null;
+    }
+
+    async Task SaveNodeQuantity(Guid id)
+    {
+        if (!canEdit) return;
+        await EquipService.UpdateAggregateCompositionNodeAsync(
+            new UpdateAggregateCompositionNodeRequest(id, editNodeQty, 0, null));
+        await LoadCompositions();
+        SelectComposition(selectedComposition!.Id);
+        editingNodeId = null;
+    }
+
+    async Task RemoveNode(Guid id)
+    {
+        await EquipService.RemoveAggregateCompositionNodeAsync(id);
+        if (selectedComposition != null)
+        {
+            await LoadCompositions();
+            SelectComposition(selectedComposition.Id);
+        }
+    }
+
+    async Task DeleteComposition(Guid id)
+    {
+        await EquipService.DeleteAggregateCompositionDraftAsync(id);
+        compositions.RemoveAll(c => c.Id == id);
+        if (selectedComposition?.Id == id) selectedComposition = null;
+    }
+
+    static string StatusLabel(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "Черновик",
+        ProductCompositionStatus.OnReview => "На проверке",
+        ProductCompositionStatus.Approved => "Утверждён",
+        ProductCompositionStatus.Archived => "Архивный",
+        _ => status.ToString()
+    };
+
+    static string StatusTag(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "warn",
+        ProductCompositionStatus.OnReview => "warn",
+        ProductCompositionStatus.Approved => "ok",
+        ProductCompositionStatus.Archived => "",
+        _ => ""
+    };
+
+    bool CanEditComposition(ProductCompositionStatus status) =>
+        canEdit && status == ProductCompositionStatus.Draft;
+}

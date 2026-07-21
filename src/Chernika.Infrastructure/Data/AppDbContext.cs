@@ -25,6 +25,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ComplexComposition> ComplexCompositions => Set<ComplexComposition>();
     public DbSet<ComplexCompositionItem> ComplexCompositionItems => Set<ComplexCompositionItem>();
     public DbSet<HKCard> HKCards => Set<HKCard>();
+    public DbSet<HKCardComponent> HKCardComponents => Set<HKCardComponent>();
     public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
     public DbSet<HKCardItemMaterial> HKCardItemMaterials => Set<HKCardItemMaterial>();
     public DbSet<HKCardStatusLog> HKCardStatusLogs => Set<HKCardStatusLog>();
@@ -214,6 +215,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Code).HasMaxLength(50).IsRequired();
             e.Property(x => x.Version).HasMaxLength(10).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.ObjectLevel).HasConversion<int>();
             e.Property(x => x.Purpose).HasMaxLength(2000);
             e.Property(x => x.NormativeBasis).HasMaxLength(2000);
             e.Property(x => x.Notes).HasMaxLength(4000);
@@ -223,13 +225,36 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .IsRowVersion();
             e.HasOne(x => x.Branch).WithMany(x => x.HKCards).HasForeignKey(x => x.BranchId)
                 .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne(x => x.Node).WithMany(x => x.HKCards).HasForeignKey(x => x.NodeId);
+            e.HasOne(x => x.Complex).WithMany(x => x.HKCards).HasForeignKey(x => x.ComplexId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.EquipmentModel).WithMany(x => x.HKCards).HasForeignKey(x => x.EquipmentModelId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Aggregate).WithMany(x => x.HKCards).HasForeignKey(x => x.AggregateId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Node).WithMany(x => x.HKCards).HasForeignKey(x => x.NodeId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.SupersedesHKCard).WithMany(x => x.SupersededBy)
+                .HasForeignKey(x => x.SupersedesHKCardId)
+                .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.Code, x.Version }).IsUnique();
             e.HasIndex(x => x.NodeId)
                 .HasDatabaseName("UX_HKCards_OneActivePerNode")
-                .HasFilter("\"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')")
+                .HasFilter("\"ObjectLevel\" = 4 AND \"Status\" IN ('Draft', 'OnReview', 'RevisionRequired')")
                 .IsUnique();
             e.HasQueryFilter(x => x.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
+        });
+
+        modelBuilder.Entity<HKCardComponent>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.AddedByUserId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ChildCode).HasMaxLength(50).IsRequired();
+            e.Property(x => x.ChildVersion).HasMaxLength(10).IsRequired();
+            e.HasOne(x => x.ParentHKCard).WithMany(x => x.ParentComponents)
+                .HasForeignKey(x => x.ParentHKCardId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.ChildHKCard).WithMany(x => x.ChildComponents)
+                .HasForeignKey(x => x.ChildHKCardId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.ParentHKCardId, x.ChildHKCardId }).IsUnique();
         });
 
         modelBuilder.Entity<HKCardItem>(e =>

@@ -16,4 +16,5 @@ public class EquipmentModel
     public ICollection<ProductComposition> ProductCompositions { get; set; } = new List<ProductComposition>();
     public ICollection<EquipmentInstance> Instances { get; set; } = new List<EquipmentInstance>();
     public ICollection<ComplexCompositionItem> ComplexCompositionItems { get; set; } = new List<ComplexCompositionItem>();
+    public ICollection<HKCard> HKCards { get; set; } = new List<HKCard>();
 }

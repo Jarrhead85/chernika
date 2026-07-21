@@ -16,10 +16,27 @@ public class HKCard
     public string Version { get; set; } = string.Empty;
 
     public HKCardStatus Status { get; set; } = HKCardStatus.Draft;
+
+    public HKObjectLevel ObjectLevel { get; set; }
+
+    public Guid? ComplexId { get; set; }
+    public Complex? Complex { get; set; }
+
+    public Guid? EquipmentModelId { get; set; }
+    public EquipmentModel? EquipmentModel { get; set; }
+
+    public Guid? AggregateId { get; set; }
+    public Aggregate? Aggregate { get; set; }
+
+    public Guid? NodeId { get; set; }
+    public Node? Node { get; set; }
+
     public Guid BranchId { get; set; }
     public Branch Branch { get; set; } = null!;
-    public Guid NodeId { get; set; }
-    public Node Node { get; set; } = null!;
+
+    public Guid? SupersedesHKCardId { get; set; }
+    public HKCard? SupersedesHKCard { get; set; }
+    public ICollection<HKCard> SupersededBy { get; set; } = new List<HKCard>();
 
     [StringLength(2000)]
     public string? Purpose { get; set; }
@@ -43,4 +60,6 @@ public class HKCard
 
     public ICollection<HKCardItem> Items { get; set; } = new List<HKCardItem>();
     public ICollection<HKCardStatusLog> StatusLog { get; set; } = new List<HKCardStatusLog>();
+    public ICollection<HKCardComponent> ParentComponents { get; set; } = new List<HKCardComponent>();
+    public ICollection<HKCardComponent> ChildComponents { get; set; } = new List<HKCardComponent>();
 }

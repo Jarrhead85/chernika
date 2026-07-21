@@ -34,36 +34,77 @@
                     </div>
 
                     <table style="width:100%;margin-bottom:16px">
-                        <tr><td style="padding:6px;font-weight:700;width:180px">Изделие:</td><td style="padding:6px">@card.Node?.Name</td></tr>
+                        <tr><td style="padding:6px;font-weight:700;width:180px">Уровень:</td><td style="padding:6px">@LevelName(card.ObjectLevel)</td></tr>
+                        <tr><td style="padding:6px;font-weight:700">Объект:</td><td style="padding:6px">@ObjectName(card)</td></tr>
                         <tr><td style="padding:6px;font-weight:700">Филиал:</td><td style="padding:6px">@card.Branch?.Name</td></tr>
                         <tr><td style="padding:6px;font-weight:700">Дата утверждения:</td><td style="padding:6px">@card.ApprovedDate?.ToString("dd.MM.yyyy")</td></tr>
                         <tr><td style="padding:6px;font-weight:700">Срок действия:</td><td style="padding:6px">@card.EffectiveDate?.ToString("dd.MM.yyyy") — @card.ExpirationDate?.ToString("dd.MM.yyyy")</td></tr>
                     </table>
 
-                    <h3 style="font-size:14px;margin:16px 0 8px">Сборочные единицы и нормы ГСМ:</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Сборочная единица</th>
-                                <th>Кол-во</th>
-                                <th>Масса/объём</th>
-                                <th>Ед.изм.</th>
-                                <th>Периодичность</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var item in card.Items.OrderBy(i => i.SortOrder))
-                            {
+                    @if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && card.Items.Any())
+                    {
+                        <h3 style="font-size:14px;margin:16px 0 8px">Сборочные единицы и нормы ГСМ:</h3>
+                        <table>
+                            <thead>
                                 <tr>
-                                    <td>@item.AssemblyUnit?.Name</td>
-                                    <td>@item.Quantity</td>
-                                    <td>@item.Volume.ToString("F3")</td>
-                                    <td>@(item.UnitOfMeasure ?? "кг")</td>
-                                    <td>@(item.Periodicity ?? "—")</td>
+                                    <th>Сборочная единица</th>
+                                    <th>Кол-во</th>
+                                    <th>Масса/объём</th>
+                                    <th>Ед.изм.</th>
+                                    <th>Периодичность</th>
                                 </tr>
-                            }
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in card.Items.OrderBy(i => i.SortOrder))
+                                {
+                                    <tr>
+                                        <td>@item.AssemblyUnit?.Name</td>
+                                        <td>@item.Quantity</td>
+                                        <td>@item.Volume.ToString("F3")</td>
+                                        <td>@(item.UnitOfMeasure ?? "кг")</td>
+                                        <td>@(item.Periodicity ?? "—")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+
+                    @if (card.ObjectLevel != Domain.Enums.HKObjectLevel.Node)
+                    {
+                        <h3 style="font-size:14px;margin:16px 0 8px">Состав ХК (агрегированные строки):</h3>
+                        @if (aggregatedRows.Count == 0)
+                        {
+                            <div class="note">Нет дочерних ХК в составе</div>
+                        }
+                        else
+                        {
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>ХК-источник</th>
+                                        <th>Сборочная единица</th>
+                                        <th>Масса/объём</th>
+                                        <th>Ед.изм.</th>
+                                        <th>Марка ГСМ</th>
+                                        <th>ГОСТ</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in aggregatedRows)
+                                    {
+                                        <tr>
+                                            <td class="mono">@row.SourceCardCode</td>
+                                            <td>@row.AssemblyUnitName</td>
+                                            <td>@row.Volume.ToString("F3")</td>
+                                            <td>@(row.UnitOfMeasure ?? "кг")</td>
+                                            <td>@row.GsmMaterialName</td>
+                                            <td class="mono">@row.Gost</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    }
 
                     @if (!string.IsNullOrEmpty(card.Purpose))
                     {
@@ -94,14 +135,22 @@
     </section>
 </div>
 
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+
 @code {
     [Parameter] public Guid Id { get; set; }
     private HKCard? card;
     private bool loading = true;
+    private List<AggregatedRowDto> aggregatedRows = new();
 
     protected override async Task OnInitializedAsync()
     {
         card = await HKCardService.GetByIdAsync(Id);
+        if (card != null && card.ObjectLevel != HKObjectLevel.Node)
+        {
+            aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+        }
         loading = false;
     }
 
@@ -123,4 +172,22 @@
     void Back() => Nav.NavigateTo("/реестр-хк");
 
     [Inject] IJSRuntime JS { get; set; } = null!;
+
+    private static string LevelName(HKObjectLevel level) => level switch
+    {
+        HKObjectLevel.Complex => "Комплекс",
+        HKObjectLevel.EquipmentModel => "Изделие",
+        HKObjectLevel.Aggregate => "Агрегат",
+        HKObjectLevel.Node => "Узел",
+        _ => "—"
+    };
+
+    private string ObjectName(HKCard c) => c.ObjectLevel switch
+    {
+        HKObjectLevel.Complex => c.Complex?.Name ?? "—",
+        HKObjectLevel.EquipmentModel => c.EquipmentModel?.Name ?? "—",
+        HKObjectLevel.Aggregate => c.Aggregate?.Name ?? "—",
+        HKObjectLevel.Node => c.Node?.Name ?? "—",
+        _ => "—"
+    };
 }

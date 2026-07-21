@@ -134,6 +134,25 @@ public class IndividualCardService
                        && acn.AggregateComposition.IsActive)
             .ToListAsync(ct);
 
+        var aggregatesWithActiveComposition = compositionNodes
+            .Select(acn => acn.AggregateComposition.AggregateId)
+            .Distinct()
+            .ToHashSet();
+        var aggregatesWithoutComposition = aggregateIds
+            .Where(id => !aggregatesWithActiveComposition.Contains(id))
+            .ToList();
+        if (aggregatesWithoutComposition.Any())
+        {
+            var missingNames = await _db.Aggregates
+                .Where(a => aggregatesWithoutComposition.Contains(a.Id))
+                .Select(a => $"{a.Code} ({a.Name})")
+                .ToListAsync(ct);
+            throw new InvalidOperationException(
+                "Не для всех агрегатов конструктивного состава утверждён состав узлов. " +
+                "Отсутствуют утверждённые составы для агрегатов: " + string.Join(", ", missingNames) + ". " +
+                "Создайте и утвердите составы агрегатов перед генерацией индивидуальных карт.");
+        }
+
         var nodeGroups = compositionNodes.GroupBy(acn => acn.AggregateComposition.AggregateId);
 
         foreach (var group in nodeGroups)
@@ -145,6 +164,7 @@ public class IndividualCardService
                     .Include(h => h.Items).ThenInclude(hi => hi.AssemblyUnit)
                     .Include(h => h.Items).ThenInclude(hi => hi.Materials).ThenInclude(m => m.GsmMaterial)
                     .Where(h =>
+                        h.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
                         h.NodeId == node.Id &&
                         h.Status == HKCardStatus.Approved &&
                         (!h.EffectiveDate.HasValue || h.EffectiveDate.Value <= now) &&

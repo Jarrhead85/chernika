@@ -15,10 +15,14 @@ public record HKCardDetailDto(
     string Code,
     string Version,
     HKCardStatus Status,
+    HKObjectLevel ObjectLevel,
     Guid BranchId,
     string? BranchName,
-    Guid NodeId,
-    string? NodeName,
+    Guid? ComplexId,
+    Guid? EquipmentModelId,
+    Guid? AggregateId,
+    Guid? NodeId,
+    string? ObjectName,
     string? Purpose,
     string? NormativeBasis,
     string? Notes,
@@ -49,7 +53,11 @@ public record HKCardItemDto(
 
 public record CreateHKCardRequest(
     Guid BranchId,
-    Guid NodeId,
+    HKObjectLevel ObjectLevel,
+    Guid? ComplexId,
+    Guid? EquipmentModelId,
+    Guid? AggregateId,
+    Guid? NodeId,
     string? Purpose,
     string? NormativeBasis,
     string? Notes,
@@ -57,7 +65,11 @@ public record CreateHKCardRequest(
     DateTime? ExpirationDate);
 
 public record UpdateHKCardRequest(
-    Guid NodeId,
+    HKObjectLevel ObjectLevel,
+    Guid? ComplexId,
+    Guid? EquipmentModelId,
+    Guid? AggregateId,
+    Guid? NodeId,
     string? Purpose,
     string? NormativeBasis,
     string? Notes,
@@ -69,10 +81,20 @@ public record StatusChangeRequest(HKCardStatus NewStatus, string? Comment = null
 
 public static class HKCardMapper
 {
+    public static string? GetObjectName(HKCard c) => c.ObjectLevel switch
+    {
+        HKObjectLevel.Complex => c.Complex?.Name,
+        HKObjectLevel.EquipmentModel => c.EquipmentModel?.Name,
+        HKObjectLevel.Aggregate => c.Aggregate?.Name,
+        HKObjectLevel.Node => c.Node?.Name,
+        _ => null
+    };
+
     public static HKCardDetailDto ToDetail(HKCard c) => new(
-        c.Id, c.Code, c.Version, c.Status,
+        c.Id, c.Code, c.Version, c.Status, c.ObjectLevel,
         c.BranchId, c.Branch?.Name,
-        c.NodeId, c.Node?.Name,
+        c.ComplexId, c.EquipmentModelId, c.AggregateId, c.NodeId,
+        GetObjectName(c),
         c.Purpose, c.NormativeBasis, c.Notes,
         c.AuthorId, c.ReviewerId,
         c.ApprovedDate, c.EffectiveDate, c.ExpirationDate,
@@ -116,8 +138,12 @@ public static class HKCardMapper
 
     public static HKCard FromCreate(CreateHKCardRequest r) => new()
     {
-        BranchId = r.BranchId,
+        ObjectLevel = r.ObjectLevel,
+        ComplexId = r.ComplexId,
+        EquipmentModelId = r.EquipmentModelId,
+        AggregateId = r.AggregateId,
         NodeId = r.NodeId,
+        BranchId = r.BranchId,
         Purpose = r.Purpose,
         NormativeBasis = r.NormativeBasis,
         Notes = r.Notes,
@@ -127,6 +153,10 @@ public static class HKCardMapper
 
     public static void ApplyUpdate(HKCard card, UpdateHKCardRequest r)
     {
+        card.ObjectLevel = r.ObjectLevel;
+        card.ComplexId = r.ComplexId;
+        card.EquipmentModelId = r.EquipmentModelId;
+        card.AggregateId = r.AggregateId;
         card.NodeId = r.NodeId;
         card.Purpose = r.Purpose;
         card.NormativeBasis = r.NormativeBasis;

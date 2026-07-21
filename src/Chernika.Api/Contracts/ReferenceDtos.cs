@@ -45,3 +45,29 @@ public static class GsmMaterialMapper
     public static GsmMaterial FromCreate(CreateGsmMaterialRequest r) => new() { Name = r.Name, Type = r.Type, Gost = r.Gost, Description = r.Description };
     public static void ApplyUpdate(GsmMaterial m, UpdateGsmMaterialRequest r) { m.Name = r.Name; m.Type = r.Type; m.Gost = r.Gost; m.Description = r.Description; }
 }
+
+// ── Aggregate ────────────────────────────────────────────────────
+
+public record AggregateDto(Guid Id, string Code, string Name, string? Description);
+public record CreateAggregateApiRequest(string Code, string Name, string? Description);
+public record UpdateAggregateApiRequest(string Code, string Name, string? Description);
+
+public static class AggregateMapper
+{
+    public static AggregateDto ToDto(Aggregate a) => new(a.Id, a.Code, a.Name, a.Description);
+    public static Aggregate FromCreate(CreateAggregateApiRequest r) => new() { Code = r.Code, Name = r.Name, Description = r.Description };
+    public static void ApplyUpdate(Aggregate a, UpdateAggregateApiRequest r) { a.Code = r.Code; a.Name = r.Name; a.Description = r.Description; }
+}
+
+// ── Complex ──────────────────────────────────────────────────────
+
+public record ComplexDto(Guid Id, string Code, string Name, string? Description);
+public record CreateComplexApiRequest(string Code, string Name, string? Description);
+public record UpdateComplexApiRequest(string Code, string Name, string? Description);
+
+public static class ComplexMapper
+{
+    public static ComplexDto ToDto(Complex c) => new(c.Id, c.Code, c.Name, c.Description);
+    public static Complex FromCreate(CreateComplexApiRequest r) => new() { Code = r.Code, Name = r.Name, Description = r.Description };
+    public static void ApplyUpdate(Complex c, UpdateComplexApiRequest r) { c.Code = r.Code; c.Name = r.Name; c.Description = r.Description; }
+}

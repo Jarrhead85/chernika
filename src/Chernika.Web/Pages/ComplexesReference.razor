@@ -1,0 +1,116 @@
+@page "/справочник-комплексов"
+@attribute [Authorize(Policy = "ViewHK")]
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочник комплексов</h2>
+            <div class="hint">Общесистемный справочник</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Код комплекса</label><input @bind="newEntity.Code" /></div>
+                <div class="field"><label>Наименование</label><input @bind="newEntity.Name" /></div>
+                <div class="field full-width"><label>Описание</label><input @bind="newEntity.Description" /></div>
+                <div class="formActions">
+                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                    @if (canEdit) { <button class="btn primary" @onclick="SaveEntity">@(editing ? "Сохранить" : "Добавить")</button> }
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список комплексов</h2>
+            <div class="hint">@entities.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!entities.Any())
+            {
+                <div class="empty-state">Нет комплексов</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr><th>Код</th><th>Наименование</th><th>Описание</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in entities)
+                        {
+                            <tr>
+                                <td class="mono">@e.Code</td>
+                                <td>@e.Name</td>
+                                <td>@e.Description</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditEntity(e)">Изменить</button> }
+                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteEntity(e.Id)">Удалить</button> }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<Complex> entities = new();
+    private Complex newEntity = new();
+    private bool editing;
+    private bool loading = true;
+    private bool canEdit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canEdit = authState.User.IsInRole("NormAdmin");
+        await LoadEntities();
+    }
+
+    async Task LoadEntities()
+    {
+        loading = true;
+        entities = await EquipService.GetComplexesAsync();
+        loading = false;
+    }
+
+    async Task SaveEntity()
+    {
+        if (string.IsNullOrWhiteSpace(newEntity.Name)) return;
+        if (editing)
+            await EquipService.UpdateComplexAsync(new Domain.Models.UpdateComplexRequest(newEntity.Id, newEntity.Code, newEntity.Name, newEntity.Description));
+        else
+            await EquipService.CreateComplexAsync(new Domain.Models.CreateComplexRequest(newEntity.Code, newEntity.Name, newEntity.Description));
+        ResetForm();
+        await LoadEntities();
+    }
+
+    void EditEntity(Complex c)
+    {
+        newEntity = new Complex { Id = c.Id, Code = c.Code, Name = c.Name, Description = c.Description };
+        editing = true;
+    }
+
+    async Task DeleteEntity(Guid id)
+    {
+        await EquipService.DeleteComplexAsync(id);
+        await LoadEntities();
+    }
+
+    void ResetForm()
+    {
+        newEntity = new Complex();
+        editing = false;
+    }
+}
