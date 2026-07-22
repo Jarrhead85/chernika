@@ -59,6 +59,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("ManageReference", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("ManageIndividualCards", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
     options.AddPolicy("ManageTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskManage)));
+    options.AddPolicy("ReportExport", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReportExport)));
     options.AddPolicy("CreateEquipment", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("EditEquipment", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("DeleteEquipment", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));

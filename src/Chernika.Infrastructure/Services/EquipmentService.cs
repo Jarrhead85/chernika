@@ -38,6 +38,7 @@ public class EquipmentService
 
     public async Task<Node> CreateNodeAsync(Node node)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         node.Id = Guid.NewGuid();
         _db.Nodes.Add(node);
         await _db.SaveChangesAsync();
@@ -83,6 +84,7 @@ public class EquipmentService
 
     public async Task<EquipmentModel> CreateModelAsync(EquipmentModel model)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         model.Id = Guid.NewGuid();
         _db.EquipmentModels.Add(model);
         await _db.SaveChangesAsync();
@@ -130,6 +132,7 @@ public class EquipmentService
 
     public async Task<EquipmentInstance> CreateInstanceAsync(EquipmentInstance inst)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         inst.Id = Guid.NewGuid();
         _db.EquipmentInstances.Add(inst);
         await _db.SaveChangesAsync();
@@ -1142,6 +1145,7 @@ public class EquipmentService
 
     public async Task<AssemblyUnit> CreateAssemblyUnitAsync(AssemblyUnit unit)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         unit.Id = Guid.NewGuid();
         _db.AssemblyUnits.Add(unit);
         await _db.SaveChangesAsync();
@@ -1176,6 +1180,7 @@ public class EquipmentService
 
     public async Task<GsmMaterial> CreateGsmMaterialAsync(GsmMaterial material)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         material.Id = Guid.NewGuid();
         _db.GsmMaterials.Add(material);
         await _db.SaveChangesAsync();

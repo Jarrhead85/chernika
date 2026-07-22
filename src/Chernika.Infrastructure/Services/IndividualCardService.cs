@@ -13,13 +13,15 @@ public class IndividualCardService
     private readonly AuditService _audit;
     private readonly ICurrentUserService _currentUser;
     private readonly TimeProvider _time;
+    private readonly IPermissionService _permissions;
 
-    public IndividualCardService(AppDbContext db, AuditService audit, ICurrentUserService currentUser, TimeProvider time)
+    public IndividualCardService(AppDbContext db, AuditService audit, ICurrentUserService currentUser, TimeProvider time, IPermissionService permissions)
     {
         _db = db;
         _audit = audit;
         _currentUser = currentUser;
         _time = time;
+        _permissions = permissions;
     }
 
     public Task<PagedResult<IndividualCard>> GetPagedAsync(int page = 1, int pageSize = 50, Guid? instanceId = null)
@@ -67,6 +69,7 @@ public class IndividualCardService
 
     public async Task<IndividualCard> CreateCardAsync(IndividualCard card, CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardGenerate);
         card.Id = Guid.NewGuid();
         card.CreatedAt = _time.GetUtcNow().UtcDateTime;
         _db.IndividualCards.Add(card);
@@ -92,6 +95,7 @@ public class IndividualCardService
 
     public async Task<bool> DeleteCardAsync(Guid id)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardGenerate);
         var card = await _db.IndividualCards.FindAsync(id);
         if (card == null) return false;
         _db.IndividualCards.Remove(card);
@@ -101,6 +105,7 @@ public class IndividualCardService
 
     public async Task<List<IndividualCard>> GenerateCardsForInstanceAsync(Guid instanceId, List<Guid> coefficientIds, CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardGenerate);
         var instance = await _db.EquipmentInstances
             .Include(i => i.EquipmentModel)
             .FirstOrDefaultAsync(i => i.Id == instanceId, ct);

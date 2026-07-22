@@ -52,16 +52,20 @@ public class UserManagementService
 
         var allFiltered = await query.OrderBy(u => u.UserName).ToListAsync();
 
+        var userIds = allFiltered.Select(u => u.Id).ToList();
+        var userRoles = await _db.UserRoles
+            .Where(ur => userIds.Contains(ur.UserId))
+            .Join(_db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => new { ur.UserId, RoleName = r.Name })
+            .ToListAsync();
+
+        var roleLookup = userRoles
+            .GroupBy(ur => ur.UserId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.RoleName).FirstOrDefault());
+
         var result = new List<UserListItem>();
         foreach (var u in allFiltered)
         {
-            var roles = await _userManager.GetRolesAsync(u);
-            var baseRole = roles.FirstOrDefault(r =>
-                r == nameof(UserRole.SystemAdmin) ||
-                r == nameof(UserRole.NormAdmin) ||
-                r == nameof(UserRole.Operator) ||
-                r == nameof(UserRole.HeadOfDepartment) ||
-                r == nameof(UserRole.Guest));
+            roleLookup.TryGetValue(u.Id, out var baseRole);
 
             if (!string.IsNullOrEmpty(roleFilter) && baseRole != roleFilter)
                 continue;

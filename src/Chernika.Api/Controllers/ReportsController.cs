@@ -1,3 +1,4 @@
+using Chernika.Domain;
 using Chernika.Domain.Enums;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -20,6 +21,7 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("hk-registry")]
+    [Authorize(Policy = "ReportExport")]
     public async Task<ActionResult> ExportHKRegistry(
         [FromQuery] HKCardStatus? status = null,
         [FromQuery] Guid? branchId = null)

@@ -20,6 +20,12 @@ public static class SecuritySeedService
         }
 
         var catalogCodes = PermissionCodes.All;
+        var catalogDefined = PermissionCatalog.All.Select(p => p.Code).ToHashSet();
+        if (!catalogCodes.SetEquals(catalogDefined))
+            throw new InvalidOperationException(
+                $"Invariant violated: PermissionCodes.All ({catalogCodes.Count} codes) != PermissionCatalog.All ({catalogDefined.Count} codes). " +
+                $"Missing in catalog: {catalogCodes.Except(catalogDefined).FirstOrDefault() ?? "none"}. " +
+                $"Extra in catalog: {catalogDefined.Except(catalogCodes).FirstOrDefault() ?? "none"}.");
         var codesToSeed = catalogCodes;
 
         var existing = await db.RolePermissionTemplates

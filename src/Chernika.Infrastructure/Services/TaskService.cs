@@ -1,3 +1,4 @@
+using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -7,8 +8,13 @@ namespace Chernika.Infrastructure.Services;
 public class TaskService
 {
     private readonly AppDbContext _db;
+    private readonly IPermissionService _permissions;
 
-    public TaskService(AppDbContext db) => _db = db;
+    public TaskService(AppDbContext db, IPermissionService permissions)
+    {
+        _db = db;
+        _permissions = permissions;
+    }
 
     public Task<List<WorkTask>> GetActiveTasksAsync(string? assigneeId = null)
     {
@@ -28,6 +34,7 @@ public class TaskService
 
     public async Task<WorkTask> CreateTaskAsync(string title, string assigneeId, string? description = null, string? entityType = null, string? entityId = null, DateTime? dueDate = null)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.TaskManage);
         var task = new WorkTask
         {
             Id = Guid.NewGuid(),
@@ -62,6 +69,7 @@ public class TaskService
 
     public async Task<bool> DeleteTaskAsync(Guid id)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.TaskManage);
         var task = await _db.WorkTasks.FindAsync(id);
         if (task == null) return false;
         _db.WorkTasks.Remove(task);
