@@ -65,13 +65,19 @@
                     <span>Журнал аудита</span>
                 </a>
             }
-            @if (canManageUsers)
-            {
-                <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
-                <a class="@GetActive("пользователи")" href="пользователи">
-                    <span>Пользователи</span>
-                </a>
-            }
+@if (canManageUsers)
+{
+    <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
+    <a class="@GetActive("пользователи")" href="пользователи">
+        <span>Пользователи</span>
+    </a>
+}
+@if (canSystemConfig)
+{
+    <a class="@GetActive("диагностика")" href="диагностика">
+        <span>Диагностика</span>
+    </a>
+}
         </nav>
         <section class="sideCard" aria-label="Статус">
             @*<h3>Контур и безопасность</h3>*@
@@ -166,6 +172,7 @@
     string userInitial = "?";
     bool canViewAudit;
     bool canManageUsers;
+    bool canSystemConfig;
     bool _isDark = true;
 
     List<SearchResultItem> searchResults = [];
@@ -246,6 +253,7 @@
             {
                 canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
                 canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
+                canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
             }
         }
     }

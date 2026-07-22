@@ -75,6 +75,7 @@ builder.Services.AddScoped<TaskService>();
 builder.Services.AddScoped<ReportService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<UserManagementService>();
+builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
 builder.Services.AddScoped<AuthenticationStateProvider, RevalidatingIdentityAuthenticationStateProvider<ApplicationUser>>();
 
 var app = builder.Build();
@@ -98,7 +99,8 @@ if (app.Environment.IsDevelopment())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
-    await DatabaseInit.InitializeAsync(db, userManager, roleManager);
+    var seedDemo = app.Configuration.GetValue<bool>("SeedDemoData");
+    await DatabaseInit.InitializeAsync(db, userManager, roleManager, seedDemo);
 }
 
 app.Run();

@@ -7,113 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Chernika.Infrastructure.Services;
 
-public static class DbSeeder
+public static class DemoDataSeeder
 {
-    private static readonly (string UserName, string Password, string FullName, string Position, UserRole Role)[] TestUsers =
-    [
-        ("admin", "Admin@12345", "Администратор системы", "Системный администратор", UserRole.SystemAdmin),
-        ("normadmin", "Norm@12345", "Нормировщик", "Нормировщик ГСМ", UserRole.NormAdmin),
-        ("operator", "Op@12345", "А. Оператор", "Оператор-эксперт", UserRole.Operator),
-        ("head", "Head@12345", "Начальник отдела", "Начальник отдела нормирования", UserRole.HeadOfDepartment),
-        ("guest", "Guest@12345", "В. Гость", "Внешний наблюдатель", UserRole.Guest),
-    ];
-
-    private static readonly Dictionary<string, string[]> RolePermissions = new()
+    public static async Task SeedAsync(AppDbContext db, UserManager<ApplicationUser> userManager)
     {
-        [nameof(UserRole.SystemAdmin)] = PermissionCodes.All.ToArray(),
-        [nameof(UserRole.NormAdmin)] =
-        [
-            PermissionCodes.HKView,
-            PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
-            PermissionCodes.HKAggregateCreate, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKAggregateSubmit,
-            PermissionCodes.HKEquipmentCreate, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKEquipmentSubmit,
-            PermissionCodes.HKComplexCreate, PermissionCodes.HKComplexEditDraft, PermissionCodes.HKComplexSubmit,
-            PermissionCodes.HKReview, PermissionCodes.HKApprove, PermissionCodes.HKArchive, PermissionCodes.HKDelete,
-            PermissionCodes.ReferenceView, PermissionCodes.ReferenceEdit,
-            PermissionCodes.CompositionView, PermissionCodes.CompositionEdit,
-            PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
-            PermissionCodes.ReportExport,
-            PermissionCodes.AuditView,
-        ],
-        [nameof(UserRole.Operator)] =
-        [
-            PermissionCodes.HKView,
-            PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
-            PermissionCodes.ReferenceView,
-            PermissionCodes.CompositionView,
-            PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
-            PermissionCodes.ReportExport,
-            PermissionCodes.TaskViewOwn,
-        ],
-        [nameof(UserRole.HeadOfDepartment)] =
-        [
-            PermissionCodes.HKView,
-            PermissionCodes.ReferenceView,
-            PermissionCodes.CompositionView,
-            PermissionCodes.IndividualCardView,
-            PermissionCodes.ReportExport,
-            PermissionCodes.AuditView,
-            PermissionCodes.TaskViewOwn,
-        ],
-        [nameof(UserRole.Guest)] =
-        [
-            PermissionCodes.HKView,
-            PermissionCodes.ReferenceView,
-            PermissionCodes.CompositionView,
-            PermissionCodes.IndividualCardView,
-        ],
-    };
-
-    public static async Task SeedAsync(AppDbContext db, UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
-    {
-        foreach (var roleName in Enum.GetNames<UserRole>())
-        {
-            if (!await roleManager.RoleExistsAsync(roleName))
-                await roleManager.CreateAsync(new IdentityRole(roleName));
-        }
-
-        foreach (var (userName, password, fullName, position, role) in TestUsers)
-        {
-            var user = await userManager.FindByNameAsync(userName);
-            if (user == null)
-            {
-                user = new ApplicationUser
-                {
-                    UserName = userName,
-                    Email = $"{userName}@chernika.local",
-                    FullName = fullName,
-                    Position = position,
-                    IsActive = true,
-                    EmailConfirmed = true,
-                };
-                var result = await userManager.CreateAsync(user, password);
-                if (!result.Succeeded)
-                {
-                    var errors = string.Join(", ", result.Errors.Select(e => e.Description));
-                    throw new InvalidOperationException($"Failed to create user {userName}: {errors}");
-                }
-            }
-            if (!await userManager.IsInRoleAsync(user, role.ToString()))
-                await userManager.AddToRoleAsync(user, role.ToString());
-        }
-
-        foreach (var (roleName, permissions) in RolePermissions)
-        {
-            foreach (var perm in permissions)
-            {
-                var exists = await db.RolePermissionTemplates.AnyAsync(x => x.RoleName == roleName && x.PermissionCode == perm);
-                if (!exists)
-                {
-                    db.RolePermissionTemplates.Add(new RolePermissionTemplate
-                    {
-                        Id = Guid.NewGuid(),
-                        RoleName = roleName,
-                        PermissionCode = perm,
-                    });
-                }
-            }
-        }
-
         var branch = await db.Branches.OrderBy(b => b.Code).FirstOrDefaultAsync();
         if (branch == null)
         {
@@ -121,13 +18,58 @@ public static class DbSeeder
             var branch2 = new Branch { Id = Guid.NewGuid(), Name = "Филиал №7", Code = "BR-007" };
             db.Branches.AddRange(branch, branch2);
         }
-        else if (await db.Nodes.AnyAsync())
+
+        var (userName, password, fullName, position, role) = ("admin", "Admin@12345", "Администратор системы", "Системный администратор", UserRole.SystemAdmin);
+        var testUsers = new (string UserName, string Password, string FullName, string Position, UserRole Role)[]
         {
-            await AssignDefaultBranchAsync(userManager, branch.Id);
-            return;
+            ("admin", "Admin@12345", "Администратор системы", "Системный администратор", UserRole.SystemAdmin),
+            ("normadmin", "Norm@12345", "Нормировщик", "Нормировщик ГСМ", UserRole.NormAdmin),
+            ("operator", "Op@12345", "А. Оператор", "Оператор-эксперт", UserRole.Operator),
+            ("head", "Head@12345", "Начальник отдела", "Начальник отдела нормирования", UserRole.HeadOfDepartment),
+            ("guest", "Guest@12345", "В. Гость", "Внешний наблюдатель", UserRole.Guest),
+        };
+
+        foreach (var (u, p, fn, pos, r) in testUsers)
+        {
+            var user = await userManager.FindByNameAsync(u);
+            if (user == null)
+            {
+                user = new ApplicationUser
+                {
+                    UserName = u,
+                    Email = $"{u}@chernika.local",
+                    FullName = fn,
+                    Position = pos,
+                    BranchId = branch.Id,
+                    IsActive = true,
+                    EmailConfirmed = true,
+                };
+                var result = await userManager.CreateAsync(user, p);
+                if (!result.Succeeded)
+                {
+                    var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+                    throw new InvalidOperationException($"Failed to create user {u}: {errors}");
+                }
+            }
+            if (!await userManager.IsInRoleAsync(user, r.ToString()))
+                await userManager.AddToRoleAsync(user, r.ToString());
         }
 
-        await AssignDefaultBranchAsync(userManager, branch.Id);
+        foreach (var u in new[] { "normadmin", "operator" })
+        {
+            var user = await userManager.FindByNameAsync(u);
+            if (user != null && user.BranchId != branch.Id)
+            {
+                user.BranchId = branch.Id;
+                await userManager.UpdateAsync(user);
+            }
+        }
+
+        if (await db.Nodes.AnyAsync())
+        {
+            await db.SaveChangesAsync();
+            return;
+        }
 
         var gsmMaterials = new List<GsmMaterial>
         {
@@ -282,18 +224,5 @@ public static class DbSeeder
         db.HKCards.Add(card3);
 
         await db.SaveChangesAsync();
-    }
-
-    private static async Task AssignDefaultBranchAsync(UserManager<ApplicationUser> userManager, Guid branchId)
-    {
-        foreach (var userName in new[] { "normadmin", "operator" })
-        {
-            var user = await userManager.FindByNameAsync(userName);
-            if (user != null && user.BranchId != branchId)
-            {
-                user.BranchId = branchId;
-                await userManager.UpdateAsync(user);
-            }
-        }
     }
 }

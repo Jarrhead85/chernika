@@ -1,0 +1,161 @@
+@page "/диагностика"
+@attribute [Authorize(Policy = "SystemConfig")]
+@using Chernika.Domain
+@inject ISecurityDataRepairService RepairService
+@inject NavigationManager Nav
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Диагностика безопасности</h2>
+            <div class="hint">Проверка целостности ролей и полномочий</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (diagnostics != null)
+            {
+                <div style="margin-bottom:16px">
+                    <span class="badge @(diagnostics.Status == "Готово" ? "ok" : "bad")">
+                        @diagnostics.Status
+                    </span>
+                </div>
+
+                <div class="form" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+                    <div class="stat-card">
+                        <div class="label">Активных пользователей</div>
+                        <div class="value">@diagnostics.TotalActiveUsers</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Без базовой роли</div>
+                        <div class="value @(diagnostics.UsersWithoutBaseRole > 0 ? "bad" : "")">@diagnostics.UsersWithoutBaseRole</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">С несколькими ролями</div>
+                        <div class="value @(diagnostics.UsersWithMultipleRoles > 0 ? "bad" : "")">@diagnostics.UsersWithMultipleRoles</div>
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Роль</th>
+                            <th>Шаблонных прав</th>
+                            <th>Активных пользователей</th>
+                            <th>Права</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var role in diagnostics.Roles)
+                        {
+                            <tr>
+                                <td><span class="badge">@role.RoleName</span></td>
+                                <td class="mono">@role.TemplateCount</td>
+                                <td>@role.ActiveUserCount</td>
+                                <td>
+                                    @if (role.PermissionCodes != null && role.PermissionCodes.Count > 0)
+                                    {
+                                        <div style="font-size:12px;color:var(--text2);max-width:500px">
+                                            @string.Join(", ", role.PermissionCodes.OrderBy(x => x))
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <span style="color:var(--bad)">Нет шаблонов</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                @if (repairResult != null)
+                {
+                    <div style="margin-top:16px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)">
+                        <h3 style="font-size:14px;font-weight:700;margin:0 0 8px">Результат ремонта</h3>
+                        <div style="font-size:13px;color:var(--text2)">
+                            Создано ролей: @repairResult.RolesCreated<br />
+                            Шаблонов добавлено: @repairResult.TemplatesUpserted<br />
+                            Viewer→Guest: @repairResult.ViewerToGuestMigrated<br />
+                            Кэш очищен: @repairResult.PermissionsCacheCleared
+                        </div>
+                        @if (repairResult.UsersWithoutBaseRole.Any())
+                        {
+                            <div style="margin-top:8px;color:var(--bad);font-size:13px">
+                                Пользователи без базовой роли:
+                                @foreach (var u in repairResult.UsersWithoutBaseRole)
+                                {
+                                    <div>@u.UserName (@u.UserId)</div>
+                                }
+                            </div>
+                        }
+                        @if (repairResult.UsersWithMultipleBaseRoles.Any())
+                        {
+                            <div style="margin-top:8px;color:var(--warn);font-size:13px">
+                                Пользователи с несколькими ролями:
+                                @foreach (var u in repairResult.UsersWithMultipleBaseRoles)
+                                {
+                                    <div>@u.UserName (@string.Join(", ", u.CurrentRoles))</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+            else if (errorMessage != null)
+            {
+                <div class="error" style="color:var(--bad)">@errorMessage</div>
+            }
+
+            <div class="btnRow" style="margin-top:16px">
+                <button class="btn primary" @onclick="LoadDiagnostics" disabled="@loading">Обновить</button>
+                <button class="btn" @onclick="RunRepair" disabled="@(loading || repairing)">
+                    @(repairing ? "Выполняется..." : "Запустить ремонт")
+                </button>
+            </div>
+        </div>
+    </section>
+</div>
+
+@code {
+    private SecurityDiagnosticsDto? diagnostics;
+    private SecurityRepairResult? repairResult;
+    private bool loading = true;
+    private bool repairing;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync() => await LoadDiagnostics();
+
+    async Task LoadDiagnostics()
+    {
+        loading = true;
+        errorMessage = null;
+        try
+        {
+            diagnostics = await RepairService.GetDiagnosticsAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        loading = false;
+    }
+
+    async Task RunRepair()
+    {
+        repairing = true;
+        errorMessage = null;
+        try
+        {
+            repairResult = await RepairService.RepairAsync();
+            await LoadDiagnostics();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        repairing = false;
+    }
+}

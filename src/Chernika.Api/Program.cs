@@ -72,6 +72,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 builder.Services.AddScoped<UserManagementService>();
+builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
 
 var app = builder.Build();
 
