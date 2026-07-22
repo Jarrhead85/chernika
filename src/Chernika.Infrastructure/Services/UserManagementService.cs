@@ -109,6 +109,14 @@ public class UserManagementService
         return await query.CountAsync();
     }
 
+    public async Task<List<BranchListItem>> GetBranchesAsync()
+    {
+        return await _db.Branches
+            .OrderBy(b => b.Code)
+            .Select(b => new BranchListItem { Id = b.Id, Name = b.Name, Code = b.Code })
+            .ToListAsync();
+    }
+
     public async Task<(bool Success, string? Error)> CreateUserAsync(string userName, string password, string fullName, string position, string roleName, Guid? branchId = null)
     {
         var actorId = _currentUser.GetRequiredUserId();
@@ -689,6 +697,13 @@ public class UserListItem
     public Guid? BranchId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? DeletedAt { get; set; }
+}
+
+public class BranchListItem
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Code { get; set; }
 }
 
 public class UserPermissionOverrideDto

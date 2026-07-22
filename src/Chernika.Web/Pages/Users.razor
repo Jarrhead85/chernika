@@ -5,7 +5,6 @@
 @using Chernika.Domain.Enums
 @inject UserManagementService UserMgmt
 @inject UserManager<ApplicationUser> UserManager
-@inject RoleManager<Microsoft.AspNetCore.Identity.IdentityRole> RoleManager
 @implements IDisposable
 
 <div class="stack">
@@ -98,34 +97,61 @@
             <div class="modal" @onclick:stopPropagation="true">
                 <div class="modalHeader">
                     <h3>@(isEdit ? "Редактирование" : "Новый пользователь")</h3>
-                    <button class="linkBtn" @onclick="CloseUserModal">✕</button>
+                    <button class="linkBtn" @onclick="CloseUserModal" aria-label="Закрыть">✕</button>
                 </div>
                 <div class="modalBody">
-                    <div class="form">
-                        <div class="field"><label>Логин *</label>
-                            <input type="text" @bind="formUsername" class="fieldInput" disabled="@isEdit" />
-                        </div>
-                        <div class="field"><label>ФИО</label>
-                            <input type="text" @bind="formFullName" class="fieldInput" />
-                        </div>
-                        <div class="field"><label>Должность</label>
-                            <input type="text" @bind="formPosition" class="fieldInput" />
-                        </div>
-                        @if (!isEdit)
-                        {
-                            <div class="field"><label>Пароль *</label>
-                                <input type="password" @bind="formPassword" class="fieldInput" />
+                    <form autocomplete="off" @onsubmit:preventDefault="true">
+                        <div class="form">
+                            <div class="field">
+                                <label for="new-user-login">Логин *</label>
+                                <input id="new-user-login" type="text" @bind="formUsername" @bind:event="oninput"
+                                       class="fieldInput" disabled="@isEdit" autocomplete="off" maxlength="256" />
                             </div>
-                        }
-                        <div class="field"><label>Роль</label>
-                            <select @bind="formRole" class="field-select">
-                                @foreach (var role in allRoles)
-                                {
-                                    <option value="@role">@GetRoleDisplayName(role)</option>
-                                }
-                            </select>
+                            <div class="field">
+                                <label for="new-user-fullname">ФИО</label>
+                                <input id="new-user-fullname" type="text" @bind="formFullName" @bind:event="oninput"
+                                       class="fieldInput" autocomplete="off" maxlength="256" />
+                            </div>
+                            <div class="field">
+                                <label for="new-user-position">Должность</label>
+                                <input id="new-user-position" type="text" @bind="formPosition" @bind:event="oninput"
+                                       class="fieldInput" autocomplete="organization-title" maxlength="256"
+                                       placeholder="Например: инженер по нормированию" />
+                            </div>
+                            @if (!isEdit)
+                            {
+                                <div class="field">
+                                    <label for="new-user-password">Пароль *</label>
+                                    <input id="new-user-password" type="password" @bind="formPassword" @bind:event="oninput"
+                                           class="fieldInput" autocomplete="new-password" autocapitalize="none"
+                                           spellcheck="false" maxlength="128"
+                                           placeholder="Введите пароль нового пользователя" />
+                                </div>
+                            }
+                            <div class="field">
+                                <label for="new-user-role">Роль *</label>
+                                <select id="new-user-role" @bind="formRole" class="field-select">
+                                    @foreach (var role in creatableRoles)
+                                    {
+                                        <option value="@role">@GetRoleDisplayName(role)</option>
+                                    }
+                                </select>
+                            </div>
+                            @if (formRole != nameof(UserRole.SystemAdmin))
+                            {
+                                <div class="field">
+                                    <label for="new-user-branch">Филиал *</label>
+                                    <select id="new-user-branch" @bind="formBranchId" class="field-select">
+                                        <option value="">— Выберите филиал —</option>
+                                        @foreach (var b in branches)
+                                        {
+                                            <option value="@b.Id">@b.Name (@b.Code)</option>
+                                        }
+                                    </select>
+                                </div>
+                            }
                         </div>
-                    </div>
+                    </form>
 
                     @if (!string.IsNullOrEmpty(formError))
                     {
@@ -142,36 +168,53 @@
 
     @if (showPermissionsModal)
     {
-        <div class="modalOverlay" @onclick="ClosePermissionsModal">
-            <div class="modal wide" @onclick:stopPropagation="true">
+        <div class="modalOverlay" @onclick="ClosePermissionsModal" @onkeydown="OnPermissionsKeyDown">
+            <div class="modal permissionsModal" @onclick:stopPropagation="true">
                 <div class="modalHeader">
-                    <h3>Индивидуальные полномочия — @permissionsUserName</h3>
-                    <button class="linkBtn" @onclick="ClosePermissionsModal">✕</button>
+                    <h3 id="permissionsTitle">Индивидуальные полномочия — @permissionsUserName</h3>
+                    <button class="linkBtn" @onclick="ClosePermissionsModal"
+                            aria-label="Закрыть окно полномочий">✕</button>
                 </div>
                 <div class="modalBody">
                     @if (permissionsLoading)
                     {
                         <div class="loading-state">Загрузка...</div>
                     }
-                    else if (effectivePermissions != null)
+                    else if (effectivePermissions == null)
                     {
-                        @if (permissionsError != null)
+                        <div class="loginError">
+                            Не удалось загрузить полномочия.
+                            @if (!string.IsNullOrEmpty(permissionsError))
+                            {
+                                <div style="margin-top:4px">@permissionsError</div>
+                            }
+                        </div>
+                        <div style="margin-top:12px">
+                            <button class="btn primary" @onclick="() => OpenPermissionsById(permissionsUserId)">Повторить</button>
+                        </div>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrEmpty(permissionsError))
                         {
                             <div class="loginError" style="margin-bottom:12px">@permissionsError</div>
                         }
 
                         @if (effectivePermissions.BaseRole == "SystemAdmin")
                         {
-                            <div style="padding:12px;background:var(--panel2);border-radius:8px;margin-bottom:12px;font-size:13px;color:var(--text2)">
+                            <div class="note" style="margin-bottom:12px">
                                 Системный администратор всегда имеет полный доступ. Индивидуальные полномочия недоступны.
                             </div>
                         }
 
-                        <div class="form" style="grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
-                            <div class="field"><label>Поиск полномочия</label>
-                                <input type="text" @bind="permSearch" class="fieldInput" placeholder="Название или код..." />
+                        <div class="permissionsToolbar">
+                            <div class="field">
+                                <label>Поиск полномочия</label>
+                                <input type="text" @bind="permSearch" class="fieldInput"
+                                       placeholder="Название, описание или код..." />
                             </div>
-                            <div class="field"><label>Модуль</label>
+                            <div class="field">
+                                <label>Модуль</label>
                                 <select @bind="permModuleFilter" class="field-select">
                                     <option value="">Все модули</option>
                                     @foreach (var m in allModules)
@@ -180,7 +223,8 @@
                                     }
                                 </select>
                             </div>
-                            <div class="field"><label>Статус</label>
+                            <div class="field">
+                                <label>Статус</label>
                                 <select @bind="permStatusFilter" class="field-select">
                                     <option value="">Все</option>
                                     <option value="effective">Разрешено</option>
@@ -190,15 +234,22 @@
                             </div>
                         </div>
 
-                        <div style="max-height:500px;overflow-y:auto">
-                            <table>
+                        <div class="permCounters">
+                            <span>Всего: <strong>@effectivePermissions.Permissions.Count</strong></span>
+                            <span>Разрешено: <strong>@effectivePermissions.Permissions.Count(p => p.IsEffective)</strong></span>
+                            <span>Запрещено: <strong>@effectivePermissions.Permissions.Count(p => !p.IsEffective)</strong></span>
+                            <span>С индивидуальным решением: <strong>@effectivePermissions.Permissions.Count(p => p.OverrideIsGranted != null)</strong></span>
+                        </div>
+
+                        <div class="permissionsTableWrap">
+                            <table class="permissionsTable">
                                 <thead>
                                     <tr>
                                         <th>Модуль</th>
                                         <th>Полномочие</th>
                                         <th>По роли</th>
                                         <th>Индивидуальное решение</th>
-                                        <th>Итог</th>
+                                        <th>Итоговый доступ</th>
                                         @if (effectivePermissions.BaseRole != "SystemAdmin")
                                         {
                                             <th>Действия</th>
@@ -209,57 +260,75 @@
                                     @foreach (var perm in filteredPermissions)
                                     {
                                         <tr>
-                                            <td style="font-size:12px;color:var(--text2)">@perm.Module</td>
-                                            <td>
-                                                <div>@perm.Name</div>
-                                                <div style="font-size:11px;color:var(--text3)">@perm.Description</div>
-                                                <div style="font-size:10px;color:var(--text3)">Код системы: @perm.Code</div>
+                                            <td><span class="tag">@perm.Module</span></td>
+                                            <td class="permissionCell">
+                                                <div class="permissionName">@perm.Name</div>
+                                                <div class="permissionDescription">@perm.Description</div>
+                                                <code class="permissionCode">Код системы: @perm.Code</code>
                                             </td>
                                             <td>
                                                 @if (perm.GrantedByRole)
                                                 {
-                                                    <span class="badge" style="background:var(--ok)">Да</span>
+                                                    <span class="permissionStatus permissionStatus--granted">✓ Разрешено</span>
                                                 }
                                                 else
                                                 {
-                                                    <span style="color:var(--text3)">Нет</span>
+                                                    <span class="permissionStatus permissionStatus--denied">× Не предоставлено</span>
                                                 }
                                             </td>
                                             <td>
                                                 @if (perm.OverrideIsGranted == true)
                                                 {
-                                                    <span class="badge" style="background:var(--ok)">Индивидуально разрешено</span>
+                                                    <span class="permissionStatus permissionStatus--granted">✓ Разрешено индивидуально</span>
+                                                    @if (perm.GrantedByRole)
+                                                    {
+                                                        <div class="permSecondaryHint">Дополнительное разрешение не изменяет текущий доступ</div>
+                                                    }
+                                                    @if (!string.IsNullOrEmpty(perm.OverrideReason))
+                                                    {
+                                                        <div class="permReason">@perm.OverrideReason</div>
+                                                    }
                                                 }
                                                 else if (perm.OverrideIsGranted == false)
                                                 {
-                                                    <span class="badge" style="background:var(--bad)">Индивидуально запрещено</span>
+                                                    <span class="permissionStatus permissionStatus--warning">! Запрещено индивидуально</span>
+                                                    @if (!string.IsNullOrEmpty(perm.OverrideReason))
+                                                    {
+                                                        <div class="permReason">@perm.OverrideReason</div>
+                                                    }
                                                 }
                                                 else
                                                 {
-                                                    <span style="color:var(--text3)">—</span>
+                                                    <span class="permissionStatus permissionStatus--neutral">— Не задано</span>
                                                 }
                                             </td>
                                             <td>
                                                 @if (perm.IsEffective)
                                                 {
-                                                    <span class="badge" style="background:var(--ok)">Доступно</span>
+                                                    <span class="permissionStatus permissionStatus--granted">✓ Доступ разрешён</span>
                                                 }
                                                 else
                                                 {
-                                                    <span class="badge" style="background:var(--bad)">Нет доступа</span>
+                                                    <span class="permissionStatus permissionStatus--denied">× Доступ запрещён</span>
                                                 }
                                             </td>
                                             @if (effectivePermissions.BaseRole != "SystemAdmin")
                                             {
                                                 <td>
-                                                    @if (perm.OverrideIsGranted == null)
+                                                    @if (perm.RowSaving)
                                                     {
-                                                        <button class="linkBtn" style="font-size:12px" @onclick="() => GrantPerm(perm)">Разрешить дополнительно</button>
-                                                        <button class="linkBtn" style="font-size:12px;color:var(--warn)" @onclick="() => DenyPerm(perm)">Запретить</button>
+                                                        <span class="permissionStatus permissionStatus--neutral">Сохранение...</span>
+                                                    }
+                                                    else if (perm.OverrideIsGranted == null)
+                                                    {
+                                                        <div class="permActions">
+                                                            <button class="linkBtn" @onclick="() => GrantPerm(perm)">Разрешить дополнительно</button>
+                                                            <button class="linkBtn permActionDeny" @onclick="() => DenyPerm(perm)">Запретить</button>
+                                                        </div>
                                                     }
                                                     else
                                                     {
-                                                        <button class="linkBtn" style="font-size:12px;color:var(--warn)" @onclick="() => RevokePerm(perm)">Отменить индивидуальное решение</button>
+                                                        <button class="linkBtn" @onclick="() => RevokePerm(perm)">Отменить индивидуальное решение</button>
                                                     }
                                                 </td>
                                             }
@@ -283,7 +352,8 @@
             <div class="modal" @onclick:stopPropagation="true" style="max-width:400px">
                 <div class="modalHeader">
                     <h3>@(grantDenyAction == "grant" ? "Разрешить дополнительно" : "Запретить")</h3>
-                    <button class="linkBtn" @onclick="() => showGrantDenyModal = false">✕</button>
+                    <button class="linkBtn" @onclick="() => showGrantDenyModal = false"
+                            aria-label="Закрыть">✕</button>
                 </div>
                 <div class="modalBody">
                     @if (grantDenyTarget != null)
@@ -292,17 +362,18 @@
                             <div style="font-weight:700;font-size:14px">@grantDenyTarget.Name</div>
                             <div style="font-size:12px;color:var(--text2)">@grantDenyTarget.Module</div>
                             <div style="font-size:11px;color:var(--text3);margin-top:4px">@grantDenyTarget.Description</div>
-                            <div style="font-size:10px;color:var(--text3)">Код системы: @grantDenyTarget.Code</div>
+                            <code style="display:inline-block;margin-top:7px;padding:2px 6px;border:1px solid var(--line);border-radius:5px;color:var(--muted);background:var(--panel2);font-family:var(--mono);font-size:11px">Код системы: @grantDenyTarget.Code</code>
                         </div>
-                        <div style="font-size:13px;color:var(--text2);margin-bottom:8px">
-                            @if (grantDenyAction == "deny" && grantDenyTarget.GrantedByRole)
-                            {
-                                <span style="color:var(--warn)">Внимание: право разрешено базовой ролью. Запрет отнимет доступ.</span>
-                            }
-                        </div>
+                        @if (grantDenyAction == "deny" && grantDenyTarget.GrantedByRole)
+                        {
+                            <div class="note" style="margin-bottom:12px;color:var(--warn)">
+                                Внимание: право разрешено базовой ролью. Запрет отнимет доступ.
+                            </div>
+                        }
                         <div class="field">
                             <label>Причина *</label>
-                            <textarea @bind="grantDenyReason" rows="3" class="fieldInput" placeholder="Укажите причину (до 500 символов)..." maxlength="500"></textarea>
+                            <textarea @bind="grantDenyReason" rows="3" class="fieldInput"
+                                      placeholder="Укажите причину (до 500 символов)..." maxlength="500"></textarea>
                         </div>
                         @if (grantDenyError != null)
                         {
@@ -323,10 +394,19 @@
 
 @code {
     private List<UserListItem> users = new();
-    private List<string> allRoles = new();
+    private List<BranchListItem> branches = new();
     private List<string> allModules = new();
     private bool loading = true;
     private string statusFilter = "";
+
+    private static readonly string[] creatableRoles = new[]
+    {
+        nameof(UserRole.Guest),
+        nameof(UserRole.Operator),
+        nameof(UserRole.NormAdmin),
+        nameof(UserRole.HeadOfDepartment),
+        nameof(UserRole.SystemAdmin)
+    };
 
     private bool showUserModal = false;
     private bool isEdit = false;
@@ -336,7 +416,8 @@
     private string formFullName = "";
     private string formPosition = "";
     private string formPassword = "";
-    private string formRole = "";
+    private string formRole = nameof(UserRole.Guest);
+    private string formBranchId = "";
 
     private bool showPermissionsModal = false;
     private bool permissionsLoading = false;
@@ -360,7 +441,8 @@
             (string.IsNullOrEmpty(permSearch) ||
              p.Name.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
              p.Code.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
-             p.Description.Contains(permSearch, StringComparison.OrdinalIgnoreCase)) &&
+             p.Description.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
+             p.Module.Contains(permSearch, StringComparison.OrdinalIgnoreCase)) &&
             (string.IsNullOrEmpty(permModuleFilter) || p.Module == permModuleFilter) &&
             (string.IsNullOrEmpty(permStatusFilter) ||
              (permStatusFilter == "effective" && p.IsEffective) ||
@@ -371,7 +453,7 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadUsers();
-        allRoles = (await RoleManager.Roles.ToListAsync()).Select(r => r.Name ?? "").Where(n => !string.IsNullOrEmpty(n)).ToList();
+        branches = await UserMgmt.GetBranchesAsync();
         allModules = PermissionCatalog.GetAllModules().ToList();
     }
 
@@ -385,11 +467,11 @@
 
     string GetRoleDisplayName(string role) => role switch
     {
-        "SystemAdmin" => "Системный администратор",
-        "NormAdmin" => "Нормировщик",
-        "Operator" => "Оператор",
-        "HeadOfDepartment" => "Начальник отдела",
-        "Guest" => "Гость",
+        nameof(UserRole.SystemAdmin) => "Системный администратор",
+        nameof(UserRole.NormAdmin) => "Нормировщик",
+        nameof(UserRole.Operator) => "Оператор",
+        nameof(UserRole.HeadOfDepartment) => "Начальник отдела",
+        nameof(UserRole.Guest) => "Гость",
         _ => role
     };
 
@@ -401,7 +483,8 @@
         formFullName = "";
         formPosition = "";
         formPassword = "";
-        formRole = allRoles.FirstOrDefault() ?? "";
+        formRole = nameof(UserRole.Guest);
+        formBranchId = "";
         formError = "";
         showUserModal = true;
     }
@@ -415,6 +498,7 @@
         formPosition = user.Position;
         formPassword = "";
         formRole = user.RoleName;
+        formBranchId = user.BranchId?.ToString() ?? "";
         formError = "";
         showUserModal = true;
     }
@@ -423,6 +507,7 @@
     {
         showUserModal = false;
         formError = "";
+        formPassword = "";
     }
 
     async Task SaveUser()
@@ -438,8 +523,22 @@
         {
             if (string.IsNullOrWhiteSpace(formUsername)) { formError = "Логин обязателен"; return; }
             if (string.IsNullOrWhiteSpace(formPassword)) { formError = "Пароль обязателен"; return; }
-            var (success, error) = await UserMgmt.CreateUserAsync(formUsername, formPassword, formFullName, formPosition, formRole);
+            if (string.IsNullOrWhiteSpace(formRole)) { formError = "Роль обязательна"; return; }
+
+            Guid? branchId = null;
+            if (formRole != nameof(UserRole.SystemAdmin))
+            {
+                if (string.IsNullOrEmpty(formBranchId) || !Guid.TryParse(formBranchId, out var parsed))
+                {
+                    formError = "Филиал обязателен для выбранной роли";
+                    return;
+                }
+                branchId = parsed;
+            }
+
+            var (success, error) = await UserMgmt.CreateUserAsync(formUsername, formPassword, formFullName, formPosition, formRole, branchId);
             if (!success) { formError = error ?? ""; return; }
+            formPassword = "";
         }
 
         showUserModal = false;
@@ -486,15 +585,23 @@
 
     async Task OpenPermissions(UserListItem user)
     {
-        permissionsUserId = user.Id;
+        await OpenPermissionsById(user.Id);
         permissionsUserName = $"{user.FullName} ({user.UserName})";
+    }
+
+    async Task OpenPermissionsById(string userId)
+    {
+        permissionsUserId = userId;
         permissionsLoading = true;
         permissionsError = null;
         showPermissionsModal = true;
         permSearch = "";
         permModuleFilter = "";
         permStatusFilter = "";
-        effectivePermissions = await UserMgmt.GetEffectivePermissionsAsync(user.Id);
+        effectivePermissions = null;
+        StateHasChanged();
+
+        effectivePermissions = await UserMgmt.GetEffectivePermissionsAsync(userId);
         permissionsLoading = false;
         StateHasChanged();
     }
@@ -504,6 +611,12 @@
         showPermissionsModal = false;
         permissionsError = null;
         effectivePermissions = null;
+    }
+
+    void OnPermissionsKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape" && !showGrantDenyModal && !grantDenySaving)
+            ClosePermissionsModal();
     }
 
     void GrantPerm(UserEffectivePermissionDto perm)
@@ -556,7 +669,12 @@
 
     async Task RevokePerm(UserEffectivePermissionDto perm)
     {
+        perm.RowSaving = true;
+        StateHasChanged();
+
         var (result, error) = await UserMgmt.RevokePermissionAsync(permissionsUserId, perm.Code);
+        perm.RowSaving = false;
+
         if (error != null)
         {
             permissionsError = error;

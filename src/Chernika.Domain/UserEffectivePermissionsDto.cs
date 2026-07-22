@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Chernika.Domain;
 
 public class UserEffectivePermissionDto
@@ -11,6 +13,7 @@ public class UserEffectivePermissionDto
     public bool IsEffective { get; set; }
     public string Source { get; set; } = null!;
     public string? OverrideReason { get; set; }
+    [JsonIgnore] public bool RowSaving { get; set; }
 }
 
 public class UserEffectivePermissionsDto
