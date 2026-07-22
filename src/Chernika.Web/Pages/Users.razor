@@ -17,6 +17,13 @@
         <div class="panelBody">
             <div class="btnRow" style="margin-bottom:16px">
                 <button class="btn primary" @onclick="OpenCreate">+ Новый пользователь</button>
+                <select class="fieldInput" style="max-width:200px" @bind="statusFilter" @bind:after="LoadUsers">
+                    <option value="">Все (кроме удалённых)</option>
+                    <option value="active">Активные</option>
+                    <option value="blocked">Заблокированные</option>
+                    <option value="deleted">Удалённые</option>
+                    <option value="all">Все (включая удалённых)</option>
+                </select>
             </div>
 
             @if (loading)
@@ -49,16 +56,33 @@
                                 <td>@user.Position</td>
                                 <td><span class="badge">@GetRoleDisplayName(user.RoleName)</span></td>
                                 <td>
-                                    <span class="badge" style="background:@(user.IsActive ? "var(--ok)" : "var(--warn)")">
-                                        @(user.IsActive ? "Активен" : "Заблокирован")
-                                    </span>
+                                    @if (user.IsDeleted)
+                                    {
+                                        <span class="badge" style="background:var(--text3)">Удалён</span>
+                                    }
+                                    else if (user.IsActive)
+                                    {
+                                        <span class="badge" style="background:var(--ok)">Активен</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge" style="background:var(--warn)">Заблокирован</span>
+                                    }
                                 </td>
                                 <td>
                                     <button class="linkBtn" @onclick="() => OpenEdit(user)">Изменить</button>
                                     <button class="linkBtn" @onclick="() => OpenPermissions(user)">Полномочия</button>
-                                    <button class="linkBtn" style="color:var(--warn)" @onclick="() => ToggleBlock(user)">
-                                        @(user.IsActive ? "Заблокировать" : "Разблокировать")
-                                    </button>
+                                    @if (user.IsDeleted)
+                                    {
+                                        <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreUser(user)">Восстановить</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="linkBtn" style="color:var(--warn)" @onclick="() => ToggleBlock(user)">
+                                            @(user.IsActive ? "Заблокировать" : "Разблокировать")
+                                        </button>
+                                        <button class="linkBtn" style="color:var(--error)" @onclick="() => DeleteUser(user)">Удалить</button>
+                                    }
                                 </td>
                             </tr>
                         }
@@ -302,6 +326,7 @@
     private List<string> allRoles = new();
     private List<string> allModules = new();
     private bool loading = true;
+    private string statusFilter = "";
 
     private bool showUserModal = false;
     private bool isEdit = false;
@@ -353,7 +378,7 @@
     async Task LoadUsers()
     {
         loading = true;
-        users = await UserMgmt.GetUsersAsync();
+        users = await UserMgmt.GetUsersAsync(statusFilter: statusFilter);
         loading = false;
         StateHasChanged();
     }
@@ -424,6 +449,32 @@
     async Task ToggleBlock(UserListItem user)
     {
         var (success, error) = await UserMgmt.ToggleBlockAsync(user.Id);
+        if (!success)
+        {
+            formError = error ?? "";
+            StateHasChanged();
+            return;
+        }
+        await LoadUsers();
+    }
+
+    async Task DeleteUser(UserListItem user)
+    {
+        formError = "";
+        var (success, error) = await UserMgmt.DeleteUserAsync(user.Id, "Удалено из интерфейса");
+        if (!success)
+        {
+            formError = error ?? "";
+            StateHasChanged();
+            return;
+        }
+        await LoadUsers();
+    }
+
+    async Task RestoreUser(UserListItem user)
+    {
+        formError = "";
+        var (success, error) = await UserMgmt.RestoreUserAsync(user.Id, user.RoleName, user.BranchId);
         if (!success)
         {
             formError = error ?? "";
