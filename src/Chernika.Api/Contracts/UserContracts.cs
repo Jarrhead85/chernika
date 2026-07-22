@@ -9,12 +9,16 @@ public record UserDto(
     string Position,
     string RoleName,
     bool IsActive,
+    bool IsDeleted,
     Guid? BranchId,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    DateTime? DeletedAt
 );
 
-public record CreateUserRequest(string UserName, string Password, string FullName, string Position, string Role);
-public record UpdateUserRequest(string FullName, string Position, string Role);
+public record CreateUserRequest(string UserName, string Password, string FullName, string Position, string Role, Guid? BranchId = null);
+public record UpdateUserRequest(string FullName, string Position, string Role, Guid? BranchId = null);
+public record DeleteUserRequest(string Reason);
+public record RestoreUserRequest(string Role, Guid? BranchId);
 
 public record UserOverrideDto(
     Guid Id,
@@ -34,7 +38,7 @@ public static class UserMapper
 {
     public static UserDto ToDto(UserListItem item) => new(
         item.Id, item.UserName, item.FullName, item.Position,
-        item.RoleName, item.IsActive, item.BranchId, item.CreatedAt
+        item.RoleName, item.IsActive, item.IsDeleted, item.BranchId, item.CreatedAt, item.DeletedAt
     );
 
     public static UserOverrideDto ToDto(UserPermissionOverrideDto item) => new(

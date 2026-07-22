@@ -28,7 +28,7 @@ public class UsersController : ControllerBase
     public async Task<ActionResult> Create([FromBody] CreateUserRequest request)
     {
         var (success, error) = await _users.CreateUserAsync(
-            request.UserName, request.Password, request.FullName, request.Position, request.Role);
+            request.UserName, request.Password, request.FullName, request.Position, request.Role, request.BranchId);
         if (!success) return BadRequest(new { Error = error });
         return Ok(new { Message = "Пользователь создан" });
     }
@@ -37,7 +37,7 @@ public class UsersController : ControllerBase
     [Authorize(Policy = "ManageUsers")]
     public async Task<ActionResult> Update(string id, [FromBody] UpdateUserRequest request)
     {
-        var (success, error) = await _users.UpdateUserAsync(id, request.FullName, request.Position, request.Role);
+        var (success, error) = await _users.UpdateUserAsync(id, request.FullName, request.Position, request.Role, request.BranchId);
         if (!success) return BadRequest(new { Error = error });
         return NoContent();
     }
@@ -47,6 +47,24 @@ public class UsersController : ControllerBase
     public async Task<ActionResult> ToggleBlock(string id)
     {
         var (success, error) = await _users.ToggleBlockAsync(id);
+        if (!success) return BadRequest(new { Error = error });
+        return NoContent();
+    }
+
+    [HttpPost("{id}/delete")]
+    [Authorize(Policy = "ManageUsers")]
+    public async Task<ActionResult> Delete(string id, [FromBody] DeleteUserRequest request)
+    {
+        var (success, error) = await _users.DeleteUserAsync(id, request.Reason);
+        if (!success) return BadRequest(new { Error = error });
+        return NoContent();
+    }
+
+    [HttpPost("{id}/restore")]
+    [Authorize(Policy = "ManageUsers")]
+    public async Task<ActionResult> Restore(string id, [FromBody] RestoreUserRequest request)
+    {
+        var (success, error) = await _users.RestoreUserAsync(id, request.Role, request.BranchId);
         if (!success) return BadRequest(new { Error = error });
         return NoContent();
     }

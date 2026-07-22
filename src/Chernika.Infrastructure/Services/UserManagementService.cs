@@ -32,29 +32,80 @@ public class UserManagementService
         _audit = audit;
     }
 
-    public async Task<List<UserListItem>> GetUsersAsync()
+    public async Task<List<UserListItem>> GetUsersAsync(string? statusFilter = null, string? roleFilter = null, string? search = null, int page = 1, int pageSize = 50)
     {
-        var users = await _userManager.Users.OrderBy(u => u.UserName).ToListAsync();
+        var query = _userManager.Users.AsQueryable();
+
+        if (statusFilter == "active")
+            query = query.Where(u => u.IsActive && !u.IsDeleted);
+        else if (statusFilter == "blocked")
+            query = query.Where(u => !u.IsActive && !u.IsDeleted);
+        else if (statusFilter == "deleted")
+            query = query.Where(u => u.IsDeleted);
+        else if (statusFilter != "all")
+            query = query.Where(u => !u.IsDeleted);
+
+        if (!string.IsNullOrEmpty(search))
+            query = query.Where(u =>
+                (u.UserName != null && u.UserName.Contains(search)) ||
+                (u.FullName != null && u.FullName.Contains(search)));
+
+        var allFiltered = await query.OrderBy(u => u.UserName).ToListAsync();
+
         var result = new List<UserListItem>();
-        foreach (var u in users)
+        foreach (var u in allFiltered)
         {
             var roles = await _userManager.GetRolesAsync(u);
+            var baseRole = roles.FirstOrDefault(r =>
+                r == nameof(UserRole.SystemAdmin) ||
+                r == nameof(UserRole.NormAdmin) ||
+                r == nameof(UserRole.Operator) ||
+                r == nameof(UserRole.HeadOfDepartment) ||
+                r == nameof(UserRole.Guest));
+
+            if (!string.IsNullOrEmpty(roleFilter) && baseRole != roleFilter)
+                continue;
+
             result.Add(new UserListItem
             {
                 Id = u.Id,
                 UserName = u.UserName ?? "",
-                FullName = u.FullName ?? "",
+                FullName = u.DisplayNameSnapshot ?? u.FullName ?? "",
                 Position = u.Position ?? "",
-                RoleName = roles.FirstOrDefault() ?? "",
+                RoleName = baseRole ?? "",
                 IsActive = u.IsActive,
+                IsDeleted = u.IsDeleted,
                 BranchId = u.BranchId,
                 CreatedAt = u.CreatedAt,
+                DeletedAt = u.DeletedAt,
             });
         }
-        return result;
+
+        return result.Skip((page - 1) * pageSize).Take(pageSize).ToList();
     }
 
-    public async Task<(bool Success, string? Error)> CreateUserAsync(string userName, string password, string fullName, string position, string roleName)
+    public async Task<int> GetUsersCountAsync(string? statusFilter = null, string? roleFilter = null, string? search = null)
+    {
+        var query = _userManager.Users.AsQueryable();
+
+        if (statusFilter == "active")
+            query = query.Where(u => u.IsActive && !u.IsDeleted);
+        else if (statusFilter == "blocked")
+            query = query.Where(u => !u.IsActive && !u.IsDeleted);
+        else if (statusFilter == "deleted")
+            query = query.Where(u => u.IsDeleted);
+        else if (statusFilter != "all")
+            query = query.Where(u => !u.IsDeleted);
+
+        if (!string.IsNullOrEmpty(search))
+            query = query.Where(u =>
+                (u.UserName != null && u.UserName.Contains(search)) ||
+                (u.FullName != null && u.FullName.Contains(search)));
+
+        return await query.CountAsync();
+    }
+
+    public async Task<(bool Success, string? Error)> CreateUserAsync(string userName, string password, string fullName, string position, string roleName, Guid? branchId = null)
     {
         var actorId = _currentUser.GetRequiredUserId();
 
@@ -68,12 +119,23 @@ public class UserManagementService
         if (!await _roleManager.RoleExistsAsync(roleName))
             return (false, $"Роль «{roleName}» не существует");
 
+        var validRoles = Enum.GetNames<UserRole>();
+        if (!validRoles.Contains(roleName))
+            return (false, $"Роль «{roleName}» не является допустимой бизнес-ролью");
+
+        if (roleName != nameof(UserRole.SystemAdmin) && branchId == null)
+            return (false, "Филиал обязателен для роли отличной от SystemAdmin");
+
+        if (branchId.HasValue && !await _db.Branches.AnyAsync(b => b.Id == branchId.Value))
+            return (false, "Указанный филиал не существует");
+
         var user = new ApplicationUser
         {
             UserName = userName,
             Email = $"{userName}@chernika.local",
             FullName = fullName,
             Position = position,
+            BranchId = branchId,
             IsActive = true,
             EmailConfirmed = true,
         };
@@ -84,41 +146,63 @@ public class UserManagementService
 
         await _userManager.AddToRoleAsync(user, roleName);
 
-        await _audit.LogAsync("User", user.Id, "Created", actorId, $"Создан пользователь {userName} с ролью {roleName}");
+        await _audit.LogAsync("User", user.Id, "Created", actorId, $"Создан пользователь {userName} с ролью {roleName}, филиал={branchId}");
 
         return (true, null);
     }
 
-    public async Task<(bool Success, string? Error)> UpdateUserAsync(string userId, string fullName, string position, string roleName)
+    public async Task<(bool Success, string? Error)> UpdateUserAsync(string userId, string fullName, string position, string roleName, Guid? branchId = null)
     {
         var actorId = _currentUser.GetRequiredUserId();
+
+        if (actorId.ToString() == userId)
+            return (false, "Нельзя изменять собственные данные через этот экран");
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
             return (false, "Пользователь не найден");
 
+        if (user.IsDeleted)
+            return (false, "Нельзя изменять удалённого пользователя");
+
         if (!await _roleManager.RoleExistsAsync(roleName))
             return (false, $"Роль «{roleName}» не существует");
 
+        var validRoles = Enum.GetNames<UserRole>();
+        if (!validRoles.Contains(roleName))
+            return (false, $"Роль «{roleName}» не является допустимой бизнес-ролью");
+
+        if (roleName != nameof(UserRole.SystemAdmin) && branchId == null)
+            return (false, "Филиал обязателен для роли отличной от SystemAdmin");
+
+        if (branchId.HasValue && !await _db.Branches.AnyAsync(b => b.Id == branchId.Value))
+            return (false, "Указанный филиал не существует");
+
         user.FullName = fullName;
         user.Position = position;
+        user.BranchId = branchId;
         var updateResult = await _userManager.UpdateAsync(user);
         if (!updateResult.Succeeded)
             return (false, string.Join("; ", updateResult.Errors.Select(e => e.Description)));
 
         var currentRoles = await _userManager.GetRolesAsync(user);
-        var oldRole = currentRoles.FirstOrDefault() ?? "";
+        var baseRole = currentRoles.FirstOrDefault(r =>
+            r == nameof(UserRole.SystemAdmin) ||
+            r == nameof(UserRole.NormAdmin) ||
+            r == nameof(UserRole.Operator) ||
+            r == nameof(UserRole.HeadOfDepartment) ||
+            r == nameof(UserRole.Guest)) ?? "";
 
-        if (oldRole != roleName)
+        if (baseRole != roleName)
         {
-            if (oldRole == nameof(UserRole.SystemAdmin) && !await HasOtherActiveSystemAdminAsync(userId))
+            if (baseRole == nameof(UserRole.SystemAdmin) && !await HasOtherActiveSystemAdminAsync(userId))
                 return (false, "Нельзя изменить роль единственного активного системного администратора");
 
             await _userManager.RemoveFromRolesAsync(user, currentRoles);
             await _userManager.AddToRoleAsync(user, roleName);
             _permissions.InvalidateCache(userId);
 
-            await _audit.LogAsync("User", userId, "RoleChanged", actorId, $"Роль изменена с {oldRole} на {roleName}");
+            await _audit.LogAsync("User", userId, "RoleChanged", actorId, $"Роль изменена с {baseRole} на {roleName}");
         }
 
         await _audit.LogAsync("User", userId, "Updated", actorId, $"Обновлены данные пользователя {user.UserName}");
@@ -130,17 +214,20 @@ public class UserManagementService
     {
         var actorId = _currentUser.GetRequiredUserId();
 
-        if (userId == actorId.ToString())
+        if (actorId.ToString() == userId)
             return (false, "Нельзя заблокировать самого себя");
 
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
             return (false, "Пользователь не найден");
+        if (user.IsDeleted)
+            return (false, "Нельзя блокировать удалённого пользователя");
 
         if (user.IsActive)
         {
             var roles = await _userManager.GetRolesAsync(user);
-            if (roles.Contains(nameof(UserRole.SystemAdmin)) && !await HasOtherActiveSystemAdminAsync(userId))
+            var isSysAdmin = roles.Contains(nameof(UserRole.SystemAdmin));
+            if (isSysAdmin && !await HasOtherActiveSystemAdminAsync(userId))
                 return (false, "Нельзя деактивировать единственного активного системного администратора");
         }
 
@@ -158,9 +245,108 @@ public class UserManagementService
         }
 
         await _userManager.UpdateAsync(user);
+        await _userManager.UpdateSecurityStampAsync(user);
         _permissions.InvalidateCache(userId);
 
         await _audit.LogAsync("User", userId, user.IsActive ? "Unblocked" : "Blocked", actorId);
+
+        return (true, null);
+    }
+
+    public async Task<(bool Success, string? Error)> DeleteUserAsync(string userId, string reason)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        if (actorId.ToString() == userId)
+            return (false, "Нельзя удалить самого себя");
+
+        if (string.IsNullOrWhiteSpace(reason))
+            return (false, "Причина обязательна");
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+            return (false, "Пользователь не найден");
+        if (user.IsDeleted)
+            return (false, "Пользователь уже удалён");
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var isSysAdmin = roles.Contains(nameof(UserRole.SystemAdmin));
+        if (isSysAdmin && !await HasOtherActiveSystemAdminAsync(userId))
+            return (false, "Нельзя удалить единственного активного системного администратора");
+
+        user.IsDeleted = true;
+        user.IsActive = false;
+        user.DeletedAt = DateTime.UtcNow;
+        user.DeletedByUserId = actorId.ToString();
+        user.DisplayNameSnapshot = user.DisplayNameSnapshot ?? user.FullName;
+
+        var updateResult = await _userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+            return (false, string.Join("; ", updateResult.Errors.Select(e => e.Description)));
+
+        await _userManager.SetLockoutEnabledAsync(user, true);
+        await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+        await _userManager.UpdateSecurityStampAsync(user);
+
+        var overrides = await _db.UserPermissionOverrides.Where(x => x.UserId == userId).ToListAsync();
+        if (overrides.Count > 0)
+        {
+            _db.UserPermissionOverrides.RemoveRange(overrides);
+            await _db.SaveChangesAsync();
+        }
+
+        _permissions.InvalidateCache(userId);
+
+        await _audit.LogAsync("User", userId, "Deleted", actorId, $"Причина: {reason}");
+
+        return (true, null);
+    }
+
+    public async Task<(bool Success, string? Error)> RestoreUserAsync(string userId, string roleName, Guid? branchId)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+            return (false, "Пользователь не найден");
+        if (!user.IsDeleted)
+            return (false, "Пользователь не удалён");
+
+        if (string.IsNullOrWhiteSpace(roleName))
+            return (false, "Роль обязательна");
+
+        var validRoles = Enum.GetNames<UserRole>();
+        if (!validRoles.Contains(roleName))
+            return (false, $"Роль «{roleName}» не является допустимой бизнес-ролью");
+
+        if (roleName != nameof(UserRole.SystemAdmin) && branchId == null)
+            return (false, "Филиал обязателен для роли отличной от SystemAdmin");
+
+        user.IsDeleted = false;
+        user.IsActive = true;
+        user.DeletedAt = null;
+        user.DeletedByUserId = null;
+
+        var updateResult = await _userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+            return (false, string.Join("; ", updateResult.Errors.Select(e => e.Description)));
+
+        await _userManager.SetLockoutEndDateAsync(user, null);
+        await _userManager.SetLockoutEnabledAsync(user, false);
+        await _userManager.UpdateSecurityStampAsync(user);
+
+        var currentRoles = await _userManager.GetRolesAsync(user);
+        if (currentRoles.Any())
+            await _userManager.RemoveFromRolesAsync(user, currentRoles);
+        await _userManager.AddToRoleAsync(user, roleName);
+
+        if (branchId.HasValue)
+            user.BranchId = branchId;
+
+        await _userManager.UpdateAsync(user);
+        _permissions.InvalidateCache(userId);
+
+        await _audit.LogAsync("User", userId, "Restored", actorId, $"Роль: {roleName}, филиал: {branchId}");
 
         return (true, null);
     }
@@ -495,8 +681,10 @@ public class UserListItem
     public string Position { get; set; } = string.Empty;
     public string RoleName { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+    public bool IsDeleted { get; set; }
     public Guid? BranchId { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? DeletedAt { get; set; }
 }
 
 public class UserPermissionOverrideDto
