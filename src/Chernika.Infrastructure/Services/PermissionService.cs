@@ -88,6 +88,16 @@ public class PermissionService : IPermissionService
         return perms.Contains(permissionCode);
     }
 
+    public async Task<bool> HasPermissionAsync(string userId, params string[] permissionCodes)
+    {
+        var perms = await GetEffectivePermissionsAsync(userId);
+        foreach (var code in permissionCodes)
+        {
+            if (perms.Contains(code)) return true;
+        }
+        return false;
+    }
+
     public async Task DemandPermissionAsync(string permissionCode, CancellationToken ct = default)
     {
         var userId = _currentUser.GetUserId();

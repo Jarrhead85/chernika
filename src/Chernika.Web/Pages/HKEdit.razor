@@ -2,6 +2,7 @@
 @page "/хк/{Id:guid}"
 @attribute [Authorize(Policy = "ViewHK")]
 @implements IAsyncDisposable
+@using Chernika.Domain
 @using Chernika.Domain.Models
 @using Chernika.Domain.Enums
 @inject HKCardService HKCardService
@@ -9,6 +10,7 @@
 @inject EquipmentService EquipmentService
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
+@inject IPermissionService Perms
 @inject IJSRuntime JS
 
 <div class="stack">
@@ -535,12 +537,14 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
-        var isOperator = user.IsInRole("Operator");
-        canSendToApprove = user.IsInRole("Operator");
-        canApprove = user.IsInRole("NormAdmin");
-        canReturn = user.IsInRole("NormAdmin");
-        canArchive = user.IsInRole("NormAdmin");
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        canSendToApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeSubmit)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateSubmit)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentSubmit)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexSubmit);
+        canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
+        canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
+        canArchive = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKArchive);
 
         complexes = await EquipmentService.GetComplexesAsync();
         models = await EquipmentService.GetModelsAsync();
@@ -567,7 +571,10 @@
         }
         else
         {
-            canEdit = isOperator && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
+            canEdit = await Perms.HasPermissionAsync(currentUserId, selectedLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
+                selectedLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
+                selectedLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
+                PermissionCodes.HKComplexEditDraft);
 
             if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
             {
@@ -609,9 +616,12 @@
         selectedNodeId = card.NodeId ?? Guid.Empty;
         statusStr = card.Status.ToString();
 
-        var authState = await AuthState.GetAuthenticationStateAsync();
-        var isOperator = authState.User.IsInRole("Operator");
-        canEdit = isOperator && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
+        var canEditLevel = await Perms.HasPermissionAsync(currentUserId,
+            card.ObjectLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
+            card.ObjectLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
+            card.ObjectLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
+            PermissionCodes.HKComplexEditDraft);
+        canEdit = canEditLevel && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
 
         if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
         {

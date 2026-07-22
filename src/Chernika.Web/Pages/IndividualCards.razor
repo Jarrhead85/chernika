@@ -1,8 +1,10 @@
 @page "/инд-карты"
 @attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain
 @inject IndividualCardService IndCardService
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
 
 <div class="stack">
     <section class="panel">
@@ -260,7 +262,8 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
-        canManage = authState.User.IsInRole("Operator");
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canManage = await Perms.HasPermissionAsync(userId!, PermissionCodes.IndividualCardGenerate);
         instances = await EquipService.GetInstancesAsync();
         var allCoeffs = await IndCardService.GetAvailableCoefficientsAsync();
         coeffTypes = await IndCardService.GetCoefficientTypesAsync();

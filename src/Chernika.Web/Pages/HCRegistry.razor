@@ -1,11 +1,13 @@
 @page "/реестр-хк"
 @attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Models
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
+@inject IPermissionService Perms
 
 <div class="stack">
     <section class="panel">
@@ -219,6 +221,8 @@
     private bool canVerify;
     private bool canReturn;
     private string userBranchId = "";
+    private string currentUserId = "";
+    private bool hasDeletePermission;
     private System.Security.Claims.ClaimsPrincipal? _currentUser;
 
     private string filterCode = "";
@@ -232,11 +236,13 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
         _currentUser = user;
-        canCreate = user.IsInRole("Operator");
-        canSendToApprove = user.IsInRole("Operator");
-        canApprove = user.IsInRole("NormAdmin");
-        canVerify = user.IsInRole("NormAdmin");
-        canReturn = user.IsInRole("NormAdmin");
+        currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        canCreate = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate, PermissionCodes.HKAggregateCreate, PermissionCodes.HKEquipmentCreate, PermissionCodes.HKComplexCreate);
+        canSendToApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeSubmit, PermissionCodes.HKAggregateSubmit, PermissionCodes.HKEquipmentSubmit, PermissionCodes.HKComplexSubmit);
+        canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
+        canVerify = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
+        canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
+        hasDeletePermission = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKDelete);
         var claim = user.FindFirst("BranchId");
         if (claim != null) userBranchId = claim.Value;
         await LoadCards();
@@ -294,11 +300,10 @@
 
     private bool CanDeleteCard(HKCardListItemDto card)
     {
+        if (!hasDeletePermission) return false;
         if (_currentUser?.IsInRole("SystemAdmin") == true) return card.Status == HKCardStatus.Archived;
-        if (_currentUser?.IsInRole("Operator") == true)
-            return card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired
-                   && card.BranchId.ToString() == userBranchId;
-        return false;
+        return card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired
+               && card.BranchId.ToString() == userBranchId;
     }
 
     private static string LevelName(HKObjectLevel level) => level switch

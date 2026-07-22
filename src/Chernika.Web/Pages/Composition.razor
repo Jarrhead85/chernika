@@ -1,9 +1,11 @@
 @page "/состав-изделия"
 @attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain
 @using Chernika.Domain.Models
 @inject EquipmentService EquipService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
 
 <div class="stack">
     <section class="panel">
@@ -370,7 +372,8 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
-        canEdit = authState.User.IsInRole("NormAdmin") || authState.User.IsInRole("SystemAdmin");
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEdit);
         await LoadData();
     }
 
