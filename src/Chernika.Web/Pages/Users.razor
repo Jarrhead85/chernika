@@ -55,7 +55,7 @@
                                 </td>
                                 <td>
                                     <button class="linkBtn" @onclick="() => OpenEdit(user)">Изменить</button>
-                                    <button class="linkBtn" @onclick="() => OpenOverrides(user)">Права</button>
+                                    <button class="linkBtn" @onclick="() => OpenPermissions(user)">Полномочия</button>
                                     <button class="linkBtn" style="color:var(--warn)" @onclick="() => ToggleBlock(user)">
                                         @(user.IsActive ? "Заблокировать" : "Разблокировать")
                                     </button>
@@ -116,95 +116,181 @@
         </div>
     }
 
-    @if (showOverridesModal)
+    @if (showPermissionsModal)
     {
-        <div class="modalOverlay" @onclick="CloseOverridesModal">
+        <div class="modalOverlay" @onclick="ClosePermissionsModal">
             <div class="modal wide" @onclick:stopPropagation="true">
                 <div class="modalHeader">
-                    <h3>Переопределения прав — @overridesUserName</h3>
-                    <button class="linkBtn" @onclick="CloseOverridesModal">✕</button>
+                    <h3>Индивидуальные полномочия — @permissionsUserName</h3>
+                    <button class="linkBtn" @onclick="ClosePermissionsModal">✕</button>
                 </div>
                 <div class="modalBody">
-                    @if (overridesLoading)
+                    @if (permissionsLoading)
                     {
                         <div class="loading-state">Загрузка...</div>
                     }
-                    else
+                    else if (effectivePermissions != null)
                     {
-                        <div class="btnRow" style="margin-bottom:12px">
-                            <button class="btn primary" @onclick="OpenAddOverride">+ Добавить</button>
-                        </div>
-                        @if (overrides.Count == 0)
+                        @if (permissionsError != null)
                         {
-                            <div class="empty-state">Нет переопределений</div>
+                            <div class="loginError" style="margin-bottom:12px">@permissionsError</div>
                         }
-                        else
+
+                        @if (effectivePermissions.BaseRole == "SystemAdmin")
                         {
+                            <div style="padding:12px;background:var(--panel2);border-radius:8px;margin-bottom:12px;font-size:13px;color:var(--text2)">
+                                Системный администратор всегда имеет полный доступ. Индивидуальные полномочия недоступны.
+                            </div>
+                        }
+
+                        <div class="form" style="grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+                            <div class="field"><label>Поиск полномочия</label>
+                                <input type="text" @bind="permSearch" class="fieldInput" placeholder="Название или код..." />
+                            </div>
+                            <div class="field"><label>Модуль</label>
+                                <select @bind="permModuleFilter" class="field-select">
+                                    <option value="">Все модули</option>
+                                    @foreach (var m in allModules)
+                                    {
+                                        <option value="@m">@m</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="field"><label>Статус</label>
+                                <select @bind="permStatusFilter" class="field-select">
+                                    <option value="">Все</option>
+                                    <option value="effective">Разрешено</option>
+                                    <option value="denied">Запрещено</option>
+                                    <option value="override">С индивидуальным решением</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style="max-height:500px;overflow-y:auto">
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>Разрешение</th>
-                                        <th>Тип</th>
-                                        <th>Причина</th>
-                                        <th>Действия</th>
+                                        <th>Модуль</th>
+                                        <th>Полномочие</th>
+                                        <th>По роли</th>
+                                        <th>Индивидуальное решение</th>
+                                        <th>Итог</th>
+                                        @if (effectivePermissions.BaseRole != "SystemAdmin")
+                                        {
+                                            <th>Действия</th>
+                                        }
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    @foreach (var o in overrides)
+                                    @foreach (var perm in filteredPermissions)
                                     {
                                         <tr>
-                                            <td class="mono">@o.PermissionCode</td>
+                                            <td style="font-size:12px;color:var(--text2)">@perm.Module</td>
                                             <td>
-                                                <span class="badge" style="background:@(o.IsGranted ? "var(--ok)" : "var(--warn)")">
-                                                    @(o.IsGranted ? "Разрешено" : "Запрещено")
-                                                </span>
+                                                <div>@perm.Name</div>
+                                                <div style="font-size:11px;color:var(--text3)">@perm.Description</div>
+                                                <div style="font-size:10px;color:var(--text3)">Код системы: @perm.Code</div>
                                             </td>
-                                            <td>@o.Reason</td>
                                             <td>
-                                                <button class="linkBtn" style="color:var(--warn)" @onclick="() => RemoveOverride(o)">Удалить</button>
+                                                @if (perm.GrantedByRole)
+                                                {
+                                                    <span class="badge" style="background:var(--ok)">Да</span>
+                                                }
+                                                else
+                                                {
+                                                    <span style="color:var(--text3)">Нет</span>
+                                                }
                                             </td>
+                                            <td>
+                                                @if (perm.OverrideIsGranted == true)
+                                                {
+                                                    <span class="badge" style="background:var(--ok)">Индивидуально разрешено</span>
+                                                }
+                                                else if (perm.OverrideIsGranted == false)
+                                                {
+                                                    <span class="badge" style="background:var(--bad)">Индивидуально запрещено</span>
+                                                }
+                                                else
+                                                {
+                                                    <span style="color:var(--text3)">—</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (perm.IsEffective)
+                                                {
+                                                    <span class="badge" style="background:var(--ok)">Доступно</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge" style="background:var(--bad)">Нет доступа</span>
+                                                }
+                                            </td>
+                                            @if (effectivePermissions.BaseRole != "SystemAdmin")
+                                            {
+                                                <td>
+                                                    @if (perm.OverrideIsGranted == null)
+                                                    {
+                                                        <button class="linkBtn" style="font-size:12px" @onclick="() => GrantPerm(perm)">Разрешить дополнительно</button>
+                                                        <button class="linkBtn" style="font-size:12px;color:var(--warn)" @onclick="() => DenyPerm(perm)">Запретить</button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button class="linkBtn" style="font-size:12px;color:var(--warn)" @onclick="() => RevokePerm(perm)">Отменить индивидуальное решение</button>
+                                                    }
+                                                </td>
+                                            }
                                         </tr>
                                     }
                                 </tbody>
                             </table>
-                        }
-                    }
-
-                    @if (showAddOverrideForm)
-                    {
-                        <div class="form" style="margin-top:16px;border-top:1px dashed var(--line);padding-top:16px">
-                            <div class="field"><label>Код разрешения</label>
-                                <select @bind="overridePermissionCode" class="field-select">
-                                    @foreach (var pc in allPermissionCodes)
-                                    {
-                                        <option value="@pc">@pc</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="field"><label>Тип</label>
-                                <select @bind="overrideIsGranted" class="field-select">
-                                    <option value="true">Разрешить</option>
-                                    <option value="false">Запретить</option>
-                                </select>
-                            </div>
-                            <div class="field"><label>Причина</label>
-                                <input type="text" @bind="overrideReason" class="fieldInput" />
-                            </div>
-                            @if (!string.IsNullOrEmpty(overrideError))
-                            {
-                                <div class="loginError">@overrideError</div>
-                            }
-                            <div class="btnRow">
-                                <button class="btn" @onclick="CancelAddOverride">Отмена</button>
-                                <button class="btn primary" @onclick="SaveOverride">Сохранить</button>
-                            </div>
                         </div>
                     }
+                </div>
+                <div class="modalFooter">
+                    <button class="btn" @onclick="ClosePermissionsModal">Закрыть</button>
+                </div>
+            </div>
+        </div>
+    }
 
-                    @if (!string.IsNullOrEmpty(overrideError))
+    @if (showGrantDenyModal)
+    {
+        <div class="modalOverlay" @onclick="() => showGrantDenyModal = false">
+            <div class="modal" @onclick:stopPropagation="true" style="max-width:400px">
+                <div class="modalHeader">
+                    <h3>@(grantDenyAction == "grant" ? "Разрешить дополнительно" : "Запретить")</h3>
+                    <button class="linkBtn" @onclick="() => showGrantDenyModal = false">✕</button>
+                </div>
+                <div class="modalBody">
+                    @if (grantDenyTarget != null)
                     {
-                        <div class="loginError" style="margin-top:12px">@overrideError</div>
+                        <div style="margin-bottom:12px">
+                            <div style="font-weight:700;font-size:14px">@grantDenyTarget.Name</div>
+                            <div style="font-size:12px;color:var(--text2)">@grantDenyTarget.Module</div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:4px">@grantDenyTarget.Description</div>
+                            <div style="font-size:10px;color:var(--text3)">Код системы: @grantDenyTarget.Code</div>
+                        </div>
+                        <div style="font-size:13px;color:var(--text2);margin-bottom:8px">
+                            @if (grantDenyAction == "deny" && grantDenyTarget.GrantedByRole)
+                            {
+                                <span style="color:var(--warn)">Внимание: право разрешено базовой ролью. Запрет отнимет доступ.</span>
+                            }
+                        </div>
+                        <div class="field">
+                            <label>Причина *</label>
+                            <textarea @bind="grantDenyReason" rows="3" class="fieldInput" placeholder="Укажите причину (до 500 символов)..." maxlength="500"></textarea>
+                        </div>
+                        @if (grantDenyError != null)
+                        {
+                            <div class="loginError">@grantDenyError</div>
+                        }
                     }
+                </div>
+                <div class="modalFooter">
+                    <button class="btn" @onclick="() => showGrantDenyModal = false">Отмена</button>
+                    <button class="btn primary" @onclick="SaveGrantDeny" disabled="@grantDenySaving">
+                        @(grantDenySaving ? "Сохранение..." : (grantDenyAction == "grant" ? "Разрешить" : "Запретить"))
+                    </button>
                 </div>
             </div>
         </div>
@@ -214,36 +300,54 @@
 @code {
     private List<UserListItem> users = new();
     private List<string> allRoles = new();
-    private List<string> allPermissionCodes = new();
+    private List<string> allModules = new();
     private bool loading = true;
 
     private bool showUserModal = false;
     private bool isEdit = false;
     private string formError = "";
     private string editingUserId = "";
-
     private string formUsername = "";
     private string formFullName = "";
     private string formPosition = "";
     private string formPassword = "";
     private string formRole = "";
 
-    private bool showOverridesModal = false;
-    private bool overridesLoading = false;
-    private string overridesUserId = "";
-    private string overridesUserName = "";
-    private List<UserPermissionOverrideDto> overrides = new();
-    private bool showAddOverrideForm = false;
-    private string overridePermissionCode = "";
-    private bool overrideIsGranted = true;
-    private string overrideReason = "";
-    private string overrideError = "";
+    private bool showPermissionsModal = false;
+    private bool permissionsLoading = false;
+    private string permissionsUserId = "";
+    private string permissionsUserName = "";
+    private UserEffectivePermissionsDto? effectivePermissions;
+    private string? permissionsError;
+    private string permSearch = "";
+    private string permModuleFilter = "";
+    private string permStatusFilter = "";
+
+    private bool showGrantDenyModal = false;
+    private string grantDenyAction = "grant";
+    private UserEffectivePermissionDto? grantDenyTarget;
+    private string grantDenyReason = "";
+    private string? grantDenyError;
+    private bool grantDenySaving = false;
+
+    IEnumerable<UserEffectivePermissionDto> filteredPermissions =>
+        effectivePermissions?.Permissions.Where(p =>
+            (string.IsNullOrEmpty(permSearch) ||
+             p.Name.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
+             p.Code.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
+             p.Description.Contains(permSearch, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrEmpty(permModuleFilter) || p.Module == permModuleFilter) &&
+            (string.IsNullOrEmpty(permStatusFilter) ||
+             (permStatusFilter == "effective" && p.IsEffective) ||
+             (permStatusFilter == "denied" && !p.IsEffective) ||
+             (permStatusFilter == "override" && p.OverrideIsGranted != null))
+        ) ?? Enumerable.Empty<UserEffectivePermissionDto>();
 
     protected override async Task OnInitializedAsync()
     {
         await LoadUsers();
         allRoles = (await RoleManager.Roles.ToListAsync()).Select(r => r.Name ?? "").Where(n => !string.IsNullOrEmpty(n)).ToList();
-        allPermissionCodes = PermissionCodes.All.OrderBy(x => x).ToList();
+        allModules = PermissionCatalog.GetAllModules().ToList();
     }
 
     async Task LoadUsers()
@@ -329,53 +433,87 @@
         await LoadUsers();
     }
 
-    async Task OpenOverrides(UserListItem user)
+    async Task OpenPermissions(UserListItem user)
     {
-        overridesUserId = user.Id;
-        overridesUserName = $"{user.FullName} ({user.UserName})";
-        overridesLoading = true;
-        showOverridesModal = true;
-        showAddOverrideForm = false;
-        overrides = await UserMgmt.GetOverridesAsync(user.Id);
-        overridesLoading = false;
+        permissionsUserId = user.Id;
+        permissionsUserName = $"{user.FullName} ({user.UserName})";
+        permissionsLoading = true;
+        permissionsError = null;
+        showPermissionsModal = true;
+        permSearch = "";
+        permModuleFilter = "";
+        permStatusFilter = "";
+        effectivePermissions = await UserMgmt.GetEffectivePermissionsAsync(user.Id);
+        permissionsLoading = false;
         StateHasChanged();
     }
 
-    void CloseOverridesModal()
+    void ClosePermissionsModal()
     {
-        showOverridesModal = false;
-        overrideError = "";
+        showPermissionsModal = false;
+        permissionsError = null;
+        effectivePermissions = null;
     }
 
-    void OpenAddOverride()
+    void GrantPerm(UserEffectivePermissionDto perm)
     {
-        showAddOverrideForm = true;
-        overridePermissionCode = allPermissionCodes.FirstOrDefault() ?? "";
-        overrideIsGranted = true;
-        overrideReason = "";
-        overrideError = "";
+        grantDenyAction = "grant";
+        grantDenyTarget = perm;
+        grantDenyReason = "";
+        grantDenyError = null;
+        grantDenySaving = false;
+        showGrantDenyModal = true;
     }
 
-    void CancelAddOverride()
+    void DenyPerm(UserEffectivePermissionDto perm)
     {
-        showAddOverrideForm = false;
-        overrideError = "";
+        grantDenyAction = "deny";
+        grantDenyTarget = perm;
+        grantDenyReason = "";
+        grantDenyError = null;
+        grantDenySaving = false;
+        showGrantDenyModal = true;
     }
 
-    async Task SaveOverride()
+    async Task SaveGrantDeny()
     {
-        overrideError = "";
-        var (success, error) = await UserMgmt.SetOverrideAsync(overridesUserId, overridePermissionCode, overrideIsGranted, overrideReason);
-        if (!success) { overrideError = error ?? ""; return; }
-        showAddOverrideForm = false;
-        overrides = await UserMgmt.GetOverridesAsync(overridesUserId);
+        if (grantDenyTarget == null) return;
+        grantDenySaving = true;
+        grantDenyError = null;
+
+        UserEffectivePermissionsDto? result;
+        string? error;
+
+        if (grantDenyAction == "grant")
+            (result, error) = await UserMgmt.GrantPermissionAsync(permissionsUserId, grantDenyTarget.Code, grantDenyReason);
+        else
+            (result, error) = await UserMgmt.DenyPermissionAsync(permissionsUserId, grantDenyTarget.Code, grantDenyReason);
+
+        if (error != null)
+        {
+            grantDenyError = error;
+            grantDenySaving = false;
+            StateHasChanged();
+            return;
+        }
+
+        effectivePermissions = result;
+        showGrantDenyModal = false;
+        grantDenySaving = false;
         StateHasChanged();
     }
 
-    async Task RemoveOverride(UserPermissionOverrideDto o)
+    async Task RevokePerm(UserEffectivePermissionDto perm)
     {
-        await UserMgmt.RemoveOverrideAsync(overridesUserId, o.PermissionCode);
-        overrides = await UserMgmt.GetOverridesAsync(overridesUserId);
+        var (result, error) = await UserMgmt.RevokePermissionAsync(permissionsUserId, perm.Code);
+        if (error != null)
+        {
+            permissionsError = error;
+            StateHasChanged();
+            return;
+        }
+        effectivePermissions = result;
+        permissionsError = null;
         StateHasChanged();
     }
 

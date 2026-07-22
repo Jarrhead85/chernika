@@ -238,6 +238,248 @@ public class UserManagementService
         return (true, null);
     }
 
+    public async Task<UserEffectivePermissionsDto?> GetEffectivePermissionsAsync(string userId)
+    {
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null) return null;
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var baseRole = roles.FirstOrDefault(r =>
+            r == nameof(UserRole.SystemAdmin) ||
+            r == nameof(UserRole.NormAdmin) ||
+            r == nameof(UserRole.Operator) ||
+            r == nameof(UserRole.HeadOfDepartment) ||
+            r == nameof(UserRole.Guest));
+
+        var isSystemAdmin = baseRole == nameof(UserRole.SystemAdmin);
+        var templatePerms = isSystemAdmin
+            ? PermissionCodes.All.ToHashSet()
+            : (await _db.RolePermissionTemplates
+                .Where(x => x.RoleName == baseRole)
+                .Select(x => x.PermissionCode)
+                .ToListAsync()).ToHashSet();
+
+        var overrides = await _db.UserPermissionOverrides
+            .Where(x => x.UserId == userId)
+            .ToDictionaryAsync(x => x.PermissionCode);
+
+        var result = new UserEffectivePermissionsDto
+        {
+            UserId = userId,
+            UserName = user.UserName ?? "",
+            BaseRole = baseRole ?? "",
+            Permissions = new List<UserEffectivePermissionDto>(),
+        };
+
+        foreach (var def in PermissionCatalog.All)
+        {
+            var grantedByRole = templatePerms.Contains(def.Code);
+            overrides.TryGetValue(def.Code, out var overrideEntry);
+
+            bool isEffective;
+            string source;
+
+            if (isSystemAdmin)
+            {
+                isEffective = true;
+                source = "SystemAdmin";
+            }
+            else if (overrideEntry != null)
+            {
+                isEffective = overrideEntry.IsGranted;
+                source = overrideEntry.IsGranted ? "Grant" : "Deny";
+            }
+            else
+            {
+                isEffective = grantedByRole;
+                source = grantedByRole ? "Role" : "";
+            }
+
+            result.Permissions.Add(new UserEffectivePermissionDto
+            {
+                Code = def.Code,
+                Module = def.Module,
+                Name = def.Name,
+                Description = def.Description,
+                GrantedByRole = grantedByRole,
+                OverrideIsGranted = overrideEntry?.IsGranted,
+                IsEffective = isEffective,
+                Source = source,
+                OverrideReason = overrideEntry?.Reason,
+            });
+        }
+
+        return result;
+    }
+
+    public async Task<(UserEffectivePermissionsDto? Result, string? Error)> GrantPermissionAsync(string userId, string permissionCode, string reason)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var actorUserId = actorId.ToString();
+
+        if (actorUserId == userId)
+            return (null, "Нельзя изменять полномочия самого себя");
+
+        if (!PermissionCodes.All.Contains(permissionCode))
+            return (null, $"Неизвестный код полномочия: {permissionCode}");
+
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length > 500)
+            return (null, "Причина обязательна и не может превышать 500 символов");
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+            return (null, "Пользователь не найден");
+        if (user.IsDeleted)
+            return (null, "Пользователь удалён");
+        if (!user.IsActive)
+            return (null, "Пользователь заблокирован");
+
+        var userRoles = await _userManager.GetRolesAsync(user);
+        if (userRoles.Contains(nameof(UserRole.SystemAdmin)))
+            return (null, "Нельзя менять полномочия системного администратора");
+
+        var existing = await _db.UserPermissionOverrides
+            .FirstOrDefaultAsync(x => x.UserId == userId && x.PermissionCode == permissionCode);
+
+        if (existing != null && existing.IsGranted)
+            return (null, "Право уже индивидуально разрешено");
+
+        var oldState = existing != null ? (existing.IsGranted ? "Grant" : "Deny") : null;
+
+        if (existing != null)
+        {
+            existing.IsGranted = true;
+            existing.Reason = reason;
+            existing.GrantedByUserId = actorUserId;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            _db.UserPermissionOverrides.Add(new UserPermissionOverride
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                PermissionCode = permissionCode,
+                IsGranted = true,
+                Reason = reason,
+                GrantedByUserId = actorUserId,
+                CreatedAt = DateTime.UtcNow,
+            });
+        }
+
+        await _db.SaveChangesAsync();
+        _permissions.InvalidateCache(userId);
+
+        await _audit.LogAsync("UserPermissionOverride", userId, "OverrideGranted", actorId,
+            $"Code={permissionCode}, Old={oldState}, New=Grant, Reason={reason}");
+
+        var result = await GetEffectivePermissionsAsync(userId);
+        return (result, null);
+    }
+
+    public async Task<(UserEffectivePermissionsDto? Result, string? Error)> DenyPermissionAsync(string userId, string permissionCode, string reason)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var actorUserId = actorId.ToString();
+
+        if (actorUserId == userId)
+            return (null, "Нельзя изменять полномочия самого себя");
+
+        if (!PermissionCodes.All.Contains(permissionCode))
+            return (null, $"Неизвестный код полномочия: {permissionCode}");
+
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length > 500)
+            return (null, "Причина обязательна и не может превышать 500 символов");
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+            return (null, "Пользователь не найден");
+        if (user.IsDeleted)
+            return (null, "Пользователь удалён");
+        if (!user.IsActive)
+            return (null, "Пользователь заблокирован");
+
+        var userRoles = await _userManager.GetRolesAsync(user);
+        if (userRoles.Contains(nameof(UserRole.SystemAdmin)))
+            return (null, "Нельзя менять полномочия системного администратора");
+
+        var existing = await _db.UserPermissionOverrides
+            .FirstOrDefaultAsync(x => x.UserId == userId && x.PermissionCode == permissionCode);
+
+        if (existing != null && !existing.IsGranted)
+            return (null, "Право уже индивидуально запрещено");
+
+        var oldState = existing != null ? (existing.IsGranted ? "Grant" : "Deny") : null;
+
+        if (existing != null)
+        {
+            existing.IsGranted = false;
+            existing.Reason = reason;
+            existing.GrantedByUserId = actorUserId;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            _db.UserPermissionOverrides.Add(new UserPermissionOverride
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                PermissionCode = permissionCode,
+                IsGranted = false,
+                Reason = reason,
+                GrantedByUserId = actorUserId,
+                CreatedAt = DateTime.UtcNow,
+            });
+        }
+
+        await _db.SaveChangesAsync();
+        _permissions.InvalidateCache(userId);
+
+        await _audit.LogAsync("UserPermissionOverride", userId, "OverrideDenied", actorId,
+            $"Code={permissionCode}, Old={oldState}, New=Deny, Reason={reason}");
+
+        var result = await GetEffectivePermissionsAsync(userId);
+        return (result, null);
+    }
+
+    public async Task<(UserEffectivePermissionsDto? Result, string? Error)> RevokePermissionAsync(string userId, string permissionCode)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var actorUserId = actorId.ToString();
+
+        if (actorUserId == userId)
+            return (null, "Нельзя изменять полномочия самого себя");
+
+        if (!PermissionCodes.All.Contains(permissionCode))
+            return (null, $"Неизвестный код полномочия: {permissionCode}");
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null)
+            return (null, "Пользователь не найден");
+
+        var userRoles = await _userManager.GetRolesAsync(user);
+        if (userRoles.Contains(nameof(UserRole.SystemAdmin)))
+            return (null, "Нельзя менять полномочия системного администратора");
+
+        var existing = await _db.UserPermissionOverrides
+            .FirstOrDefaultAsync(x => x.UserId == userId && x.PermissionCode == permissionCode);
+
+        if (existing == null)
+            return (null, "Индивидуальное решение не найдено");
+
+        var oldState = existing.IsGranted ? "Grant" : "Deny";
+
+        _db.UserPermissionOverrides.Remove(existing);
+        await _db.SaveChangesAsync();
+        _permissions.InvalidateCache(userId);
+
+        await _audit.LogAsync("UserPermissionOverride", userId, "OverrideRevoked", actorId,
+            $"Code={permissionCode}, Old={oldState}, New=Revoke");
+
+        var result = await GetEffectivePermissionsAsync(userId);
+        return (result, null);
+    }
+
     private async Task<bool> HasOtherActiveSystemAdminAsync(string excludeUserId)
     {
         var sysAdmins = await _userManager.GetUsersInRoleAsync(nameof(UserRole.SystemAdmin));

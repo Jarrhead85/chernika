@@ -1,4 +1,5 @@
 using Chernika.Api.Contracts;
+using Chernika.Domain;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -50,29 +51,47 @@ public class UsersController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("{id}/effective-permissions")]
+    [Authorize(Policy = "ManageRoles")]
+    public async Task<ActionResult<UserEffectivePermissionsDto>> GetEffectivePermissions(string id)
+    {
+        var result = await _users.GetEffectivePermissionsAsync(id);
+        if (result == null) return NotFound();
+        return Ok(result);
+    }
+
+    [HttpPost("{id}/grant")]
+    [Authorize(Policy = "ManageRoles")]
+    public async Task<ActionResult<UserEffectivePermissionsDto>> GrantPermission(string id, [FromBody] PermissionOverrideRequest request)
+    {
+        var (result, error) = await _users.GrantPermissionAsync(id, request.PermissionCode, request.Reason);
+        if (error != null) return BadRequest(new { Error = error });
+        return Ok(result);
+    }
+
+    [HttpPost("{id}/deny")]
+    [Authorize(Policy = "ManageRoles")]
+    public async Task<ActionResult<UserEffectivePermissionsDto>> DenyPermission(string id, [FromBody] PermissionOverrideRequest request)
+    {
+        var (result, error) = await _users.DenyPermissionAsync(id, request.PermissionCode, request.Reason);
+        if (error != null) return BadRequest(new { Error = error });
+        return Ok(result);
+    }
+
+    [HttpPost("{id}/revoke")]
+    [Authorize(Policy = "ManageRoles")]
+    public async Task<ActionResult<UserEffectivePermissionsDto>> RevokePermission(string id, [FromQuery] string code)
+    {
+        var (result, error) = await _users.RevokePermissionAsync(id, code);
+        if (error != null) return BadRequest(new { Error = error });
+        return Ok(result);
+    }
+
     [HttpGet("{id}/overrides")]
     [Authorize(Policy = "ManageRoles")]
     public async Task<ActionResult<List<UserOverrideDto>>> GetOverrides(string id)
     {
         var overrides = await _users.GetOverridesAsync(id);
         return Ok(overrides.Select(UserMapper.ToDto).ToList());
-    }
-
-    [HttpPost("{id}/overrides")]
-    [Authorize(Policy = "ManageRoles")]
-    public async Task<ActionResult> SetOverride(string id, [FromBody] SetOverrideRequest request)
-    {
-        var (success, error) = await _users.SetOverrideAsync(id, request.PermissionCode, request.IsGranted, request.Reason);
-        if (!success) return BadRequest(new { Error = error });
-        return NoContent();
-    }
-
-    [HttpDelete("{id}/overrides")]
-    [Authorize(Policy = "ManageRoles")]
-    public async Task<ActionResult> RemoveOverride(string id, [FromQuery] string code)
-    {
-        var (success, error) = await _users.RemoveOverrideAsync(id, code);
-        if (!success) return BadRequest(new { Error = error });
-        return NoContent();
     }
 }

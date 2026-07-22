@@ -1,0 +1,56 @@
+namespace Chernika.Domain;
+
+public sealed record PermissionDefinition(
+    string Code,
+    string Module,
+    string Name,
+    string Description,
+    int SortOrder);
+
+public static class PermissionCatalog
+{
+    public static IReadOnlyList<PermissionDefinition> All { get; } = new List<PermissionDefinition>
+    {
+        new(PermissionCodes.HKView, "Химмотологические карты", "Просмотр химмотологических карт", "Просмотр реестра и деталей химмотологических карт всех уровней", 1),
+        new(PermissionCodes.HKNodeCreate, "ХК — узлы", "Создание ХК узла", "Создание новой химмотологической карты узла", 2),
+        new(PermissionCodes.HKNodeEditDraft, "ХК — узлы", "Редактирование черновика ХК узла", "Изменение содержимого черновика химмотологической карты узла", 3),
+        new(PermissionCodes.HKNodeSubmit, "ХК — узлы", "Отправка ХК узла на проверку", "Отправка заполненной химмотологической карты узла на нормоконтроль", 4),
+        new(PermissionCodes.HKAggregateCreate, "ХК — агрегаты", "Создание ХК агрегата", "Создание новой химмотологической карты агрегата", 5),
+        new(PermissionCodes.HKAggregateEditDraft, "ХК — агрегаты", "Редактирование черновика ХК агрегата", "Изменение содержимого черновика химмотологической карты агрегата", 6),
+        new(PermissionCodes.HKAggregateSubmit, "ХК — агрегаты", "Отправка ХК агрегата на проверку", "Отправка заполненной химмотологической карты агрегата на нормоконтроль", 7),
+        new(PermissionCodes.HKEquipmentCreate, "ХК — изделия", "Создание ХК изделия", "Создание новой химмотологической карты изделия", 8),
+        new(PermissionCodes.HKEquipmentEditDraft, "ХК — изделия", "Редактирование черновика ХК изделия", "Изменение содержимого черновика химмотологической карты изделия", 9),
+        new(PermissionCodes.HKEquipmentSubmit, "ХК — изделия", "Отправка ХК изделия на проверку", "Отправка заполненной химмотологической карты изделия на нормоконтроль", 10),
+        new(PermissionCodes.HKComplexCreate, "ХК — комплексы", "Создание ХК комплекса", "Создание новой химмотологической карты комплекса", 11),
+        new(PermissionCodes.HKComplexEditDraft, "ХК — комплексы", "Редактирование черновика ХК комплекса", "Изменение содержимого черновика химмотологической карты комплекса", 12),
+        new(PermissionCodes.HKComplexSubmit, "ХК — комплексы", "Отправка ХК комплекса на проверку", "Отправка заполненной химмотологической карты комплекса на нормоконтроль", 13),
+        new(PermissionCodes.HKReview, "Химмотологические карты", "Проверка и возврат на доработку", "Проверка химмотологической карты и возврат автору при необходимости", 14),
+        new(PermissionCodes.HKApprove, "Химмотологические карты", "Утверждение ХК", "Утверждение проверенной химмотологической карты", 15),
+        new(PermissionCodes.HKArchive, "Химмотологические карты", "Архивирование ХК", "Перевод утверждённой химмотологической карты в архив", 16),
+        new(PermissionCodes.HKDelete, "Химмотологические карты", "Удаление черновика ХК", "Удаление химмотологической карты в статусе черновик", 17),
+        new(PermissionCodes.ReferenceView, "Справочники", "Просмотр справочников", "Просмотр справочников узлов, агрегатов, комплектов, ГСМ и моделей техники", 18),
+        new(PermissionCodes.ReferenceEdit, "Справочники", "Редактирование справочников", "Создание, изменение и удаление элементов справочников", 19),
+        new(PermissionCodes.CompositionView, "Конструктивные составы", "Просмотр конструктивных составов", "Просмотр конструктивных составов изделий, агрегатов и комплексов", 20),
+        new(PermissionCodes.CompositionEdit, "Конструктивные составы", "Редактирование конструктивных составов", "Создание, изменение и удаление конструктивных составов", 21),
+        new(PermissionCodes.IndividualCardView, "Индивидуальные карты", "Просмотр индивидуальных карт", "Просмотр индивидуальных норм ГСМ по экземплярам техники", 22),
+        new(PermissionCodes.IndividualCardGenerate, "Индивидуальные карты", "Формирование индивидуальных карт", "Автоматическое формирование индивидуальных карт на основе ХК", 23),
+        new(PermissionCodes.ReportExport, "Отчёты", "Экспорт отчётов", "Экспорт отчётов и реестров в форматы PDF и XLSX", 24),
+        new(PermissionCodes.TaskViewOwn, "Задачи", "Просмотр своих задач", "Просмотр задач, назначенных текущему пользователю", 25),
+        new(PermissionCodes.TaskManage, "Задачи", "Управление задачами", "Выполнение, удаление и управление всеми задачами", 26),
+        new(PermissionCodes.AuditView, "Аудит", "Просмотр журнала аудита", "Просмотр журнала действий пользователей в системе", 27),
+        new(PermissionCodes.UsersManage, "Администрирование", "Управление пользователями", "Создание, редактирование, блокировка и удаление учётных записей", 28),
+        new(PermissionCodes.PermissionsManage, "Администрирование", "Управление дополнительными полномочиями", "Выдача, запрет и отмена индивидуальных полномочий пользователям", 29),
+        new(PermissionCodes.SystemConfig, "Администрирование", "Системные настройки", "Доступ к системным настройкам и диагностике", 30),
+    };
+
+    private static readonly Dictionary<string, PermissionDefinition> ByCode = All.ToDictionary(x => x.Code);
+
+    public static PermissionDefinition? FindByCode(string code) =>
+        ByCode.TryGetValue(code, out var def) ? def : null;
+
+    public static IReadOnlyList<PermissionDefinition> GetByModule(string module) =>
+        All.Where(x => x.Module == module).ToList();
+
+    public static IReadOnlyList<string> GetAllModules() =>
+        All.Select(x => x.Module).Distinct().ToList();
+}

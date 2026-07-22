@@ -28,6 +28,7 @@ public record UserOverrideDto(
 );
 
 public record SetOverrideRequest(string PermissionCode, bool IsGranted, string? Reason);
+public record PermissionOverrideRequest(string PermissionCode, string Reason);
 
 public static class UserMapper
 {
