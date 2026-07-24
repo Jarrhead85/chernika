@@ -168,14 +168,23 @@
 
     @if (showPermissionsModal)
     {
-        <div class="modalOverlay" @onclick="ClosePermissionsModal" @onkeydown="OnPermissionsKeyDown">
-            <div class="modal permissionsModal" @onclick:stopPropagation="true">
-                <div class="modalHeader">
+        <div class="modalOverlay permissionsOverlay" @onclick="ClosePermissionsModal" @onkeydown="OnPermissionsKeyDown">
+            <section class="modal permissionsModal"
+                     role="dialog"
+                     aria-modal="true"
+                     aria-labelledby="permissionsTitle"
+                     @onclick:stopPropagation="true">
+                <header class="modalHeader permissionsHeader">
                     <h3 id="permissionsTitle">Индивидуальные полномочия — @permissionsUserName</h3>
-                    <button class="linkBtn" @onclick="ClosePermissionsModal"
-                            aria-label="Закрыть окно полномочий">✕</button>
-                </div>
-                <div class="modalBody">
+                    <button type="button"
+                            class="modalCloseButton"
+                            @onclick="ClosePermissionsModal"
+                            aria-label="Закрыть окно «Индивидуальные полномочия»"
+                            title="Закрыть">
+                        <span aria-hidden="true">×</span>
+                    </button>
+                </header>
+                <div class="modalBody permissionsBody">
                     @if (permissionsLoading)
                     {
                         <div class="loading-state">Загрузка...</div>
@@ -241,7 +250,7 @@
                             <span>С индивидуальным решением: <strong>@effectivePermissions.Permissions.Count(p => p.OverrideIsGranted != null)</strong></span>
                         </div>
 
-                        <div class="permissionsTableWrap">
+                        <div class="permissionsTableWrap" tabindex="0" aria-label="Таблица полномочий пользователя">
                             <table class="permissionsTable">
                                 <thead>
                                     <tr>
@@ -339,10 +348,7 @@
                         </div>
                     }
                 </div>
-                <div class="modalFooter">
-                    <button class="btn" @onclick="ClosePermissionsModal">Закрыть</button>
-                </div>
-            </div>
+            </section>
         </div>
     }
 
@@ -611,6 +617,11 @@
         showPermissionsModal = false;
         permissionsError = null;
         effectivePermissions = null;
+        permissionsUserId = "";
+        permissionsUserName = "";
+        permSearch = "";
+        permModuleFilter = "";
+        permStatusFilter = "";
     }
 
     void OnPermissionsKeyDown(KeyboardEventArgs e)

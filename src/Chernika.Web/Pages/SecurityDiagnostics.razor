@@ -11,6 +11,35 @@
             <div class="hint">Проверка целостности ролей и полномочий</div>
         </div>
         <div class="panelBody">
+            <div class="note" style="margin-bottom:16px">
+                <strong>Что проверяется:</strong> целостность базовых ролей, шаблонов полномочий и назначений активных пользователей.<br />
+                <strong>Не проверяется:</strong> содержимое ХК, нормы ГСМ, PDF-вложения, миграции БД и доступность файлового хранилища.
+            </div>
+
+            <details style="margin-bottom:16px;font-size:13px;color:var(--text2)">
+                <summary style="cursor:pointer;font-weight:600;color:var(--text)">Как исправляются проблемы</summary>
+                <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                    <div>
+                        <div style="font-weight:700;color:var(--ok);margin-bottom:6px">Исправляется автоматически</div>
+                        <ul style="margin:0;padding-left:18px;list-style:disc">
+                            <li>Создание отсутствующих базовых ролей</li>
+                            <li>Добавление отсутствующих шаблонов полномочий</li>
+                            <li>Перенос устаревшей роли «Наблюдатель» в «Гость»</li>
+                            <li>Обновление кэша полномочий</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <div style="font-weight:700;color:var(--warn);margin-bottom:6px">Требует действия администратора</div>
+                        <ul style="margin:0;padding-left:18px;list-style:disc">
+                            <li>Назначить роль пользователю без роли</li>
+                            <li>Оставить ровно одну базовую роль пользователю с несколькими ролями</li>
+                            <li>Назначить филиал пользователю без филиала</li>
+                            <li>Разобрать удалённые/заблокированные учётные записи и бизнес-исключения</li>
+                        </ul>
+                    </div>
+                </div>
+            </details>
+
             @if (loading)
             {
                 <div class="loading-state">Загрузка...</div>
@@ -36,34 +65,56 @@
                         <div class="label">С несколькими ролями</div>
                         <div class="value @(diagnostics.UsersWithMultipleRoles > 0 ? "bad" : "")">@diagnostics.UsersWithMultipleRoles</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="label">Без филиала</div>
+                        <div class="value @(diagnostics.UsersMissingBranch > 0 ? "warn" : "")">@diagnostics.UsersMissingBranch</div>
+                    </div>
                 </div>
+
+                @if (diagnostics.MissingTemplates > 0 || diagnostics.UnexpectedTemplates > 0)
+                {
+                    <div class="note" style="margin-bottom:16px;color:var(--warn)">
+                        @if (diagnostics.MissingTemplates > 0)
+                        {
+                            <div>Отсутствует шаблонов полномочий: <strong>@diagnostics.MissingTemplates</strong></div>
+                        }
+                        @if (diagnostics.UnexpectedTemplates > 0)
+                        {
+                            <div>Лишних шаблонов полномочий: <strong>@diagnostics.UnexpectedTemplates</strong> (автоматически не удаляются)</div>
+                        }
+                    </div>
+                }
 
                 <table>
                     <thead>
                         <tr>
                             <th>Роль</th>
-                            <th>Шаблонных прав</th>
+                            <th>Шаблонов</th>
+                            <th>Ожидается</th>
                             <th>Активных пользователей</th>
-                            <th>Права</th>
+                            <th>Статус шаблонов</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var role in diagnostics.Roles)
                         {
                             <tr>
-                                <td><span class="badge">@role.RoleName</span></td>
+                                <td><span class="badge">@GetRoleDisplayName(role.RoleName)</span></td>
                                 <td class="mono">@role.TemplateCount</td>
+                                <td class="mono">@role.ExpectedTemplateCount</td>
                                 <td>@role.ActiveUserCount</td>
                                 <td>
-                                    @if (role.PermissionCodes != null && role.PermissionCodes.Count > 0)
+                                    @if (role.MissingPermissionCodes > 0)
                                     {
-                                        <div style="font-size:12px;color:var(--text2);max-width:500px">
-                                            @string.Join(", ", role.PermissionCodes.OrderBy(x => x))
-                                        </div>
+                                        <span style="color:var(--bad)">Отсутствует: @role.MissingPermissionCodes</span>
                                     }
-                                    else
+                                    @if (role.UnexpectedPermissionCodes > 0)
                                     {
-                                        <span style="color:var(--bad)">Нет шаблонов</span>
+                                        <span style="color:var(--warn);margin-left:8px">Лишних: @role.UnexpectedPermissionCodes</span>
+                                    }
+                                    @if (role.MissingPermissionCodes == 0 && role.UnexpectedPermissionCodes == 0)
+                                    {
+                                        <span style="color:var(--ok)">В норме</span>
                                     }
                                 </td>
                             </tr>
@@ -74,31 +125,90 @@
                 @if (repairResult != null)
                 {
                     <div style="margin-top:16px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)">
-                        <h3 style="font-size:14px;font-weight:700;margin:0 0 8px">Результат ремонта</h3>
+                        <h3 style="font-size:14px;font-weight:700;margin:0 0 8px">Результат автоматического исправления</h3>
                         <div style="font-size:13px;color:var(--text2)">
-                            Создано ролей: @repairResult.RolesCreated<br />
-                            Шаблонов добавлено: @repairResult.TemplatesUpserted<br />
-                            Viewer→Guest: @repairResult.ViewerToGuestMigrated<br />
-                            Кэш очищен: @repairResult.PermissionsCacheCleared
+                            Создано базовых ролей: @repairResult.RolesCreated<br />
+                            Добавлено шаблонов полномочий: @repairResult.TemplatesAdded<br />
+                            Пользователей перенесено из «Наблюдатель» в «Гость»: @repairResult.ViewerToGuestMigrated<br />
+                            Обновлён кэш полномочий: @repairResult.CacheCleared<br />
+                            Требуют ручного исправления: @(repairResult.UsersWithoutBaseRole.Count + repairResult.UsersWithMultipleBaseRoles.Count + repairResult.UsersMissingBranch.Count)
                         </div>
+
                         @if (repairResult.UsersWithoutBaseRole.Any())
                         {
-                            <div style="margin-top:8px;color:var(--bad);font-size:13px">
-                                Пользователи без базовой роли:
-                                @foreach (var u in repairResult.UsersWithoutBaseRole)
-                                {
-                                    <div>@u.UserName (@u.UserId)</div>
-                                }
+                            <div style="margin-top:12px;font-size:13px">
+                                <div style="font-weight:700;color:var(--bad);margin-bottom:6px">Пользователи без базовой роли</div>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Пользователь</th>
+                                            <th>Текущая роль/роли</th>
+                                            <th>Рекомендуемое действие</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var u in repairResult.UsersWithoutBaseRole)
+                                        {
+                                            <tr>
+                                                <td>@u.FullName <span class="mono" style="font-size:11px">(@u.UserName)</span></td>
+                                                <td>@(u.CurrentRoles.Any() ? string.Join(", ", u.CurrentRoles) : "—")</td>
+                                                <td>@u.RecommendedAction</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
                             </div>
                         }
+
                         @if (repairResult.UsersWithMultipleBaseRoles.Any())
                         {
-                            <div style="margin-top:8px;color:var(--warn);font-size:13px">
-                                Пользователи с несколькими ролями:
-                                @foreach (var u in repairResult.UsersWithMultipleBaseRoles)
-                                {
-                                    <div>@u.UserName (@string.Join(", ", u.CurrentRoles))</div>
-                                }
+                            <div style="margin-top:12px;font-size:13px">
+                                <div style="font-weight:700;color:var(--warn);margin-bottom:6px">Пользователи с несколькими базовыми ролями</div>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Пользователь</th>
+                                            <th>Текущая роль/роли</th>
+                                            <th>Рекомендуемое действие</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var u in repairResult.UsersWithMultipleBaseRoles)
+                                        {
+                                            <tr>
+                                                <td>@u.FullName <span class="mono" style="font-size:11px">(@u.UserName)</span></td>
+                                                <td>@string.Join(", ", u.CurrentRoles)</td>
+                                                <td>@u.RecommendedAction</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+
+                        @if (repairResult.UsersMissingBranch.Any())
+                        {
+                            <div style="margin-top:12px;font-size:13px">
+                                <div style="font-weight:700;color:var(--warn);margin-bottom:6px">Пользователи без назначенного филиала</div>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Пользователь</th>
+                                            <th>Текущая роль/роли</th>
+                                            <th>Рекомендуемое действие</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var u in repairResult.UsersMissingBranch)
+                                        {
+                                            <tr>
+                                                <td>@u.FullName <span class="mono" style="font-size:11px">(@u.UserName)</span></td>
+                                                <td>@string.Join(", ", u.CurrentRoles)</td>
+                                                <td>@u.RecommendedAction</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
                             </div>
                         }
                     </div>
@@ -111,13 +221,41 @@
 
             <div class="btnRow" style="margin-top:16px">
                 <button class="btn primary" @onclick="LoadDiagnostics" disabled="@loading">Обновить</button>
-                <button class="btn" @onclick="RunRepair" disabled="@(loading || repairing)">
-                    @(repairing ? "Выполняется..." : "Запустить ремонт")
+                <button class="btn" @onclick="() => showConfirmRepair = true" disabled="@(loading || repairing)">
+                    Выполнить исправление
                 </button>
             </div>
         </div>
     </section>
 </div>
+
+@if (showConfirmRepair)
+{
+    <div class="modalOverlay" @onclick="() => showConfirmRepair = false">
+        <div class="modal" @onclick:stopPropagation="true" style="max-width:480px">
+            <div class="modalHeader">
+                <h3>Подтверждение исправления</h3>
+                <button class="linkBtn" @onclick="() => showConfirmRepair = false" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modalBody">
+                <p style="font-size:13px;color:var(--text2);margin:0 0 12px">
+                    Будут созданы отсутствующие базовые роли и шаблоны полномочий,
+                    устаревшая роль «Наблюдатель» будет перенесена в «Гость»,
+                    кэш полномочий будет обновлён.
+                </p>
+                <p style="font-size:13px;color:var(--warn);margin:0">
+                    Пользователи без роли, с несколькими ролями или без филиала автоматически не изменяются.
+                </p>
+            </div>
+            <div class="modalFooter">
+                <button class="btn" @onclick="() => showConfirmRepair = false">Отмена</button>
+                <button class="btn primary" @onclick="RunRepair" disabled="@repairing">
+                    @(repairing ? "Выполняется..." : "Выполнить исправление")
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private SecurityDiagnosticsDto? diagnostics;
@@ -125,8 +263,19 @@
     private bool loading = true;
     private bool repairing;
     private string? errorMessage;
+    private bool showConfirmRepair;
 
     protected override async Task OnInitializedAsync() => await LoadDiagnostics();
+
+    string GetRoleDisplayName(string role) => role switch
+    {
+        nameof(UserRole.SystemAdmin) => "Системный администратор",
+        nameof(UserRole.NormAdmin) => "Нормировщик",
+        nameof(UserRole.Operator) => "Оператор",
+        nameof(UserRole.HeadOfDepartment) => "Начальник отдела",
+        nameof(UserRole.Guest) => "Гость",
+        _ => role
+    };
 
     async Task LoadDiagnostics()
     {
@@ -147,6 +296,7 @@
     {
         repairing = true;
         errorMessage = null;
+        showConfirmRepair = false;
         try
         {
             repairResult = await RepairService.RepairAsync();

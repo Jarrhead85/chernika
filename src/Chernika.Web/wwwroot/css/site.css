@@ -531,32 +531,33 @@ input:-webkit-autofill:focus {
     height: min(860px, calc(100dvh - 32px));
     max-height: none;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr);
     overflow: hidden;
 }
 
-.permissionsModal .modalHeader,
-.permissionsModal .modalFooter {
-    flex-shrink: 0;
+.permissionsHeader {
+    min-height: 60px;
+    padding: 14px 18px 14px 20px;
 }
 
-.permissionsModal .modalBody {
+.permissionsBody {
     min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 14px;
     overflow: hidden;
-    padding: 16px 20px;
+    padding: 16px 20px 20px;
 }
 
 .permissionsToolbar {
     display: grid;
     grid-template-columns: minmax(240px, 2fr) minmax(180px, 1fr) minmax(180px, 1fr);
     gap: 14px;
-    margin-bottom: 14px;
 }
 
 .permCounters {
     display: flex;
     gap: 16px;
-    margin-bottom: 12px;
     font-size: 12px;
     color: var(--muted);
     flex-wrap: wrap;
@@ -568,23 +569,62 @@ input:-webkit-autofill:focus {
 
 .permissionsTableWrap {
     min-height: 0;
+    height: 100%;
     overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable both-edges;
     border: 1px solid var(--line);
     border-radius: var(--radius2);
+    background: var(--panel);
 }
 
 .permissionsTable {
+    width: 100%;
     min-width: 1120px;
     margin: 0;
     border: 0;
     border-radius: 0;
 }
 
-.permissionsTable th {
+.permissionsTable thead th {
     position: sticky;
     top: 0;
-    z-index: 1;
+    z-index: 2;
     background: var(--panel2);
+    box-shadow: 0 1px 0 var(--line);
+}
+
+.modalCloseButton {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--line));
+    border-radius: 50%;
+    color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 8%, var(--panel));
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+
+.modalCloseButton:hover {
+    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--bad) 17%, var(--panel));
+    border-color: var(--bad);
+}
+
+.modalCloseButton:focus-visible {
+    outline: none;
+    border-color: var(--bad);
+    box-shadow: 0 0 0 3px rgba(220, 70, 80, .18);
+}
+
+.modalCloseButton:active {
+    transform: translateY(0);
 }
 
 .permissionCell {
@@ -707,9 +747,18 @@ input:-webkit-autofill:focus {
         height: 100dvh;
         border-radius: 0;
     }
-    .permissionsModal .modalHeader { padding: 12px 14px; }
-    .permissionsModal .modalBody { padding: 12px 14px; }
-    .permissionsModal .modalFooter { padding: 10px 14px; }
-    .permissionsToolbar { grid-template-columns: 1fr; gap: 10px; }
-    .permissionsTable { min-width: 980px; }
+
+    .permissionsBody {
+        padding: 12px 14px 14px;
+        gap: 10px;
+    }
+
+    .permissionsToolbar {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .permissionsTable {
+        min-width: 980px;
+    }
 }
