@@ -187,19 +187,23 @@
                 <div class="modalBody permissionsBody">
                     @if (permissionsLoading)
                     {
-                        <div class="loading-state">Загрузка...</div>
+                        <div class="permissionsState loading-state">Загрузка полномочий...</div>
                     }
                     else if (effectivePermissions == null)
                     {
-                        <div class="loginError">
-                            Не удалось загрузить полномочия.
-                            @if (!string.IsNullOrEmpty(permissionsError))
-                            {
-                                <div style="margin-top:4px">@permissionsError</div>
-                            }
-                        </div>
-                        <div style="margin-top:12px">
-                            <button class="btn primary" @onclick="() => OpenPermissionsById(permissionsUserId)">Повторить</button>
+                        <div class="permissionsState">
+                            <div style="text-align:center">
+                                <div class="loginError" style="display:inline-block">
+                                    Не удалось загрузить полномочия.
+                                    @if (!string.IsNullOrEmpty(permissionsError))
+                                    {
+                                        <div style="margin-top:4px">@permissionsError</div>
+                                    }
+                                </div>
+                                <div style="margin-top:12px">
+                                    <button class="btn primary" @onclick="() => OpenPermissionsById(permissionsUserId)">Повторить</button>
+                                </div>
+                            </div>
                         </div>
                     }
                     else

@@ -530,49 +530,42 @@ input:-webkit-autofill:focus {
     max-width: none;
     height: min(860px, calc(100dvh - 32px));
     max-height: none;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
 }
 
 .permissionsHeader {
+    flex: 0 0 auto;
     min-height: 60px;
     padding: 14px 18px 14px 20px;
 }
 
 .permissionsBody {
     min-height: 0;
-    display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
     gap: 14px;
     overflow: hidden;
     padding: 16px 20px 20px;
 }
 
-.permissionsToolbar {
-    display: grid;
-    grid-template-columns: minmax(240px, 2fr) minmax(180px, 1fr) minmax(180px, 1fr);
-    gap: 14px;
-}
-
-.permCounters {
-    display: flex;
-    gap: 16px;
-    font-size: 12px;
-    color: var(--muted);
-    flex-wrap: wrap;
-}
-
-.permCounters strong {
-    color: var(--text);
+.permissionsToolbar,
+.permCounters,
+.permissionsSystemNote,
+.permissionsError {
+    flex: 0 0 auto;
 }
 
 .permissionsTableWrap {
+    min-width: 0;
     min-height: 0;
-    height: 100%;
+    flex: 1 1 0;
     overflow: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable both-edges;
+    -webkit-overflow-scrolling: touch;
     border: 1px solid var(--line);
     border-radius: var(--radius2);
     background: var(--panel);
@@ -732,6 +725,34 @@ input:-webkit-autofill:focus {
 
 .permActionDeny {
     color: var(--warn) !important;
+}
+
+.permissionsState {
+    display: grid;
+    min-height: 180px;
+    place-items: center;
+    color: var(--muted);
+}
+
+.permissionsTableWrap:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79, 140, 255, .12);
+}
+
+.permissionsTableWrap::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+
+.permissionsTableWrap::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--muted) 60%, transparent);
+    border: 3px solid var(--panel);
+    border-radius: 999px;
+}
+
+.permissionsTableWrap::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
 }
 
 @media (max-width: 1120px) {
