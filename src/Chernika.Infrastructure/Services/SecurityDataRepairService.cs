@@ -107,8 +107,9 @@ public class SecurityDataRepairService : ISecurityDataRepairService
                             $"Не удалось создать роль «{roleName}»: {string.Join(", ", createResult.Errors.Select(e => e.Description))}");
                     }
                     result.RolesCreated++;
-                    await _audit.LogAsync("SecurityRepair", "System", "RoleCreated", Guid.Empty,
-                        $"Создана роль: {roleName}");
+                    await _audit.LogAsync(new AuditWriteRequest("SecurityRepair", "System", "RoleCreated", Guid.Empty,
+                        EntityDisplayName: "Система",
+                        Details: $"Создана роль: {GetRoleDisplayName(roleName)}"));
                 }
             }
 
@@ -147,8 +148,9 @@ public class SecurityDataRepairService : ISecurityDataRepairService
                 }
 
                 if (result.ViewerToGuestMigrated > 0)
-                    await _audit.LogAsync("SecurityRepair", "System", "ViewerMigrated", Guid.Empty,
-                        $"Пользователей перенесено из «Наблюдатель» в «Гость»: {result.ViewerToGuestMigrated}");
+                    await _audit.LogAsync(new AuditWriteRequest("SecurityRepair", "System", "ViewerMigrated", Guid.Empty,
+                        EntityDisplayName: "Система",
+                        Details: $"Пользователей перенесено из «Наблюдатель» в «Гость»: {result.ViewerToGuestMigrated}"));
             }
 
             var allRoleTemplates = await _db.RolePermissionTemplates
@@ -266,10 +268,11 @@ public class SecurityDataRepairService : ISecurityDataRepairService
             + result.UsersWithMultipleBaseRoles.Count
             + result.UsersMissingBranch.Count;
 
-        await _audit.LogAsync("SecurityRepair", "System", "Repaired", Guid.Empty,
-            $"Ролей создано: {result.RolesCreated}, шаблонов добавлено: {result.TemplatesAdded}, " +
-            $"перенесено Viewer→Guest: {result.ViewerToGuestMigrated}, кэш обновлён: {result.CacheCleared}, " +
-            $"требуют ручного исправления: {manualCount}, время: {sw.ElapsedMilliseconds}ms");
+        await _audit.LogAsync(new AuditWriteRequest("SecurityRepair", "System", "Repaired", Guid.Empty,
+            EntityDisplayName: "Система",
+            Details: $"Ролей создано: {result.RolesCreated}; шаблонов добавлено: {result.TemplatesAdded}; " +
+            $"перенесено Viewer→Guest: {result.ViewerToGuestMigrated}; кэш обновлён: {result.CacheCleared}; " +
+            $"требуют ручного исправления: {manualCount}; время: {sw.ElapsedMilliseconds}ms"));
 
         return result;
     }
@@ -415,4 +418,14 @@ public class SecurityDataRepairService : ISecurityDataRepairService
 
         return diagnostics;
     }
+
+    private static string GetRoleDisplayName(string role) => role switch
+    {
+        nameof(UserRole.SystemAdmin) => "Системный администратор",
+        nameof(UserRole.NormAdmin) => "Нормировщик",
+        nameof(UserRole.Operator) => "Оператор",
+        nameof(UserRole.HeadOfDepartment) => "Начальник отдела",
+        nameof(UserRole.Guest) => "Гость",
+        _ => role
+    };
 }

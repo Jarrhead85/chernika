@@ -158,7 +158,9 @@ public class UserManagementService
 
         await _userManager.AddToRoleAsync(user, roleName);
 
-        await _audit.LogAsync("User", user.Id, "Created", actorId, $"Создан пользователь {userName} с ролью {roleName}, филиал={branchId}");
+        await _audit.LogAsync(new AuditWriteRequest("User", user.Id, "Created", actorId,
+            EntityDisplayName: $"{userName} — {fullName}",
+            Details: $"Роль: {roleName}; филиал: {branchId}"));
 
         return (true, null);
     }
@@ -214,10 +216,14 @@ public class UserManagementService
             await _userManager.AddToRoleAsync(user, roleName);
             _permissions.InvalidateCache(userId);
 
-            await _audit.LogAsync("User", userId, "RoleChanged", actorId, $"Роль изменена с {baseRole} на {roleName}");
+            await _audit.LogAsync(new AuditWriteRequest("User", userId, "RoleChanged", actorId,
+                EntityDisplayName: $"{user.UserName} — {user.FullName}",
+                Details: $"Было: {GetRoleDisplayName(baseRole)}; стало: {GetRoleDisplayName(roleName)}"));
         }
 
-        await _audit.LogAsync("User", userId, "Updated", actorId, $"Обновлены данные пользователя {user.UserName}");
+        await _audit.LogAsync(new AuditWriteRequest("User", userId, "Updated", actorId,
+            EntityDisplayName: $"{user.UserName} — {user.FullName}",
+            Details: "Данные пользователя обновлены"));
 
         return (true, null);
     }
@@ -244,6 +250,7 @@ public class UserManagementService
         }
 
         user.IsActive = !user.IsActive;
+        var userDisplayName = $"{user.UserName} — {user.FullName}";
 
         if (user.IsActive)
         {
@@ -260,7 +267,10 @@ public class UserManagementService
         await _userManager.UpdateSecurityStampAsync(user);
         _permissions.InvalidateCache(userId);
 
-        await _audit.LogAsync("User", userId, user.IsActive ? "Unblocked" : "Blocked", actorId);
+        await _audit.LogAsync(new AuditWriteRequest("User", userId,
+            user.IsActive ? "Unblocked" : "Blocked", actorId,
+            EntityDisplayName: userDisplayName,
+            Details: user.IsActive ? "Учётная запись разблокирована" : "Учётная запись заблокирована"));
 
         return (true, null);
     }
@@ -292,6 +302,8 @@ public class UserManagementService
         user.DeletedByUserId = actorId.ToString();
         user.DisplayNameSnapshot = user.DisplayNameSnapshot ?? user.FullName;
 
+        var deletedDisplayName = $"{user.UserName} — {user.FullName}";
+
         var updateResult = await _userManager.UpdateAsync(user);
         if (!updateResult.Succeeded)
             return (false, string.Join("; ", updateResult.Errors.Select(e => e.Description)));
@@ -309,7 +321,9 @@ public class UserManagementService
 
         _permissions.InvalidateCache(userId);
 
-        await _audit.LogAsync("User", userId, "Deleted", actorId, $"Причина: {reason}");
+        await _audit.LogAsync(new AuditWriteRequest("User", userId, "Deleted", actorId,
+            EntityDisplayName: deletedDisplayName,
+            Details: $"Причина: {reason}"));
 
         return (true, null);
     }
@@ -358,7 +372,9 @@ public class UserManagementService
         await _userManager.UpdateAsync(user);
         _permissions.InvalidateCache(userId);
 
-        await _audit.LogAsync("User", userId, "Restored", actorId, $"Роль: {roleName}, филиал: {branchId}");
+        await _audit.LogAsync(new AuditWriteRequest("User", userId, "Restored", actorId,
+            EntityDisplayName: $"{user.UserName} — {user.FullName}",
+            Details: $"Роль: {GetRoleDisplayName(roleName)}; филиал: {branchId}"));
 
         return (true, null);
     }
@@ -387,6 +403,9 @@ public class UserManagementService
     {
         var actorId = _currentUser.GetRequiredUserId();
 
+        var user = await _userManager.FindByIdAsync(userId);
+        var userDisplayName = user != null ? $"{user.UserName} — {user.FullName}" : userId;
+
         var existing = await _db.UserPermissionOverrides
             .FirstOrDefaultAsync(x => x.UserId == userId && x.PermissionCode == permissionCode);
 
@@ -413,7 +432,13 @@ public class UserManagementService
 
         await _db.SaveChangesAsync();
         _permissions.InvalidateCache(userId);
-        await _audit.LogAsync("UserPermissionOverride", userId, isGranted ? "OverrideGranted" : "OverrideDenied", actorId, $"{permissionCode} = {isGranted}");
+        var permDisplayName = PermissionCatalog.All.FirstOrDefault(p => p.Code == permissionCode);
+        var permLabel = permDisplayName != null ? $"{permDisplayName.Name} ({permissionCode})" : permissionCode;
+
+        await _audit.LogAsync(new AuditWriteRequest("UserPermissionOverride", userId,
+            isGranted ? "OverrideGranted" : "OverrideDenied", actorId,
+            EntityDisplayName: userDisplayName,
+            Details: $"Полномочие: {permLabel}; причина: {reason}"));
 
         return (true, null);
     }
@@ -421,6 +446,9 @@ public class UserManagementService
     public async Task<(bool Success, string? Error)> RemoveOverrideAsync(string userId, string permissionCode)
     {
         var actorId = _currentUser.GetRequiredUserId();
+
+        var user = await _userManager.FindByIdAsync(userId);
+        var userDisplayName = user != null ? $"{user.UserName} — {user.FullName}" : userId;
 
         var existing = await _db.UserPermissionOverrides
             .FirstOrDefaultAsync(x => x.UserId == userId && x.PermissionCode == permissionCode);
@@ -431,7 +459,13 @@ public class UserManagementService
         _db.UserPermissionOverrides.Remove(existing);
         await _db.SaveChangesAsync();
         _permissions.InvalidateCache(userId);
-        await _audit.LogAsync("UserPermissionOverride", userId, "OverrideRemoved", actorId, permissionCode);
+
+        var permDef = PermissionCatalog.All.FirstOrDefault(p => p.Code == permissionCode);
+        var permLabel = permDef != null ? $"{permDef.Name} ({permissionCode})" : permissionCode;
+
+        await _audit.LogAsync(new AuditWriteRequest("UserPermissionOverride", userId, "OverrideRemoved", actorId,
+            EntityDisplayName: userDisplayName,
+            Details: $"Полномочие: {permLabel}"));
 
         return (true, null);
     }
@@ -568,8 +602,12 @@ public class UserManagementService
         await _db.SaveChangesAsync();
         _permissions.InvalidateCache(userId);
 
-        await _audit.LogAsync("UserPermissionOverride", userId, "OverrideGranted", actorId,
-            $"Code={permissionCode}, Old={oldState}, New=Grant, Reason={reason}");
+        var permDef = PermissionCatalog.All.FirstOrDefault(p => p.Code == permissionCode);
+        var permLabel = permDef != null ? $"{permDef.Name} ({permissionCode})" : permissionCode;
+
+        await _audit.LogAsync(new AuditWriteRequest("UserPermissionOverride", userId, "OverrideGranted", actorId,
+            EntityDisplayName: $"{user.UserName} — {user.FullName}",
+            Details: $"Полномочие: {permLabel}; было: {oldState ?? "нет решения"}; стало: разрешено; причина: {reason}"));
 
         var result = await GetEffectivePermissionsAsync(userId);
         return (result, null);
@@ -633,8 +671,12 @@ public class UserManagementService
         await _db.SaveChangesAsync();
         _permissions.InvalidateCache(userId);
 
-        await _audit.LogAsync("UserPermissionOverride", userId, "OverrideDenied", actorId,
-            $"Code={permissionCode}, Old={oldState}, New=Deny, Reason={reason}");
+        var permDef2 = PermissionCatalog.All.FirstOrDefault(p => p.Code == permissionCode);
+        var permLabel2 = permDef2 != null ? $"{permDef2.Name} ({permissionCode})" : permissionCode;
+
+        await _audit.LogAsync(new AuditWriteRequest("UserPermissionOverride", userId, "OverrideDenied", actorId,
+            EntityDisplayName: $"{user.UserName} — {user.FullName}",
+            Details: $"Полномочие: {permLabel2}; было: {oldState ?? "нет решения"}; стало: запрещено; причина: {reason}"));
 
         var result = await GetEffectivePermissionsAsync(userId);
         return (result, null);
@@ -671,8 +713,12 @@ public class UserManagementService
         await _db.SaveChangesAsync();
         _permissions.InvalidateCache(userId);
 
-        await _audit.LogAsync("UserPermissionOverride", userId, "OverrideRevoked", actorId,
-            $"Code={permissionCode}, Old={oldState}, New=Revoke");
+        var permDef3 = PermissionCatalog.All.FirstOrDefault(p => p.Code == permissionCode);
+        var permLabel3 = permDef3 != null ? $"{permDef3.Name} ({permissionCode})" : permissionCode;
+
+        await _audit.LogAsync(new AuditWriteRequest("UserPermissionOverride", userId, "OverrideRevoked", actorId,
+            EntityDisplayName: $"{user.UserName} — {user.FullName}",
+            Details: $"Полномочие: {permLabel3}; было: {oldState}; решение отменено"));
 
         var result = await GetEffectivePermissionsAsync(userId);
         return (result, null);
@@ -683,6 +729,16 @@ public class UserManagementService
         var sysAdmins = await _userManager.GetUsersInRoleAsync(nameof(UserRole.SystemAdmin));
         return sysAdmins.Any(u => u.IsActive && u.Id != excludeUserId);
     }
+
+    private static string GetRoleDisplayName(string role) => role switch
+    {
+        nameof(UserRole.SystemAdmin) => "Системный администратор",
+        nameof(UserRole.NormAdmin) => "Нормировщик",
+        nameof(UserRole.Operator) => "Оператор",
+        nameof(UserRole.HeadOfDepartment) => "Начальник отдела",
+        nameof(UserRole.Guest) => "Гость",
+        _ => role
+    };
 }
 
 public class UserListItem

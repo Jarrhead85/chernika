@@ -783,3 +783,59 @@ input:-webkit-autofill:focus {
         min-width: 980px;
     }
 }
+
+/* ═══════════════════════════════════════
+   Audit Log
+   ═══════════════════════════════════════ */
+
+.auditObjectName {
+    font-weight: 650;
+    color: var(--text);
+}
+
+.auditLegacyHint,
+.auditActorLogin {
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.auditActorName {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.auditAction {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.auditAction--success {
+    color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+    border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
+}
+
+.auditAction--warning {
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+}
+
+.auditAction--danger {
+    color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 10%, transparent);
+    border-color: color-mix(in srgb, var(--bad) 30%, var(--line));
+}
+
+.auditAction--neutral {
+    color: var(--muted);
+    background: var(--panel2);
+}

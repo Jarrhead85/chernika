@@ -1,5 +1,6 @@
 @page "/журнал-аудита"
 @attribute [Authorize(Policy = "ViewAuditLog")]
+@using Chernika.Domain
 @using Chernika.Infrastructure.Dtos
 @inject AuditService AuditService
 @inject NavigationManager Nav
@@ -15,19 +16,36 @@
                 <div class="field"><label>Тип сущности</label>
                     <select @bind="filterEntityType" class="field-select">
                         <option value="">Все</option>
-                        <option value="HKCard">ХК</option>
-                        <option value="EquipmentModel">Модель</option>
-                        <option value="EquipmentInstance">Экземпляр</option>
-                        <option value="IndividualCard">Инд. карта</option>
+                        <option value="HKCard">Химмотологическая карта</option>
+                        <option value="Complex">Комплекс</option>
+                        <option value="Aggregate">Узел</option>
+                        <option value="EquipmentModel">Изделие</option>
+                        <option value="EquipmentInstance">Экземпляр техники</option>
+                        <option value="IndividualCard">Индивидуальная карта</option>
+                        <option value="GsmMaterial">Марка ГСМ</option>
+                        <option value="AssemblyUnit">Сборочная единица</option>
+                        <option value="Branch">Филиал</option>
+                        <option value="Coefficient">Коэффициент</option>
+                        <option value="CoefficientType">Тип коэффициента</option>
+                        <option value="WorkTask">Задача</option>
+                        <option value="User">Пользователь</option>
+                        <option value="UserPermissionOverride">Индивидуальное полномочие</option>
+                        <option value="SecurityRepair">Конфигурация безопасности</option>
+                        <option value="ProductComposition">Состав изделия</option>
+                        <option value="AggregateComposition">Состав узла</option>
+                        <option value="ComplexComposition">Состав комплекса</option>
                     </select>
                 </div>
                 <div class="field"><label>Действие</label>
                     <select @bind="filterAction" class="field-select">
-                        <option value="">Все</option>
+                        <option value="">Все действия</option>
                         <option value="Create">Создание</option>
                         <option value="Update">Изменение</option>
                         <option value="Delete">Удаление</option>
-                        <option value="StatusChange">Смена статуса</option>
+                        <option value="StatusChange">Изменение статуса</option>
+                        <option value="UserManagement">Управление пользователями</option>
+                        <option value="PermissionOverride">Индивидуальные полномочия</option>
+                        <option value="Security">Конфигурация безопасности</option>
                     </select>
                 </div>
                 <div class="field"><label>Период</label>
@@ -69,7 +87,6 @@
                             <th>Сущность</th>
                             <th>Объект</th>
                             <th>Детали</th>
-                            <th>ID</th>
                             <th>Пользователь</th>
                         </tr>
                     </thead>
@@ -78,21 +95,34 @@
                         {
                             <tr>
                                 <td class="mono">@log.CreatedAt.ToString("dd.MM.yyyy HH:mm")</td>
-                                <td><span class="badge">@TranslateAction(log.Action)</span></td>
-                                <td>@TranslateEntityType(log.EntityType)</td>
+                                <td><span class="auditAction auditAction--@GetSeverityClass(log.ActionSeverity)">@log.ActionDisplay</span></td>
+                                <td><span class="tag">@log.EntityTypeDisplay</span></td>
                                 <td>
-                                    @if (!string.IsNullOrEmpty(log.EntityDisplayName))
+                                    <div class="auditObjectName">@log.EntityDisplayName</div>
+                                    @if (log.IsEntitySnapshotMissing)
                                     {
-                                        @log.EntityDisplayName
+                                        <div class="auditLegacyHint">Историческое имя объекта отсутствует</div>
+                                    }
+                                </td>
+                                <td>
+                                    @if (log.DetailsDisplay != "—")
+                                    {
+                                        <button type="button" class="linkBtn" @onclick="() => OpenDetails(log)">
+                                            @(log.DetailsDisplay.Length > 60 ? log.DetailsDisplay[..60] + "…" : log.DetailsDisplay)
+                                        </button>
                                     }
                                     else
                                     {
-                                        <em class="muted">Запись удалена</em>
+                                        <span class="muted">—</span>
                                     }
                                 </td>
-                                <td>@(string.IsNullOrEmpty(log.Details) ? "—" : log.Details.Length > 50 ? log.Details[..50] + "…" : log.Details)</td>
-                                <td class="mono">@log.EntityId.Substring(0, Math.Min(8, log.EntityId.Length))…</td>
-                                <td class="mono">@log.UserId.ToString().Substring(0, 8)…</td>
+                                <td>
+                                    <div class="auditActorName">@log.ActorFullName</div>
+                                    @if (!string.IsNullOrWhiteSpace(log.ActorLogin) && log.ActorLogin != "system")
+                                    {
+                                        <div class="auditActorLogin">@log.ActorLogin</div>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -110,6 +140,56 @@
     </section>
 </div>
 
+@if (showDetails && selectedLog != null)
+{
+    <div class="modalOverlay" @onclick="CloseDetails">
+        <div class="modal" @onclick:stopPropagation="true" style="max-width:560px">
+            <div class="modalHeader">
+                <h3>Детали события</h3>
+                <button type="button" class="modalCloseButton"
+                        @onclick="CloseDetails"
+                        aria-label="Закрыть"
+                        title="Закрыть">
+                    <span aria-hidden="true">×</span>
+                </button>
+            </div>
+            <div class="modalBody">
+                <div class="form" style="grid-template-columns:1fr;gap:12px">
+                    <div class="field">
+                        <label>Дата</label>
+                        <div>@selectedLog.CreatedAt.ToString("dd.MM.yyyy HH:mm:ss")</div>
+                    </div>
+                    <div class="field">
+                        <label>Действие</label>
+                        <div><span class="auditAction auditAction--@GetSeverityClass(selectedLog.ActionSeverity)">@selectedLog.ActionDisplay</span></div>
+                    </div>
+                    <div class="field">
+                        <label>Сущность</label>
+                        <div>@selectedLog.EntityTypeDisplay</div>
+                    </div>
+                    <div class="field">
+                        <label>Объект</label>
+                        <div>@selectedLog.EntityDisplayName</div>
+                        <code style="font-size:11px;color:var(--muted)">@selectedLog.EntityId</code>
+                    </div>
+                    <div class="field">
+                        <label>Детали</label>
+                        <div style="white-space:pre-wrap;font-size:13px">@selectedLog.DetailsDisplay</div>
+                    </div>
+                    <div class="field">
+                        <label>Пользователь</label>
+                        <div>@selectedLog.ActorFullName</div>
+                        @if (!string.IsNullOrWhiteSpace(selectedLog.ActorLogin))
+                        {
+                            <code style="font-size:11px;color:var(--muted)">@selectedLog.ActorLogin</code>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<AuditLogDisplayDto> logs = new();
     private bool loading = true;
@@ -122,50 +202,17 @@
     private string filterAction = "";
     private string filterPeriod = "7";
 
+    private bool showDetails = false;
+    private AuditLogDisplayDto? selectedLog;
+
     protected override async Task OnInitializedAsync() => await LoadLogs();
 
-    static string TranslateAction(string action) => action switch
+    static string GetSeverityClass(AuditSeverity severity) => severity switch
     {
-        "Create" or "Created" => "Создание",
-        "Update" or "Updated" => "Изменение",
-        "Delete" => "Удаление",
-        _ when action.StartsWith("Status:") => ParseStatusAction(action),
-        _ => action
-    };
-
-    static string ParseStatusAction(string action)
-    {
-        var statusStr = action["Status:".Length..];
-        if (Enum.TryParse<HKCardStatus>(statusStr, out var status))
-        {
-            return status switch
-            {
-                HKCardStatus.Draft => "Статус: Черновик",
-                HKCardStatus.OnReview => "Статус: На проверке",
-                HKCardStatus.RevisionRequired => "Статус: Требует доработки",
-                HKCardStatus.Approved => "Статус: Утверждено",
-                HKCardStatus.Archived => "Статус: Архив",
-                HKCardStatus.Deleted => "Статус: Удалено",
-                _ => action
-            };
-        }
-        return action;
-    }
-
-    static string TranslateEntityType(string entityType) => entityType switch
-    {
-        "HKCard" => "Химмотологическая карта",
-        "Node" => "Изделие",
-        "EquipmentModel" => "Модель техники",
-        "EquipmentInstance" => "Экземпляр техники",
-        "IndividualCard" => "Индивидуальная карта",
-        "GsmMaterial" => "Горюче-смазочный материал",
-        "AssemblyUnit" => "Сборочная единица",
-        "Branch" => "Филиал",
-        "Coefficient" => "Коэффициент",
-        "CoefficientType" => "Тип коэффициента",
-        "WorkTask" => "Задача",
-        _ => entityType
+        AuditSeverity.Success => "success",
+        AuditSeverity.Warning => "warning",
+        AuditSeverity.Danger => "danger",
+        _ => "neutral"
     };
 
     async Task LoadLogs()
@@ -185,4 +232,16 @@
 
     async Task PrevPage() { if (currentPage > 1) { currentPage--; await LoadLogs(); } }
     async Task NextPage() { if (currentPage < totalPages) { currentPage++; await LoadLogs(); } }
+
+    void OpenDetails(AuditLogDisplayDto log)
+    {
+        selectedLog = log;
+        showDetails = true;
+    }
+
+    void CloseDetails()
+    {
+        showDetails = false;
+        selectedLog = null;
+    }
 }
