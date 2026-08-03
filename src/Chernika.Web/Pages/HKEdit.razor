@@ -58,7 +58,7 @@
                             }
                         </div>
                         <div class="field hk-letter-numbers-field">
-                            <label>Номера писем</label>
+                            <label>Номер письма</label>
                             <div class="hk-letter-numbers" role="group" aria-label="Номера входящего и исходящего писем">
                                 <div class="hk-letter-number-part">
                                     <label class="sr-only" for="hk-incoming-letter">Входящий номер</label>
@@ -84,6 +84,106 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="field hk-mb-field">
+                            <label>Род войск</label>
+                            <div class="hki-tags-row">
+                                @foreach (var mbId in selectedMilitaryBranchIds)
+                                {
+                                    var mb = allMilitaryBranches.FirstOrDefault(b => b.Id == mbId);
+                                    if (mb != null)
+                                    {
+                                        <span class="hki-mat-tag">
+                                            <span>@mb.Code — @mb.Name</span>
+                                            @if (canEdit)
+                                            {
+                                                <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
+                                            }
+                                        </span>
+                                    }
+                                }
+                                @if (!selectedMilitaryBranchIds.Any())
+                                {
+                                    <span class="hki-empty-hint">Не выбрано</span>
+                                }
+                            </div>
+                            @if (canEdit)
+                            {
+                                var mbDropId = "mb-drop";
+                                var mbBtnId = "mb-btn";
+                                <div id="@mbBtnId" class="field-select hki-mb-select" @onclick="() => ToggleMbDropdown(mbDropId, mbBtnId)">
+                                    <span>Добавить род войск...</span>
+                                </div>
+                                @if (_mbDropOpen)
+                                {
+                                    <div id="@mbDropId" class="gsm-dropdown">
+                                        <input class="gsm-dropdown-search" @bind="_mbSearch" @oninput="() => { }" placeholder="Поиск..." />
+                                        @foreach (var mb in FilteredMilitaryBranches())
+                                        {
+                                            <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMilitaryBranch(mb.Id)">@mb.Code — @mb.Name</div>
+                                        }
+                                        @if (!FilteredMilitaryBranches().Any())
+                                        {
+                                            <div class="hki-search-empty">Нет совпадений</div>
+                                        }
+                                    </div>
+                                }
+                            }
+                            <div class="hki-hint">Применяется ко всем уровням ХК</div>
+                        </div>
+                        <div class="field hk-pdf-field">
+                            <label>PDF-скан исходной ХК</label>
+                            @if (_attachment == null)
+                            {
+                                <span class="hki-empty-hint">Файл не прикреплён</span>
+                                @if (canEdit)
+                                {
+                                    if (IsNew)
+                                    {
+                                        <div class="hki-file-note">Сохраните ХК, чтобы прикрепить файл</div>
+                                    }
+                                    else if (CanManageAttachment)
+                                    {
+                                        <div class="hki-file-row">
+                                            <label class="btn hki-file-btn">
+                                                Выбрать файл
+                                                <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept=".pdf" class="hki-file-input" />
+                                            </label>
+                                            <button type="button" class="btn primary" disabled="@(_pendingFile == null || _uploading)" @onclick="() => UploadAttachment()">@(_uploading ? "Загрузка..." : "Загрузить")</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="hki-file-note">Загрузка доступна только для черновика или карты на доработке</div>
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                <div class="hki-file-row">
+                                    <span class="hki-file-name">📄 @_attachment.OriginalFileName <span class="hki-file-size">(@FormatSize(_attachment.SizeBytes))</span></span>
+                                    <button type="button" class="btn" @onclick="OpenAttachmentPreview">Открыть</button>
+                                    <button type="button" class="btn" @onclick="DownloadAttachment">Скачать</button>
+                                    @if (canEdit && CanManageAttachment)
+                                    {
+                                        <label class="btn ghost hki-file-btn">
+                                            Заменить
+                                            <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept=".pdf" class="hki-file-input" />
+                                        </label>
+                                        <button type="button" class="btn primary" disabled="@(_pendingFile == null || _uploading)" @onclick="() => UploadAttachment()">@(_uploading ? "Загрузка..." : "Загрузить")</button>
+                                        <button type="button" class="btn ghost hki-file-danger" @onclick="DeleteAttachment">Удалить</button>
+                                    }
+                                </div>
+                                <div class="hki-file-meta">Загрузил: @(_attachment.UploadedByUserName ?? "—") · @(_attachment.UploadedAt.ToString("dd.MM.yyyy HH:mm"))</div>
+                            }
+                            @if (_pendingFile != null)
+                            {
+                                <div class="hki-file-meta hki-file-pending">Выбрано: @_pendingFile.Name (@FormatSize(_pendingFile.Size))</div>
+                            }
+                            @if (!string.IsNullOrEmpty(_attachmentError))
+                            {
+                                <div class="hki-field-error">@_attachmentError</div>
+                            }
+                        </div>
                         <div class="field hk-request-details-field">
                             <label for="hk-request-details">Реквизиты</label>
                             @if (canEdit)
@@ -95,165 +195,76 @@
                                 <p style="margin:4px 0 0">@card.RequestDetails</p>
                             }
                         </div>
-                    </div>
-
-                    <div class="field"><label>Номер ХК</label><InputText @bind-Value="card.Code" readonly class="field" /></div>
-                    <div class="field"><label>Уровень объекта</label>
-                        <div class="level-selector" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-                            @foreach (var lvl in new[] { HKObjectLevel.Complex, HKObjectLevel.EquipmentModel, HKObjectLevel.Aggregate, HKObjectLevel.Node })
-                            {
-                                var active = selectedLevel == lvl;
-                                <button type="button" class="btn @(active ? "primary" : "ghost")" @onclick="() => SelectLevel(lvl)" style="font-size:13px;padding:4px 12px">@LevelName(lvl)</button>
-                            }
+                        <div class="field">
+                            <label>Уровень объекта</label>
+                            <div class="level-selector" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+                                @foreach (var lvl in new[] { HKObjectLevel.Complex, HKObjectLevel.EquipmentModel, HKObjectLevel.Aggregate, HKObjectLevel.Node })
+                                {
+                                    var active = selectedLevel == lvl;
+                                    <button type="button" class="btn @(active ? "primary" : "ghost")" @onclick="() => SelectLevel(lvl)" style="font-size:13px;padding:4px 12px">@LevelName(lvl)</button>
+                                }
+                            </div>
                         </div>
-                    </div>
-                    <div class="field"><label>@ObjectFieldLabel()</label>
-                        @{
-                            var objectEntity = GetSelectedObject();
-                            var objDropId = "obj-drop";
-                            var objBtnId = "obj-btn";
-                        }
-                        @if (canEdit)
-                        {
-                            <div id="@objBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" @onclick="() => ToggleObjectDropdown(objDropId, objBtnId)">
-                                <span style="flex:1">@(objectEntity != null ? objectEntity : "Выбрать...")</span>
-                                @if (objectEntity != null)
-                                {
-                                    <button type="button" style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:16px;line-height:1;padding:0;flex-shrink:0" @onclick="ClearObject" @onclick:stopPropagation="true">×</button>
-                                }
-                            </div>
-                        @if (_objectDropOpen)
-                        {
-                            <div id="@objDropId" class="gsm-dropdown">
-                                <input class="gsm-dropdown-search" @bind="_objectSearch" @oninput="() => { }" placeholder="Поиск..." />
-                                @if (canQuickCreate && selectedLevel == HKObjectLevel.Node)
-                                {
-                                    <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateNode(); }">
-                                        <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_objectSearch) ? "Создать новый" : $"Создать «{_objectSearch}»")
-                                    </button>
-                                }
-                                <div class="gsm-dropdown-divider" role="separator"></div>
-                                @foreach (var obj in GetFilteredObjects())
-                                {
-                                    <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectObject(obj)">@obj</div>
-                                }
-                                @if (!GetFilteredObjects().Any())
-                                {
-                                    <div class="hki-search-empty">Нет совпадений</div>
-                                }
-                            </div>
-                        }
-                        }
-                        else
-                        {
-                            <span class="field-select" style="cursor:default;display:block;opacity:.7">@(objectEntity ?? "")</span>
-                        }
-                        @if (!string.IsNullOrEmpty(_activeCardWarning) && _existingActiveCard != null)
-                        {
-                            <div class="note" style="margin-top:6px;font-size:12px;color:var(--warn)">
-                                ⚠ @_activeCardWarning
-                                <button type="button" class="linkBtn" @onclick="GoToExistingCard" style="text-decoration:underline;margin-left:4px;font-size:12px">Перейти к существующей ХК</button>
-                            </div>
-                        }
-                    </div>
-
-                    <div class="full-width" style="margin-top:8px">
-                        <div class="panel">
-                            <div class="panelHeader">
-                                <h3 style="font-size:14px;font-weight:700;margin:0">Род войск</h3>
-                                <div class="hint">Применяется ко всем уровням ХК</div>
-                            </div>
-                            <div class="panelBody">
-                                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-                                    @foreach (var mbId in selectedMilitaryBranchIds)
+                        <div class="field">
+                            <label>@ObjectFieldLabel()</label>
+                            @{
+                                var objectEntity = GetSelectedObject();
+                                var objDropId = "obj-drop";
+                                var objBtnId = "obj-btn";
+                            }
+                            @if (canEdit)
+                            {
+                                <div id="@objBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" @onclick="() => ToggleObjectDropdown(objDropId, objBtnId)">
+                                    <span style="flex:1">@(objectEntity != null ? objectEntity : "Выбрать...")</span>
+                                    @if (objectEntity != null)
                                     {
-                                        var mb = allMilitaryBranches.FirstOrDefault(b => b.Id == mbId);
-                                        if (mb != null)
-                                        {
-                                            <span class="hki-mat-tag">
-                                                <span>@mb.Code — @mb.Name</span>
-                                                @if (canEdit)
-                                                {
-                                                    <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
-                                                }
-                                            </span>
-                                        }
-                                    }
-                                    @if (!selectedMilitaryBranchIds.Any())
-                                    {
-                                        <span style="font-size:12px;opacity:.6">Не выбрано</span>
+                                        <button type="button" style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:16px;line-height:1;padding:0;flex-shrink:0" @onclick="ClearObject" @onclick:stopPropagation="true">×</button>
                                     }
                                 </div>
-                                @if (canEdit)
-                                {
-                                    var mbDropId = "mb-drop";
-                                    var mbBtnId = "mb-btn";
-                                    <div id="@mbBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;max-width:400px" @onclick="() => ToggleMbDropdown(mbDropId, mbBtnId)">
-                                        <span>Добавить род войск...</span>
-                                    </div>
-                                    @if (_mbDropOpen)
+                            @if (_objectDropOpen)
+                            {
+                                <div id="@objDropId" class="gsm-dropdown">
+                                    <input class="gsm-dropdown-search" @bind="_objectSearch" @oninput="() => { }" placeholder="Поиск..." />
+                                    @if (canQuickCreate && selectedLevel == HKObjectLevel.Node)
                                     {
-                                        <div id="@mbDropId" class="gsm-dropdown">
-                                            <input class="gsm-dropdown-search" @bind="_mbSearch" @oninput="() => { }" placeholder="Поиск..." />
-                                            @foreach (var mb in FilteredMilitaryBranches())
-                                            {
-                                                <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMilitaryBranch(mb.Id)">@mb.Code — @mb.Name</div>
-                                            }
-                                            @if (!FilteredMilitaryBranches().Any())
-                                            {
-                                                <div class="hki-search-empty">Нет совпадений</div>
-                                            }
-                                        </div>
+                                        <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateNode(); }">
+                                            <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_objectSearch) ? "Создать новый" : $"Создать «{_objectSearch}»")
+                                        </button>
                                     }
-                                }
-                            </div>
+                                    <div class="gsm-dropdown-divider" role="separator"></div>
+                                    @foreach (var obj in GetFilteredObjects())
+                                    {
+                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectObject(obj)">@obj</div>
+                                    }
+                                    @if (!GetFilteredObjects().Any())
+                                    {
+                                        <div class="hki-search-empty">Нет совпадений</div>
+                                    }
+                                </div>
+                            }
+                            }
+                            else
+                            {
+                                <span class="field-select" style="cursor:default;display:block;opacity:.7">@(objectEntity ?? "")</span>
+                            }
+                            @if (!string.IsNullOrEmpty(_activeCardWarning) && _existingActiveCard != null)
+                            {
+                                <div class="note" style="margin-top:6px;font-size:12px;color:var(--warn)">
+                                    ⚠ @_activeCardWarning
+                                    <button type="button" class="linkBtn" @onclick="GoToExistingCard" style="text-decoration:underline;margin-left:4px;font-size:12px">Перейти к существующей ХК</button>
+                                </div>
+                            }
                         </div>
-                    </div>
-
-                    <div class="full-width" style="margin-top:8px">
-                        <div class="panel">
-                            <div class="panelHeader">
-                                <h3 style="font-size:14px;font-weight:700;margin:0">PDF-скан исходной ХК</h3>
-                            </div>
-                            <div class="panelBody">
-                                @if (_attachment == null)
-                                {
-                                    <div style="display:flex;align-items:center;gap:12px">
-                                        <span style="font-size:13px;opacity:.6">Нет вложения</span>
-                                        @if (canEdit)
-                                        {
-                                            <InputFile OnChange="HandleAttachmentUpload" accept=".pdf" />
-                                            <button type="button" class="btn primary" disabled="@(_uploading)" @onclick="() => UploadAttachment()">
-                                                @(_uploading ? "Загрузка..." : "Загрузить")
-                                            </button>
-                                        }
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(_attachmentError))
-                                    {
-                                        <div style="color:var(--bad);font-size:13px;margin-top:6px">@_attachmentError</div>
-                                    }
-                                }
-                                else
-                                {
-                                    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                                        <span style="font-size:13px">
-                                            📄 @_attachment.OriginalFileName
-                                            <span style="opacity:.6">(@FormatSize(_attachment.SizeBytes))</span>
-                                        </span>
-                                        <span style="font-size:12px;opacity:.6">Загрузил: @(_attachment.UploadedByUserName ?? "—") @_attachment.UploadedAt.ToString("dd.MM.yyyy HH:mm")</span>
-                                        <button type="button" class="btn" @onclick="OpenAttachmentPreview">Открыть</button>
-                                        <button type="button" class="btn" @onclick="DownloadAttachment">Скачать</button>
-                                        @if (canEdit)
-                                        {
-                                            <InputFile OnChange="HandleAttachmentUpload" accept=".pdf" />
-                                            <button type="button" class="btn ghost" disabled="@(_uploading)" @onclick="() => UploadAttachment()">
-                                                @(_uploading ? "Загрузка..." : "Заменить")
-                                            </button>
-                                            <button type="button" class="btn ghost" style="color:var(--bad)" @onclick="DeleteAttachment">Удалить</button>
-                                        }
-                                    </div>
-                                }
-                            </div>
+                        <div class="field">
+                            <label>Номер ХК</label>
+                            @if (canEdit && !IsNew)
+                            {
+                                <InputText @bind-Value="card.Code" readonly class="fieldInput" />
+                            }
+                            else
+                            {
+                                <span>@(string.IsNullOrEmpty(card.Code) ? "—" : card.Code)</span>
+                            }
                         </div>
                     </div>
 
@@ -751,6 +762,9 @@
     private bool _uploading;
     private string? _attachmentError;
     private IBrowserFile? _pendingFile;
+    private int _fileInputKey;
+
+    private bool CanManageAttachment => !IsNew && canEdit && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
 
     private record AttachmentInfo(Guid Id, string OriginalFileName, long SizeBytes, string? UploadedByUserName, DateTime UploadedAt);
 
@@ -951,6 +965,7 @@
             _activeDropdownId = null;
         }
         _objectDropOpen = false;
+        _mbDropOpen = false;
         foreach (var key in _matOpen.Keys.ToList())
             _matOpen[key] = false;
         foreach (var key in _auOpen.Keys.ToList())
@@ -1168,6 +1183,11 @@
         catch (UnauthorizedAccessException ex)
         {
             errorMessage = ex.Message;
+            return;
+        }
+        catch (HKCardValidationException ex)
+        {
+            errorMessage = ex.ToUserMessage();
             return;
         }
         catch (DbUpdateException)
@@ -1568,15 +1588,16 @@
         StateHasChanged();
     }
 
-    private async Task HandleAttachmentUpload(InputFileChangeEventArgs e)
+    private void HandleAttachmentUpload(InputFileChangeEventArgs e)
     {
         _pendingFile = e.File;
-        await UploadAttachment();
+        _attachmentError = null;
+        StateHasChanged();
     }
 
     private async Task UploadAttachment()
     {
-        if (_pendingFile == null && _attachment == null) return;
+        if (IsNew || !CanManageAttachment) return;
         if (_pendingFile == null) return;
 
         _attachmentError = null;
@@ -1598,6 +1619,7 @@
             else
             {
                 _pendingFile = null;
+                _fileInputKey++;
                 await LoadAttachmentAsync(card.Id);
             }
         }
@@ -1622,6 +1644,7 @@
             if (response.IsSuccessStatusCode)
             {
                 _attachment = null;
+                _fileInputKey++;
             }
         }
         catch { }
@@ -1631,7 +1654,7 @@
     private async Task OpenAttachmentPreview()
     {
         if (_attachment == null) return;
-        await JS.InvokeVoidAsync("window.open", $"/api/HKCards/{card.Id}/attachment/content", "_blank");
+        await JS.InvokeVoidAsync("window.open", $"/api/HKCards/{card.Id}/attachment/content?inline=true", "_blank");
     }
 
     private async Task DownloadAttachment()

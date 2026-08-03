@@ -73,6 +73,7 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddScoped<HKCardService>();
+builder.Services.AddScoped<HKCardValidationService>();
 builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<EquipmentService>();
 builder.Services.AddScoped<IndividualCardService>();

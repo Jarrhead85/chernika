@@ -8,6 +8,7 @@ using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Net.Http.Headers;
 
 namespace Chernika.Api.Controllers;
 
@@ -76,6 +77,10 @@ public class HKCardsController : ControllerBase
         {
             return BadRequest(ex.Message);
         }
+        catch (HKCardValidationException ex)
+        {
+            return BadRequest(ex.ToUserMessage());
+        }
     }
 
     [HttpPut("{id}")]
@@ -99,6 +104,10 @@ public class HKCardsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return Conflict(ex.Message);
+        }
+        catch (HKCardValidationException ex)
+        {
+            return BadRequest(ex.ToUserMessage());
         }
         return NoContent();
     }
@@ -315,7 +324,7 @@ public class HKCardsController : ControllerBase
     }
 
     [HttpGet("{id}/attachment/content")]
-    public async Task<IActionResult> GetAttachmentContent(Guid id)
+    public async Task<IActionResult> GetAttachmentContent(Guid id, [FromQuery] bool inline = false)
     {
         if (!await _permissions.HasPermissionAsync(_currentUser.GetRequiredUserId().ToString(), PermissionCodes.HKView))
             return Forbid();
@@ -324,6 +333,15 @@ public class HKCardsController : ControllerBase
         if (attachment == null) return NotFound();
 
         var stream = await _fileStorage.OpenReadAsync(attachment.StorageKey);
+        if (inline)
+        {
+            Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("inline")
+            {
+                FileName = attachment.OriginalFileName,
+                FileNameStar = attachment.OriginalFileName
+            }.ToString();
+            return File(stream, attachment.ContentType, enableRangeProcessing: true);
+        }
         return File(stream, attachment.ContentType, attachment.OriginalFileName, enableRangeProcessing: true);
     }
 

@@ -18,6 +18,9 @@ public class HKCardService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ICurrentUserService _currentUser;
     private readonly IPermissionService _permissions;
+    private readonly HKCardValidationService _hkValidation;
+    private readonly AuditService _audit;
+    private readonly TimeProvider _time;
     private readonly ILogger<HKCardService> _logger;
 
     public HKCardService(
@@ -26,6 +29,9 @@ public class HKCardService
         UserManager<ApplicationUser> userManager,
         ICurrentUserService currentUser,
         IPermissionService permissions,
+        HKCardValidationService hkValidation,
+        AuditService audit,
+        TimeProvider time,
         ILogger<HKCardService> logger)
     {
         _db = db;
@@ -33,6 +39,9 @@ public class HKCardService
         _userManager = userManager;
         _currentUser = currentUser;
         _permissions = permissions;
+        _hkValidation = hkValidation;
+        _audit = audit;
+        _time = time;
         _logger = logger;
     }
 
@@ -578,6 +587,46 @@ public class HKCardService
         return maxSuffix == 0 ? $"{baseCode}-2" : $"{baseCode}-{maxSuffix + 1}";
     }
 
+    private static string LevelDisplayName(HKObjectLevel level) => level switch
+    {
+        Domain.Enums.HKObjectLevel.Complex => "Комплекс",
+        Domain.Enums.HKObjectLevel.EquipmentModel => "Изделие",
+        Domain.Enums.HKObjectLevel.Aggregate => "Агрегат",
+        Domain.Enums.HKObjectLevel.Node => "Узел",
+        _ => "Объект"
+    };
+
+    private async Task EnsureNoActiveDuplicateAsync(HKCard card, CancellationToken ct = default)
+    {
+        var activeStatuses = new[] { HKCardStatus.Draft, HKCardStatus.OnReview, HKCardStatus.RevisionRequired };
+
+        var hasActive = card.ObjectLevel switch
+        {
+            Domain.Enums.HKObjectLevel.Node => await _db.HKCards.AnyAsync(x =>
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
+                x.NodeId == card.NodeId &&
+                activeStatuses.Contains(x.Status), ct),
+            Domain.Enums.HKObjectLevel.Aggregate => await _db.HKCards.AnyAsync(x =>
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate &&
+                x.AggregateId == card.AggregateId &&
+                activeStatuses.Contains(x.Status), ct),
+            Domain.Enums.HKObjectLevel.EquipmentModel => await _db.HKCards.AnyAsync(x =>
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel &&
+                x.EquipmentModelId == card.EquipmentModelId &&
+                activeStatuses.Contains(x.Status), ct),
+            Domain.Enums.HKObjectLevel.Complex => await _db.HKCards.AnyAsync(x =>
+                x.ObjectLevel == Domain.Enums.HKObjectLevel.Complex &&
+                x.ComplexId == card.ComplexId &&
+                activeStatuses.Contains(x.Status), ct),
+            _ => throw new ArgumentException("Неизвестный уровень объекта.")
+        };
+
+        if (hasActive)
+            throw new InvalidOperationException(
+                $"Для выбранного {LevelDisplayName(card.ObjectLevel).ToLowerInvariant()} уже существует активная ХК. " +
+                "Откройте, продолжите или удалите существующую карточку.");
+    }
+
     private async Task<string> ResolveObjectCodeAsync(HKCard card)
     {
         var code = card.ObjectLevel switch
@@ -612,88 +661,6 @@ public class HKCardService
                 (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired))
             .FirstOrDefaultAsync();
 
-    public async Task<(bool Success, string? Error)> ValidateCardItemsAsync(ICollection<HKCardItem> items)
-    {
-        if (items == null || items.Count == 0)
-            return (false, "ХК должна содержать хотя бы одну строку.");
-
-        var assemblyUnitIds = items.Select(i => i.AssemblyUnitId).Distinct().ToHashSet();
-        var existingAus = await _db.AssemblyUnits
-            .IgnoreQueryFilters()
-            .Where(a => assemblyUnitIds.Contains(a.Id))
-            .Select(a => a.Id)
-            .ToListAsync();
-        var missingAus = assemblyUnitIds.Except(existingAus).ToList();
-        if (missingAus.Any())
-            return (false, $"Сборочная единица с идентификатором {missingAus[0]} не найдена.");
-
-        var allMaterials = items.SelectMany(i => i.Materials).ToList();
-        if (allMaterials.Any(m => !Enum.IsDefined(typeof(GsmCategory), m.Category)))
-            return (false, "Некорректная категория материала.");
-
-        var gsmMaterialIds = allMaterials.Select(m => m.GsmMaterialId).Distinct().ToHashSet();
-        var existingMaterials = await _db.GsmMaterials
-            .IgnoreQueryFilters()
-            .Where(m => gsmMaterialIds.Contains(m.Id))
-            .ToListAsync();
-        var existingMaterialIds = existingMaterials.Select(m => m.Id).ToHashSet();
-        var missingMats = gsmMaterialIds.Except(existingMaterialIds).ToList();
-        if (missingMats.Any())
-            return (false, $"Марка ГСМ с идентификатором {missingMats[0]} не найдена.");
-
-        foreach (var grp in allMaterials.GroupBy(m => new { m.HKCardItemId, m.Category }))
-        {
-            var dupes = grp.GroupBy(m => m.GsmMaterialId).FirstOrDefault(g => g.Count() > 1);
-            if (dupes != null)
-                return (false, "Обнаружены дублирующиеся марки ГСМ в одной строке и категории.");
-        }
-
-        foreach (var item in items)
-        {
-            if (item.AssemblyUnitId == Guid.Empty)
-                return (false, "Укажите сборочную единицу во всех строках таблицы.");
-            if (item.Quantity <= 0)
-                return (false, "Количество изделий должно быть больше нуля.");
-            if (item.Volume < 0)
-                return (false, "Масса/объём не может быть отрицательным.");
-        }
-
-        return (true, null);
-    }
-
-    private static void ValidateRequestFields(HKCard card)
-    {
-        card.RequestOrganization = card.RequestOrganization?.Trim();
-        card.RequestSenderFullName = card.RequestSenderFullName?.Trim();
-        card.RequestDetails = card.RequestDetails?.Trim();
-        card.IncomingLetterNumber = card.IncomingLetterNumber?.Trim();
-        card.OutgoingLetterNumber = card.OutgoingLetterNumber?.Trim();
-
-        if (!string.IsNullOrEmpty(card.IncomingLetterNumber))
-        {
-            if (string.IsNullOrEmpty(card.RequestOrganization))
-                throw new ArgumentException("При указании номера входящего письма обязательны «Организация» и «Дата поступления».");
-            if (!card.RequestReceivedDate.HasValue)
-                throw new ArgumentException("При указании номера входящего письма обязательна «Дата поступления».");
-        }
-
-        var hasAnyRequestField = !string.IsNullOrEmpty(card.RequestOrganization)
-            || !string.IsNullOrEmpty(card.RequestSenderFullName)
-            || card.RequestReceivedDate.HasValue
-            || !string.IsNullOrEmpty(card.IncomingLetterNumber)
-            || !string.IsNullOrEmpty(card.OutgoingLetterNumber);
-
-        if (hasAnyRequestField && string.IsNullOrEmpty(card.RequestDetails))
-            throw new ArgumentException("При заполнении реквизитов обращения обязательно поле «Реквизиты / основание».");
-
-        if (card.RequestReceivedDate.HasValue)
-        {
-            var maxDate = DateTime.UtcNow.AddDays(1);
-            if (card.RequestReceivedDate.Value > maxDate)
-                throw new ArgumentException("Дата поступления не может быть позже текущей даты более чем на один день.");
-        }
-    }
-
     public async Task<HKCard> CreateAsync(HKCard card, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
@@ -711,28 +678,22 @@ public class HKCardService
         if (!await _permissions.HasPermissionAsync(actorId.ToString(), createPerm))
             throw new UnauthorizedAccessException("Недостаточно прав для создания ХК.");
 
-        if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (!card.NodeId.HasValue || card.NodeId == Guid.Empty))
-            throw new ArgumentException("Необходимо выбрать узел.");
-
         if (actor.BranchId == null || actor.BranchId.Value == Guid.Empty)
             throw new InvalidOperationException("У пользователя не указан филиал. Создание ХК невозможно.");
 
-        ValidateRequestFields(card);
+        var validation = await _hkValidation.ValidateDraftAsync(card, ct);
+        if (!validation.IsValid)
+            throw new HKCardValidationException(validation.Errors);
 
-        var validation = await ValidateCardItemsAsync(card.Items);
-        if (!validation.Success)
-            throw new ArgumentException(validation.Error);
-
-        if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
-            && card.ExpirationDate.Value < card.EffectiveDate.Value)
-            throw new ArgumentException(
-                "Дата окончания действия не может быть раньше даты начала действия.");
+        await EnsureNoActiveDuplicateAsync(card, ct);
 
         card.Id = Guid.NewGuid();
-        card.Code = await GenerateCodeAsync(await ResolveObjectCodeAsync(card));
+        var objectCode = await ResolveObjectCodeAsync(card);
+        card.Code = await GenerateCodeAsync(objectCode);
         card.Version = GenerateVersion();
-        card.CreatedAt = DateTime.UtcNow;
-        card.UpdatedAt = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
+        card.CreatedAt = now;
+        card.UpdatedAt = now;
         card.Status = HKCardStatus.Draft;
         card.AuthorId = actorId;
         card.BranchId = actor.BranchId.Value;
@@ -748,29 +709,14 @@ public class HKCardService
             }
         }
 
-        if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node)
-        {
-            var hasActiveDuplicate = await _db.HKCards.AnyAsync(x =>
-                x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
-                x.NodeId == card.NodeId &&
-                (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));
-            if (hasActiveDuplicate)
-                throw new InvalidOperationException(
-                    "Для выбранного узла уже существует активная ХК " +
-                    "в статусе «Черновик», «На согласовании» или «На доработке». " +
-                    "Завершите или архивируйте существующую карточку перед созданием новой.");
-        }
-
         _db.HKCards.Add(card);
-        _db.AuditLogs.Add(new AuditLog
-        {
-            Id = Guid.NewGuid(),
-            EntityType = "HKCard",
-            EntityId = card.Id.ToString(),
-            Action = "Created",
-            UserId = actorId,
-            CreatedAt = DateTime.UtcNow
-        });
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "HKCard",
+            card.Id.ToString(),
+            "Created",
+            actorId,
+            EntityDisplayName: $"{card.Code} v{card.Version}",
+            Details: $"Создана ХК уровня «{LevelDisplayName(card.ObjectLevel)}» для объекта «{objectCode}»."), ct);
 
         try
         {
@@ -780,16 +726,16 @@ public class HKCardService
             when (ex.InnerException is PostgresException
             {
                 SqlState: PostgresErrorCodes.UniqueViolation,
-                ConstraintName: "UX_HKCards_OneActivePerNode"
-            })
+                ConstraintName: string constraint
+            } && constraint.StartsWith("UX_HKCards_OneActivePer", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "Для выбранного узла уже существует активная ХК. " +
-                "Завершите, архивируйте или откройте существующую карточку.");
+                $"Для выбранного {LevelDisplayName(card.ObjectLevel).ToLowerInvariant()} уже существует активная ХК. " +
+                "Откройте, продолжите или удалите существующую карточку.");
         }
         catch (DbUpdateException ex)
         {
-            _logger.LogError(ex, "Failed to create HK card (NodeId={NodeId})", card.NodeId);
+            _logger.LogError(ex, "Failed to create HK card (ObjectLevel={ObjectLevel})", card.ObjectLevel);
             throw new InvalidOperationException("Не удалось сохранить ХК. Проверьте заполнение всех полей и повторите попытку.");
         }
 
@@ -819,16 +765,9 @@ public class HKCardService
         if (card.RowVersion == 0)
             throw new InvalidOperationException("Версия карточки не указана. Обновите страницу и повторите попытку.");
 
-        ValidateRequestFields(card);
-
-        if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
-            && card.ExpirationDate.Value < card.EffectiveDate.Value)
-            throw new ArgumentException(
-                "Дата окончания действия не может быть раньше даты начала действия.");
-
-        var validation = await ValidateCardItemsAsync(card.Items);
-        if (!validation.Success)
-            throw new ArgumentException(validation.Error);
+        var validation = await _hkValidation.ValidateDraftAsync(card, ct);
+        if (!validation.IsValid)
+            throw new HKCardValidationException(validation.Errors);
 
         var existing = await _db.HKCards
             .Include(x => x.Items).ThenInclude(i => i.Materials)
@@ -975,23 +914,19 @@ public class HKCardService
         if (!HKCardStatusTransitions.IsAllowed(oldStatus, newStatus))
             return (false, HKCardStatusTransitions.GetErrorMessage(oldStatus, newStatus));
 
-        if (newStatus is HKCardStatus.OnReview or HKCardStatus.Approved
-            && card.ObjectLevel != Domain.Enums.HKObjectLevel.Node)
+        if (newStatus is HKCardStatus.OnReview or HKCardStatus.Approved)
         {
-            var now = DateTime.UtcNow;
-            var invalidChildren = await _db.HKCardComponents
-                .Where(c => c.ParentHKCardId == id)
-                .Join(_db.HKCards, comp => comp.ChildHKCardId, hk => hk.Id, (comp, hk) => hk)
-                .Where(hk => hk.Status != HKCardStatus.Approved
-                    || (hk.EffectiveDate.HasValue && hk.EffectiveDate > now)
-                    || (hk.ExpirationDate.HasValue && hk.ExpirationDate < now))
-                .Select(hk => hk.Code)
-                .ToListAsync(ct);
-
-            if (invalidChildren.Count != 0)
-                return (false,
-                    $"Невозможно изменить статус: следующие дочерние ХК недействительны: {string.Join(", ", invalidChildren)}. " +
-                    "Обновите или замените их перед отправкой.");
+            var validationCard = await _db.HKCards.AsNoTracking()
+                .Include(x => x.Items).ThenInclude(i => i.Materials)
+                .FirstOrDefaultAsync(x => x.Id == id, ct);
+            if (validationCard != null)
+            {
+                var result = newStatus == HKCardStatus.Approved
+                    ? await _hkValidation.ValidateForApprovalAsync(validationCard, ct)
+                    : await _hkValidation.ValidateForReviewAsync(validationCard, ct);
+                if (!result.IsValid)
+                    return (false, result.ToUserMessage());
+            }
         }
 
         card.Status = newStatus;

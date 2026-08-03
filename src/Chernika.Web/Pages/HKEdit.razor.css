@@ -1,13 +1,14 @@
 .hk-request-grid {
+    grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: minmax(220px, 1.45fr) minmax(210px, 1.3fr) minmax(150px, .8fr) minmax(260px, 1.2fr) minmax(200px, 1fr);
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 14px;
-    align-items: end;
+    align-items: start;
     margin-bottom: 14px;
 }
 
 .hk-request-details-field {
-    margin-bottom: 14px;
+    align-self: stretch;
 }
 
 .hk-request-grid .hk-request-details-field .fieldInput {
@@ -74,7 +75,7 @@
 
 @media (max-width: 1120px) {
     .hk-request-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 }
 
@@ -389,4 +390,95 @@
     height: 1px;
     background: var(--line);
     flex: 0 0 auto;
+}
+
+/* ---- Род войск: plain field ---- */
+
+.hki-tags-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.hki-mb-select {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.hki-hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+}
+
+/* ---- PDF-скан: compact field ---- */
+
+.hki-empty-hint {
+    font-size: 12px;
+    opacity: .6;
+    display: block;
+}
+
+.hki-file-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.hki-file-btn {
+    position: relative;
+}
+
+.hki-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+}
+
+.hki-file-name {
+    font-size: 13px;
+    word-break: break-word;
+    min-width: 0;
+}
+
+.hki-file-size {
+    opacity: .6;
+}
+
+.hki-file-meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+}
+
+.hki-file-pending {
+    color: var(--accent);
+}
+
+.hki-file-note {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+}
+
+.hki-field-error {
+    font-size: 12px;
+    color: var(--bad);
+    margin-top: 6px;
+}
+
+.hki-file-danger {
+    color: var(--bad);
+}
+
+.hk-pdf-field .btn {
+    padding: 7px 10px;
+    font-size: 12px;
 }

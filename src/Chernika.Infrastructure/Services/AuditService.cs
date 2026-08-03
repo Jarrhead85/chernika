@@ -52,6 +52,45 @@ public class AuditService
         return log;
     }
 
+    public async Task<AuditLog> CreateLogAsync(AuditWriteRequest request, CancellationToken ct = default)
+    {
+        string? actorFullName = null;
+        string? actorLogin = null;
+
+        if (request.ActorUserId != Guid.Empty)
+        {
+            var actor = await _db.Users
+                .Where(u => u.Id == request.ActorUserId.ToString())
+                .Select(u => new { u.FullName, u.UserName })
+                .FirstOrDefaultAsync(ct);
+
+            actorFullName = actor?.FullName;
+            actorLogin = actor?.UserName;
+        }
+        else
+        {
+            actorFullName = "Система";
+            actorLogin = "system";
+        }
+
+        var log = new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = request.EntityType,
+            EntityId = request.EntityId,
+            Action = request.Action,
+            UserId = request.ActorUserId,
+            Details = LimitLength(request.Details, 2000),
+            CreatedAt = DateTime.UtcNow,
+            EntityDisplayName = LimitLength(request.EntityDisplayName, 150),
+            ActorFullName = LimitLength(actorFullName, 200),
+            ActorLogin = LimitLength(actorLogin, 150),
+        };
+
+        _db.AuditLogs.Add(log);
+        return log;
+    }
+
     [System.Obsolete("Use LogAsync(AuditWriteRequest) with EntityDisplayName")]
     public async Task<AuditLog> LogAsync(string entityType, string entityId, string action, Guid userId, string? details = null)
     {
