@@ -47,6 +47,23 @@ public class HKCard
     [StringLength(4000)]
     public string? Notes { get; set; }
 
+    [StringLength(500)]
+    public string? RequestOrganization { get; set; }
+
+    [StringLength(500)]
+    public string? RequestSenderFullName { get; set; }
+
+    public DateTime? RequestReceivedDate { get; set; }
+
+    [StringLength(2000)]
+    public string? RequestDetails { get; set; }
+
+    [StringLength(100)]
+    public string? IncomingLetterNumber { get; set; }
+
+    [StringLength(100)]
+    public string? OutgoingLetterNumber { get; set; }
+
     public Guid? AuthorId { get; set; }
     public Guid? ReviewerId { get; set; }
     public DateTime? ApprovedDate { get; set; }
@@ -62,4 +79,7 @@ public class HKCard
     public ICollection<HKCardStatusLog> StatusLog { get; set; } = new List<HKCardStatusLog>();
     public ICollection<HKCardComponent> ParentComponents { get; set; } = new List<HKCardComponent>();
     public ICollection<HKCardComponent> ChildComponents { get; set; } = new List<HKCardComponent>();
+    public ICollection<HKCardMilitaryBranch> MilitaryBranches { get; set; } = new List<HKCardMilitaryBranch>();
+    public HKCardAttachment? Attachment { get; set; }
+    public ICollection<ReferenceProposal> Proposals { get; set; } = new List<ReferenceProposal>();
 }

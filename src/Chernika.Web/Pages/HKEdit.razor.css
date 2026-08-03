@@ -1,3 +1,90 @@
+.hk-request-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.45fr) minmax(210px, 1.3fr) minmax(150px, .8fr) minmax(260px, 1.2fr) minmax(200px, 1fr);
+    gap: 14px;
+    align-items: end;
+    margin-bottom: 14px;
+}
+
+.hk-request-details-field {
+    margin-bottom: 14px;
+}
+
+.hk-request-grid .hk-request-details-field .fieldInput {
+    height: 38px;
+    line-height: 1.2;
+    overflow: hidden;
+    resize: vertical;
+}
+
+.hk-letter-numbers {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 40px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    background: var(--panel2);
+}
+
+.hk-letter-number-part {
+    min-width: 0;
+}
+
+.hk-letter-number-part + .hk-letter-number-part {
+    border-left: 1px solid var(--line);
+}
+
+.hk-letter-numbers .fieldInput {
+    width: 100%;
+    height: 100%;
+    min-height: 38px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.hk-letter-numbers .fieldInput:focus {
+    position: relative;
+    z-index: 1;
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.hk-letter-numbers .hk-letter-number-part:first-child .fieldInput:focus {
+    border-radius: var(--radius2, 10px) 0 0 var(--radius2, 10px);
+}
+
+.hk-letter-numbers .hk-letter-number-part:last-child .fieldInput:focus {
+    border-radius: 0 var(--radius2, 10px) var(--radius2, 10px) 0;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+@media (max-width: 1120px) {
+    .hk-request-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
+    .hk-request-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+}
+
 .hk-items-table-wrapper {
     border-radius: var(--radius);
     border: 1px solid var(--line);
@@ -267,4 +354,39 @@
 .hki-actions .linkBtn:disabled {
     opacity: 0.3;
     cursor: default;
+}
+
+/* ---- quick-create button inside dropdown ---- */
+
+.gsm-dropdown-create {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+    color: var(--accent);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.gsm-dropdown-create:hover {
+    background: color-mix(in srgb, var(--accent) 15%, var(--panel));
+}
+
+.gsm-dropdown-create:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 3px rgba(79, 140, 255, .12);
+}
+
+.gsm-dropdown-divider {
+    height: 1px;
+    background: var(--line);
+    flex: 0 0 auto;
 }

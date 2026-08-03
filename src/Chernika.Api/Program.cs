@@ -60,6 +60,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("ManageIndividualCards", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
     options.AddPolicy("ManageTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskManage)));
     options.AddPolicy("ReportExport", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReportExport)));
+    options.AddPolicy("HKAttachmentEdit", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKAttachmentEdit)));
     options.AddPolicy("CreateEquipment", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("EditEquipment", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("DeleteEquipment", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
@@ -77,6 +78,8 @@ builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
+builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
+builder.Services.AddScoped<SearchService>();
 
 var app = builder.Build();
 

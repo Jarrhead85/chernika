@@ -1,0 +1,155 @@
+@page "/справочник-родов-войск"
+@attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain
+@inject EquipmentService EquipService
+@inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочник родов войск</h2>
+            <div class="hint">Общесистемный справочник</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field"><label>Код</label><input @bind="newBranch.Code" /></div>
+                <div class="field"><label>Наименование</label><input @bind="newBranch.Name" /></div>
+                <div class="field full-width"><label>Описание</label><input @bind="newBranch.Description" /></div>
+                <div class="formActions">
+                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                    @if (canEdit)
+                    {
+                        <button class="btn primary" @onclick="SaveBranch">@(editing ? "Сохранить" : "Добавить")</button>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div style="color:var(--bad);font-size:13px;margin-top:6px">@errorMessage</div>
+                }
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список родов войск</h2>
+            <div class="hint">@branches.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!branches.Any())
+            {
+                <div class="empty-state">Нет записей</div>
+            }
+            else
+            {
+                <table>
+                    <thead>
+                        <tr><th>Код</th><th>Наименование</th><th>Описание</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var b in branches)
+                        {
+                            <tr>
+                                <td class="mono">@b.Code</td>
+                                <td>@b.Name</td>
+                                <td>@b.Description</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (canEdit)
+                                        {
+                                            <button class="linkBtn" @onclick="() => EditBranch(b)">Изменить</button>
+                                            <button class="linkBtn" style="color:var(--bad)" @onclick="() => DeleteBranch(b.Id)">Удалить</button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private List<MilitaryBranch> branches = new();
+    private MilitaryBranch newBranch = new();
+    private bool editing = false;
+    private bool loading = true;
+    private bool canEdit;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
+        await LoadBranches();
+    }
+
+    async Task LoadBranches()
+    {
+        loading = true;
+        branches = await EquipService.GetMilitaryBranchesAsync();
+        loading = false;
+    }
+
+    async Task SaveBranch()
+    {
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(newBranch.Code) || string.IsNullOrWhiteSpace(newBranch.Name))
+        {
+            errorMessage = "Код и наименование обязательны.";
+            return;
+        }
+
+        try
+        {
+            if (editing)
+                await EquipService.UpdateMilitaryBranchAsync(newBranch);
+            else
+                await EquipService.CreateMilitaryBranchAsync(newBranch);
+            ResetForm();
+            await LoadBranches();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    void EditBranch(MilitaryBranch b)
+    {
+        newBranch = new MilitaryBranch { Id = b.Id, Code = b.Code, Name = b.Name, Description = b.Description, IsDeleted = b.IsDeleted, CreatedAt = b.CreatedAt, UpdatedAt = b.UpdatedAt };
+        editing = true;
+    }
+
+    async Task DeleteBranch(Guid id)
+    {
+        try
+        {
+            await EquipService.DeleteMilitaryBranchAsync(id);
+            await LoadBranches();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    void ResetForm()
+    {
+        newBranch = new MilitaryBranch();
+        editing = false;
+        errorMessage = null;
+    }
+}

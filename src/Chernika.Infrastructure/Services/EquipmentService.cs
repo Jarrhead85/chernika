@@ -31,7 +31,7 @@ public class EquipmentService
         _db.EquipmentModels.OrderBy(m => m.Index).ToListAsync();
 
     public Task<List<Node>> GetNodesAsync() =>
-        _db.Nodes.OrderBy(n => n.Code).ToListAsync();
+        _db.Nodes.Where(n => !n.IsDraft).OrderBy(n => n.Code).ToListAsync();
 
     public Task<Node?> GetNodeAsync(Guid id) =>
         _db.Nodes.FirstOrDefaultAsync(n => n.Id == id);
@@ -1138,7 +1138,7 @@ public class EquipmentService
     }
 
     public Task<List<AssemblyUnit>> GetAssemblyUnitsAsync() =>
-        _db.AssemblyUnits.OrderBy(a => a.Code).ToListAsync();
+        _db.AssemblyUnits.Where(a => !a.IsDraft).OrderBy(a => a.Code).ToListAsync();
 
     public Task<AssemblyUnit?> GetAssemblyUnitAsync(Guid id) =>
         _db.AssemblyUnits.FirstOrDefaultAsync(a => a.Id == id);
@@ -1173,7 +1173,7 @@ public class EquipmentService
     }
 
     public Task<List<GsmMaterial>> GetGsmMaterialsAsync() =>
-        _db.GsmMaterials.OrderBy(m => m.Name).ToListAsync();
+        _db.GsmMaterials.Where(m => !m.IsDraft).OrderBy(m => m.Name).ToListAsync();
 
     public Task<GsmMaterial?> GetGsmMaterialAsync(Guid id) =>
         _db.GsmMaterials.FirstOrDefaultAsync(m => m.Id == id);
@@ -1205,5 +1205,98 @@ public class EquipmentService
         await _db.SaveChangesAsync();
         await _audit.LogAsync("GsmMaterial", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
         return true;
+    }
+
+    public Task<List<MilitaryBranch>> GetMilitaryBranchesAsync() =>
+        _db.MilitaryBranches.OrderBy(m => m.Code).ToListAsync();
+
+    public async Task<MilitaryBranch> CreateMilitaryBranchAsync(MilitaryBranch branch)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        branch.Id = Guid.NewGuid();
+        branch.CreatedAt = DateTime.UtcNow;
+        branch.UpdatedAt = DateTime.UtcNow;
+        _db.MilitaryBranches.Add(branch);
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", branch.Id.ToString(), "Create", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{branch.Code} — {branch.Name}"));
+        return branch;
+    }
+
+    public async Task<MilitaryBranch> UpdateMilitaryBranchAsync(MilitaryBranch branch)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        branch.UpdatedAt = DateTime.UtcNow;
+        _db.MilitaryBranches.Update(branch);
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", branch.Id.ToString(), "Update", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{branch.Code} — {branch.Name}"));
+        return branch;
+    }
+
+    public async Task<bool> DeleteMilitaryBranchAsync(Guid id)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+
+        var hasApprovedCard = await _db.HKCardMilitaryBranches
+            .AnyAsync(mb => mb.MilitaryBranchId == id
+                && mb.HKCard.Status == HKCardStatus.Approved);
+        if (hasApprovedCard)
+            throw new InvalidOperationException("Нельзя удалить род войск, используемый в утверждённой ХК.");
+
+        var b = await _db.MilitaryBranches.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+        if (b == null || b.IsDeleted) return false;
+        b.IsDeleted = true;
+        b.DeletedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", id.ToString(), "Delete", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{b.Code} — {b.Name}"));
+        return true;
+    }
+
+    public async Task SetHKCardMilitaryBranchesAsync(Guid hkCardId, List<Guid> branchIds, CancellationToken ct = default)
+    {
+        var card = await _db.HKCards.FindAsync(hkCardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+        if (card.ObjectLevel != HKObjectLevel.EquipmentModel)
+            throw new InvalidOperationException("Род войск применяется только к ХК изделия.");
+
+        var existing = await _db.HKCardMilitaryBranches
+            .Where(mb => mb.HKCardId == hkCardId)
+            .ToListAsync(ct);
+
+        var toRemove = existing.Where(e => !branchIds.Contains(e.MilitaryBranchId)).ToList();
+        var existingIds = existing.Select(e => e.MilitaryBranchId).ToHashSet();
+        var toAdd = branchIds.Where(id => !existingIds.Contains(id)).ToList();
+
+        _db.HKCardMilitaryBranches.RemoveRange(toRemove);
+        foreach (var branchId in toAdd)
+        {
+            _db.HKCardMilitaryBranches.Add(new HKCardMilitaryBranch
+            {
+                HKCardId = hkCardId,
+                MilitaryBranchId = branchId
+            });
+        }
+
+        if (toRemove.Count > 0 || toAdd.Count > 0)
+        {
+            var addedNames = toAdd.Select(id => _db.MilitaryBranches.FirstOrDefault(b => b.Id == id)?.Name ?? id.ToString());
+            var removedNames = toRemove.Select(e => _db.MilitaryBranches.FirstOrDefault(b => b.Id == e.MilitaryBranchId)?.Name ?? e.MilitaryBranchId.ToString());
+            var details = new List<string>();
+            if (addedNames.Any()) details.Add($"Добавлены: {string.Join(", ", addedNames)}");
+            if (removedNames.Any()) details.Add($"Удалены: {string.Join(", ", removedNames)}");
+
+            await _db.SaveChangesAsync(ct);
+            await _audit.LogAsync(new AuditWriteRequest("HKCard", hkCardId.ToString(), "Update", _currentUser.GetRequiredUserId(),
+                EntityDisplayName: $"{card.Code} v{card.Version}",
+                Details: $"Род войск: {string.Join("; ", details)}"), ct);
+        }
+    }
+
+    public async Task<List<MilitaryBranch>> GetHKCardMilitaryBranchesAsync(Guid hkCardId, CancellationToken ct = default)
+    {
+        return await _db.HKCardMilitaryBranches
+            .Where(mb => mb.HKCardId == hkCardId)
+            .Select(mb => mb.MilitaryBranch)
+            .OrderBy(b => b.Code)
+            .ToListAsync(ct);
     }
 }

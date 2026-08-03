@@ -9,18 +9,27 @@ window.dropdownPortal = {
     if (!el || !anchor) return;
 
     el.style.removeProperty('display');
-
-    // Save original parent so detach can move element back before Blazor re-render
     el.__originalParent = el.parentNode;
-
     document.body.appendChild(el);
 
     const r = anchor.getBoundingClientRect();
+    const pad = 12;
+    const maxH = 280;
+
+    const spaceBelow = window.innerHeight - r.bottom - pad;
+    const spaceAbove = r.top - pad;
+    const openUp = spaceBelow < Math.min(maxH, 220) && spaceAbove > spaceBelow;
+    const height = Math.max(140, Math.min(maxH, openUp ? spaceAbove : spaceBelow));
+    const width = Math.min(Math.max(r.width, 240), window.innerWidth - pad * 2);
+    let left = Math.max(pad, Math.min(r.left, window.innerWidth - width - pad));
+    let top = openUp ? Math.max(pad, r.top - height - 2) : r.bottom + 2;
+
     el.style.cssText += `
       position: fixed !important;
-      top: ${r.bottom}px !important;
-      left: ${r.left}px !important;
-      min-width: ${r.width}px !important;
+      top: ${top}px !important;
+      left: ${left}px !important;
+      width: ${width}px !important;
+      max-height: ${height}px !important;
       z-index: 9999 !important;
     `;
     this._activeId = dropId;
@@ -30,7 +39,6 @@ window.dropdownPortal = {
     const el = document.getElementById(dropId);
     if (!el) return;
 
-    // Move back to original parent so Blazor can find it during re-render
     if (el.__originalParent && el.__originalParent !== document.body) {
       el.__originalParent.appendChild(el);
     } else if (el.parentNode) {

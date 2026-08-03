@@ -61,6 +61,8 @@ public static class AuditDisplayCatalog
         ["AggregateCompositionNode"] = "Изделие в составе узла",
         ["ComplexComposition"] = "Состав комплекса",
         ["ComplexCompositionItem"] = "Изделие в составе комплекса",
+        ["MilitaryBranch"] = "Род войск",
+        ["HKCardAttachment"] = "PDF-вложение ХК",
     };
 
     private static readonly Dictionary<string, string[]> ActionFilterGroups = new()

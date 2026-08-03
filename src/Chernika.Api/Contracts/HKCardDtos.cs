@@ -26,6 +26,12 @@ public record HKCardDetailDto(
     string? Purpose,
     string? NormativeBasis,
     string? Notes,
+    string? RequestOrganization,
+    string? RequestSenderFullName,
+    DateTime? RequestReceivedDate,
+    string? RequestDetails,
+    string? IncomingLetterNumber,
+    string? OutgoingLetterNumber,
     Guid? AuthorId,
     Guid? ReviewerId,
     DateTime? ApprovedDate,
@@ -61,6 +67,12 @@ public record CreateHKCardRequest(
     string? Purpose,
     string? NormativeBasis,
     string? Notes,
+    string? RequestOrganization,
+    string? RequestSenderFullName,
+    DateTime? RequestReceivedDate,
+    string? RequestDetails,
+    string? IncomingLetterNumber,
+    string? OutgoingLetterNumber,
     DateTime? EffectiveDate,
     DateTime? ExpirationDate);
 
@@ -73,6 +85,12 @@ public record UpdateHKCardRequest(
     string? Purpose,
     string? NormativeBasis,
     string? Notes,
+    string? RequestOrganization,
+    string? RequestSenderFullName,
+    DateTime? RequestReceivedDate,
+    string? RequestDetails,
+    string? IncomingLetterNumber,
+    string? OutgoingLetterNumber,
     DateTime? EffectiveDate,
     DateTime? ExpirationDate,
     uint RowVersion);
@@ -96,6 +114,9 @@ public static class HKCardMapper
         c.ComplexId, c.EquipmentModelId, c.AggregateId, c.NodeId,
         GetObjectName(c),
         c.Purpose, c.NormativeBasis, c.Notes,
+        c.RequestOrganization, c.RequestSenderFullName,
+        c.RequestReceivedDate, c.RequestDetails,
+        c.IncomingLetterNumber, c.OutgoingLetterNumber,
         c.AuthorId, c.ReviewerId,
         c.ApprovedDate, c.EffectiveDate, c.ExpirationDate,
         c.CreatedAt, c.UpdatedAt, c.RowVersion,
@@ -147,6 +168,12 @@ public static class HKCardMapper
         Purpose = r.Purpose,
         NormativeBasis = r.NormativeBasis,
         Notes = r.Notes,
+        RequestOrganization = r.RequestOrganization,
+        RequestSenderFullName = r.RequestSenderFullName,
+        RequestReceivedDate = r.RequestReceivedDate,
+        RequestDetails = r.RequestDetails,
+        IncomingLetterNumber = r.IncomingLetterNumber,
+        OutgoingLetterNumber = r.OutgoingLetterNumber,
         EffectiveDate = r.EffectiveDate,
         ExpirationDate = r.ExpirationDate
     };
@@ -161,6 +188,12 @@ public static class HKCardMapper
         card.Purpose = r.Purpose;
         card.NormativeBasis = r.NormativeBasis;
         card.Notes = r.Notes;
+        card.RequestOrganization = r.RequestOrganization;
+        card.RequestSenderFullName = r.RequestSenderFullName;
+        card.RequestReceivedDate = r.RequestReceivedDate;
+        card.RequestDetails = r.RequestDetails;
+        card.IncomingLetterNumber = r.IncomingLetterNumber;
+        card.OutgoingLetterNumber = r.OutgoingLetterNumber;
         card.EffectiveDate = r.EffectiveDate;
         card.ExpirationDate = r.ExpirationDate;
         card.RowVersion = r.RowVersion;

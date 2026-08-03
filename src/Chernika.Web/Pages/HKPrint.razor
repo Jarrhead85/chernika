@@ -41,6 +41,39 @@
                         <tr><td style="padding:6px;font-weight:700">Срок действия:</td><td style="padding:6px">@card.EffectiveDate?.ToString("dd.MM.yyyy") — @card.ExpirationDate?.ToString("dd.MM.yyyy")</td></tr>
                     </table>
 
+                    @if (!string.IsNullOrEmpty(card.RequestOrganization) || !string.IsNullOrEmpty(card.RequestSenderFullName)
+                         || card.RequestReceivedDate.HasValue || !string.IsNullOrEmpty(card.IncomingLetterNumber)
+                         || !string.IsNullOrEmpty(card.OutgoingLetterNumber) || !string.IsNullOrEmpty(card.RequestDetails))
+                    {
+                        <h3 style="font-size:14px;margin:16px 0 8px">Основание разработки ХК:</h3>
+                        <table>
+                            @if (!string.IsNullOrEmpty(card.RequestOrganization))
+                            {
+                                <tr><td style="padding:4px;font-weight:700;width:200px">Организация:</td><td style="padding:4px">@card.RequestOrganization</td></tr>
+                            }
+                            @if (!string.IsNullOrEmpty(card.RequestSenderFullName))
+                            {
+                                <tr><td style="padding:4px;font-weight:700">ФИО отправителя:</td><td style="padding:4px">@card.RequestSenderFullName</td></tr>
+                            }
+                            @if (card.RequestReceivedDate.HasValue)
+                            {
+                                <tr><td style="padding:4px;font-weight:700">Дата поступления:</td><td style="padding:4px">@card.RequestReceivedDate.Value.ToString("dd.MM.yyyy")</td></tr>
+                            }
+                            @if (!string.IsNullOrEmpty(card.IncomingLetterNumber))
+                            {
+                                <tr><td style="padding:4px;font-weight:700">Входящий номер:</td><td style="padding:4px">@card.IncomingLetterNumber</td></tr>
+                            }
+                            @if (!string.IsNullOrEmpty(card.OutgoingLetterNumber))
+                            {
+                                <tr><td style="padding:4px;font-weight:700">Исходящий номер:</td><td style="padding:4px">@card.OutgoingLetterNumber</td></tr>
+                            }
+                            @if (!string.IsNullOrEmpty(card.RequestDetails))
+                            {
+                                <tr><td style="padding:4px;font-weight:700;vertical-align:top">Основание:</td><td style="padding:4px">@card.RequestDetails</td></tr>
+                            }
+                        </table>
+                    }
+
                     @if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && card.Items.Any())
                     {
                         <h3 style="font-size:14px;margin:16px 0 8px">Сборочные единицы и нормы ГСМ:</h3>

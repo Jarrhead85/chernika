@@ -69,6 +69,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("ManageIndividualCards", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
     options.AddPolicy("ManageTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskManage)));
     options.AddPolicy("ReportExport", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReportExport)));
+    options.AddPolicy("HKAttachmentEdit", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKAttachmentEdit)));
 });
 
 builder.Services.AddScoped<HKCardService>();
@@ -81,6 +82,7 @@ builder.Services.AddScoped<ReportService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
+builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
 builder.Services.AddScoped<AuthenticationStateProvider, RevalidatingIdentityAuthenticationStateProvider<ApplicationUser>>();
 
 var app = builder.Build();

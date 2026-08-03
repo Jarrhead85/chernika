@@ -661,6 +661,39 @@ public class HKCardService
         return (true, null);
     }
 
+    private static void ValidateRequestFields(HKCard card)
+    {
+        card.RequestOrganization = card.RequestOrganization?.Trim();
+        card.RequestSenderFullName = card.RequestSenderFullName?.Trim();
+        card.RequestDetails = card.RequestDetails?.Trim();
+        card.IncomingLetterNumber = card.IncomingLetterNumber?.Trim();
+        card.OutgoingLetterNumber = card.OutgoingLetterNumber?.Trim();
+
+        if (!string.IsNullOrEmpty(card.IncomingLetterNumber))
+        {
+            if (string.IsNullOrEmpty(card.RequestOrganization))
+                throw new ArgumentException("При указании номера входящего письма обязательны «Организация» и «Дата поступления».");
+            if (!card.RequestReceivedDate.HasValue)
+                throw new ArgumentException("При указании номера входящего письма обязательна «Дата поступления».");
+        }
+
+        var hasAnyRequestField = !string.IsNullOrEmpty(card.RequestOrganization)
+            || !string.IsNullOrEmpty(card.RequestSenderFullName)
+            || card.RequestReceivedDate.HasValue
+            || !string.IsNullOrEmpty(card.IncomingLetterNumber)
+            || !string.IsNullOrEmpty(card.OutgoingLetterNumber);
+
+        if (hasAnyRequestField && string.IsNullOrEmpty(card.RequestDetails))
+            throw new ArgumentException("При заполнении реквизитов обращения обязательно поле «Реквизиты / основание».");
+
+        if (card.RequestReceivedDate.HasValue)
+        {
+            var maxDate = DateTime.UtcNow.AddDays(1);
+            if (card.RequestReceivedDate.Value > maxDate)
+                throw new ArgumentException("Дата поступления не может быть позже текущей даты более чем на один день.");
+        }
+    }
+
     public async Task<HKCard> CreateAsync(HKCard card, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
@@ -683,6 +716,8 @@ public class HKCardService
 
         if (actor.BranchId == null || actor.BranchId.Value == Guid.Empty)
             throw new InvalidOperationException("У пользователя не указан филиал. Создание ХК невозможно.");
+
+        ValidateRequestFields(card);
 
         var validation = await ValidateCardItemsAsync(card.Items);
         if (!validation.Success)
@@ -784,6 +819,8 @@ public class HKCardService
         if (card.RowVersion == 0)
             throw new InvalidOperationException("Версия карточки не указана. Обновите страницу и повторите попытку.");
 
+        ValidateRequestFields(card);
+
         if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
             && card.ExpirationDate.Value < card.EffectiveDate.Value)
             throw new ArgumentException(
@@ -810,6 +847,12 @@ public class HKCardService
         existing.Purpose = card.Purpose;
         existing.NormativeBasis = card.NormativeBasis;
         existing.Notes = card.Notes;
+        existing.RequestOrganization = card.RequestOrganization;
+        existing.RequestSenderFullName = card.RequestSenderFullName;
+        existing.RequestReceivedDate = card.RequestReceivedDate;
+        existing.RequestDetails = card.RequestDetails;
+        existing.IncomingLetterNumber = card.IncomingLetterNumber;
+        existing.OutgoingLetterNumber = card.OutgoingLetterNumber;
         existing.EffectiveDate = card.EffectiveDate;
         existing.ExpirationDate = card.ExpirationDate;
         existing.UpdatedAt = DateTime.UtcNow;
@@ -1283,5 +1326,195 @@ public class HKCardService
         if (roles.Contains(nameof(UserRole.HeadOfDepartment))) return UserRole.HeadOfDepartment;
         if (roles.Contains(nameof(UserRole.Guest))) return UserRole.Guest;
         return UserRole.Operator;
+    }
+
+    public async Task<ReferenceProposal> CreateProposalAsync(
+        Guid hkCardId, ProposalTargetType targetType,
+        string code, string name, string? description, string? gost, string? type)
+    {
+        var card = await _db.HKCards.FindAsync(hkCardId)
+            ?? throw new ArgumentException("ХК не найдена.");
+        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+            throw new InvalidOperationException("Предложения можно создавать только для черновика или карты на доработке.");
+
+        var actorId = _currentUser.GetRequiredUserId();
+        var proposal = new ReferenceProposal
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = hkCardId,
+            TargetType = targetType,
+            Code = code.Trim(),
+            Name = name.Trim(),
+            Description = description?.Trim(),
+            Gost = gost?.Trim(),
+            Type = type?.Trim(),
+            Status = ProposalStatus.Pending,
+            CreatedByUserId = actorId.ToString(),
+            CreatedAt = DateTime.UtcNow
+        };
+
+        switch (targetType)
+        {
+            case ProposalTargetType.Node:
+                var node = new Node
+                {
+                    Id = proposal.Id,
+                    Code = proposal.Code,
+                    Name = proposal.Name,
+                    Description = proposal.Description,
+                    IsDraft = true
+                };
+                _db.Nodes.Add(node);
+                proposal.CreatedStubNodeId = node.Id;
+                break;
+
+            case ProposalTargetType.AssemblyUnit:
+                var au = new AssemblyUnit
+                {
+                    Id = proposal.Id,
+                    Code = proposal.Code,
+                    Name = proposal.Name,
+                    Description = proposal.Description,
+                    IsDraft = true
+                };
+                _db.AssemblyUnits.Add(au);
+                proposal.CreatedStubAssemblyUnitId = au.Id;
+                break;
+
+            case ProposalTargetType.GsmMaterial:
+                var gsm = new GsmMaterial
+                {
+                    Id = proposal.Id,
+                    Name = proposal.Name,
+                    Type = proposal.Type ?? "",
+                    Gost = proposal.Gost,
+                    Description = proposal.Description,
+                    IsDraft = true
+                };
+                _db.GsmMaterials.Add(gsm);
+                proposal.CreatedStubGsmMaterialId = gsm.Id;
+                break;
+        }
+
+        _db.ReferenceProposals.Add(proposal);
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "ReferenceProposal",
+            EntityId = proposal.Id.ToString(),
+            Action = "Created",
+            UserId = actorId,
+            CreatedAt = DateTime.UtcNow,
+            EntityDisplayName = $"Предложение для {card.Code}: {name}"
+        });
+
+        await _db.SaveChangesAsync();
+        return proposal;
+    }
+
+    public async Task<List<ReferenceProposal>> GetProposalsAsync(Guid hkCardId)
+    {
+        return await _db.ReferenceProposals
+            .Where(p => p.HKCardId == hkCardId)
+            .OrderBy(p => p.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task AcceptProposalAsync(Guid proposalId)
+    {
+        var proposal = await _db.ReferenceProposals.FindAsync(proposalId)
+            ?? throw new ArgumentException("Предложение не найдено.");
+        if (proposal.Status != ProposalStatus.Pending)
+            throw new InvalidOperationException("Принять можно только предложение в статусе Ожидает.");
+
+        proposal.Status = ProposalStatus.Accepted;
+        proposal.ResolvedAt = DateTime.UtcNow;
+
+        switch (proposal.TargetType)
+        {
+            case ProposalTargetType.Node:
+                if (proposal.CreatedStubNodeId.HasValue)
+                {
+                    var node = await _db.Nodes.FindAsync(proposal.CreatedStubNodeId.Value);
+                    if (node != null) node.IsDraft = false;
+                }
+                break;
+            case ProposalTargetType.AssemblyUnit:
+                if (proposal.CreatedStubAssemblyUnitId.HasValue)
+                {
+                    var au = await _db.AssemblyUnits.FindAsync(proposal.CreatedStubAssemblyUnitId.Value);
+                    if (au != null) au.IsDraft = false;
+                }
+                break;
+            case ProposalTargetType.GsmMaterial:
+                if (proposal.CreatedStubGsmMaterialId.HasValue)
+                {
+                    var gsm = await _db.GsmMaterials.FindAsync(proposal.CreatedStubGsmMaterialId.Value);
+                    if (gsm != null) gsm.IsDraft = false;
+                }
+                break;
+        }
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "ReferenceProposal",
+            EntityId = proposal.Id.ToString(),
+            Action = "Accepted",
+            UserId = Guid.Parse(proposal.CreatedByUserId),
+            CreatedAt = DateTime.UtcNow,
+            EntityDisplayName = $"Предложение: {proposal.Name}"
+        });
+
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task RejectProposalAsync(Guid proposalId)
+    {
+        var proposal = await _db.ReferenceProposals.FindAsync(proposalId)
+            ?? throw new ArgumentException("Предложение не найдено.");
+        if (proposal.Status != ProposalStatus.Pending)
+            throw new InvalidOperationException("Отклонить можно только предложение в статусе Ожидает.");
+
+        proposal.Status = ProposalStatus.Rejected;
+        proposal.ResolvedAt = DateTime.UtcNow;
+
+        switch (proposal.TargetType)
+        {
+            case ProposalTargetType.Node:
+                if (proposal.CreatedStubNodeId.HasValue)
+                {
+                    var node = await _db.Nodes.FindAsync(proposal.CreatedStubNodeId.Value);
+                    if (node != null) _db.Nodes.Remove(node);
+                }
+                break;
+            case ProposalTargetType.AssemblyUnit:
+                if (proposal.CreatedStubAssemblyUnitId.HasValue)
+                {
+                    var au = await _db.AssemblyUnits.FindAsync(proposal.CreatedStubAssemblyUnitId.Value);
+                    if (au != null) _db.AssemblyUnits.Remove(au);
+                }
+                break;
+            case ProposalTargetType.GsmMaterial:
+                if (proposal.CreatedStubGsmMaterialId.HasValue)
+                {
+                    var gsm = await _db.GsmMaterials.FindAsync(proposal.CreatedStubGsmMaterialId.Value);
+                    if (gsm != null) _db.GsmMaterials.Remove(gsm);
+                }
+                break;
+        }
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "ReferenceProposal",
+            EntityId = proposal.Id.ToString(),
+            Action = "Rejected",
+            UserId = Guid.Parse(proposal.CreatedByUserId),
+            CreatedAt = DateTime.UtcNow,
+            EntityDisplayName = $"Предложение: {proposal.Name}"
+        });
+
+        await _db.SaveChangesAsync();
     }
 }

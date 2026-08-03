@@ -23,6 +23,80 @@
             <EditForm Model="@card" OnValidSubmit="SaveCard">
                 <DataAnnotationsValidator />
                 <div class="form">
+                    <div class="hk-request-grid">
+                        <div class="field">
+                            <label for="hk-request-organization">Организация</label>
+                            @if (canEdit)
+                            {
+                                <InputText id="hk-request-organization" @bind-Value="card.RequestOrganization" class="fieldInput" />
+                            }
+                            else
+                            {
+                                <span>@(card.RequestOrganization ?? "")</span>
+                            }
+                        </div>
+                        <div class="field">
+                            <label for="hk-request-sender">ФИО отправителя</label>
+                            @if (canEdit)
+                            {
+                                <InputText id="hk-request-sender" @bind-Value="card.RequestSenderFullName" class="fieldInput" />
+                            }
+                            else
+                            {
+                                <span>@(card.RequestSenderFullName ?? "")</span>
+                            }
+                        </div>
+                        <div class="field">
+                            <label for="hk-request-date">Дата поступления</label>
+                            @if (canEdit)
+                            {
+                                <InputDate id="hk-request-date" @bind-Value="card.RequestReceivedDate" class="fieldInput" />
+                            }
+                            else
+                            {
+                                <span>@card.RequestReceivedDate?.ToString("dd.MM.yyyy")</span>
+                            }
+                        </div>
+                        <div class="field hk-letter-numbers-field">
+                            <label>Номера писем</label>
+                            <div class="hk-letter-numbers" role="group" aria-label="Номера входящего и исходящего писем">
+                                <div class="hk-letter-number-part">
+                                    <label class="sr-only" for="hk-incoming-letter">Входящий номер</label>
+                                    @if (canEdit)
+                                    {
+                                        <InputText id="hk-incoming-letter" @bind-Value="card.IncomingLetterNumber" class="fieldInput" placeholder="Входящий" />
+                                    }
+                                    else
+                                    {
+                                        <span>@(card.IncomingLetterNumber ?? "")</span>
+                                    }
+                                </div>
+                                <div class="hk-letter-number-part">
+                                    <label class="sr-only" for="hk-outgoing-letter">Исходящий номер</label>
+                                    @if (canEdit)
+                                    {
+                                        <InputText id="hk-outgoing-letter" @bind-Value="card.OutgoingLetterNumber" class="fieldInput" placeholder="Исходящий" />
+                                    }
+                                    else
+                                    {
+                                        <span>@(card.OutgoingLetterNumber ?? "")</span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                        <div class="field hk-request-details-field">
+                            <label for="hk-request-details">Реквизиты</label>
+                            @if (canEdit)
+                            {
+                                <InputTextArea id="hk-request-details" @bind-Value="card.RequestDetails" class="fieldInput" placeholder="Основание и реквизиты обращения" />
+                            }
+                            else
+                            {
+                                <p style="margin:4px 0 0">@card.RequestDetails</p>
+                            }
+                        </div>
+                    </div>
+
                     <div class="field"><label>Номер ХК</label><InputText @bind-Value="card.Code" readonly class="field" /></div>
                     <div class="field"><label>Уровень объекта</label>
                         <div class="level-selector" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
@@ -48,20 +122,27 @@
                                     <button type="button" style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:16px;line-height:1;padding:0;flex-shrink:0" @onclick="ClearObject" @onclick:stopPropagation="true">×</button>
                                 }
                             </div>
-                            @if (_objectDropOpen)
-                            {
-                                <div id="@objDropId" class="gsm-dropdown">
-                                    <input class="gsm-dropdown-search" @bind="_objectSearch" @oninput="() => { }" placeholder="Поиск..." />
-                                    @foreach (var obj in GetFilteredObjects())
-                                    {
-                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectObject(obj)">@obj</div>
-                                    }
-                                    @if (!GetFilteredObjects().Any())
-                                    {
-                                        <div class="hki-search-empty">Нет совпадений</div>
-                                    }
-                                </div>
-                            }
+                        @if (_objectDropOpen)
+                        {
+                            <div id="@objDropId" class="gsm-dropdown">
+                                <input class="gsm-dropdown-search" @bind="_objectSearch" @oninput="() => { }" placeholder="Поиск..." />
+                                @if (canQuickCreate && selectedLevel == HKObjectLevel.Node)
+                                {
+                                    <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateNode(); }">
+                                        <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_objectSearch) ? "Создать новый" : $"Создать «{_objectSearch}»")
+                                    </button>
+                                }
+                                <div class="gsm-dropdown-divider" role="separator"></div>
+                                @foreach (var obj in GetFilteredObjects())
+                                {
+                                    <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectObject(obj)">@obj</div>
+                                }
+                                @if (!GetFilteredObjects().Any())
+                                {
+                                    <div class="hki-search-empty">Нет совпадений</div>
+                                }
+                            </div>
+                        }
                         }
                         else
                         {
@@ -75,6 +156,107 @@
                             </div>
                         }
                     </div>
+
+                    <div class="full-width" style="margin-top:8px">
+                        <div class="panel">
+                            <div class="panelHeader">
+                                <h3 style="font-size:14px;font-weight:700;margin:0">Род войск</h3>
+                                <div class="hint">Применяется ко всем уровням ХК</div>
+                            </div>
+                            <div class="panelBody">
+                                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+                                    @foreach (var mbId in selectedMilitaryBranchIds)
+                                    {
+                                        var mb = allMilitaryBranches.FirstOrDefault(b => b.Id == mbId);
+                                        if (mb != null)
+                                        {
+                                            <span class="hki-mat-tag">
+                                                <span>@mb.Code — @mb.Name</span>
+                                                @if (canEdit)
+                                                {
+                                                    <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
+                                                }
+                                            </span>
+                                        }
+                                    }
+                                    @if (!selectedMilitaryBranchIds.Any())
+                                    {
+                                        <span style="font-size:12px;opacity:.6">Не выбрано</span>
+                                    }
+                                </div>
+                                @if (canEdit)
+                                {
+                                    var mbDropId = "mb-drop";
+                                    var mbBtnId = "mb-btn";
+                                    <div id="@mbBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;max-width:400px" @onclick="() => ToggleMbDropdown(mbDropId, mbBtnId)">
+                                        <span>Добавить род войск...</span>
+                                    </div>
+                                    @if (_mbDropOpen)
+                                    {
+                                        <div id="@mbDropId" class="gsm-dropdown">
+                                            <input class="gsm-dropdown-search" @bind="_mbSearch" @oninput="() => { }" placeholder="Поиск..." />
+                                            @foreach (var mb in FilteredMilitaryBranches())
+                                            {
+                                                <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMilitaryBranch(mb.Id)">@mb.Code — @mb.Name</div>
+                                            }
+                                            @if (!FilteredMilitaryBranches().Any())
+                                            {
+                                                <div class="hki-search-empty">Нет совпадений</div>
+                                            }
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="full-width" style="margin-top:8px">
+                        <div class="panel">
+                            <div class="panelHeader">
+                                <h3 style="font-size:14px;font-weight:700;margin:0">PDF-скан исходной ХК</h3>
+                            </div>
+                            <div class="panelBody">
+                                @if (_attachment == null)
+                                {
+                                    <div style="display:flex;align-items:center;gap:12px">
+                                        <span style="font-size:13px;opacity:.6">Нет вложения</span>
+                                        @if (canEdit)
+                                        {
+                                            <InputFile OnChange="HandleAttachmentUpload" accept=".pdf" />
+                                            <button type="button" class="btn primary" disabled="@(_uploading)" @onclick="() => UploadAttachment()">
+                                                @(_uploading ? "Загрузка..." : "Загрузить")
+                                            </button>
+                                        }
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(_attachmentError))
+                                    {
+                                        <div style="color:var(--bad);font-size:13px;margin-top:6px">@_attachmentError</div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                                        <span style="font-size:13px">
+                                            📄 @_attachment.OriginalFileName
+                                            <span style="opacity:.6">(@FormatSize(_attachment.SizeBytes))</span>
+                                        </span>
+                                        <span style="font-size:12px;opacity:.6">Загрузил: @(_attachment.UploadedByUserName ?? "—") @_attachment.UploadedAt.ToString("dd.MM.yyyy HH:mm")</span>
+                                        <button type="button" class="btn" @onclick="OpenAttachmentPreview">Открыть</button>
+                                        <button type="button" class="btn" @onclick="DownloadAttachment">Скачать</button>
+                                        @if (canEdit)
+                                        {
+                                            <InputFile OnChange="HandleAttachmentUpload" accept=".pdf" />
+                                            <button type="button" class="btn ghost" disabled="@(_uploading)" @onclick="() => UploadAttachment()">
+                                                @(_uploading ? "Загрузка..." : "Заменить")
+                                            </button>
+                                            <button type="button" class="btn ghost" style="color:var(--bad)" @onclick="DeleteAttachment">Удалить</button>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="field"><label>Статус</label>
                         <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
                             <StatusBadge Status="@card.Status" />
@@ -98,7 +280,6 @@
                         </div>
                     </div>
                     <div class="field full-width"><label>Назначение ХК</label><InputTextArea @bind-Value="card.Purpose" /></div>
-                    <div class="field full-width"><label>Основание для разработки</label><InputTextArea @bind-Value="card.NormativeBasis" /></div>
                     <div class="field full-width"><label>Примечание</label><InputTextArea @bind-Value="card.Notes" /></div>
                     <div class="field"><label>Дата начала действия</label><InputDate @bind-Value="card.EffectiveDate" /></div>
                     <div class="field"><label>Дата окончания действия</label><InputDate @bind-Value="card.ExpirationDate"
@@ -163,6 +344,13 @@
                                                 {
                                                     <div id="@auDropId" class="gsm-dropdown">
                                                         <input class="gsm-dropdown-search" @bind="_auSearch[auKey]" @oninput="() => { }" placeholder="Поиск..." />
+                                                        @if (canQuickCreate)
+                                                        {
+                                                            <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateAssemblyUnit(auKey); }">
+                                                                <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_auSearch.GetValueOrDefault(auKey)) ? "Создать новый" : $"Создать «{_auSearch[auKey]}»")
+                                                            </button>
+                                                        }
+                                                        <div class="gsm-dropdown-divider" role="separator"></div>
                                                         @foreach (var a in FilteredAssemblyUnits(auKey))
                                                         {
                                                             <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectAu(item, a)">@a.Code — @a.Name</div>
@@ -220,6 +408,13 @@
                                                                 <input class="gsm-dropdown-search" @bind="_matSearch[pickerKey]"
                                                                        @oninput="() => { }"
                                                                        placeholder="Поиск..." />
+                                                                @if (canQuickCreate)
+                                                                {
+                                                                    <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateGsmMaterial(item.Id, cat); }">
+                                                                        <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_matSearch.GetValueOrDefault(pickerKey)) ? "Создать новый" : $"Создать «{_matSearch[pickerKey]}»")
+                                                                    </button>
+                                                                }
+                                                                <div class="gsm-dropdown-divider" role="separator"></div>
                                                                 @foreach (var group in FilteredGsmMaterials(cat, item).GroupBy(m => m.Type))
                                                                 {
                                                                     <div class="gsm-dropdown-group-label">@group.Key</div>
@@ -298,7 +493,7 @@
                         }
                     </div>
                     }
-                    @if (selectedLevel != HKObjectLevel.Node && !IsNew)
+                    @if (selectedLevel != HKObjectLevel.Node)
                     {
                     <div class="full-width" style="margin-top:8px">
                         <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Состав ХК</h3>
@@ -428,6 +623,50 @@
     </section>
 </div>
 
+@if (_quickCreateKind.HasValue)
+{
+    <div class="modalOverlay" @onclick="CloseQuickCreateModal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="qc-title" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3 id="qc-title">@(QuickCreateTitle)</h3>
+                <button type="button" class="linkBtn" @onclick="CloseQuickCreateModal">✕</button>
+            </div>
+            <div class="modalBody">
+                @if (_quickCreateKind == QuickCreateKind.Node)
+                {
+                    <div class="field"><label>Код <span style="color:var(--bad)">*</span></label><input @bind="_qcCode" class="field" placeholder="Код узла" /></div>
+                    <div class="field"><label>Наименование <span style="color:var(--bad)">*</span></label><input @bind="_qcName" class="field" placeholder="Наименование узла" /></div>
+                    <div class="field"><label>Описание</label><textarea @bind="_qcDescription" rows="2" placeholder="Описание (необязательно)"></textarea></div>
+                }
+                else if (_quickCreateKind == QuickCreateKind.AssemblyUnit)
+                {
+                    <div class="field"><label>Код <span style="color:var(--bad)">*</span></label><input @bind="_qcCode" class="field" placeholder="Код сборочной единицы" /></div>
+                    <div class="field"><label>Наименование <span style="color:var(--bad)">*</span></label><input @bind="_qcName" class="field" placeholder="Наименование сборочной единицы" /></div>
+                    <div class="field"><label>Описание</label><textarea @bind="_qcDescription" rows="2" placeholder="Описание (необязательно)"></textarea></div>
+                }
+                else if (_quickCreateKind == QuickCreateKind.GsmMaterial)
+                {
+                    <div class="field"><label>Наименование <span style="color:var(--bad)">*</span></label><input @bind="_qcName" class="field" placeholder="Наименование марки ГСМ" /></div>
+                    <div class="field"><label>Тип <span style="color:var(--bad)">*</span></label><input @bind="_qcType" class="field" placeholder="Тип (Основные, Дублирующие и т.д.)" /></div>
+                    <div class="field"><label>ГОСТ / ТУ</label><input @bind="_qcGost" class="field" placeholder="ГОСТ (необязательно)" /></div>
+                    <div class="field"><label>Описание</label><textarea @bind="_qcDescription" rows="2" placeholder="Описание (необязательно)"></textarea></div>
+                }
+                @if (_quickCreateError != null)
+                {
+                    <div style="color:var(--bad);font-size:13px;margin-top:6px">@_quickCreateError</div>
+                }
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="CloseQuickCreateModal">Отмена</button>
+                <button type="button" class="btn primary" @onclick="SaveQuickCreateAsync"
+                        disabled="@(_quickCreateSaving || !_qcFormValid)">
+                    @(_quickCreateSaving ? "Сохранение..." : "Создать")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @if (showReturnModal)
 {
     <div class="modalOverlay" @onclick="() => showReturnModal = false">
@@ -503,6 +742,18 @@
     private bool _disposed;
     private DotNetObjectReference<HKEdit> _dotNetRef = null!;
 
+    private List<MilitaryBranch> allMilitaryBranches = new();
+    private List<Guid> selectedMilitaryBranchIds = new();
+    private bool _mbDropOpen;
+    private string _mbSearch = "";
+
+    private AttachmentInfo? _attachment;
+    private bool _uploading;
+    private string? _attachmentError;
+    private IBrowserFile? _pendingFile;
+
+    private record AttachmentInfo(Guid Id, string OriginalFileName, long SizeBytes, string? UploadedByUserName, DateTime UploadedAt);
+
     private bool _objectDropOpen;
     private string _objectSearch = "";
     private Guid? _loadedCardId;
@@ -513,6 +764,19 @@
     private string _addChildSearch = "";
     private List<HKCardListItemDto> _availableChildCards = new();
     private Guid? _pendingChildId;
+
+    private enum QuickCreateKind { Node, AssemblyUnit, GsmMaterial }
+    private QuickCreateKind? _quickCreateKind;
+    private bool _quickCreateSaving;
+    private string? _quickCreateError;
+    private string _qcCode = "";
+    private string _qcName = "";
+    private string _qcDescription = "";
+    private string _qcGost = "";
+    private string _qcType = "";
+    private Guid? _quickCreateItemUiKey;
+    private GsmCategory? _quickCreateCategory;
+    private bool canQuickCreate;
 
     protected override void OnInitialized()
     {
@@ -552,6 +816,7 @@
         nodes = await EquipmentService.GetNodesAsync();
         assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
         gsmMaterials = await EquipmentService.GetGsmMaterialsAsync();
+        allMilitaryBranches = await EquipmentService.GetMilitaryBranchesAsync();
 
         if (NodeId.HasValue && NodeId.Value != Guid.Empty)
         {
@@ -575,6 +840,7 @@
                 selectedLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
                 selectedLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
                 PermissionCodes.HKComplexEditDraft);
+            canQuickCreate = canEdit;
 
             if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
             {
@@ -622,6 +888,7 @@
             card.ObjectLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
             PermissionCodes.HKComplexEditDraft);
         canEdit = canEditLevel && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
+        canQuickCreate = canEdit;
 
         if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
         {
@@ -643,6 +910,36 @@
         {
             _components = await HKCardService.GetComponentsAsync(cardId);
             _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(cardId);
+        }
+
+        if (selectedLevel == HKObjectLevel.EquipmentModel)
+        {
+            var cardBranches = await EquipmentService.GetHKCardMilitaryBranchesAsync(cardId);
+            selectedMilitaryBranchIds = cardBranches.Select(b => b.Id).ToList();
+        }
+
+        await LoadAttachmentAsync(cardId);
+    }
+
+    private async Task LoadAttachmentAsync(Guid cardId)
+    {
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
+            var response = await http.GetAsync($"/api/HKCards/{cardId}/attachment");
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadFromJsonAsync<AttachmentInfo>();
+                _attachment = json;
+            }
+            else
+            {
+                _attachment = null;
+            }
+        }
+        catch
+        {
+            _attachment = null;
         }
     }
 
@@ -1118,6 +1415,20 @@
 
     private async Task ToggleAddChild()
     {
+        if (IsNew)
+        {
+            try
+            {
+                await HKCardService.CreateAsync(card);
+                Nav.NavigateTo($"/хк/{card.Id}", replace: true);
+                return;
+            }
+            catch (Exception)
+            {
+                errorMessage = "Сохраните карту перед добавлением дочерней ХК.";
+                return;
+            }
+        }
         _addChildOpen = !_addChildOpen;
         if (_addChildOpen)
         {
@@ -1204,5 +1515,271 @@
             try { await JS.InvokeVoidAsync("dropdownPortal.cleanup"); } catch { }
         }
         Nav.NavigateTo($"/хк/{_existingActiveCard!.Id}", forceLoad: true);
+    }
+
+    private IEnumerable<MilitaryBranch> FilteredMilitaryBranches()
+    {
+        var search = _mbSearch?.Trim().ToLower() ?? "";
+        var available = allMilitaryBranches.Where(b => !selectedMilitaryBranchIds.Contains(b.Id));
+        if (string.IsNullOrEmpty(search)) return available;
+        return available.Where(b => (b.Code?.ToLower().Contains(search) ?? false) || (b.Name?.ToLower().Contains(search) ?? false));
+    }
+
+    private async Task ToggleMbDropdown(string dropId, string btnId)
+    {
+        if (_mbDropOpen)
+        {
+            await CloseActiveDropdownAsync();
+            StateHasChanged();
+        }
+        else
+        {
+            await CloseActiveDropdownAsync();
+            _mbDropOpen = true;
+            _mbSearch = "";
+            _activeDropdownId = dropId;
+            StateHasChanged();
+            await Task.Delay(50);
+            if (_disposed) return;
+            await JS.InvokeVoidAsync("dropdownPortal.attach", dropId, btnId);
+            await JS.InvokeVoidAsync("dropdownPortal.onClickOutside", dropId, _dotNetRef);
+        }
+    }
+
+    private async Task AddMilitaryBranch(Guid branchId)
+    {
+        selectedMilitaryBranchIds.Add(branchId);
+        _mbSearch = "";
+        await CloseActiveDropdownAsync();
+        if (!IsNew)
+        {
+            await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+        }
+        StateHasChanged();
+    }
+
+    private async Task RemoveMilitaryBranch(Guid branchId)
+    {
+        selectedMilitaryBranchIds.Remove(branchId);
+        if (!IsNew)
+        {
+            await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+        }
+        StateHasChanged();
+    }
+
+    private async Task HandleAttachmentUpload(InputFileChangeEventArgs e)
+    {
+        _pendingFile = e.File;
+        await UploadAttachment();
+    }
+
+    private async Task UploadAttachment()
+    {
+        if (_pendingFile == null && _attachment == null) return;
+        if (_pendingFile == null) return;
+
+        _attachmentError = null;
+        _uploading = true;
+        StateHasChanged();
+
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
+            using var content = new MultipartFormDataContent();
+            var stream = _pendingFile.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            content.Add(new StreamContent(stream), "file", _pendingFile.Name);
+            var response = await http.PostAsync($"/api/HKCards/{card.Id}/attachment", content);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                _attachmentError = error;
+            }
+            else
+            {
+                _pendingFile = null;
+                await LoadAttachmentAsync(card.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _attachmentError = ex.Message;
+        }
+        finally
+        {
+            _uploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteAttachment()
+    {
+        if (_attachment == null) return;
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
+            var response = await http.DeleteAsync($"/api/HKCards/{card.Id}/attachment");
+            if (response.IsSuccessStatusCode)
+            {
+                _attachment = null;
+            }
+        }
+        catch { }
+        StateHasChanged();
+    }
+
+    private async Task OpenAttachmentPreview()
+    {
+        if (_attachment == null) return;
+        await JS.InvokeVoidAsync("window.open", $"/api/HKCards/{card.Id}/attachment/content", "_blank");
+    }
+
+    private async Task DownloadAttachment()
+    {
+        if (_attachment == null) return;
+        await JS.InvokeVoidAsync("window.open", $"/api/HKCards/{card.Id}/attachment/content", "_blank");
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} Б";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} КБ";
+        return $"{bytes / (1024.0 * 1024.0):F1} МБ";
+    }
+
+    private string QuickCreateTitle => _quickCreateKind switch
+    {
+        QuickCreateKind.Node => "Новый узел",
+        QuickCreateKind.AssemblyUnit => "Новая сборочная единица",
+        QuickCreateKind.GsmMaterial => "Новая марка ГСМ",
+        _ => "Новая запись"
+    };
+
+    private bool _qcFormValid => _quickCreateKind switch
+    {
+        QuickCreateKind.Node => !string.IsNullOrWhiteSpace(_qcCode) && !string.IsNullOrWhiteSpace(_qcName),
+        QuickCreateKind.AssemblyUnit => !string.IsNullOrWhiteSpace(_qcCode) && !string.IsNullOrWhiteSpace(_qcName),
+        QuickCreateKind.GsmMaterial => !string.IsNullOrWhiteSpace(_qcName) && !string.IsNullOrWhiteSpace(_qcType),
+        _ => false
+    };
+
+    private void OpenQuickCreateNode()
+    {
+        _quickCreateKind = QuickCreateKind.Node;
+        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcType = "";
+        _quickCreateError = null;
+        _quickCreateItemUiKey = null;
+        _quickCreateCategory = null;
+    }
+
+    private void OpenQuickCreateAssemblyUnit(Guid itemUiKey)
+    {
+        _quickCreateKind = QuickCreateKind.AssemblyUnit;
+        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcType = "";
+        _quickCreateError = null;
+        _quickCreateItemUiKey = itemUiKey;
+        _quickCreateCategory = null;
+    }
+
+    private void OpenQuickCreateGsmMaterial(Guid itemUiKey, GsmCategory category)
+    {
+        _quickCreateKind = QuickCreateKind.GsmMaterial;
+        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcType = "";
+        _quickCreateError = null;
+        _quickCreateItemUiKey = itemUiKey;
+        _quickCreateCategory = category;
+    }
+
+    private void CloseQuickCreateModal()
+    {
+        _quickCreateKind = null;
+        _quickCreateError = null;
+    }
+
+    private void CloseAllDropdownsSync()
+    {
+        _objectDropOpen = false;
+        _mbDropOpen = false;
+        _auOpen.Clear();
+        _matOpen.Clear();
+        _ = CloseActiveDropdownAsync();
+    }
+
+    private async Task SaveQuickCreateAsync()
+    {
+        _quickCreateSaving = true;
+        _quickCreateError = null;
+        StateHasChanged();
+
+        try
+        {
+            switch (_quickCreateKind)
+            {
+                case QuickCreateKind.Node:
+                {
+                    var created = await EquipmentService.CreateNodeAsync(new Node
+                    {
+                        Code = _qcCode.Trim(),
+                        Name = _qcName.Trim(),
+                        Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
+                    });
+                    nodes = await EquipmentService.GetNodesAsync();
+                    selectedNodeId = created.Id;
+                    card.NodeId = created.Id;
+                    if (IsNew)
+                    {
+                        card.Code = await HKCardService.GenerateCodeForNodeAsync(created.Id);
+                        _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(created.Id);
+                        _activeCardWarning = _existingActiveCard != null
+                            ? $"Для узла уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
+                            : null;
+                    }
+                    break;
+                }
+                case QuickCreateKind.AssemblyUnit:
+                {
+                    var created = await EquipmentService.CreateAssemblyUnitAsync(new AssemblyUnit
+                    {
+                        Code = _qcCode.Trim(),
+                        Name = _qcName.Trim(),
+                        Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
+                    });
+                    assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
+                    if (_quickCreateItemUiKey.HasValue)
+                    {
+                        var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);
+                        if (item != null) await SelectAu(item, created);
+                    }
+                    break;
+                }
+                case QuickCreateKind.GsmMaterial:
+                {
+                    var created = await EquipmentService.CreateGsmMaterialAsync(new GsmMaterial
+                    {
+                        Name = _qcName.Trim(),
+                        Type = _qcType.Trim(),
+                        Gost = string.IsNullOrWhiteSpace(_qcGost) ? null : _qcGost.Trim(),
+                        Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
+                    });
+                    gsmMaterials = await EquipmentService.GetGsmMaterialsAsync();
+                    if (_quickCreateItemUiKey.HasValue && _quickCreateCategory.HasValue)
+                    {
+                        var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);
+                        if (item != null) await AddMaterial(item, _quickCreateCategory.Value, created.Id);
+                    }
+                    break;
+                }
+            }
+            CloseQuickCreateModal();
+        }
+        catch (Exception ex)
+        {
+            _quickCreateError = ex.Message;
+        }
+        finally
+        {
+            _quickCreateSaving = false;
+            StateHasChanged();
+        }
     }
 }

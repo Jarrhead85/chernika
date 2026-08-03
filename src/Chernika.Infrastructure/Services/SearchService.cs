@@ -25,13 +25,18 @@ public class SearchService
                         EF.Functions.ILike(c.Version, $"%{q}%") ||
                         EF.Functions.ILike(c.Purpose ?? "", $"%{q}%") ||
                         EF.Functions.ILike(c.Notes ?? "", $"%{q}%") ||
-                        EF.Functions.ILike(c.NormativeBasis ?? "", $"%{q}%"))
+                        EF.Functions.ILike(c.NormativeBasis ?? "", $"%{q}%") ||
+                        EF.Functions.ILike(c.RequestOrganization ?? "", $"%{q}%") ||
+                        EF.Functions.ILike(c.RequestSenderFullName ?? "", $"%{q}%") ||
+                        EF.Functions.ILike(c.IncomingLetterNumber ?? "", $"%{q}%") ||
+                        EF.Functions.ILike(c.OutgoingLetterNumber ?? "", $"%{q}%") ||
+                        EF.Functions.ILike(c.RequestDetails ?? "", $"%{q}%"))
             .Take(maxResults)
             .ToListAsync();
 
         foreach (var c in hkCards)
         {
-            var match = FindMatch(c.Code, c.Version, c.Purpose, c.Notes, c.NormativeBasis, q);
+            var match = FindMatchExtended(c, q);
             results.Add(new SearchResultItem
             {
                 EntityType = "HKCard",
@@ -46,9 +51,10 @@ public class SearchService
 
         var nodes = await _db.Nodes
             .Include(n => n.HKCards)
-            .Where(n => EF.Functions.ILike(n.Code, $"%{q}%") ||
+            .Where(n => !n.IsDraft &&
+                        (EF.Functions.ILike(n.Code, $"%{q}%") ||
                         EF.Functions.ILike(n.Name, $"%{q}%") ||
-                        EF.Functions.ILike(n.Description ?? "", $"%{q}%"))
+                        EF.Functions.ILike(n.Description ?? "", $"%{q}%")))
             .Take(maxResults)
             .ToListAsync();
 
@@ -116,9 +122,10 @@ public class SearchService
 
         var materials = await _db.GsmMaterials
             .Include(m => m.HKCardItemMaterials).ThenInclude(mim => mim.HKCardItem).ThenInclude(hi => hi.HKCard)
-            .Where(m => EF.Functions.ILike(m.Name, $"%{q}%") ||
+            .Where(m => !m.IsDraft &&
+                        (EF.Functions.ILike(m.Name, $"%{q}%") ||
                         EF.Functions.ILike(m.Type, $"%{q}%") ||
-                        EF.Functions.ILike(m.Gost ?? "", $"%{q}%"))
+                        EF.Functions.ILike(m.Gost ?? "", $"%{q}%")))
             .Take(maxResults)
             .ToListAsync();
 
@@ -140,9 +147,10 @@ public class SearchService
 
         var assemblyUnits = await _db.AssemblyUnits
             .Include(a => a.HKCardItems).ThenInclude(hi => hi.HKCard)
-            .Where(a => EF.Functions.ILike(a.Code, $"%{q}%") ||
+            .Where(a => !a.IsDraft &&
+                        (EF.Functions.ILike(a.Code, $"%{q}%") ||
                         EF.Functions.ILike(a.Name, $"%{q}%") ||
-                        EF.Functions.ILike(a.Description ?? "", $"%{q}%"))
+                        EF.Functions.ILike(a.Description ?? "", $"%{q}%")))
             .Take(maxResults)
             .ToListAsync();
 
@@ -173,5 +181,16 @@ public class SearchService
         if (notes?.ToLowerInvariant().Contains(q) == true) return "Примечание";
         if (normativeBasis?.ToLowerInvariant().Contains(q) == true) return "Основание для разработки";
         return null;
+    }
+
+    private static string? FindMatchExtended(HKCard c, string q)
+    {
+        var qLower = q.ToLowerInvariant();
+        if (!string.IsNullOrEmpty(c.RequestOrganization) && c.RequestOrganization.ToLowerInvariant().Contains(qLower)) return "Организация";
+        if (!string.IsNullOrEmpty(c.RequestSenderFullName) && c.RequestSenderFullName.ToLowerInvariant().Contains(qLower)) return "ФИО отправителя";
+        if (!string.IsNullOrEmpty(c.IncomingLetterNumber) && c.IncomingLetterNumber.ToLowerInvariant().Contains(qLower)) return "Входящий номер";
+        if (!string.IsNullOrEmpty(c.OutgoingLetterNumber) && c.OutgoingLetterNumber.ToLowerInvariant().Contains(qLower)) return "Исходящий номер";
+        if (!string.IsNullOrEmpty(c.RequestDetails) && c.RequestDetails.ToLowerInvariant().Contains(qLower)) return "Основание";
+        return FindMatch(c.Code, c.Version, c.Purpose, c.Notes, c.NormativeBasis, q);
     }
 }

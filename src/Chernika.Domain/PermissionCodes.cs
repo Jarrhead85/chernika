@@ -23,6 +23,8 @@ public static class PermissionCodes
     public const string HKApprove = "HK.Approve";
     public const string HKArchive = "HK.Archive";
     public const string HKDelete = "HK.Delete";
+    public const string HKAttachmentView = "HK.Attachment.View";
+    public const string HKAttachmentEdit = "HK.Attachment.Edit";
 
     public const string ReferenceView = "Reference.View";
     public const string ReferenceEdit = "Reference.Edit";
@@ -47,6 +49,7 @@ public static class PermissionCodes
         HKEquipmentCreate, HKEquipmentEditDraft, HKEquipmentSubmit,
         HKComplexCreate, HKComplexEditDraft, HKComplexSubmit,
         HKReview, HKApprove, HKArchive, HKDelete,
+        HKAttachmentView, HKAttachmentEdit,
         ReferenceView, ReferenceEdit, CompositionView, CompositionEdit,
         IndividualCardView, IndividualCardGenerate, ReportExport,
         TaskViewOwn, TaskManage, AuditView,

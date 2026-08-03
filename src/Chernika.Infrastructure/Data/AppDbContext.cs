@@ -37,6 +37,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
     public DbSet<RolePermissionTemplate> RolePermissionTemplates => Set<RolePermissionTemplate>();
     public DbSet<UserPermissionOverride> UserPermissionOverrides => Set<UserPermissionOverride>();
+    public DbSet<MilitaryBranch> MilitaryBranches => Set<MilitaryBranch>();
+    public DbSet<HKCardMilitaryBranch> HKCardMilitaryBranches => Set<HKCardMilitaryBranch>();
+    public DbSet<HKCardAttachment> HKCardAttachments => Set<HKCardAttachment>();
+    public DbSet<ReferenceProposal> ReferenceProposals => Set<ReferenceProposal>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -382,6 +386,53 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.GrantedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<MilitaryBranch>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(250).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(1000);
+            e.HasIndex(x => x.Code).IsUnique().HasFilter("\"IsDeleted\" = false");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<HKCardMilitaryBranch>(e =>
+        {
+            e.HasKey(x => new { x.HKCardId, x.MilitaryBranchId });
+            e.HasOne(x => x.HKCard).WithMany(x => x.MilitaryBranches)
+                .HasForeignKey(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.MilitaryBranch).WithMany()
+                .HasForeignKey(x => x.MilitaryBranchId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<HKCardAttachment>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.OriginalFileName).HasMaxLength(255).IsRequired();
+            e.Property(x => x.StorageKey).HasMaxLength(512).IsRequired();
+            e.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Sha256).HasMaxLength(128).IsRequired();
+            e.Property(x => x.UploadedByUserId).HasMaxLength(450).IsRequired();
+            e.Property(x => x.UploadedByUserName).HasMaxLength(256);
+            e.HasIndex(x => x.HKCardId).IsUnique();
+            e.HasOne(x => x.HKCard).WithOne(x => x.Attachment)
+                .HasForeignKey<HKCardAttachment>(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ReferenceProposal>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.Property(x => x.Gost).HasMaxLength(200);
+            e.Property(x => x.Type).HasMaxLength(200);
+            e.Property(x => x.CreatedByUserId).HasMaxLength(450).IsRequired();
+            e.HasOne(x => x.HKCard).WithMany(x => x.Proposals)
+                .HasForeignKey(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.HKCardId).HasDatabaseName("IX_ReferenceProposals_HKCardId");
         });
     }
 }

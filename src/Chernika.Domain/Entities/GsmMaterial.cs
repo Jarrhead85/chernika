@@ -9,6 +9,7 @@ public class GsmMaterial
     public string? Description { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
+    public bool IsDraft { get; set; }
 
     public ICollection<HKCardItemMaterial> HKCardItemMaterials { get; set; } = new List<HKCardItemMaterial>();
 }

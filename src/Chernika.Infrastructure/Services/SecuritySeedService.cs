@@ -104,6 +104,7 @@ internal static class RolePermissionDefaults
             PermissionCodes.HKEquipmentCreate, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKEquipmentSubmit,
             PermissionCodes.HKComplexCreate, PermissionCodes.HKComplexEditDraft, PermissionCodes.HKComplexSubmit,
             PermissionCodes.HKReview, PermissionCodes.HKApprove, PermissionCodes.HKArchive, PermissionCodes.HKDelete,
+            PermissionCodes.HKAttachmentView, PermissionCodes.HKAttachmentEdit,
             PermissionCodes.ReferenceView, PermissionCodes.ReferenceEdit,
             PermissionCodes.CompositionView, PermissionCodes.CompositionEdit,
             PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
@@ -114,6 +115,7 @@ internal static class RolePermissionDefaults
         [
             PermissionCodes.HKView,
             PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
+            PermissionCodes.HKAttachmentView,
             PermissionCodes.ReferenceView,
             PermissionCodes.CompositionView,
             PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
@@ -123,6 +125,7 @@ internal static class RolePermissionDefaults
         [nameof(UserRole.HeadOfDepartment)] =
         [
             PermissionCodes.HKView,
+            PermissionCodes.HKAttachmentView,
             PermissionCodes.ReferenceView,
             PermissionCodes.CompositionView,
             PermissionCodes.IndividualCardView,
@@ -133,6 +136,7 @@ internal static class RolePermissionDefaults
         [nameof(UserRole.Guest)] =
         [
             PermissionCodes.HKView,
+            PermissionCodes.HKAttachmentView,
             PermissionCodes.ReferenceView,
             PermissionCodes.CompositionView,
             PermissionCodes.IndividualCardView,

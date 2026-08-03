@@ -8,6 +8,7 @@ public class Node
     public string? Description { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
+    public bool IsDraft { get; set; }
 
     public ICollection<HKCard> HKCards { get; set; } = new List<HKCard>();
     public ICollection<AggregateCompositionNode> AggregateCompositionNodes { get; set; } = new List<AggregateCompositionNode>();

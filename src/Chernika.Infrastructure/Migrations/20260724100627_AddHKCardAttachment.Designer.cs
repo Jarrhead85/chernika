@@ -3,6 +3,7 @@ using System;
 using Chernika.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Chernika.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260724100627_AddHKCardAttachment")]
+    partial class AddHKCardAttachment
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -259,9 +262,6 @@ namespace Chernika.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.Property<bool>("IsDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsDraft")
                         .HasColumnType("boolean");
 
                     b.Property<string>("Name")
@@ -640,9 +640,6 @@ namespace Chernika.Infrastructure.Migrations
                         .HasColumnType("character varying(128)");
 
                     b.Property<bool>("IsDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsDraft")
                         .HasColumnType("boolean");
 
                     b.Property<string>("Name")
@@ -1154,9 +1151,6 @@ namespace Chernika.Infrastructure.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
-                    b.Property<bool>("IsDraft")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(256)
@@ -1285,71 +1279,6 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("ProductCompositionId", "SortOrder");
 
                     b.ToTable("ProductCompositionParts");
-                });
-
-            modelBuilder.Entity("Chernika.Domain.Entities.ReferenceProposal", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<Guid?>("CreatedStubAssemblyUnitId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("CreatedStubGsmMaterialId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("CreatedStubNodeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("Gost")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<Guid>("HKCardId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateTime?>("ResolvedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("TargetType")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Type")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("HKCardId")
-                        .HasDatabaseName("IX_ReferenceProposals_HKCardId");
-
-                    b.ToTable("ReferenceProposals");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.RolePermissionTemplate", b =>
@@ -1949,17 +1878,6 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("ProductComposition");
                 });
 
-            modelBuilder.Entity("Chernika.Domain.Entities.ReferenceProposal", b =>
-                {
-                    b.HasOne("Chernika.Domain.Entities.HKCard", "HKCard")
-                        .WithMany("Proposals")
-                        .HasForeignKey("HKCardId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("HKCard");
-                });
-
             modelBuilder.Entity("Chernika.Domain.Entities.UserPermissionOverride", b =>
                 {
                     b.HasOne("Chernika.Domain.Entities.ApplicationUser", null)
@@ -2123,8 +2041,6 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("MilitaryBranches");
 
                     b.Navigation("ParentComponents");
-
-                    b.Navigation("Proposals");
 
                     b.Navigation("StatusLog");
 

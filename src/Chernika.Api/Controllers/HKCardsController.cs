@@ -1,10 +1,13 @@
 using Chernika.Api.Contracts;
 using Chernika.Domain;
+using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
+using Chernika.Infrastructure.Data;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Chernika.Api.Controllers;
 
@@ -15,13 +18,25 @@ public class HKCardsController : ControllerBase
 {
     private readonly HKCardService _hkCards;
     private readonly IAuthorizationService _authorization;
+    private readonly AppDbContext _db;
+    private readonly IFileStorageService _fileStorage;
+    private readonly IPermissionService _permissions;
+    private readonly ICurrentUserService _currentUser;
 
     public HKCardsController(
         HKCardService hkCards,
-        IAuthorizationService authorization)
+        IAuthorizationService authorization,
+        AppDbContext db,
+        IFileStorageService fileStorage,
+        IPermissionService permissions,
+        ICurrentUserService currentUser)
     {
         _hkCards = hkCards;
         _authorization = authorization;
+        _db = db;
+        _fileStorage = fileStorage;
+        _permissions = permissions;
+        _currentUser = currentUser;
     }
 
     [HttpGet]
@@ -187,6 +202,161 @@ public class HKCardsController : ControllerBase
     {
         var (success, error) = await _hkCards.DeleteAsync(id);
         if (!success) return BadRequest(error ?? "Невозможно удалить карточку в текущем статусе.");
+        return NoContent();
+    }
+
+    [HttpGet("{id}/attachment")]
+    public async Task<ActionResult<object>> GetAttachment(Guid id)
+    {
+        var card = await _hkCards.GetByIdAsync(id);
+        if (card == null) return NotFound();
+        var attachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);
+        if (attachment == null) return NotFound();
+        return Ok(new
+        {
+            attachment.Id,
+            attachment.OriginalFileName,
+            attachment.ContentType,
+            SizeBytes = attachment.SizeBytes,
+            attachment.UploadedByUserName,
+            attachment.UploadedAt
+        });
+    }
+
+    [HttpPost("{id}/attachment")]
+    [Authorize(Policy = "HKAttachmentEdit")]
+    public async Task<ActionResult> UploadAttachment(Guid id, IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest("Файл не выбран.");
+
+        var card = await _hkCards.GetByIdAsync(id);
+        if (card == null) return NotFound();
+
+        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+            return BadRequest("Загрузка вложения доступна только для черновика или карты на доработке.");
+
+        var actorId = _currentUser.GetRequiredUserId();
+        var actor = await _db.Users.FirstOrDefaultAsync(u => u.Id == actorId.ToString());
+        if (actor == null) return Unauthorized();
+
+        var existingAttachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);
+        if (existingAttachment != null)
+        {
+            await _fileStorage.DeleteAsync(existingAttachment.StorageKey);
+            _db.HKCardAttachments.Remove(existingAttachment);
+            _db.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                EntityType = "HKCardAttachment",
+                EntityId = existingAttachment.Id.ToString(),
+                Action = "Deleted",
+                UserId = actorId,
+                CreatedAt = DateTime.UtcNow,
+                EntityDisplayName = $"{card.Code} v{card.Version} — {existingAttachment.OriginalFileName}"
+            });
+        }
+
+        if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            return BadRequest("Допускается только PDF-формат.");
+
+        const long maxBytes = 20 * 1024 * 1024;
+        if (file.Length > maxBytes)
+            return BadRequest("Размер файла не должен превышать 20 МБ.");
+
+        await using var stream = file.OpenReadStream();
+
+        var firstBytes = new byte[5];
+        var read = await stream.ReadAsync(firstBytes.AsMemory(0, 5));
+        stream.Position = 0;
+        if (read < 5 || firstBytes[0] != 0x25 || firstBytes[1] != 0x50 || firstBytes[2] != 0x44 || firstBytes[3] != 0x46 || firstBytes[4] != 0x2D)
+            return BadRequest("Файл не является корректным PDF (неверная сигнатура).");
+
+        var storageKey = $"hk/{id}/{Guid.NewGuid():N}.pdf";
+        var result = await _fileStorage.SaveAsync(stream, storageKey);
+
+        var attachment = new HKCardAttachment
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = id,
+            OriginalFileName = Path.GetFileName(file.FileName),
+            StorageKey = result.StorageKey,
+            ContentType = "application/pdf",
+            SizeBytes = result.SizeBytes,
+            Sha256 = result.Sha256,
+            UploadedByUserId = actorId.ToString(),
+            UploadedByUserName = actor.FullName ?? actor.UserName,
+            UploadedAt = DateTime.UtcNow
+        };
+
+        _db.HKCardAttachments.Add(attachment);
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCardAttachment",
+            EntityId = attachment.Id.ToString(),
+            Action = "Created",
+            UserId = actorId,
+            CreatedAt = DateTime.UtcNow,
+            EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
+        });
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch
+        {
+            await _fileStorage.DeleteAsync(storageKey);
+            throw;
+        }
+
+        return Ok(new { attachment.Id, attachment.OriginalFileName, attachment.SizeBytes, attachment.Sha256 });
+    }
+
+    [HttpGet("{id}/attachment/content")]
+    public async Task<IActionResult> GetAttachmentContent(Guid id)
+    {
+        if (!await _permissions.HasPermissionAsync(_currentUser.GetRequiredUserId().ToString(), PermissionCodes.HKView))
+            return Forbid();
+
+        var attachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);
+        if (attachment == null) return NotFound();
+
+        var stream = await _fileStorage.OpenReadAsync(attachment.StorageKey);
+        return File(stream, attachment.ContentType, attachment.OriginalFileName, enableRangeProcessing: true);
+    }
+
+    [HttpDelete("{id}/attachment")]
+    [Authorize(Policy = "HKAttachmentEdit")]
+    public async Task<ActionResult> DeleteAttachment(Guid id)
+    {
+        var card = await _hkCards.GetByIdAsync(id);
+        if (card == null) return NotFound();
+
+        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+            return BadRequest("Удаление вложения доступно только для черновика или карты на доработке.");
+
+        var attachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);
+        if (attachment == null) return NotFound();
+
+        var storageKey = attachment.StorageKey;
+        _db.HKCardAttachments.Remove(attachment);
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCardAttachment",
+            EntityId = attachment.Id.ToString(),
+            Action = "Deleted",
+            UserId = _currentUser.GetRequiredUserId(),
+            CreatedAt = DateTime.UtcNow,
+            EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
+        });
+
+        await _db.SaveChangesAsync();
+        await _fileStorage.DeleteAsync(storageKey);
+
         return NoContent();
     }
 }
