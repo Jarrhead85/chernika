@@ -1,4 +1,6 @@
 using Chernika.Api.Contracts;
+using Chernika.Domain.Enums;
+using Chernika.Domain.Models;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,50 +17,64 @@ public class WorkTasksController : ControllerBase
     public WorkTasksController(TaskService tasks) => _tasks = tasks;
 
     [HttpGet]
-    public async Task<ActionResult<List<WorkTaskDto>>> GetActive([FromQuery] string? assigneeId = null)
+    public async Task<ActionResult<List<WorkTaskListItemDto>>> GetActive([FromQuery] int limit = 100)
     {
-        var tasks = await _tasks.GetActiveTasksAsync(assigneeId);
-        return Ok(tasks.Select(WorkTaskMapper.ToDto).ToList());
+        var result = await _tasks.GetMyTasksAsync(new WorkTaskQuery
+        {
+            Page = 1,
+            PageSize = Math.Clamp(limit, 1, 200)
+        });
+        return Ok(result.Items
+            .Where(t => t.Status != WorkTaskStatus.Completed && t.Status != WorkTaskStatus.Cancelled)
+            .ToList());
     }
 
     [HttpGet("completed")]
-    public async Task<ActionResult<List<WorkTaskDto>>> GetCompleted(
-        [FromQuery] string? assigneeId = null,
-        [FromQuery] int limit = 20)
+    public async Task<ActionResult<List<WorkTaskListItemDto>>> GetCompleted([FromQuery] int limit = 20)
     {
-        var tasks = await _tasks.GetCompletedTasksAsync(assigneeId, Math.Clamp(limit, 1, 200));
-        return Ok(tasks.Select(WorkTaskMapper.ToDto).ToList());
+        var result = await _tasks.GetMyTasksAsync(new WorkTaskQuery
+        {
+            Page = 1,
+            PageSize = Math.Clamp(limit, 1, 200),
+            Status = WorkTaskStatus.Completed
+        });
+        return Ok(result.Items.ToList());
     }
 
     [HttpGet("count")]
-    public async Task<ActionResult<int>> GetActiveCount([FromQuery] string? assigneeId = null)
+    public async Task<ActionResult<int>> GetActiveCount()
     {
-        return Ok(await _tasks.GetActiveCountAsync(assigneeId));
+        return Ok(await _tasks.GetOpenTaskCountAsync());
     }
 
     [HttpPost]
-    [Authorize(Policy = "ViewTasks")]
     public async Task<ActionResult<WorkTaskDto>> Create([FromBody] CreateWorkTaskRequest request)
     {
-        var created = await _tasks.CreateTaskAsync(
-            request.Title, request.AssigneeId, request.Description,
-            request.EntityType, request.EntityId, request.DueDate);
-        return Ok(WorkTaskMapper.ToDto(created));
+        var created = await _tasks.CreateAsync(new CreateWorkTaskCommand(
+            Title: request.Title,
+            Type: (WorkTaskType)request.Type,
+            Priority: (WorkTaskPriority)request.Priority,
+            Description: request.Description,
+            AssignedToUserId: request.AssignedToUserId,
+            AssignedRole: request.AssignedRole,
+            EntityType: request.EntityType,
+            EntityId: request.EntityId,
+            DueDateUtc: request.DueDateUtc,
+            NotifyAssignee: true));
+        return Ok(created);
     }
 
     [HttpPut("{id}/complete")]
-    [Authorize(Policy = "ViewTasks")]
     public async Task<ActionResult> Complete(Guid id)
     {
-        if (!await _tasks.CompleteTaskAsync(id)) return NotFound();
+        await _tasks.CompleteAsync(new CompleteWorkTaskCommand(id));
         return NoContent();
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Policy = "ViewTasks")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        if (!await _tasks.DeleteTaskAsync(id)) return NotFound();
+        await _tasks.CancelAsync(new CancelWorkTaskCommand(id, "Удалено через API"));
         return NoContent();
     }
 }

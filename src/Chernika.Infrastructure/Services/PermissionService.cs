@@ -16,6 +16,7 @@ public class PermissionService : IPermissionService
     private readonly ICurrentUserService _currentUser;
     private readonly IMemoryCache _cache;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+    private readonly SemaphoreSlim _computeLock = new(1, 1);
 
     public PermissionService(
         AppDbContext db,
@@ -35,51 +36,62 @@ public class PermissionService : IPermissionService
         if (_cache.TryGetValue<IReadOnlySet<string>>(cacheKey, out var cached))
             return cached!;
 
-        var user = await _userManager.FindByIdAsync(userId);
-        if (user == null || !user.IsActive)
-            return FrozenSet<string>.Empty;
-
-        var roles = await _userManager.GetRolesAsync(user);
-        var baseRole = roles.FirstOrDefault(r =>
-            r == nameof(UserRole.SystemAdmin) ||
-            r == nameof(UserRole.NormAdmin) ||
-            r == nameof(UserRole.Operator) ||
-            r == nameof(UserRole.HeadOfDepartment) ||
-            r == nameof(UserRole.Guest));
-
-        HashSet<string> result;
-        if (baseRole == nameof(UserRole.SystemAdmin))
+        await _computeLock.WaitAsync(ct);
+        try
         {
-            result = new HashSet<string>(PermissionCodes.All);
-        }
-        else
-        {
-            result = new HashSet<string>();
-            if (baseRole != null)
+            if (_cache.TryGetValue<IReadOnlySet<string>>(cacheKey, out var cachedAfterLock))
+                return cachedAfterLock!;
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null || !user.IsActive)
+                return FrozenSet<string>.Empty;
+
+            var roles = await _userManager.GetRolesAsync(user);
+            var baseRole = roles.FirstOrDefault(r =>
+                r == nameof(UserRole.SystemAdmin) ||
+                r == nameof(UserRole.NormAdmin) ||
+                r == nameof(UserRole.Operator) ||
+                r == nameof(UserRole.HeadOfDepartment) ||
+                r == nameof(UserRole.Guest));
+
+            HashSet<string> result;
+            if (baseRole == nameof(UserRole.SystemAdmin))
             {
-                var templatePerms = await _db.RolePermissionTemplates
-                    .Where(x => x.RoleName == baseRole)
-                    .Select(x => x.PermissionCode)
+                result = new HashSet<string>(PermissionCodes.All);
+            }
+            else
+            {
+                result = new HashSet<string>();
+                if (baseRole != null)
+                {
+                    var templatePerms = await _db.RolePermissionTemplates
+                        .Where(x => x.RoleName == baseRole)
+                        .Select(x => x.PermissionCode)
+                        .ToListAsync(ct);
+                    result.UnionWith(templatePerms);
+                }
+
+                var overrides = await _db.UserPermissionOverrides
+                    .Where(x => x.UserId == userId)
                     .ToListAsync(ct);
-                result.UnionWith(templatePerms);
+
+                foreach (var o in overrides)
+                {
+                    if (o.IsGranted)
+                        result.Add(o.PermissionCode);
+                    else
+                        result.Remove(o.PermissionCode);
+                }
             }
 
-            var overrides = await _db.UserPermissionOverrides
-                .Where(x => x.UserId == userId)
-                .ToListAsync(ct);
-
-            foreach (var o in overrides)
-            {
-                if (o.IsGranted)
-                    result.Add(o.PermissionCode);
-                else
-                    result.Remove(o.PermissionCode);
-            }
+            var frozen = result.ToFrozenSet();
+            _cache.Set(cacheKey, frozen, CacheDuration);
+            return frozen;
         }
-
-        var frozen = result.ToFrozenSet();
-        _cache.Set(cacheKey, frozen, CacheDuration);
-        return frozen;
+        finally
+        {
+            _computeLock.Release();
+        }
     }
 
     public async Task<bool> HasPermissionAsync(string userId, string permissionCode, CancellationToken ct = default)

@@ -1,4 +1,6 @@
 @using Chernika.Domain
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
 @page "/задачи"
 @attribute [Authorize(Policy = "ViewTasks")]
 @inject TaskService TaskService
@@ -48,23 +50,27 @@
                 <div class="alerts">
                     @foreach (var task in activeTasks)
                     {
-                        var isUrgent = task.DueDate.HasValue && task.DueDate.Value < DateTime.UtcNow.AddDays(2);
+                        var isUrgent = task.DueDateUtc.HasValue && task.DueDateUtc.Value < DateTime.UtcNow.AddDays(2);
                         <div class="alert">
                             <div class="top">
                                 <p class="title">@task.Title</p>
-                                <span class="tag @(isUrgent ? "bad" : task.DueDate.HasValue ? "warn" : "ok")">
-                                    @(task.DueDate?.ToString("dd.MM") ?? "Без срока")
+                                <span class="tag @(isUrgent ? "bad" : task.DueDateUtc.HasValue ? "warn" : "ok")">
+                                    @(task.DueDateUtc?.ToString("dd.MM") ?? "Без срока")
                                 </span>
                             </div>
                             <p class="desc">@task.Description</p>
                             <div class="rowActions" style="margin-top:8px">
-                                @if (_canManage)
+                                @if (_canComplete)
                                 {
                                     <button class="linkBtn" @onclick="() => CompleteTask(task.Id)">✓ Выполнено</button>
                                 }
-                                @if (!string.IsNullOrEmpty(task.EntityId))
+                                @if (task.EntityType == "HKCard" && task.EntityId.HasValue)
                                 {
                                     <button class="linkBtn" @onclick="() => OpenEntity(task)">Открыть</button>
+                                }
+                                @if (_canCancel)
+                                {
+                                    <button class="linkBtn" @onclick="() => CancelTask(task.Id)">Отменить</button>
                                 }
                             </div>
                         </div>
@@ -84,20 +90,14 @@
             {
                 <table>
                     <thead>
-                        <tr><th>Задача</th><th>Выполнена</th><th>Действия</th></tr>
+                        <tr><th>Задача</th><th>Создана</th></tr>
                     </thead>
                     <tbody>
                         @foreach (var task in completedTasks)
                         {
                             <tr>
                                 <td>@task.Title</td>
-                                <td class="mono">@task.CompletedAt?.ToString("dd.MM.yyyy HH:mm")</td>
-                                <td>
-                                    @if (_canManage)
-                                    {
-                                        <button class="linkBtn" @onclick="() => DeleteTask(task.Id)">Удалить</button>
-                                    }
-                                </td>
+                                <td class="mono">@task.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm")</td>
                             </tr>
                         }
                     </tbody>
@@ -112,45 +112,64 @@
 </div>
 
 @code {
-    private List<WorkTask> activeTasks = new();
-    private List<WorkTask> completedTasks = new();
+    private List<WorkTaskListItemDto> activeTasks = new();
+    private List<WorkTaskListItemDto> completedTasks = new();
     private bool loading = true;
     private int activeCount = 0;
     private string filter = "all";
-    private bool _canManage;
+    private bool _canComplete;
+    private bool _canCancel;
 
     protected override async Task OnInitializedAsync()
     {
         var userId = (await AuthState.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (userId != null)
-            _canManage = await PermSvc.HasPermissionAsync(userId, PermissionCodes.TaskManage);
+        {
+            _canComplete = await PermSvc.HasPermissionAsync(userId, PermissionCodes.TaskComplete);
+            _canCancel = await PermSvc.HasPermissionAsync(userId, PermissionCodes.TaskCancel);
+        }
         await LoadTasks();
     }
 
     async Task LoadTasks()
     {
         loading = true;
-        activeTasks = await TaskService.GetActiveTasksAsync();
-        completedTasks = await TaskService.GetCompletedTasksAsync();
-        activeCount = await TaskService.GetActiveCountAsync();
+        var typeFilter = filter switch
+        {
+            "hk_review" => (WorkTaskType?)WorkTaskType.HKReview,
+            "hk_revision" => (WorkTaskType?)WorkTaskType.HKRevision,
+            _ => null
+        };
+        var active = await TaskService.GetMyTasksAsync(new WorkTaskQuery { PageSize = 200, Type = typeFilter });
+        activeTasks = active.Items
+            .Where(t => t.Status != WorkTaskStatus.Completed && t.Status != WorkTaskStatus.Cancelled)
+            .ToList();
+        var done = await TaskService.GetMyTasksAsync(new WorkTaskQuery
+        {
+            PageSize = 50,
+            Status = WorkTaskStatus.Completed,
+            Type = typeFilter
+        });
+        completedTasks = done.Items.ToList();
+        activeCount = await TaskService.GetOpenTaskCountAsync();
         loading = false;
     }
 
     async Task CompleteTask(Guid id)
     {
-        await TaskService.CompleteTaskAsync(id);
+        await TaskService.CompleteAsync(new CompleteWorkTaskCommand(id));
         await LoadTasks();
     }
 
-    async Task DeleteTask(Guid id)
+    async Task CancelTask(Guid id)
     {
-        await TaskService.DeleteTaskAsync(id);
+        await TaskService.CancelAsync(new CancelWorkTaskCommand(id, "Отменена пользователем"));
         await LoadTasks();
     }
 
-    void OpenEntity(WorkTask task)
+    void OpenEntity(WorkTaskListItemDto task)
     {
-        if (task.EntityType == "HKCard" && Guid.TryParse(task.EntityId, out var hkId))
-            Nav.NavigateTo($"/хк/{hkId}");
+        if (task.EntityType == "HKCard" && task.EntityId.HasValue)
+            Nav.NavigateTo($"/хк/{task.EntityId.Value}");
     }
 }

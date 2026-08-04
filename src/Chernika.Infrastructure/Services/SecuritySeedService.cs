@@ -110,6 +110,9 @@ internal static class RolePermissionDefaults
             PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
             PermissionCodes.ReportExport,
             PermissionCodes.AuditView,
+            PermissionCodes.TaskView, PermissionCodes.TaskAssign,
+            PermissionCodes.TaskComplete, PermissionCodes.TaskCancel,
+            PermissionCodes.NotificationView, PermissionCodes.NotificationMarkRead,
         ],
         [nameof(UserRole.Operator)] =
         [
@@ -121,6 +124,8 @@ internal static class RolePermissionDefaults
             PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
             PermissionCodes.ReportExport,
             PermissionCodes.TaskViewOwn,
+            PermissionCodes.TaskView, PermissionCodes.TaskComplete,
+            PermissionCodes.NotificationView, PermissionCodes.NotificationMarkRead,
         ],
         [nameof(UserRole.HeadOfDepartment)] =
         [
@@ -132,6 +137,8 @@ internal static class RolePermissionDefaults
             PermissionCodes.ReportExport,
             PermissionCodes.AuditView,
             PermissionCodes.TaskViewOwn,
+            PermissionCodes.TaskView, PermissionCodes.TaskComplete, PermissionCodes.TaskAssign,
+            PermissionCodes.NotificationView, PermissionCodes.NotificationMarkRead,
         ],
         [nameof(UserRole.Guest)] =
         [
@@ -141,6 +148,8 @@ internal static class RolePermissionDefaults
             PermissionCodes.CompositionView,
             PermissionCodes.IndividualCardView,
             PermissionCodes.TaskViewOwn,
+            PermissionCodes.TaskView,
+            PermissionCodes.NotificationView, PermissionCodes.NotificationMarkRead,
         ],
     };
 

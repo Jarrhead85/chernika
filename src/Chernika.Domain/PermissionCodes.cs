@@ -35,6 +35,13 @@ public static class PermissionCodes
     public const string IndividualCardGenerate = "IndividualCard.Generate";
     public const string ReportExport = "Report.Export";
 
+    public const string TaskView = "Task.View";
+    public const string TaskAssign = "Task.Assign";
+    public const string TaskComplete = "Task.Complete";
+    public const string TaskCancel = "Task.Cancel";
+    public const string NotificationView = "Notification.View";
+    public const string NotificationMarkRead = "Notification.MarkRead";
+
     public const string TaskViewOwn = "Task.ViewOwn";
     public const string TaskManage = "Task.Manage";
     public const string AuditView = "Audit.View";
@@ -52,6 +59,8 @@ public static class PermissionCodes
         HKAttachmentView, HKAttachmentEdit,
         ReferenceView, ReferenceEdit, CompositionView, CompositionEdit,
         IndividualCardView, IndividualCardGenerate, ReportExport,
+        TaskView, TaskAssign, TaskComplete, TaskCancel,
+        NotificationView, NotificationMarkRead,
         TaskViewOwn, TaskManage, AuditView,
         UsersManage, PermissionsManage, SystemConfig,
     };

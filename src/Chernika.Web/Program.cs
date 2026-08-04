@@ -79,6 +79,7 @@ builder.Services.AddScoped<EquipmentService>();
 builder.Services.AddScoped<IndividualCardService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<TaskService>();
+builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<ReportService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<UserManagementService>();

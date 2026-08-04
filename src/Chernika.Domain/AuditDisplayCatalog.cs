@@ -33,6 +33,16 @@ public static class AuditDisplayCatalog
         ["RoleCreated"] = new("Создание базовой роли", AuditSeverity.Success),
         ["ViewerMigrated"] = new("Перенос из устаревшей роли «Наблюдатель» в «Гость»", AuditSeverity.Warning),
         ["Repaired"] = new("Автоматическое исправление конфигурации доступа", AuditSeverity.Warning),
+        ["Task.Created"] = new("Задача создана", AuditSeverity.Success),
+        ["Task.Assigned"] = new("Задача назначена исполнителю", AuditSeverity.Warning),
+        ["Task.Started"] = new("Задача взята в работу", AuditSeverity.Neutral),
+        ["Task.Completed"] = new("Задача выполнена", AuditSeverity.Success),
+        ["Task.Cancelled"] = new("Задача отменена", AuditSeverity.Danger),
+        ["Task.Overdue"] = new("Задача просрочена", AuditSeverity.Warning),
+        ["Task.Deleted"] = new("Задача удалена", AuditSeverity.Danger),
+        ["Notification.Created"] = new("Уведомление создано", AuditSeverity.Neutral),
+        ["Notification.Read"] = new("Уведомление прочитано", AuditSeverity.Neutral),
+        ["Notification.ReadAll"] = new("Все уведомления прочитаны", AuditSeverity.Neutral),
     };
 
     private static readonly Dictionary<string, string> EntityTypes = new()
@@ -63,6 +73,7 @@ public static class AuditDisplayCatalog
         ["ComplexCompositionItem"] = "Изделие в составе комплекса",
         ["MilitaryBranch"] = "Род войск",
         ["HKCardAttachment"] = "PDF-вложение ХК",
+        ["Notification"] = "Уведомление",
     };
 
     private static readonly Dictionary<string, string[]> ActionFilterGroups = new()
@@ -74,6 +85,8 @@ public static class AuditDisplayCatalog
         ["UserManagement"] = ["RoleChanged", "Blocked", "Unblocked", "Restored", "Created"],
         ["PermissionOverride"] = ["OverrideGranted", "OverrideDenied", "OverrideRemoved", "OverrideRevoked"],
         ["Security"] = ["RoleCreated", "ViewerMigrated", "Repaired"],
+        ["Tasks"] = ["Task.Created", "Task.Assigned", "Task.Started", "Task.Completed", "Task.Cancelled", "Task.Overdue", "Task.Deleted"],
+        ["Notifications"] = ["Notification.Created", "Notification.Read", "Notification.ReadAll"],
     };
 
     public static AuditActionDisplay GetAction(string action)

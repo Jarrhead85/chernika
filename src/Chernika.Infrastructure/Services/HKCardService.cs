@@ -1036,12 +1036,17 @@ public class HKCardService
             case HKCardStatus.RevisionRequired:
                 if (card.AuthorId.HasValue)
                 {
-                    await _tasks.CreateTaskAsync(
-                        $"Доработка ХК {card.Code}",
-                        card.AuthorId.Value.ToString(),
-                        $"Карточка {card.Code} возвращена на доработку.",
-                        "HKCard",
-                        card.Id.ToString());
+                    await _tasks.CreateRangeAsync(new[]
+                    {
+                        BuildLegacyTask(card,
+                            title: $"Доработка ХК {card.Code}",
+                            description: $"Карточка {card.Code} возвращена на доработку.",
+                            type: WorkTaskType.HKRevision,
+                            assignee: card.AuthorId.Value.ToString(),
+                            entityType: "HKCard",
+                            entityId: card.Id,
+                            dueDays: 7)
+                    });
                 }
                 break;
 
@@ -1096,19 +1101,16 @@ public class HKCardService
         if (assignee == null)
             return;
 
-        var tasks = instanceIds.Select(instanceId => new WorkTask
-        {
-            Id = Guid.NewGuid(),
-            Title = $"Пересчёт инд. карт — экземпляр",
-            AssigneeId = assignee,
-            Description = $"Утверждена новая версия ХК {card.Code} (v{card.Version}). Требуется подтверждение пересчёта индивидуальных карт.",
-            EntityType = "EquipmentInstance",
-            EntityId = instanceId.ToString(),
-            DueDate = DateTime.UtcNow.AddDays(14),
-            CreatedAt = DateTime.UtcNow
-        }).ToList();
+        var tasks = instanceIds.Select(instanceId => BuildLegacyTask(card,
+            title: "Пересчёт инд. карт — экземпляр",
+            description: $"Утверждена новая версия ХК {card.Code} (v{card.Version}). Требуется подтверждение пересчёта индивидуальных карт.",
+            type: WorkTaskType.HKReview,
+            assignee: assignee,
+            entityType: "EquipmentInstance",
+            entityId: instanceId,
+            dueDays: 14)).ToList();
 
-        await _tasks.CreateTasksAsync(tasks);
+        await _tasks.CreateRangeAsync(tasks);
     }
 
     private async Task ArchivePreviousApprovedVersionsAsync(HKCard card, Guid actorUserId, CancellationToken ct = default)
@@ -1167,7 +1169,49 @@ public class HKCardService
     {
         var users = await GetBranchUsersInRoleAsync(card.BranchId, role);
         var assignee = users.Count > 0 ? users[0] : fallbackAssignee;
-        await _tasks.CreateTaskAsync(title, assignee, description, "HKCard", card.Id.ToString(), DateTime.UtcNow.AddDays(7));
+        await _tasks.CreateRangeAsync(new[]
+        {
+            BuildLegacyTask(card,
+                title: title,
+                description: description,
+                type: WorkTaskType.HKReview,
+                assignee: assignee,
+                entityType: "HKCard",
+                entityId: card.Id,
+                dueDays: 7)
+        });
+    }
+
+    private static WorkTask BuildLegacyTask(
+        HKCard card,
+        string title,
+        string description,
+        WorkTaskType type,
+        string assignee,
+        string entityType,
+        Guid entityId,
+        int dueDays)
+    {
+        var now = DateTime.UtcNow;
+        return new WorkTask
+        {
+            Id = Guid.NewGuid(),
+            Title = title,
+            Description = description,
+            Type = type,
+            Status = WorkTaskStatus.Open,
+            Priority = WorkTaskPriority.Normal,
+            AssignedToUserId = assignee,
+            BranchId = card.BranchId,
+            EntityType = entityType,
+            EntityId = entityId,
+            EntityCodeSnapshot = card.Code,
+            EntityTitleSnapshot = $"v{card.Version}",
+            CreatedByUserId = assignee,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+            DueDateUtc = now.AddDays(dueDays)
+        };
     }
 
     private async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)

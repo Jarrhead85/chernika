@@ -35,6 +35,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<IndividualCardItem> IndividualCardItems => Set<IndividualCardItem>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
+    public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<RolePermissionTemplate> RolePermissionTemplates => Set<RolePermissionTemplate>();
     public DbSet<UserPermissionOverride> UserPermissionOverrides => Set<UserPermissionOverride>();
     public DbSet<MilitaryBranch> MilitaryBranches => Set<MilitaryBranch>();
@@ -358,9 +359,66 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(x => x.Id);
             e.Property(x => x.Title).HasMaxLength(512).IsRequired();
             e.Property(x => x.Description).HasMaxLength(4000);
+            e.Property(x => x.Type).HasConversion<int>();
+            e.Property(x => x.Status).HasConversion<int>();
+            e.Property(x => x.Priority).HasConversion<int>();
+            e.Property(x => x.CreatedByUserId).HasMaxLength(450).IsRequired();
+            e.Property(x => x.AssignedToUserId).HasMaxLength(450);
+            e.Property(x => x.AssignedRole).HasMaxLength(100);
             e.Property(x => x.EntityType).HasMaxLength(100);
-            e.Property(x => x.EntityId).HasMaxLength(100);
-            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.AssigneeId);
+            e.Property(x => x.EntityCodeSnapshot).HasMaxLength(100);
+            e.Property(x => x.EntityTitleSnapshot).HasMaxLength(512);
+            e.Property(x => x.CompletedByUserId).HasMaxLength(450);
+            e.Property(x => x.CompletionComment).HasMaxLength(4000);
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.AssignedToUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.AssignedToUserId, x.Status, x.IsDeleted })
+                .HasDatabaseName("IX_WorkTasks_AssignedToUserId_Status_IsDeleted");
+            e.HasIndex(x => new { x.AssignedRole, x.Status, x.IsDeleted })
+                .HasDatabaseName("IX_WorkTasks_AssignedRole_Status_IsDeleted");
+            e.HasIndex(x => new { x.BranchId, x.Status })
+                .HasDatabaseName("IX_WorkTasks_BranchId_Status");
+            e.HasIndex(x => new { x.EntityType, x.EntityId })
+                .HasDatabaseName("IX_WorkTasks_EntityType_EntityId");
+            e.HasIndex(x => new { x.DueDateUtc, x.Status })
+                .HasDatabaseName("IX_WorkTasks_DueDateUtc_Status");
+            e.HasIndex(x => x.CreatedAtUtc).HasDatabaseName("IX_WorkTasks_CreatedAtUtc");
+            e.ToTable(t => t.HasCheckConstraint(
+                "CK_WorkTasks_Assignee",
+                "\"AssignedToUserId\" IS NOT NULL OR \"AssignedRole\" IS NOT NULL"));
+            e.ToTable(t => t.HasCheckConstraint(
+                "CK_WorkTasks_CompletedAt",
+                "\"CompletedAtUtc\" IS NULL OR \"Status\" IN (3, 4)"));
+        });
+
+        modelBuilder.Entity<Notification>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UserId).HasMaxLength(450).IsRequired();
+            e.Property(x => x.Type).HasConversion<int>();
+            e.Property(x => x.Channel).HasConversion<int>();
+            e.Property(x => x.Title).HasMaxLength(512).IsRequired();
+            e.Property(x => x.Message).HasMaxLength(2000);
+            e.Property(x => x.EntityType).HasMaxLength(100);
+            e.Property(x => x.NavigationUrl).HasMaxLength(500);
+            e.Property(x => x.DeduplicationKey).HasMaxLength(400);
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<WorkTask>().WithMany().HasForeignKey(x => x.WorkTaskId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(x => new { x.UserId, x.IsRead, x.CreatedAtUtc })
+                .HasDatabaseName("IX_Notifications_UserId_IsRead_CreatedAtUtc");
+            e.HasIndex(x => new { x.UserId, x.ExpiresAtUtc })
+                .HasDatabaseName("IX_Notifications_UserId_ExpiresAtUtc");
+            e.HasIndex(x => x.WorkTaskId).HasDatabaseName("IX_Notifications_WorkTaskId");
+            e.HasIndex(x => new { x.EntityType, x.EntityId })
+                .HasDatabaseName("IX_Notifications_EntityType_EntityId");
+            e.HasIndex(x => new { x.UserId, x.DeduplicationKey })
+                .HasDatabaseName("UX_Notifications_DeduplicationKey")
+                .IsUnique()
+                .HasFilter("\"DeduplicationKey\" IS NOT NULL");
         });
 
         modelBuilder.Entity<RolePermissionTemplate>(e =>
