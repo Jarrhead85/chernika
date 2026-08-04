@@ -23,7 +23,7 @@
             <EditForm Model="@card" OnValidSubmit="SaveCard">
                 <DataAnnotationsValidator />
                 <div class="form">
-                    <div class="hk-request-grid">
+                    <div class="hk-form-row hk-form-row--request">
                         <div class="field">
                             <label for="hk-request-organization">Организация</label>
                             @if (canEdit)
@@ -86,26 +86,25 @@
                         </div>
                         <div class="field hk-mb-field">
                             <label>Род войск</label>
-                            <div class="hki-tags-row">
-                                @foreach (var mbId in selectedMilitaryBranchIds)
-                                {
-                                    var mb = allMilitaryBranches.FirstOrDefault(b => b.Id == mbId);
-                                    if (mb != null)
+                            @if (selectedMilitaryBranchIds.Any())
+                            {
+                                <div class="hki-tags-row">
+                                    @foreach (var mbId in selectedMilitaryBranchIds)
                                     {
-                                        <span class="hki-mat-tag">
-                                            <span>@mb.Code — @mb.Name</span>
-                                            @if (canEdit)
-                                            {
-                                                <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
-                                            }
-                                        </span>
+                                        var mb = allMilitaryBranches.FirstOrDefault(b => b.Id == mbId);
+                                        if (mb != null)
+                                        {
+                                            <span class="hki-mat-tag">
+                                                <span>@mb.Code — @mb.Name</span>
+                                                @if (canEdit)
+                                                {
+                                                    <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
+                                                }
+                                            </span>
+                                        }
                                     }
-                                }
-                                @if (!selectedMilitaryBranchIds.Any())
-                                {
-                                    <span class="hki-empty-hint">Не выбрано</span>
-                                }
-                            </div>
+                                </div>
+                            }
                             @if (canEdit)
                             {
                                 var mbDropId = "mb-drop";
@@ -128,33 +127,23 @@
                                     </div>
                                 }
                             }
-                            <div class="hki-hint">Применяется ко всем уровням ХК</div>
                         </div>
                         <div class="field hk-pdf-field">
                             <label>PDF-скан исходной ХК</label>
                             @if (_attachment == null)
                             {
-                                <span class="hki-empty-hint">Файл не прикреплён</span>
-                                @if (canEdit)
+                                @if (canEdit && CanSelectAttachment)
                                 {
-                                    if (IsNew)
-                                    {
-                                        <div class="hki-file-note">Сохраните ХК, чтобы прикрепить файл</div>
-                                    }
-                                    else if (CanManageAttachment)
-                                    {
-                                        <div class="hki-file-row">
-                                            <label class="btn hki-file-btn">
-                                                Выбрать файл
-                                                <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept=".pdf" class="hki-file-input" />
-                                            </label>
+                                    <div class="hki-file-row">
+                                        <label class="btn ghost hki-file-btn">
+                                            Выбрать файл
+                                            <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept="application/pdf,.pdf" class="hki-file-input" />
+                                        </label>
+                                        @if (!IsNew)
+                                        {
                                             <button type="button" class="btn primary" disabled="@(_pendingFile == null || _uploading)" @onclick="() => UploadAttachment()">@(_uploading ? "Загрузка..." : "Загрузить")</button>
-                                        </div>
-                                    }
-                                    else
-                                    {
-                                        <div class="hki-file-note">Загрузка доступна только для черновика или карты на доработке</div>
-                                    }
+                                        }
+                                    </div>
                                 }
                             }
                             else
@@ -167,7 +156,7 @@
                                     {
                                         <label class="btn ghost hki-file-btn">
                                             Заменить
-                                            <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept=".pdf" class="hki-file-input" />
+                                            <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept="application/pdf,.pdf" class="hki-file-input" />
                                         </label>
                                         <button type="button" class="btn primary" disabled="@(_pendingFile == null || _uploading)" @onclick="() => UploadAttachment()">@(_uploading ? "Загрузка..." : "Загрузить")</button>
                                         <button type="button" class="btn ghost hki-file-danger" @onclick="DeleteAttachment">Удалить</button>
@@ -177,18 +166,25 @@
                             }
                             @if (_pendingFile != null)
                             {
-                                <div class="hki-file-meta hki-file-pending">Выбрано: @_pendingFile.Name (@FormatSize(_pendingFile.Size))</div>
+                                <div class="hki-file-meta hki-file-pending">@(IsNew ? "Файл будет прикреплён при сохранении: " : "Выбрано: ")@_pendingFile.Name (@FormatSize(_pendingFile.Size))</div>
+                                @if (IsNew)
+                                {
+                                    <iframe id="hk-pdf-preview" class="hk-pdf-preview" title="Предпросмотр PDF"></iframe>
+                                }
                             }
                             @if (!string.IsNullOrEmpty(_attachmentError))
                             {
                                 <div class="hki-field-error">@_attachmentError</div>
                             }
                         </div>
+                    </div>
+
+                    <div class="hk-form-row hk-form-row--object">
                         <div class="field hk-request-details-field">
                             <label for="hk-request-details">Реквизиты</label>
                             @if (canEdit)
                             {
-                                <InputTextArea id="hk-request-details" @bind-Value="card.RequestDetails" class="fieldInput" placeholder="Основание и реквизиты обращения" />
+                                <InputTextArea id="hk-request-details" @bind-Value="card.RequestDetails" class="fieldInput" />
                             }
                             else
                             {
@@ -197,11 +193,17 @@
                         </div>
                         <div class="field">
                             <label>Уровень объекта</label>
-                            <div class="level-selector" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-                                @foreach (var lvl in new[] { HKObjectLevel.Complex, HKObjectLevel.EquipmentModel, HKObjectLevel.Aggregate, HKObjectLevel.Node })
+                            <div class="hk-level-segmented" role="tablist" aria-label="Уровень объекта">
+                                @foreach (var lvl in LevelOrder)
                                 {
                                     var active = selectedLevel == lvl;
-                                    <button type="button" class="btn @(active ? "primary" : "ghost")" @onclick="() => SelectLevel(lvl)" style="font-size:13px;padding:4px 12px">@LevelName(lvl)</button>
+                                    <button type="button"
+                                            class="hk-level-segmented-item @(active ? "active" : "")"
+                                            role="tab" aria-selected="@active.ToString().ToLower()"
+                                            disabled="@(!canEdit)"
+                                            @onclick="() => SelectLevel(lvl)">
+                                        @LevelName(lvl)
+                                    </button>
                                 }
                             </div>
                         </div>
@@ -268,35 +270,30 @@
                         </div>
                     </div>
 
-                    <div class="field"><label>Статус</label>
-                        <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
-                            <StatusBadge Status="@card.Status" />
-                            @if (card.Status == HKCardStatus.Draft && canSendToApprove)
-                            {
-                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
-                            }
-                            @if (card.Status == HKCardStatus.RevisionRequired && canSendToApprove)
-                            {
-                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
-                            }
-                            @if (card.Status == HKCardStatus.OnReview && canApprove)
-                            {
-                                <button type="button" class="btn primary" @onclick="ApproveCard">✓ Утвердить</button>
-                                <button type="button" class="btn ghost" @onclick="ReturnForRevision">↩ Вернуть на доработку</button>
-                            }
-                            @if (card.Status == HKCardStatus.Approved && canArchive)
-                            {
-                                <button type="button" class="btn ghost" @onclick="ArchiveCard">В архив</button>
-                            }
+                    <div class="hk-form-row hk-form-row--description">
+                        <div class="field">
+                            <label>Назначение ХК</label>
+                            <InputTextArea @bind-Value="card.Purpose" class="fieldInput hk-resizable-textarea" />
+                        </div>
+                        <div class="field">
+                            <label>Примечание</label>
+                            <InputTextArea @bind-Value="card.Notes" class="fieldInput hk-resizable-textarea" />
                         </div>
                     </div>
-                    <div class="field full-width"><label>Назначение ХК</label><InputTextArea @bind-Value="card.Purpose" /></div>
-                    <div class="field full-width"><label>Примечание</label><InputTextArea @bind-Value="card.Notes" /></div>
-                    <div class="field"><label>Дата начала действия</label><InputDate @bind-Value="card.EffectiveDate" /></div>
-                    <div class="field"><label>Дата окончания действия</label><InputDate @bind-Value="card.ExpirationDate"
-                        AdditionalAttributes="@(card.EffectiveDate.HasValue
-                            ? new Dictionary<string, object> { ["min"] = card.EffectiveDate.Value.ToString("yyyy-MM-dd") }
-                            : null)" /></div>
+
+                    <div class="hk-form-row hk-form-row--dates">
+                        <div class="field">
+                            <label>Дата начала действия</label>
+                            <InputDate @bind-Value="card.EffectiveDate" />
+                        </div>
+                        <div class="field">
+                            <label>Дата окончания действия</label>
+                            <InputDate @bind-Value="card.ExpirationDate"
+                                AdditionalAttributes="@(card.EffectiveDate.HasValue
+                                    ? new Dictionary<string, object> { ["min"] = card.EffectiveDate.Value.ToString("yyyy-MM-dd") }
+                                    : null)" />
+                        </div>
+                    </div>
 
                     @if (selectedLevel == HKObjectLevel.Node)
                     {
@@ -618,9 +615,31 @@
                     </div>
                     }
 
-                    <div class="formActions">
-                        <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
-                        <button type="submit" class="btn primary" disabled="@(!canEdit && !IsNew)">@(IsNew ? "Создать ХК" : "Сохранить")</button>
+                    <div class="formActions hk-form-actions-with-status">
+                        <div class="hk-status-inline">
+                            <StatusBadge Status="@card.Status" />
+                            @if (card.Status == HKCardStatus.Draft && canSendToApprove)
+                            {
+                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
+                            }
+                            @if (card.Status == HKCardStatus.RevisionRequired && canSendToApprove)
+                            {
+                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
+                            }
+                            @if (card.Status == HKCardStatus.OnReview && canApprove)
+                            {
+                                <button type="button" class="btn primary" @onclick="ApproveCard">✓ Утвердить</button>
+                                <button type="button" class="btn ghost" @onclick="ReturnForRevision">↩ Вернуть на доработку</button>
+                            }
+                            @if (card.Status == HKCardStatus.Approved && canArchive)
+                            {
+                                <button type="button" class="btn ghost" @onclick="ArchiveCard">В архив</button>
+                            }
+                        </div>
+                        <div class="hk-form-actions-buttons">
+                            <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
+                            <button type="submit" class="btn primary" disabled="@(!canEdit && !IsNew)">@(IsNew ? "Сохранить черновик" : "Сохранить")</button>
+                        </div>
                     </div>
 
                     @if (!string.IsNullOrEmpty(errorMessage))
@@ -763,7 +782,9 @@
     private string? _attachmentError;
     private IBrowserFile? _pendingFile;
     private int _fileInputKey;
+    private bool _previewPending;
 
+    private bool CanSelectAttachment => canEdit && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
     private bool CanManageAttachment => !IsNew && canEdit && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
 
     private record AttachmentInfo(Guid Id, string OriginalFileName, long SizeBytes, string? UploadedByUserName, DateTime UploadedAt);
@@ -803,12 +824,28 @@
         try
         {
             await JS.InvokeVoidAsync("dropdownPortal.cleanup");
+            await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
         }
         catch { /* ignore — page is unloading */ }
         finally
         {
             _dotNetRef?.Dispose();
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_previewPending && !_disposed && IsNew && _pendingFile != null)
+        {
+            _previewPending = false;
+            try
+            {
+                var stream = _pendingFile.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+                await JS.InvokeVoidAsync("hkPdfPreview.load", new DotNetStreamReference(stream), "hk-pdf-preview");
+            }
+            catch { /* preview is best-effort */ }
+        }
+        await base.OnAfterRenderAsync(firstRender);
     }
 
     protected override async Task OnInitializedAsync()
@@ -1197,6 +1234,18 @@
             return;
         }
 
+        if (IsNew && _pendingFile != null && card.Id != Guid.Empty)
+        {
+            try
+            {
+                await UploadAttachment();
+            }
+            catch
+            {
+                // continue — navigate even if the pending file upload failed
+            }
+        }
+
         Nav.NavigateTo("/реестр-хк");
     }
 
@@ -1356,6 +1405,10 @@
         _objectSearch = "";
         _activeCardWarning = null;
         _existingActiveCard = null;
+        if (IsNew)
+        {
+            card.Code = string.Empty;
+        }
         _ = CloseActiveDropdownAsync();
         StateHasChanged();
     }
@@ -1420,6 +1473,14 @@
         HKObjectLevel.Aggregate => "Агрегат",
         HKObjectLevel.Node => "Узел",
         _ => "Объект"
+    };
+
+    private static readonly HKObjectLevel[] LevelOrder =
+    {
+        HKObjectLevel.Node,
+        HKObjectLevel.Aggregate,
+        HKObjectLevel.EquipmentModel,
+        HKObjectLevel.Complex
     };
 
     private static string LevelName(HKObjectLevel level) => level switch
@@ -1592,12 +1653,15 @@
     {
         _pendingFile = e.File;
         _attachmentError = null;
+        _previewPending = true;
         StateHasChanged();
     }
 
     private async Task UploadAttachment()
     {
-        if (IsNew || !CanManageAttachment) return;
+        if (card.Id == Guid.Empty) return;
+        if (!canEdit) return;
+        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired)) return;
         if (_pendingFile == null) return;
 
         _attachmentError = null;
@@ -1620,6 +1684,8 @@
             {
                 _pendingFile = null;
                 _fileInputKey++;
+                _previewPending = false;
+                await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
                 await LoadAttachmentAsync(card.Id);
             }
         }

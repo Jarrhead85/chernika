@@ -1,27 +1,82 @@
-.hk-request-grid {
+.hk-form-row {
+    --hk-control-height: 38px;
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 14px;
     align-items: start;
     margin-bottom: 14px;
+    min-width: 0;
 }
 
-.hk-request-details-field {
-    align-self: stretch;
+.hk-form-row > .field {
+    min-width: 0;
 }
 
-.hk-request-grid .hk-request-details-field .fieldInput {
-    height: 38px;
+.hk-form-row--request {
+    grid-template-columns: minmax(150px, 1.15fr) minmax(150px, 1.05fr) minmax(132px, .65fr) minmax(170px, .95fr) minmax(160px, .9fr) minmax(172px, .95fr);
+}
+
+.hk-form-row--object {
+    grid-template-columns: minmax(210px, 1.35fr) minmax(270px, 1.55fr) minmax(220px, 1.25fr) minmax(150px, .7fr);
+}
+
+.hk-form-row--description {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hk-form-row--dates {
+    grid-template-columns: repeat(2, minmax(132px, 220px));
+    justify-content: start;
+}
+
+/* нормализация контролов (Firefox/Chromium) */
+.hk-form-row .fieldInput,
+.hk-form-row .field-select,
+.hk-form-row .hk-letter-numbers,
+.hk-form-row .hk-level-segmented {
+    box-sizing: border-box;
+    height: var(--hk-control-height);
+    min-height: var(--hk-control-height);
+}
+
+.hk-form-row input,
+.hk-form-row select,
+.hk-form-row textarea {
+    box-sizing: border-box;
+    font: inherit;
+}
+
+.hk-form-row .field-select {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.hk-request-details-field .fieldInput {
+    height: var(--hk-control-height);
+    min-height: var(--hk-control-height);
+    max-height: var(--hk-control-height);
     line-height: 1.2;
-    overflow: hidden;
+    resize: none;
+    overflow-y: auto;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+.hk-form-row--description .hk-resizable-textarea {
+    height: var(--hk-control-height);
+    min-height: var(--hk-control-height);
+    max-height: 220px;
+    line-height: 1.2;
     resize: vertical;
+    overflow-y: auto;
+    padding-top: 8px;
+    padding-bottom: 8px;
 }
 
 .hk-letter-numbers {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    min-height: 40px;
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: var(--radius2, 10px);
@@ -39,7 +94,7 @@
 .hk-letter-numbers .fieldInput {
     width: 100%;
     height: 100%;
-    min-height: 38px;
+    min-height: 0;
     border: 0;
     border-radius: 0;
     background: transparent;
@@ -74,26 +129,45 @@
 }
 
 @media (max-width: 1120px) {
-    .hk-request-grid {
+    .hk-form-row--request {
         grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .hk-form-row--object {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
 @media (max-width: 560px) {
-    .hk-request-grid {
-        grid-template-columns: 1fr;
+    .hk-form-row--request,
+    .hk-form-row--object,
+    .hk-form-row--description,
+    .hk-form-row--dates {
+        grid-template-columns: minmax(0, 1fr);
         gap: 12px;
     }
+}
+
+.panelBody,
+.form,
+.hk-form-row,
+.hk-form-row > .field {
+    min-width: 0;
 }
 
 .hk-items-table-wrapper {
     border-radius: var(--radius);
     border: 1px solid var(--line);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.form > .full-width {
+    min-width: 0;
 }
 
 .hk-items-table {
     width: 100%;
+    min-width: 0;
     table-layout: fixed;
     border-collapse: collapse;
     border: none;
@@ -408,21 +482,61 @@
     justify-content: space-between;
 }
 
-.hki-hint {
-    font-size: 12px;
+.hk-mb-field .hk-mb-select {
+    min-height: var(--hk-control-height);
+    height: var(--hk-control-height);
+    box-sizing: border-box;
+}
+
+/* ---- Уровень объекта: segmented control ---- */
+
+.hk-level-segmented {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    background: var(--panel2);
+    overflow: hidden;
+}
+
+.hk-level-segmented-item {
+    flex: 1 1 0;
+    min-width: 0;
+    border: none;
+    background: transparent;
     color: var(--muted);
-    margin-top: 6px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 6px;
+    white-space: nowrap;
+    transition: background .15s ease, color .15s ease;
+}
+
+.hk-level-segmented-item + .hk-level-segmented-item {
+    border-left: 1px solid var(--line);
+}
+
+.hk-level-segmented-item:hover:not(:disabled):not(.active) {
+    color: var(--text);
+}
+
+.hk-level-segmented-item.active {
+    background: rgba(79, 140, 255, .18);
+    color: var(--text);
+}
+
+.hk-level-segmented-item:disabled {
+    opacity: .5;
+    cursor: default;
 }
 
 /* ---- PDF-скан: compact field ---- */
 
-.hki-empty-hint {
-    font-size: 12px;
-    opacity: .6;
-    display: block;
-}
-
-.hki-file-row {
+.hk-file-row {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -431,15 +545,25 @@
 
 .hki-file-btn {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--hk-control-height);
+    white-space: nowrap;
 }
 
-.hki-file-input {
+.hki-file-btn ::deep .hki-file-input {
     position: absolute;
     width: 1px;
     height: 1px;
+    padding: 0;
+    margin: -1px;
+    border: 0;
     opacity: 0;
     overflow: hidden;
     clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 .hki-file-name {
@@ -462,10 +586,14 @@
     color: var(--accent);
 }
 
-.hki-file-note {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 6px;
+.hk-pdf-preview {
+    display: block;
+    width: 100%;
+    height: 300px;
+    margin-top: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    background: var(--panel2);
 }
 
 .hki-field-error {
@@ -479,6 +607,44 @@
 }
 
 .hk-pdf-field .btn {
-    padding: 7px 10px;
+    height: var(--hk-control-height);
+    padding: 0 10px;
     font-size: 12px;
+}
+
+/* ---- Статус + кнопки действий ---- */
+
+.hk-form-actions-with-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+    margin-top: 6px;
+}
+
+.hk-status-inline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.hk-form-actions-buttons {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+}
+
+@media (max-width: 560px) {
+    .hk-form-actions-with-status {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .hk-form-actions-buttons {
+        margin-left: 0;
+    }
 }

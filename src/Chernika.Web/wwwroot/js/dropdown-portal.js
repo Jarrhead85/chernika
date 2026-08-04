@@ -93,3 +93,31 @@ window.dropdownPortal = {
     }
   }
 };
+
+window.hkPdfPreview = {
+  async load(streamRef, iframeId) {
+    const iframe = document.getElementById(iframeId);
+    if (!iframe || !streamRef) return;
+    if (iframe.__blobUrl) {
+      URL.revokeObjectURL(iframe.__blobUrl);
+      iframe.__blobUrl = null;
+    }
+    try {
+      const blob = await new Response(streamRef.stream).blob();
+      iframe.__blobUrl = URL.createObjectURL(blob);
+      iframe.src = iframe.__blobUrl;
+    } catch (_) {
+      iframe.src = '';
+    }
+  },
+
+  clear(iframeId) {
+    const iframe = document.getElementById(iframeId);
+    if (!iframe) return;
+    if (iframe.__blobUrl) {
+      URL.revokeObjectURL(iframe.__blobUrl);
+      iframe.__blobUrl = null;
+    }
+    iframe.src = '';
+  }
+};
