@@ -80,6 +80,7 @@ builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler
 builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
 builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
+builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection("FileStorage"));
 builder.Services.AddScoped<SearchService>();
 
 var app = builder.Build();

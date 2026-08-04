@@ -84,6 +84,7 @@ builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
 builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
+builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection("FileStorage"));
 builder.Services.AddScoped<AuthenticationStateProvider, RevalidatingIdentityAuthenticationStateProvider<ApplicationUser>>();
 
 var app = builder.Build();

@@ -10,8 +10,10 @@
 @inject EquipmentService EquipmentService
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
+@using Microsoft.Extensions.Options
 @inject IPermissionService Perms
 @inject IJSRuntime JS
+@inject IOptions<FileStorageOptions> FileOptions
 
 <div class="stack">
     <section class="panel">
@@ -166,11 +168,13 @@
                             }
                             @if (_pendingFile != null)
                             {
-                                <div class="hki-file-meta hki-file-pending">@(IsNew ? "Файл будет прикреплён при сохранении: " : "Выбрано: ")@_pendingFile.Name (@FormatSize(_pendingFile.Size))</div>
-                                @if (IsNew)
-                                {
-                                    <iframe id="hk-pdf-preview" class="hk-pdf-preview" title="Предпросмотр PDF"></iframe>
-                                }
+                                <div class="hki-file-row" style="margin-top:4px">
+                                    <span class="hki-file-meta hki-file-pending">@(IsNew ? "Файл будет прикреплён при сохранении: " : "Выбрано: ")@_pendingFile.Name (@FormatSize(_pendingFile.Size))</span>
+                                    @if (IsNew)
+                                    {
+                                        <button type="button" class="btn" @onclick="OpenPendingPreview">Предпросмотр</button>
+                                    }
+                                </div>
                             }
                             @if (!string.IsNullOrEmpty(_attachmentError))
                             {
@@ -284,14 +288,11 @@
                     <div class="hk-form-row hk-form-row--dates">
                         <div class="field">
                             <label>Дата начала действия</label>
-                            <InputDate @bind-Value="card.EffectiveDate" />
+                            <InputDate @bind-Value="card.EffectiveDate" class="fieldInput" />
                         </div>
                         <div class="field">
                             <label>Дата окончания действия</label>
-                            <InputDate @bind-Value="card.ExpirationDate"
-                                AdditionalAttributes="@(card.EffectiveDate.HasValue
-                                    ? new Dictionary<string, object> { ["min"] = card.EffectiveDate.Value.ToString("yyyy-MM-dd") }
-                                    : null)" />
+                            <InputDate @bind-Value="card.ExpirationDate" AdditionalAttributes="@ExpirationDateAttributes()" />
                         </div>
                     </div>
 
@@ -723,6 +724,21 @@
     </div>
 }
 
+@if (_previewOpen && IsNew && _pendingFile != null)
+{
+    <div class="modalOverlay" @onclick="ClosePendingPreview">
+        <div class="modal hk-preview-modal" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3>Предпросмотр PDF</h3>
+                <button type="button" class="linkBtn" @onclick="ClosePendingPreview">✕</button>
+            </div>
+            <div class="modalBody">
+                <iframe id="hk-pdf-preview" class="hk-pdf-preview hk-pdf-preview-modal" title="Предпросмотр PDF"></iframe>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter] public Guid? Id { get; set; }
     [SupplyParameterFromQuery(Name = "nodeId")] public Guid? NodeId { get; set; }
@@ -783,6 +799,7 @@
     private IBrowserFile? _pendingFile;
     private int _fileInputKey;
     private bool _previewPending;
+    private bool _previewOpen;
 
     private bool CanSelectAttachment => canEdit && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
     private bool CanManageAttachment => !IsNew && canEdit && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
@@ -840,7 +857,7 @@
             _previewPending = false;
             try
             {
-                var stream = _pendingFile.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+                var stream = _pendingFile.OpenReadStream(maxAllowedSize: FileOptions.Value.MaxPdfSizeBytes);
                 await JS.InvokeVoidAsync("hkPdfPreview.load", new DotNetStreamReference(stream), "hk-pdf-preview");
             }
             catch { /* preview is best-effort */ }
@@ -1236,13 +1253,13 @@
 
         if (IsNew && _pendingFile != null && card.Id != Guid.Empty)
         {
-            try
+            await UploadAttachment();
+
+            if (!string.IsNullOrEmpty(_attachmentError))
             {
-                await UploadAttachment();
-            }
-            catch
-            {
-                // continue — navigate even if the pending file upload failed
+                errorMessage = "Черновик ХК сохранён, но PDF-файл не удалось прикрепить. " +
+                               "Исправьте ошибку и повторите загрузку.";
+                return;
             }
         }
 
@@ -1654,6 +1671,35 @@
         _pendingFile = e.File;
         _attachmentError = null;
         _previewPending = true;
+        _previewOpen = false;
+        StateHasChanged();
+    }
+
+    private void OpenPendingPreview()
+    {
+        if (!IsNew || _pendingFile == null) return;
+        _previewOpen = true;
+        _previewPending = true;
+        StateHasChanged();
+    }
+
+    private Dictionary<string, object> ExpirationDateAttributes()
+    {
+        var attributes = new Dictionary<string, object> { ["class"] = "fieldInput" };
+        if (card.EffectiveDate.HasValue)
+            attributes["min"] = card.EffectiveDate.Value.ToString("yyyy-MM-dd");
+        return attributes;
+    }
+
+    private async Task ClosePendingPreview()
+    {
+        _previewOpen = false;
+        _previewPending = false;
+        try
+        {
+            await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
+        }
+        catch { /* page unloading or iframe already detached */ }
         StateHasChanged();
     }
 
@@ -1672,7 +1718,7 @@
         {
             using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
             using var content = new MultipartFormDataContent();
-            var stream = _pendingFile.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            var stream = _pendingFile.OpenReadStream(maxAllowedSize: FileOptions.Value.MaxPdfSizeBytes);
             content.Add(new StreamContent(stream), "file", _pendingFile.Name);
             var response = await http.PostAsync($"/api/HKCards/{card.Id}/attachment", content);
             if (!response.IsSuccessStatusCode)
@@ -1685,6 +1731,7 @@
                 _pendingFile = null;
                 _fileInputKey++;
                 _previewPending = false;
+                _previewOpen = false;
                 await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
                 await LoadAttachmentAsync(card.Id);
             }

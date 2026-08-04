@@ -8,6 +8,7 @@ using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 
 namespace Chernika.Api.Controllers;
@@ -23,6 +24,7 @@ public class HKCardsController : ControllerBase
     private readonly IFileStorageService _fileStorage;
     private readonly IPermissionService _permissions;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOptions<FileStorageOptions> _fileOptions;
 
     public HKCardsController(
         HKCardService hkCards,
@@ -30,7 +32,8 @@ public class HKCardsController : ControllerBase
         AppDbContext db,
         IFileStorageService fileStorage,
         IPermissionService permissions,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        IOptions<FileStorageOptions> fileOptions)
     {
         _hkCards = hkCards;
         _authorization = authorization;
@@ -38,6 +41,7 @@ public class HKCardsController : ControllerBase
         _fileStorage = fileStorage;
         _permissions = permissions;
         _currentUser = currentUser;
+        _fileOptions = fileOptions;
     }
 
     [HttpGet]
@@ -269,9 +273,15 @@ public class HKCardsController : ControllerBase
         if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             return BadRequest("Допускается только PDF-формат.");
 
-        const long maxBytes = 20 * 1024 * 1024;
+        var maxBytes = _fileOptions.Value.MaxPdfSizeBytes > 0
+            ? _fileOptions.Value.MaxPdfSizeBytes
+            : 20L * 1024 * 1024;
         if (file.Length > maxBytes)
-            return BadRequest("Размер файла не должен превышать 20 МБ.");
+            return BadRequest($"Размер файла не должен превышать {FormatFileSize(maxBytes)}.");
+
+        if (!string.IsNullOrEmpty(file.ContentType)
+            && !IsPdfContentType(file.ContentType))
+            return BadRequest("Недопустимый тип содержимого файла (ожидается PDF).");
 
         await using var stream = file.OpenReadStream();
 
@@ -376,6 +386,22 @@ public class HKCardsController : ControllerBase
         await _fileStorage.DeleteAsync(storageKey);
 
         return NoContent();
+    }
+
+    private static bool IsPdfContentType(string contentType)
+    {
+        return contentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase)
+            || contentType.Equals("application/x-pdf", StringComparison.OrdinalIgnoreCase)
+            || contentType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes >= 1024 * 1024)
+            return $"{(double)bytes / (1024 * 1024):0.##} МБ";
+        if (bytes >= 1024)
+            return $"{(double)bytes / 1024:0.#} КБ";
+        return $"{bytes} Б";
     }
 }
 
