@@ -9,9 +9,12 @@ public sealed class WorkTaskQuery
 
     public string? Text { get; init; }
     public WorkTaskStatus? Status { get; init; }
+    public bool ActiveOnly { get; init; }
     public WorkTaskType? Type { get; init; }
     public WorkTaskPriority? Priority { get; init; }
     public WorkTaskDueFilter DueFilter { get; init; } = WorkTaskDueFilter.All;
+
+    public int? CompletedWithinDays { get; init; }
 
     public string? EntityType { get; init; }
     public Guid? EntityId { get; init; }

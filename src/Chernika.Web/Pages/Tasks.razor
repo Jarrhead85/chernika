@@ -1,9 +1,11 @@
 @using Chernika.Domain
+@using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Models
 @page "/задачи"
 @attribute [Authorize(Policy = "ViewTasks")]
 @inject TaskService TaskService
+@inject EquipmentService EquipSvc
 @inject NavigationManager Nav
 @inject IPermissionService PermSvc
 @inject AuthenticationStateProvider AuthState
@@ -11,21 +13,27 @@
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
-            <h2>Входящие задачи</h2>
-            <div class="hint">@activeCount активных</div>
+            <h2>Задачи</h2>
+            <div class="hint">@activeCount активных назначено мне • @completedWithin7 выполнено за 7 дней</div>
         </div>
         <div class="panelBody">
-            <div class="form" style="grid-template-columns:1fr auto">
-                <div class="field"><label>Фильтр</label>
-                    <select @bind="filter" class="field-select">
-                        <option value="all">Все задачи</option>
-                        <option value="hk_review">На проверку ХК</option>
-                        <option value="hk_revision">На доработку ХК</option>
-                        <option value="recalculate">Пересчёт инд. карт</option>
-                    </select>
+            <div class="hero">
+                <div class="heroBox">
+                    <div class="eyebrow">Рабочий процесс • Реестр задач</div>
+                    <h3>Входящие задачи</h3>
+                    <p>Проверка и доработка ХК, пересчёт индивидуальных карт и назначенные вам задачи</p>
                 </div>
-                <div class="field" style="display:flex;align-items:flex-end">
-                    <button class="btn primary" @onclick="LoadTasks">Обновить</button>
+                <div class="heroGrid">
+                    <div class="heroStat">
+                        <div class="label">Активные <span class="tag warn">назначено мне</span></div>
+                        <div class="value">@activeCount</div>
+                        <div class="trend">@statusCounts.GetValueOrDefault(WorkTaskStatus.Overdue) просрочено</div>
+                    </div>
+                    <div class="heroStat">
+                        <div class="label">В реестре <span class="tag ok">видимые</span></div>
+                        <div class="value">@visibleTotal</div>
+                        <div class="trend">@statusCounts.GetValueOrDefault(WorkTaskStatus.Completed) выполнено</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -33,143 +41,439 @@
 
     <section class="panel">
         <div class="panelHeader">
-            <h2>Активные задачи</h2>
-            <div class="hint">@activeTasks.Count</div>
+            <h2>Фильтры</h2>
+            <div class="hint">Серверная фильтрация, сортировка и пагинация</div>
+        </div>
+        <div class="panelBody">
+            <div class="form">
+                <div class="field" style="grid-column:span 2"><label>Поиск</label>
+                    <input @bind="text" placeholder="Название или описание задачи…" />
+                </div>
+                <div class="field"><label>Срок</label>
+                    <select @bind="dueFilter" class="field-select">
+                        <option value="0">Все сроки</option>
+                        <option value="1">Сегодня</option>
+                        <option value="2">На этой неделе</option>
+                        <option value="3">Просроченные</option>
+                    </select>
+                </div>
+                <div class="field"><label>Филиал</label>
+                    <select @bind="branchFilterId" class="field-select">
+                        <option value="">Все</option>
+                        @foreach (var b in branches)
+                        {
+                            <option value="@b.Id">@b.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="field"><label>Сортировка</label>
+                    <select @bind="sortBy" class="field-select">
+                        <option value="due">По сроку</option>
+                        <option value="priority">По приоритету</option>
+                        <option value="created">По созданию</option>
+                        <option value="status">По статусу</option>
+                    </select>
+                </div>
+                <div class="field"><label>Направление</label>
+                    <select @bind="sortDescStr" class="field-select">
+                        <option value="false">По возрастанию</option>
+                        <option value="true">По убыванию</option>
+                    </select>
+                </div>
+                <div class="formActions">
+                    <button class="btn" @onclick="ApplyFilters">Применить</button>
+                    <button class="btn" @onclick="ResetFilters">Сбросить</button>
+                </div>
+            </div>
+            <div class="chips" style="margin-top:12px">
+                <button class="pill @(activeTab == null ? "pillOn" : "")" @onclick="() => SetTab(null)">Все активные @(countOpen + countInProgress + countOverdue)</button>
+                <button class="pill @(activeTab == WorkTaskStatus.Open ? "pillOn" : "")" @onclick="() => SetTab(WorkTaskStatus.Open)">Открыта @countOpen</button>
+                <button class="pill @(activeTab == WorkTaskStatus.InProgress ? "pillOn" : "")" @onclick="() => SetTab(WorkTaskStatus.InProgress)">В работе @countInProgress</button>
+                <button class="pill @(activeTab == WorkTaskStatus.Overdue ? "pillOn" : "")" @onclick="() => SetTab(WorkTaskStatus.Overdue)">Просрочена @countOverdue</button>
+                <button class="pill @(activeTab == WorkTaskStatus.Completed ? "pillOn" : "")" @onclick="() => SetTab(WorkTaskStatus.Completed)">Выполнена @countCompleted</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>@TabTitle</h2>
+            <div class="hint">@result.TotalCount записей</div>
         </div>
         <div class="panelBody">
             @if (loading)
             {
                 <div class="loading-state">Загрузка...</div>
             }
-            else if (!activeTasks.Any())
+            else if (!result.Items.Any())
             {
-                <div class="empty-state">Нет активных задач</div>
+                <div class="empty-state">Нет задач, соответствующих фильтру</div>
             }
             else
             {
-                <div class="alerts">
-                    @foreach (var task in activeTasks)
-                    {
-                        var isUrgent = task.DueDateUtc.HasValue && task.DueDateUtc.Value < DateTime.UtcNow.AddDays(2);
-                        <div class="alert">
-                            <div class="top">
-                                <p class="title">@task.Title</p>
-                                <span class="tag @(isUrgent ? "bad" : task.DueDateUtc.HasValue ? "warn" : "ok")">
-                                    @(task.DueDateUtc?.ToString("dd.MM") ?? "Без срока")
-                                </span>
-                            </div>
-                            <p class="desc">@task.Description</p>
-                            <div class="rowActions" style="margin-top:8px">
-                                @if (_canComplete)
-                                {
-                                    <button class="linkBtn" @onclick="() => CompleteTask(task.Id)">✓ Выполнено</button>
-                                }
-                                @if (task.EntityType == "HKCard" && task.EntityId.HasValue)
-                                {
-                                    <button class="linkBtn" @onclick="() => OpenEntity(task)">Открыть</button>
-                                }
-                                @if (_canCancel)
-                                {
-                                    <button class="linkBtn" @onclick="() => CancelTask(task.Id)">Отменить</button>
-                                }
-                            </div>
-                        </div>
-                    }
-                </div>
-            }
-        </div>
-    </section>
-
-    <section class="panel">
-        <div class="panelHeader">
-            <h2>Выполненные</h2>
-            <div class="hint">Последние @completedTasks.Count</div>
-        </div>
-        <div class="panelBody">
-            @if (completedTasks.Any())
-            {
-                <table>
-                    <thead>
-                        <tr><th>Задача</th><th>Создана</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var task in completedTasks)
-                        {
+                <div style="overflow-x:auto">
+                    <table>
+                        <thead>
                             <tr>
-                                <td>@task.Title</td>
-                                <td class="mono">@task.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm")</td>
+                                <th>Задача</th>
+                                <th>Статус</th>
+                                <th>Приоритет</th>
+                                <th>Исполнитель</th>
+                                <th>Срок</th>
+                                <th>Завершена</th>
+                                <th>Действия</th>
                             </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var task in result.Items)
+                            {
+                                <tr>
+                                    <td>
+                                        <a href="/задачи/@task.Id" class="linkBtn">@task.Title</a>
+                                        <br /><span class="mono" style="font-size:12px">@TypeLabel(task.Type)</span>
+                                    </td>
+                                    <td><span class="tag @StatusTagClass(task.Status)">@StatusLabel(task.Status)</span></td>
+                                    <td><span class="tag @PriorityTagClass(task.Priority)">@PriorityLabel(task.Priority)</span></td>
+                                    <td>@(task.AssignedToUserName ?? task.AssignedRole ?? "—")</td>
+                                    <td class="mono">@DueLabel(task)</td>
+                                    <td class="mono">@(task.CompletedAtUtc?.ToString("dd.MM.yyyy HH:mm") ?? "—")</td>
+                                    <td>
+                                        <div class="rowActions">
+                                            @if (CanStart(task))
+                                            {
+                                                <button class="linkBtn" @onclick="() => StartTask(task.Id)">▶ Взять в работу</button>
+                                            }
+                                            @if (CanComplete(task))
+                                            {
+                                                <button class="linkBtn" @onclick="() => OpenComplete(task)">✓ Выполнить</button>
+                                            }
+                                            @if (_canCancel)
+                                            {
+                                                <button class="linkBtn" @onclick="() => CancelTask(task.Id)">Отменить</button>
+                                            }
+                                            @if (task.EntityType == "HKCard" && task.EntityId.HasValue)
+                                            {
+                                                <button class="linkBtn" @onclick="() => GoToHk(task.EntityId.Value)">ХК</button>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="footer">
+                    <div>
+                        @if (result.Page > 1)
+                        {
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page - 1)">← Назад</button>
                         }
-                    </tbody>
-                </table>
-            }
-            else
-            {
-                <div class="empty-state">Нет выполненных задач</div>
+                        <span class="mono">стр. @result.Page из @Math.Max(1, result.TotalPages)</span>
+                        @if (result.Page < result.TotalPages)
+                        {
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page + 1)">Вперёд →</button>
+                        }
+                    </div>
+                    <div class="mono">Показано @result.Items.Count из @result.TotalCount</div>
+                </div>
             }
         </div>
     </section>
 </div>
 
+@if (showCompleteModal)
+{
+    <div class="modalOverlay" @onclick="CloseComplete">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="complete-title" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3 id="complete-title">Выполнение задачи</h3>
+                <button type="button" class="modalCloseButton" @onclick="CloseComplete">×</button>
+            </div>
+            <div class="modalBody">
+                <div class="note" style="margin-bottom:12px">@completeTarget?.Title</div>
+                @if (RequiresComment(completeTarget))
+                {
+                    <div class="note warn" style="margin-bottom:8px">Для задач «Доработка ХК» комментарий выполнения обязателен.</div>
+                }
+                <div class="field"><label>Комментарий выполнения</label>
+                    <textarea @bind="completeComment" rows="3" style="width:100%;resize:vertical;padding:8px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:14px" placeholder="Опишите результат…"></textarea>
+                </div>
+            </div>
+            <div class="modalFooter">
+                <button class="btn" @onclick="CloseComplete">Отмена</button>
+                <button class="btn primary" @onclick="ConfirmComplete">Выполнить</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="note" style="margin-top:12px">@errorMessage</div>
+}
+
 @code {
-    private List<WorkTaskListItemDto> activeTasks = new();
-    private List<WorkTaskListItemDto> completedTasks = new();
+    private PagedResult<WorkTaskListItemDto> result = new();
+    private Dictionary<WorkTaskStatus, int> statusCounts = new();
+    private List<Branch> branches = new();
     private bool loading = true;
-    private int activeCount = 0;
-    private string filter = "all";
+    private int activeCount;
+    private int completedWithin7;
     private bool _canComplete;
     private bool _canCancel;
+    private bool _canSystemConfig;
+    private string currentUserId = "";
+
+    private string text = "";
+    private WorkTaskDueFilter dueFilter = WorkTaskDueFilter.All;
+    private string branchFilterId = "";
+    private string sortBy = "due";
+    private string sortDescStr = "false";
+    private WorkTaskStatus? activeTab;
+    private int page = 1;
+    private const int PageSize = 10;
+
+    private WorkTaskListItemDto? completeTarget;
+    private string completeComment = "";
+    private bool showCompleteModal;
+    private string? errorMessage;
+
+    private int countOpen => statusCounts.GetValueOrDefault(WorkTaskStatus.Open);
+    private int countInProgress => statusCounts.GetValueOrDefault(WorkTaskStatus.InProgress);
+    private int countOverdue => statusCounts.GetValueOrDefault(WorkTaskStatus.Overdue);
+    private int countCompleted => statusCounts.GetValueOrDefault(WorkTaskStatus.Completed);
+    private int visibleTotal => countOpen + countInProgress + countOverdue + countCompleted
+        + statusCounts.GetValueOrDefault(WorkTaskStatus.Cancelled);
+
+    private string TabTitle => activeTab switch
+    {
+        WorkTaskStatus.Open => "Открытые задачи",
+        WorkTaskStatus.InProgress => "Задачи в работе",
+        WorkTaskStatus.Overdue => "Просроченные задачи",
+        WorkTaskStatus.Completed => "Выполненные задачи",
+        _ => "Активные задачи"
+    };
 
     protected override async Task OnInitializedAsync()
     {
-        var userId = (await AuthState.GetAuthenticationStateAsync()).User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (userId != null)
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        if (currentUserId != "")
         {
-            _canComplete = await PermSvc.HasPermissionAsync(userId, PermissionCodes.TaskComplete);
-            _canCancel = await PermSvc.HasPermissionAsync(userId, PermissionCodes.TaskCancel);
+            _canComplete = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskComplete);
+            _canCancel = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskCancel);
+            _canSystemConfig = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
         }
-        await LoadTasks();
+        await LoadBranchesAsync();
+        await LoadAsync();
     }
 
-    async Task LoadTasks()
+    private async Task LoadBranchesAsync()
+    {
+        var all = await EquipSvc.GetBranchesAsync();
+        if (_canSystemConfig)
+        {
+            branches = all;
+            return;
+        }
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var claimBranchId = authState.User.FindFirst("BranchId")?.Value;
+        branches = all.Where(b => b.Id.ToString() == claimBranchId).ToList();
+    }
+
+    private async Task ApplyFilters()
+    {
+        page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ResetFilters()
+    {
+        text = "";
+        dueFilter = WorkTaskDueFilter.All;
+        branchFilterId = "";
+        sortBy = "due";
+        sortDescStr = "false";
+        activeTab = null;
+        page = 1;
+        await LoadAsync();
+    }
+
+    private async Task SetTab(WorkTaskStatus? tab)
+    {
+        activeTab = tab;
+        page = 1;
+        await LoadAsync();
+    }
+
+    private async Task GoToPage(int p)
+    {
+        page = p;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
     {
         loading = true;
-        var typeFilter = filter switch
+        errorMessage = null;
+        try
         {
-            "hk_review" => (WorkTaskType?)WorkTaskType.HKReview,
-            "hk_revision" => (WorkTaskType?)WorkTaskType.HKRevision,
-            _ => null
-        };
-        var active = await TaskService.GetMyTasksAsync(new WorkTaskQuery { PageSize = 200, Type = typeFilter });
-        activeTasks = active.Items
-            .Where(t => t.Status != WorkTaskStatus.Completed && t.Status != WorkTaskStatus.Cancelled)
-            .ToList();
-        var done = await TaskService.GetMyTasksAsync(new WorkTaskQuery
+            var query = new WorkTaskQuery
+            {
+                Page = page,
+                PageSize = PageSize,
+                Text = string.IsNullOrWhiteSpace(text) ? null : text.Trim(),
+                DueFilter = dueFilter,
+                SortBy = sortBy,
+                SortDescending = sortDescStr == "true",
+                BranchId = Guid.TryParse(branchFilterId, out var b) ? b : null,
+                Status = activeTab,
+                ActiveOnly = activeTab == null,
+            };
+            result = await TaskService.GetMyTasksAsync(query);
+            statusCounts = await TaskService.GetStatusCountsAsync();
+            activeCount = await TaskService.GetOpenTaskCountAsync();
+            completedWithin7 = (await TaskService.GetMyTasksAsync(new WorkTaskQuery
+            {
+                Page = 1,
+                PageSize = 1,
+                Status = WorkTaskStatus.Completed,
+                CompletedWithinDays = 7,
+            })).TotalCount;
+        }
+        catch (UnauthorizedAccessException ex)
         {
-            PageSize = 50,
-            Status = WorkTaskStatus.Completed,
-            Type = typeFilter
-        });
-        completedTasks = done.Items.ToList();
-        activeCount = await TaskService.GetOpenTaskCountAsync();
-        loading = false;
+            errorMessage = ex.Message;
+            result = new PagedResult<WorkTaskListItemDto>();
+        }
+        finally
+        {
+            loading = false;
+        }
     }
 
-    async Task CompleteTask(Guid id)
+    private bool CanStart(WorkTaskListItemDto task) =>
+        _canComplete && WorkTaskTransitions.CanStart(task.Status)
+        && (task.AssignedToUserId == currentUserId || _canSystemConfig);
+
+    private bool CanComplete(WorkTaskListItemDto task) =>
+        _canComplete && WorkTaskTransitions.IsActive(task.Status)
+        && (task.AssignedToUserId == currentUserId || _canSystemConfig);
+
+    private static bool RequiresComment(WorkTaskListItemDto? task) =>
+        task is { Type: WorkTaskType.HKRevision or WorkTaskType.ReferenceProposalReview };
+
+    private void OpenComplete(WorkTaskListItemDto task)
     {
-        await TaskService.CompleteAsync(new CompleteWorkTaskCommand(id));
-        await LoadTasks();
+        completeTarget = task;
+        completeComment = "";
+        showCompleteModal = true;
     }
 
-    async Task CancelTask(Guid id)
+    private void CloseComplete()
     {
-        await TaskService.CancelAsync(new CancelWorkTaskCommand(id, "Отменена пользователем"));
-        await LoadTasks();
+        showCompleteModal = false;
+        completeTarget = null;
     }
 
-    void OpenEntity(WorkTaskListItemDto task)
+    private async Task ConfirmComplete()
     {
-        if (task.EntityType == "HKCard" && task.EntityId.HasValue)
-            Nav.NavigateTo($"/хк/{task.EntityId.Value}");
+        if (completeTarget == null) return;
+        if (RequiresComment(completeTarget) && string.IsNullOrWhiteSpace(completeComment))
+        {
+            errorMessage = "Для этого типа задачи комментарий выполнения обязателен.";
+            return;
+        }
+        try
+        {
+            await TaskService.CompleteAsync(new CompleteWorkTaskCommand(completeTarget.Id, completeComment.Trim()));
+            CloseComplete();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
     }
+
+    private async Task StartTask(Guid id)
+    {
+        try
+        {
+            await TaskService.StartAsync(id);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private async Task CancelTask(Guid id)
+    {
+        try
+        {
+            await TaskService.CancelAsync(new CancelWorkTaskCommand(id, "Отменена пользователем"));
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private void GoToHk(Guid id) => Nav.NavigateTo($"/хк/{id}");
+
+    private static string DueLabel(WorkTaskListItemDto task) =>
+        task.IsOverdue
+            ? "просрочена " + task.DueDateUtc?.ToString("dd.MM.yy")
+            : task.DueDateUtc.HasValue ? task.DueDateUtc.Value.ToString("dd.MM.yy") : "—";
+
+    private static string StatusLabel(WorkTaskStatus status) => status switch
+    {
+        WorkTaskStatus.Open => "Открыта",
+        WorkTaskStatus.InProgress => "В работе",
+        WorkTaskStatus.Completed => "Выполнена",
+        WorkTaskStatus.Cancelled => "Отменена",
+        WorkTaskStatus.Overdue => "Просрочена",
+        _ => status.ToString()
+    };
+
+    private static string StatusTagClass(WorkTaskStatus status) => status switch
+    {
+        WorkTaskStatus.Open => "warn",
+        WorkTaskStatus.InProgress => "",
+        WorkTaskStatus.Completed => "ok",
+        WorkTaskStatus.Cancelled => "",
+        WorkTaskStatus.Overdue => "bad",
+        _ => ""
+    };
+
+    private static string PriorityLabel(WorkTaskPriority priority) => priority switch
+    {
+        WorkTaskPriority.Low => "Низкий",
+        WorkTaskPriority.Normal => "Обычный",
+        WorkTaskPriority.High => "Высокий",
+        WorkTaskPriority.Critical => "Критический",
+        _ => priority.ToString()
+    };
+
+    private static string PriorityTagClass(WorkTaskPriority priority) => priority switch
+    {
+        WorkTaskPriority.High => "warn",
+        WorkTaskPriority.Critical => "bad",
+        _ => ""
+    };
+
+    private static string TypeLabel(WorkTaskType type) => type switch
+    {
+        WorkTaskType.HKReview => "Проверка ХК",
+        WorkTaskType.HKRevision => "Доработка ХК",
+        WorkTaskType.HKExpirationReview => "Срок действия ХК",
+        WorkTaskType.ParentHKRevision => "Доработка родительской ХК",
+        WorkTaskType.ReferenceProposalReview => "Проверка предложения",
+        WorkTaskType.UserAdministration => "Администрирование пользователей",
+        _ => type.ToString()
+    };
 }

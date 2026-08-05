@@ -1,5 +1,8 @@
 namespace Chernika.Api.Contracts;
 
+public record CompleteWorkTaskRequest(
+    string? Comment = null);
+
 public record CreateWorkTaskRequest(
     string Title,
     string? AssignedToUserId = null,

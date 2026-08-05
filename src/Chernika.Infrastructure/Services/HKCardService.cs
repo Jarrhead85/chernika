@@ -981,14 +981,23 @@ public class HKCardService
 
         try
         {
-            await _db.SaveChangesAsync(ct);
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                await ApplyWorkflowTasksAsync(card, newStatus, actorId, ct);
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                await tx.RollbackAsync(ct);
+                return (false, "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+            }
         }
         catch (DbUpdateConcurrencyException)
         {
             return (false, "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
         }
-
-        await CreateTasksForStatusChangeAsync(card, oldStatus, newStatus, actorId);
 
         if (newStatus == HKCardStatus.Approved)
             await ArchivePreviousApprovedVersionsAsync(card, actorId, ct);
@@ -1020,52 +1029,137 @@ public class HKCardService
         return await ChangeStatusAsync(id, HKCardStatus.Deleted, null, ct);
     }
 
-    private async Task CreateTasksForStatusChangeAsync(HKCard card, HKCardStatus _, HKCardStatus to, Guid actorUserId)
+    private async Task ApplyWorkflowTasksAsync(HKCard card, HKCardStatus to, Guid actorUserId, CancellationToken ct)
     {
         switch (to)
         {
             case HKCardStatus.OnReview:
-                    await CreateBranchRoleTaskAsync(
-                        card,
-                        "NormAdmin",
-                        $"Проверка ХК {card.Code}",
-                        $"Карточка {card.Code} (v{card.Version}) отправлена на проверку.",
-                        actorUserId.ToString());
+                await CreateWorkflowTaskAsync(
+                    card,
+                    type: WorkTaskType.HKReview,
+                    title: $"Проверка ХК {card.Code}",
+                    description: $"Карточка {card.Code} (v{card.Version}) отправлена на проверку.",
+                    role: "NormAdmin",
+                    dueDays: 7,
+                    ct: ct);
                 break;
 
             case HKCardStatus.RevisionRequired:
+                await CloseOpenWorkflowTasksAsync(WorkTaskType.HKReview, "HKCard", card.Id, cancelled: true, actorUserId, ct);
                 if (card.AuthorId.HasValue)
                 {
-                    await _tasks.CreateRangeAsync(new[]
-                    {
-                        BuildLegacyTask(card,
-                            title: $"Доработка ХК {card.Code}",
-                            description: $"Карточка {card.Code} возвращена на доработку.",
-                            type: WorkTaskType.HKRevision,
-                            assignee: card.AuthorId.Value.ToString(),
-                            entityType: "HKCard",
-                            entityId: card.Id,
-                            dueDays: 7)
-                    });
+                    await CreateWorkflowTaskAsync(
+                        card,
+                        type: WorkTaskType.HKRevision,
+                        title: $"Доработка ХК {card.Code}",
+                        description: $"Карточка {card.Code} возвращена на доработку.",
+                        assignee: card.AuthorId.Value.ToString(),
+                        dueDays: 7,
+                        ct: ct);
                 }
                 break;
 
             case HKCardStatus.Approved:
-                await CreateRecalculationTasksAsync(card);
+                await CloseOpenWorkflowTasksAsync(WorkTaskType.HKReview, "HKCard", card.Id, cancelled: false, actorUserId, ct);
+                await CreateRecalculationTasksAsync(card, actorUserId, ct);
                 break;
 
             case HKCardStatus.Archived:
+            case HKCardStatus.Deleted:
                 break;
         }
     }
 
-    private async Task CreateRecalculationTasksAsync(HKCard card)
+    private async Task CreateWorkflowTaskAsync(
+        HKCard card,
+        WorkTaskType type,
+        string title,
+        string description,
+        string? assignee = null,
+        string? role = null,
+        int? dueDays = null,
+        CancellationToken ct = default)
+    {
+        var resolvedAssignee = assignee;
+        if (string.IsNullOrWhiteSpace(resolvedAssignee) && !string.IsNullOrWhiteSpace(role))
+        {
+            var users = await GetBranchUsersInRoleAsync(card.BranchId, role);
+            resolvedAssignee = users.Count > 0 ? users[0] : await GetAnyUserInRoleAsync(role);
+        }
+        if (string.IsNullOrWhiteSpace(resolvedAssignee))
+            return;
+
+        await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
+            Title: title,
+            Type: type,
+            Priority: WorkTaskPriority.Normal,
+            Description: description,
+            AssignedToUserId: resolvedAssignee,
+            BranchId: card.BranchId,
+            EntityType: "HKCard",
+            EntityId: card.Id,
+            EntityCodeSnapshot: card.Code,
+            EntityTitleSnapshot: $"v{card.Version}",
+            DueDateUtc: dueDays.HasValue ? DateTime.UtcNow.AddDays(dueDays.Value) : null,
+            NotifyAssignee: true), ct);
+    }
+
+    private async Task CloseOpenWorkflowTasksAsync(
+        WorkTaskType type, string entityType, Guid entityId, bool cancelled, Guid actorUserId, CancellationToken ct)
+    {
+        var open = await _db.WorkTasks
+            .Where(t => !t.IsDeleted
+                && t.Type == type
+                && t.EntityType == entityType
+                && t.EntityId == entityId
+                && (t.Status == WorkTaskStatus.Open
+                    || t.Status == WorkTaskStatus.InProgress
+                    || t.Status == WorkTaskStatus.Overdue))
+            .ToListAsync(ct);
+
+        var now = DateTime.UtcNow;
+        foreach (var task in open)
+        {
+            if (cancelled)
+            {
+                task.Status = WorkTaskStatus.Cancelled;
+                await _audit.CreateLogAsync(
+                    new AuditWriteRequest(
+                        EntityType: "WorkTask",
+                        EntityId: task.Id.ToString(),
+                        Action: "Task.Cancelled",
+                        ActorUserId: actorUserId,
+                        EntityDisplayName: task.Title,
+                        Details: "Задача закрыта при изменении статуса ХК"),
+                    ct);
+            }
+            else
+            {
+                task.Status = WorkTaskStatus.Completed;
+                task.CompletedAtUtc = now;
+                task.CompletedByUserId = actorUserId.ToString();
+                task.CompletionComment = "ХК утверждена";
+                await _audit.CreateLogAsync(
+                    new AuditWriteRequest(
+                        EntityType: "WorkTask",
+                        EntityId: task.Id.ToString(),
+                        Action: "Task.Completed",
+                        ActorUserId: actorUserId,
+                        EntityDisplayName: task.Title,
+                        Details: "ХК утверждена"),
+                    ct);
+            }
+            task.UpdatedAtUtc = now;
+        }
+    }
+
+    private async Task CreateRecalculationTasksAsync(HKCard card, Guid actorUserId, CancellationToken ct)
     {
         var instanceIds = await _db.IndividualCards
             .Where(c => _db.HKCards.Any(h => h.Id == c.HKCardId && h.Code == card.Code))
             .Select(c => c.EquipmentInstanceId)
             .Distinct()
-            .ToListAsync();
+            .ToListAsync(ct);
 
         var objectId = card.ObjectLevel switch
         {
@@ -1080,14 +1174,14 @@ public class HKCardService
             join p in _db.ProductCompositionParts on a.PartId equals p.Id
             join pc in _db.ProductCompositions on p.ProductCompositionId equals pc.Id
             where a.AggregateId == objectId
-            select pc.EquipmentModelId).Distinct().ToListAsync();
+            select pc.EquipmentModelId).Distinct().ToListAsync(ct);
 
         if (modelIds.Count != 0)
         {
             var fromModels = await _db.EquipmentInstances
                 .Where(i => modelIds.Contains(i.EquipmentModelId))
                 .Select(i => i.Id)
-                .ToListAsync();
+                .ToListAsync(ct);
             instanceIds = instanceIds.Union(fromModels).Distinct().ToList();
         }
 
@@ -1101,16 +1195,22 @@ public class HKCardService
         if (assignee == null)
             return;
 
-        var tasks = instanceIds.Select(instanceId => BuildLegacyTask(card,
-            title: "Пересчёт инд. карт — экземпляр",
-            description: $"Утверждена новая версия ХК {card.Code} (v{card.Version}). Требуется подтверждение пересчёта индивидуальных карт.",
-            type: WorkTaskType.HKReview,
-            assignee: assignee,
-            entityType: "EquipmentInstance",
-            entityId: instanceId,
-            dueDays: 14)).ToList();
-
-        await _tasks.CreateRangeAsync(tasks);
+        foreach (var instanceId in instanceIds)
+        {
+            await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
+                Title: "Пересчёт инд. карт — экземпляр",
+                Type: WorkTaskType.HKReview,
+                Priority: WorkTaskPriority.Normal,
+                Description: $"Утверждена новая версия ХК {card.Code} (v{card.Version}). Требуется подтверждение пересчёта индивидуальных карт.",
+                AssignedToUserId: assignee,
+                BranchId: card.BranchId,
+                EntityType: "EquipmentInstance",
+                EntityId: instanceId,
+                EntityCodeSnapshot: card.Code,
+                EntityTitleSnapshot: $"v{card.Version}",
+                DueDateUtc: DateTime.UtcNow.AddDays(14),
+                NotifyAssignee: true), ct);
+        }
     }
 
     private async Task ArchivePreviousApprovedVersionsAsync(HKCard card, Guid actorUserId, CancellationToken ct = default)
@@ -1163,55 +1263,6 @@ public class HKCardService
         {
             // Concurrency conflict during archival is non-fatal
         }
-    }
-
-    private async Task CreateBranchRoleTaskAsync(HKCard card, string role, string title, string description, string fallbackAssignee)
-    {
-        var users = await GetBranchUsersInRoleAsync(card.BranchId, role);
-        var assignee = users.Count > 0 ? users[0] : fallbackAssignee;
-        await _tasks.CreateRangeAsync(new[]
-        {
-            BuildLegacyTask(card,
-                title: title,
-                description: description,
-                type: WorkTaskType.HKReview,
-                assignee: assignee,
-                entityType: "HKCard",
-                entityId: card.Id,
-                dueDays: 7)
-        });
-    }
-
-    private static WorkTask BuildLegacyTask(
-        HKCard card,
-        string title,
-        string description,
-        WorkTaskType type,
-        string assignee,
-        string entityType,
-        Guid entityId,
-        int dueDays)
-    {
-        var now = DateTime.UtcNow;
-        return new WorkTask
-        {
-            Id = Guid.NewGuid(),
-            Title = title,
-            Description = description,
-            Type = type,
-            Status = WorkTaskStatus.Open,
-            Priority = WorkTaskPriority.Normal,
-            AssignedToUserId = assignee,
-            BranchId = card.BranchId,
-            EntityType = entityType,
-            EntityId = entityId,
-            EntityCodeSnapshot = card.Code,
-            EntityTitleSnapshot = $"v{card.Version}",
-            CreatedByUserId = assignee,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = now,
-            DueDateUtc = now.AddDays(dueDays)
-        };
     }
 
     private async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)

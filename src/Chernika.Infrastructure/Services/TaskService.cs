@@ -95,6 +95,97 @@ public class TaskService
         return await MapToDtoAsync(task, ct);
     }
 
+    public async Task<WorkTask> CreateFromWorkflowAsync(CreateWorkflowTaskCommand command, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        if (string.IsNullOrWhiteSpace(command.AssignedToUserId))
+            throw new ArgumentException("Workflow-задача должна быть назначена пользователю.");
+
+        if (command.EntityType != null && command.EntityId.HasValue)
+        {
+            var duplicate = await _db.WorkTasks.AnyAsync(t =>
+                !t.IsDeleted
+                && t.Type == command.Type
+                && t.EntityType == command.EntityType
+                && t.EntityId == command.EntityId
+                && (t.Status == WorkTaskStatus.Open
+                    || t.Status == WorkTaskStatus.InProgress
+                    || t.Status == WorkTaskStatus.Overdue), ct);
+            if (duplicate)
+                return (await _db.WorkTasks.FirstOrDefaultAsync(t =>
+                    !t.IsDeleted
+                    && t.Type == command.Type
+                    && t.EntityType == command.EntityType
+                    && t.EntityId == command.EntityId
+                    && (t.Status == WorkTaskStatus.Open
+                        || t.Status == WorkTaskStatus.InProgress
+                        || t.Status == WorkTaskStatus.Overdue), ct))!;
+        }
+
+        var now = DateTime.UtcNow;
+        var task = new WorkTask
+        {
+            Id = Guid.NewGuid(),
+            Title = command.Title.Trim(),
+            Description = command.Description,
+            Type = command.Type,
+            Status = WorkTaskStatus.Open,
+            Priority = command.Priority,
+            CreatedByUserId = actorId.ToString(),
+            AssignedToUserId = command.AssignedToUserId,
+            BranchId = command.BranchId,
+            EntityType = command.EntityType,
+            EntityId = command.EntityId,
+            EntityCodeSnapshot = command.EntityCodeSnapshot,
+            EntityTitleSnapshot = command.EntityTitleSnapshot,
+            CreatedAtUtc = now,
+            DueDateUtc = command.DueDateUtc,
+            UpdatedAtUtc = now,
+        };
+
+        _db.WorkTasks.Add(task);
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest(
+                EntityType: "WorkTask",
+                EntityId: task.Id.ToString(),
+                Action: "Task.Created",
+                ActorUserId: actorId,
+                EntityDisplayName: task.Title),
+            ct);
+
+        if (command.NotifyAssignee)
+        {
+            await _notifications.AddAsync(command.AssignedToUserId, new CreateNotificationCommand(
+                Type: NotificationType.TaskAssigned,
+                Title: $"Назначена задача: {task.Title}",
+                Message: command.Description,
+                EntityType: task.EntityType,
+                EntityId: task.EntityId,
+                WorkTaskId: task.Id,
+                NavigationUrl: $"/задачи/{task.Id}",
+                BranchId: task.BranchId,
+                DeduplicationKey: $"task-assigned:{task.Id}:{command.AssignedToUserId}"), ct);
+        }
+
+        return task;
+    }
+
+    public async Task<WorkTaskDto?> GetByIdAsync(Guid taskId, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        await _permissions.DemandPermissionAsync(PermissionCodes.TaskView, ct);
+        var safeBranchId = await GetAccessibleBranchIdAsync(null, ct);
+
+        var baseQuery = _db.WorkTasks.AsNoTracking().Where(t => t.Id == taskId && !t.IsDeleted);
+        if (safeBranchId.HasValue)
+            baseQuery = baseQuery.Where(t => t.BranchId == safeBranchId.Value);
+        baseQuery = await ApplyScopeAsync(baseQuery, actorId, safeBranchId, ct);
+
+        var task = await baseQuery.FirstOrDefaultAsync(ct);
+        return task == null ? null : await MapToDtoAsync(task, ct);
+    }
+
     public async Task<WorkTaskDto> AssignAsync(AssignWorkTaskCommand command, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
@@ -268,7 +359,7 @@ public class TaskService
             .Take(pageSize)
             .ToListAsync(ct);
 
-        var names = await GetUserNamesAsync(tasks.Select(t => t.AssignedToUserId), ct);
+        var names = await GetUserNamesAsync(tasks.Select(t => t.AssignedToUserId).Concat(tasks.Select(t => t.CompletedByUserId)), ct);
         var now = DateTime.UtcNow;
 
         return new PagedResult<WorkTaskListItemDto>
@@ -291,6 +382,9 @@ public class TaskService
                 EntityTitleSnapshot = t.EntityTitleSnapshot,
                 CreatedAtUtc = t.CreatedAtUtc,
                 DueDateUtc = t.DueDateUtc,
+                CompletedAtUtc = t.CompletedAtUtc,
+                CompletedByUserId = t.CompletedByUserId,
+                CompletedByUserName = t.CompletedByUserId != null ? names.GetValueOrDefault(t.CompletedByUserId) : null,
                 IsOverdue = t.DueDateUtc.HasValue && t.DueDateUtc < now
                     && (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress),
             }).ToList(),
@@ -315,13 +409,23 @@ public class TaskService
         return await query.CountAsync(ct);
     }
 
-    public async Task CreateRangeAsync(IEnumerable<WorkTask> tasks, CancellationToken ct = default)
+    public async Task<Dictionary<WorkTaskStatus, int>> GetStatusCountsAsync(CancellationToken ct = default)
     {
-        var list = tasks.ToList();
-        if (list.Count == 0)
-            return;
-        _db.WorkTasks.AddRange(list);
-        await _db.SaveChangesAsync(ct);
+        var actorId = _currentUser.GetRequiredUserId();
+        await _permissions.DemandPermissionAsync(PermissionCodes.TaskView, ct);
+        var safeBranchId = await GetAccessibleBranchIdAsync(null, ct);
+
+        var baseQuery = _db.WorkTasks.AsNoTracking().Where(t => !t.IsDeleted);
+        if (safeBranchId.HasValue)
+            baseQuery = baseQuery.Where(t => t.BranchId == safeBranchId.Value);
+        baseQuery = await ApplyScopeAsync(baseQuery, actorId, safeBranchId, ct);
+
+        var groups = await baseQuery
+            .GroupBy(t => t.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        return groups.ToDictionary(g => g.Status, g => g.Count);
     }
 
     public async Task ProcessOverdueTasksAsync(CancellationToken ct = default)
@@ -451,6 +555,9 @@ public class TaskService
         if (f.Status.HasValue)
             query = query.Where(t => t.Status == f.Status.Value);
 
+        if (f.ActiveOnly)
+            query = query.Where(t => t.Status != WorkTaskStatus.Completed && t.Status != WorkTaskStatus.Cancelled);
+
         if (f.Type.HasValue)
             query = query.Where(t => t.Type == f.Type.Value);
 
@@ -462,6 +569,12 @@ public class TaskService
 
         if (f.EntityId.HasValue)
             query = query.Where(t => t.EntityId == f.EntityId.Value);
+
+        if (f.CompletedWithinDays.HasValue && f.CompletedWithinDays.Value > 0)
+        {
+            var from = DateTime.UtcNow.AddDays(-f.CompletedWithinDays.Value);
+            query = query.Where(t => t.CompletedAtUtc != null && t.CompletedAtUtc >= from);
+        }
 
         var now = DateTime.UtcNow;
         switch (f.DueFilter)
@@ -539,6 +652,7 @@ public class TaskService
             StartedAtUtc = task.StartedAtUtc,
             CompletedAtUtc = task.CompletedAtUtc,
             CompletedByUserId = task.CompletedByUserId,
+            CompletedByUserName = task.CompletedByUserId != null ? names.GetValueOrDefault(task.CompletedByUserId) : null,
             CompletionComment = task.CompletionComment,
             IsOverdue = task.DueDateUtc.HasValue && task.DueDateUtc < now
                 && WorkTaskTransitions.IsActive(task.Status),

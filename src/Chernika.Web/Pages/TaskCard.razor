@@ -1,0 +1,302 @@
+@using Chernika.Domain
+@using Chernika.Domain.Entities
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@page "/задачи/{Id:guid}"
+@attribute [Authorize(Policy = "ViewTasks")]
+@inject TaskService TaskService
+@inject AuditService AuditSvc
+@inject NavigationManager Nav
+@inject IPermissionService PermSvc
+@inject AuthenticationStateProvider AuthState
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Задача</h2>
+            <div class="hint"><a href="/задачи" class="linkBtn">← К списку задач</a></div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (task == null)
+            {
+                <div class="empty-state">Задача не найдена или недоступна</div>
+            }
+            else
+            {
+                <div class="metrics2">
+                    <div class="metric"><div class="label">Статус</div><div class="value"><span class="tag @StatusClass(task.Status)">@StatusLabel(task.Status)</span></div></div>
+                    <div class="metric"><div class="label">Тип</div><div class="value">@TypeLabel(task.Type)</div></div>
+                    <div class="metric"><div class="label">Приоритет</div><div class="value">@PriorityLabel(task.Priority)</div></div>
+                    <div class="metric"><div class="label">Исполнитель</div><div class="value">@(task.AssignedToUserName ?? task.AssignedRole ?? "—")</div></div>
+                    <div class="metric"><div class="label">Автор</div><div class="value">@(task.CreatedByUserName ?? "—")</div></div>
+                    <div class="metric"><div class="label">Создана</div><div class="value mono">@task.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm")</div></div>
+                    <div class="metric"><div class="label">Срок</div><div class="value mono">@(task.DueDateUtc?.ToString("dd.MM.yyyy HH:mm") ?? "—")</div></div>
+                    @if (task.StartedAtUtc.HasValue)
+                    {
+                        <div class="metric"><div class="label">Начата</div><div class="value mono">@task.StartedAtUtc.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                    }
+                    @if (task.CompletedAtUtc.HasValue)
+                    {
+                        <div class="metric"><div class="label">Завершена</div><div class="value mono">@task.CompletedAtUtc.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                    }
+                    @if (task.CompletedByUserName != null)
+                    {
+                        <div class="metric"><div class="label">Кем завершена</div><div class="value">@task.CompletedByUserName</div></div>
+                    }
+                    @if (!string.IsNullOrEmpty(task.EntityCodeSnapshot))
+                    {
+                        <div class="metric"><div class="label">Объект</div><div class="value mono">@task.EntityCodeSnapshot @task.EntityTitleSnapshot</div></div>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(task.Description))
+                {
+                    <div class="note" style="margin-top:12px">@task.Description</div>
+                }
+                @if (!string.IsNullOrEmpty(task.CompletionComment))
+                {
+                    <div class="note" style="margin-top:12px">Комментарий выполнения: @task.CompletionComment</div>
+                }
+                <div class="btnRow" style="margin-top:12px">
+                    @if (CanStart)
+                    {
+                        <button class="btn primary" @onclick="StartTask">▶ Взять в работу</button>
+                    }
+                    @if (CanComplete)
+                    {
+                        <button class="btn primary" @onclick="() => OpenComplete()">✓ Выполнить</button>
+                    }
+                    @if (_canCancel)
+                    {
+                        <button class="btn" @onclick="CancelTask">Отменить</button>
+                    }
+                    @if (task.EntityType == "HKCard" && task.EntityId.HasValue)
+                    {
+                        <button class="btn" @onclick="() => GoToHk(task.EntityId.Value)">Открыть ХК</button>
+                    }
+                </div>
+            }
+        </div>
+    </section>
+
+    @if (task != null)
+    {
+        <section class="panel">
+            <div class="panelHeader"><h2>История</h2><div class="hint">@auditLogs.Count записей</div></div>
+            <div class="panelBody">
+                @if (!auditLogs.Any())
+                {
+                    <div class="empty-state">История пуста</div>
+                }
+                else
+                {
+                    <table>
+                        <thead>
+                            <tr><th>Дата</th><th>Действие</th><th>Пользователь</th><th>Комментарий</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var log in auditLogs)
+                            {
+                                <tr>
+                                    <td class="mono">@log.CreatedAt.ToString("dd.MM.yyyy HH:mm")</td>
+                                    <td>@AuditDisplayCatalog.GetAction(log.Action).Title</td>
+                                    <td>@(log.ActorFullName ?? "Система")</td>
+                                    <td>@(log.Details ?? "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </section>
+    }
+</div>
+
+@if (showCompleteModal && task != null)
+{
+    <div class="modalOverlay" @onclick="() => showCompleteModal = false">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="complete-title" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3 id="complete-title">Выполнение задачи</h3>
+                <button type="button" class="modalCloseButton" @onclick="() => showCompleteModal = false">×</button>
+            </div>
+            <div class="modalBody">
+                <div class="note" style="margin-bottom:12px">@task.Title</div>
+                @if (RequiresComment)
+                {
+                    <div class="note warn" style="margin-bottom:8px">Для задач «Доработка ХК» комментарий выполнения обязателен.</div>
+                }
+                <div class="field"><label>Комментарий выполнения</label>
+                    <textarea @bind="completeComment" rows="3" style="width:100%;resize:vertical;padding:8px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:14px" placeholder="Опишите результат…"></textarea>
+                </div>
+            </div>
+            <div class="modalFooter">
+                <button class="btn" @onclick="() => showCompleteModal = false">Отмена</button>
+                <button class="btn primary" @onclick="ConfirmComplete">Выполнить</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="note" style="margin-top:12px">@errorMessage</div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private WorkTaskDto? task;
+    private List<Chernika.Domain.Entities.AuditLog> auditLogs = new();
+    private bool loading = true;
+    private bool _canComplete;
+    private bool _canCancel;
+    private bool _canSystemConfig;
+    private string currentUserId = "";
+    private string completeComment = "";
+    private bool showCompleteModal;
+    private string? errorMessage;
+
+    private bool CanStart =>
+        task != null && _canComplete && WorkTaskTransitions.CanStart(task.Status)
+        && (task.AssignedToUserId == currentUserId || _canSystemConfig);
+
+    private bool CanComplete =>
+        task != null && _canComplete && WorkTaskTransitions.IsActive(task.Status)
+        && (task.AssignedToUserId == currentUserId || _canSystemConfig);
+
+    private bool RequiresComment =>
+        task is { Type: WorkTaskType.HKRevision or WorkTaskType.ReferenceProposalReview };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        if (currentUserId != "")
+        {
+            _canComplete = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskComplete);
+            _canCancel = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskCancel);
+            _canSystemConfig = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        errorMessage = null;
+        try
+        {
+            task = await TaskService.GetByIdAsync(Id);
+            auditLogs = task == null
+                ? new List<Chernika.Domain.Entities.AuditLog>()
+                : await AuditSvc.GetLogsByEntityAsync("WorkTask", Id.ToString());
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void OpenComplete()
+    {
+        completeComment = "";
+        showCompleteModal = true;
+    }
+
+    private async Task ConfirmComplete()
+    {
+        if (task == null) return;
+        if (RequiresComment && string.IsNullOrWhiteSpace(completeComment))
+        {
+            errorMessage = "Для этого типа задачи комментарий выполнения обязателен.";
+            return;
+        }
+        try
+        {
+            await TaskService.CompleteAsync(new CompleteWorkTaskCommand(Id, completeComment.Trim()));
+            showCompleteModal = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private async Task StartTask()
+    {
+        try
+        {
+            await TaskService.StartAsync(Id);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private async Task CancelTask()
+    {
+        try
+        {
+            await TaskService.CancelAsync(new CancelWorkTaskCommand(Id, "Отменена пользователем"));
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private void GoToHk(Guid id) => Nav.NavigateTo($"/хк/{id}");
+
+    private static string StatusLabel(WorkTaskStatus status) => status switch
+    {
+        WorkTaskStatus.Open => "Открыта",
+        WorkTaskStatus.InProgress => "В работе",
+        WorkTaskStatus.Completed => "Выполнена",
+        WorkTaskStatus.Cancelled => "Отменена",
+        WorkTaskStatus.Overdue => "Просрочена",
+        _ => status.ToString()
+    };
+
+    private static string StatusClass(WorkTaskStatus status) => status switch
+    {
+        WorkTaskStatus.Open => "warn",
+        WorkTaskStatus.InProgress => "",
+        WorkTaskStatus.Completed => "ok",
+        WorkTaskStatus.Cancelled => "",
+        WorkTaskStatus.Overdue => "bad",
+        _ => ""
+    };
+
+    private static string PriorityLabel(WorkTaskPriority priority) => priority switch
+    {
+        WorkTaskPriority.Low => "Низкий",
+        WorkTaskPriority.Normal => "Обычный",
+        WorkTaskPriority.High => "Высокий",
+        WorkTaskPriority.Critical => "Критический",
+        _ => priority.ToString()
+    };
+
+    private static string TypeLabel(WorkTaskType type) => type switch
+    {
+        WorkTaskType.HKReview => "Проверка ХК",
+        WorkTaskType.HKRevision => "Доработка ХК",
+        WorkTaskType.HKExpirationReview => "Срок действия ХК",
+        WorkTaskType.ParentHKRevision => "Доработка родительской ХК",
+        WorkTaskType.ReferenceProposalReview => "Проверка предложения",
+        WorkTaskType.UserAdministration => "Администрирование пользователей",
+        _ => type.ToString()
+    };
+}

@@ -17,6 +17,7 @@ public sealed class TestScope : IAsyncDisposable
         User = user;
         Db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Tasks = scope.ServiceProvider.GetRequiredService<TaskService>();
+        HK = scope.ServiceProvider.GetRequiredService<HKCardService>();
         Notifications = scope.ServiceProvider.GetRequiredService<NotificationService>();
         Audit = scope.ServiceProvider.GetRequiredService<AuditService>();
         Permissions = scope.ServiceProvider.GetRequiredService<IPermissionService>();
@@ -26,6 +27,7 @@ public sealed class TestScope : IAsyncDisposable
     public FakeCurrentUser User { get; }
     public AppDbContext Db { get; }
     public TaskService Tasks { get; }
+    public HKCardService HK { get; }
     public NotificationService Notifications { get; }
     public AuditService Audit { get; }
     public IPermissionService Permissions { get; }

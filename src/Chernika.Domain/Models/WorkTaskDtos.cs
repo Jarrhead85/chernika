@@ -30,6 +30,7 @@ public sealed class WorkTaskDto
     public DateTime? StartedAtUtc { get; init; }
     public DateTime? CompletedAtUtc { get; init; }
     public string? CompletedByUserId { get; init; }
+    public string? CompletedByUserName { get; init; }
     public string? CompletionComment { get; init; }
 
     public bool IsOverdue { get; init; }
@@ -58,5 +59,8 @@ public sealed class WorkTaskListItemDto
 
     public DateTime CreatedAtUtc { get; init; }
     public DateTime? DueDateUtc { get; init; }
+    public DateTime? CompletedAtUtc { get; init; }
+    public string? CompletedByUserId { get; init; }
+    public string? CompletedByUserName { get; init; }
     public bool IsOverdue { get; init; }
 }

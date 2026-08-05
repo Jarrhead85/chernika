@@ -326,7 +326,7 @@ public class IndividualCardService
         type.Id = Guid.NewGuid();
         _db.CoefficientTypes.Add(type);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("CoefficientType", type.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("CoefficientType", type.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return type;
     }
 
@@ -334,7 +334,7 @@ public class IndividualCardService
     {
         _db.CoefficientTypes.Update(type);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("CoefficientType", type.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("CoefficientType", type.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -348,7 +348,7 @@ public class IndividualCardService
 
         _db.CoefficientTypes.Remove(t);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("CoefficientType", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("CoefficientType", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return (true, null);
     }
 
@@ -375,7 +375,7 @@ public class IndividualCardService
         coefficient.Id = Guid.NewGuid();
         _db.Coefficients.Add(coefficient);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Coefficient", coefficient.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Coefficient", coefficient.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return coefficient;
     }
 
@@ -383,7 +383,7 @@ public class IndividualCardService
     {
         _db.Coefficients.Update(coefficient);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Coefficient", coefficient.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Coefficient", coefficient.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -394,7 +394,7 @@ public class IndividualCardService
         c.IsDeleted = true;
         c.DeletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Coefficient", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Coefficient", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 

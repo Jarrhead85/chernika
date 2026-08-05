@@ -42,7 +42,7 @@ public class EquipmentService
         node.Id = Guid.NewGuid();
         _db.Nodes.Add(node);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Node", node.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Node", node.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return node;
     }
 
@@ -50,7 +50,7 @@ public class EquipmentService
     {
         _db.Nodes.Update(node);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Node", node.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Node", node.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return node;
     }
 
@@ -61,7 +61,7 @@ public class EquipmentService
         n.IsDeleted = true;
         n.DeletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Node", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Node", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -254,7 +254,7 @@ public class EquipmentService
 
         _db.ProductCompositions.Add(comp);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId()));
         return comp;
     }
 
@@ -274,7 +274,7 @@ public class EquipmentService
         comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
 
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductComposition", comp.Id.ToString(), "UpdateDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductComposition", comp.Id.ToString(), "UpdateDraft", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -290,7 +290,7 @@ public class EquipmentService
 
         _db.ProductCompositions.Remove(comp);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductComposition", id.ToString(), "DeleteDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductComposition", id.ToString(), "DeleteDraft", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -341,7 +341,7 @@ public class EquipmentService
         comp.Comment = comment ?? comp.Comment;
 
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductComposition", id.ToString(), "Approve", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductComposition", id.ToString(), "Approve", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -357,7 +357,7 @@ public class EquipmentService
         comp.IsActive = false;
         comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductComposition", id.ToString(), "Archive", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductComposition", id.ToString(), "Archive", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -381,7 +381,7 @@ public class EquipmentService
         await _db.SaveChangesAsync(ct);
 
         var action = newStatus == ProductCompositionStatus.OnReview ? "SubmitForReview" : "ReturnToDraft";
-        await _audit.LogAsync("ProductComposition", id.ToString(), action, _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductComposition", id.ToString(), action, _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -409,7 +409,7 @@ public class EquipmentService
         _db.ProductCompositionParts.Add(part);
         await _db.SaveChangesAsync(ct);
 
-        await _audit.LogAsync("ProductCompositionPart", part.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductCompositionPart", part.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return await _db.ProductCompositionParts
             .Include(p => p.Aggregates).ThenInclude(a => a.Aggregate)
             .FirstAsync(p => p.Id == part.Id, ct);
@@ -429,7 +429,7 @@ public class EquipmentService
         part.Description = request.Description;
         part.SortOrder = request.SortOrder;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductCompositionPart", request.PartId.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductCompositionPart", request.PartId.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -445,7 +445,7 @@ public class EquipmentService
 
         _db.ProductCompositionParts.Remove(part);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductCompositionPart", partId.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductCompositionPart", partId.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -486,7 +486,7 @@ public class EquipmentService
         _db.ProductCompositionAggregates.Add(pca);
         await _db.SaveChangesAsync(ct);
 
-        await _audit.LogAsync("ProductCompositionAggregate", pca.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductCompositionAggregate", pca.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return await _db.ProductCompositionAggregates
             .Include(a => a.Aggregate)
             .FirstAsync(a => a.Id == pca.Id, ct);
@@ -507,7 +507,7 @@ public class EquipmentService
 
         pca.Quantity = request.Quantity;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductCompositionAggregate", request.Id.ToString(), "UpdateQuantity", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductCompositionAggregate", request.Id.ToString(), "UpdateQuantity", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -523,7 +523,7 @@ public class EquipmentService
 
         _db.ProductCompositionAggregates.Remove(pca);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ProductCompositionAggregate", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ProductCompositionAggregate", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -545,7 +545,7 @@ public class EquipmentService
         branch.Id = Guid.NewGuid();
         _db.Branches.Add(branch);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Branch", branch.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Branch", branch.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return branch;
     }
 
@@ -553,7 +553,7 @@ public class EquipmentService
     {
         _db.Branches.Update(branch);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Branch", branch.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Branch", branch.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -570,7 +570,7 @@ public class EquipmentService
 
         _db.Branches.Remove(b);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Branch", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Branch", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return (true, null);
     }
 
@@ -591,7 +591,7 @@ public class EquipmentService
         };
         _db.Aggregates.Add(entity);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("Aggregate", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Aggregate", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return entity;
     }
 
@@ -603,7 +603,7 @@ public class EquipmentService
         a.Name = request.Name.Trim();
         a.Description = request.Description?.Trim();
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("Aggregate", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Aggregate", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -622,7 +622,7 @@ public class EquipmentService
         a.IsDeleted = true;
         a.DeletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("Aggregate", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Aggregate", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return (true, null);
     }
 
@@ -663,7 +663,7 @@ public class EquipmentService
         };
         _db.AggregateCompositions.Add(comp);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId()));
         return comp;
     }
 
@@ -682,7 +682,7 @@ public class EquipmentService
         comp.ExpirationDate = request.ExpirationDate;
         comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateComposition", request.Id.ToString(), "UpdateDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", request.Id.ToString(), "UpdateDraft", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -698,7 +698,7 @@ public class EquipmentService
 
         _db.AggregateCompositions.Remove(comp);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateComposition", id.ToString(), "DeleteDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", id.ToString(), "DeleteDraft", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -747,7 +747,7 @@ public class EquipmentService
         comp.UpdatedAt = now;
         comp.Comment = comment ?? comp.Comment;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateComposition", id.ToString(), "Approve", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", id.ToString(), "Approve", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -763,7 +763,7 @@ public class EquipmentService
         comp.IsActive = false;
         comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateComposition", id.ToString(), "Archive", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", id.ToString(), "Archive", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -796,7 +796,7 @@ public class EquipmentService
         };
         _db.AggregateCompositionNodes.Add(acn);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateCompositionNode", acn.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateCompositionNode", acn.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return await _db.AggregateCompositionNodes.Include(n => n.Node).FirstAsync(n => n.Id == acn.Id, ct);
     }
 
@@ -814,7 +814,7 @@ public class EquipmentService
         acn.SortOrder = request.SortOrder;
         acn.Notes = request.Notes;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateCompositionNode", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateCompositionNode", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -830,7 +830,7 @@ public class EquipmentService
 
         _db.AggregateCompositionNodes.Remove(acn);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("AggregateCompositionNode", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AggregateCompositionNode", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -853,7 +853,7 @@ public class EquipmentService
         };
         _db.Complexes.Add(entity);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("Complex", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Complex", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return entity;
     }
 
@@ -865,7 +865,7 @@ public class EquipmentService
         c.Name = request.Name.Trim();
         c.Description = request.Description?.Trim();
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("Complex", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Complex", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -889,7 +889,7 @@ public class EquipmentService
         c.IsDeleted = true;
         c.DeletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("Complex", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("Complex", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return (true, null);
     }
 
@@ -930,7 +930,7 @@ public class EquipmentService
         };
         _db.ComplexCompositions.Add(comp);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId()));
         return comp;
     }
 
@@ -949,7 +949,7 @@ public class EquipmentService
         comp.ExpirationDate = request.ExpirationDate;
         comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexComposition", request.Id.ToString(), "UpdateDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", request.Id.ToString(), "UpdateDraft", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -965,7 +965,7 @@ public class EquipmentService
 
         _db.ComplexCompositions.Remove(comp);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexComposition", id.ToString(), "DeleteDraft", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", id.ToString(), "DeleteDraft", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1014,7 +1014,7 @@ public class EquipmentService
         comp.UpdatedAt = now;
         comp.Comment = comment ?? comp.Comment;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexComposition", id.ToString(), "Approve", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", id.ToString(), "Approve", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1030,7 +1030,7 @@ public class EquipmentService
         comp.IsActive = false;
         comp.UpdatedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexComposition", id.ToString(), "Archive", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", id.ToString(), "Archive", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1062,7 +1062,7 @@ public class EquipmentService
         };
         _db.ComplexCompositionItems.Add(item);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexCompositionItem", item.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexCompositionItem", item.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return await _db.ComplexCompositionItems.Include(i => i.EquipmentModel).FirstAsync(i => i.Id == item.Id, ct);
     }
 
@@ -1080,7 +1080,7 @@ public class EquipmentService
         item.SortOrder = request.SortOrder;
         item.Notes = request.Notes;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexCompositionItem", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexCompositionItem", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1096,7 +1096,7 @@ public class EquipmentService
 
         _db.ComplexCompositionItems.Remove(item);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync("ComplexCompositionItem", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("ComplexCompositionItem", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1133,7 +1133,7 @@ public class EquipmentService
         await _db.SaveChangesAsync(ct);
 
         var action = newStatus == ProductCompositionStatus.OnReview ? "SubmitForReview" : "ReturnToDraft";
-        await _audit.LogAsync(entityName, id.ToString(), action, _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest(entityName, id.ToString(), action, _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1149,7 +1149,7 @@ public class EquipmentService
         unit.Id = Guid.NewGuid();
         _db.AssemblyUnits.Add(unit);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("AssemblyUnit", unit.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", unit.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return unit;
     }
 
@@ -1157,7 +1157,7 @@ public class EquipmentService
     {
         _db.AssemblyUnits.Update(unit);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("AssemblyUnit", unit.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", unit.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1168,7 +1168,7 @@ public class EquipmentService
         a.IsDeleted = true;
         a.DeletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("AssemblyUnit", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1184,7 +1184,7 @@ public class EquipmentService
         material.Id = Guid.NewGuid();
         _db.GsmMaterials.Add(material);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("GsmMaterial", material.Id.ToString(), "Create", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("GsmMaterial", material.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
         return material;
     }
 
@@ -1192,7 +1192,7 @@ public class EquipmentService
     {
         _db.GsmMaterials.Update(material);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("GsmMaterial", material.Id.ToString(), "Update", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("GsmMaterial", material.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1203,7 +1203,7 @@ public class EquipmentService
         m.IsDeleted = true;
         m.DeletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("GsmMaterial", id.ToString(), "Delete", _currentUser.GetRequiredUserId());
+        await _audit.LogAsync(new AuditWriteRequest("GsmMaterial", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
     }
 

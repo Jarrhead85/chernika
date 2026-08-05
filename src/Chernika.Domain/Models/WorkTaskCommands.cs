@@ -25,6 +25,20 @@ public sealed record CreateWorkTaskCommand(
     DateTime? DueDateUtc = null,
     bool NotifyAssignee = true);
 
+public sealed record CreateWorkflowTaskCommand(
+    string Title,
+    WorkTaskType Type,
+    WorkTaskPriority Priority,
+    string? Description = null,
+    string? AssignedToUserId = null,
+    Guid? BranchId = null,
+    string? EntityType = null,
+    Guid? EntityId = null,
+    string? EntityCodeSnapshot = null,
+    string? EntityTitleSnapshot = null,
+    DateTime? DueDateUtc = null,
+    bool NotifyAssignee = true);
+
 public sealed record AssignWorkTaskCommand(
     Guid TaskId,
     string? AssignedToUserId,

@@ -2,11 +2,14 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject SearchService SearchSvc
 @inject IPermissionService PermSvc
+@inject TaskService TaskSvc
 @using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Models
+@using Chernika.Infrastructure.Services
 @using Microsoft.AspNetCore.Identity
 @inherits LayoutComponentBase
+@implements IDisposable
 
 <div class="bgParallax" aria-hidden="true"></div>
 <div class="app">
@@ -61,6 +64,10 @@
             <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
             <a class="@GetActive("задачи")" href="задачи">
                 <span> Задачи</span>
+                @if (openTaskCount > 0)
+                {
+                    <span class="badge">@openTaskCount</span>
+                }
             </a>
             @if (canViewAudit)
             {
@@ -184,8 +191,39 @@
     bool searchHover = false;
     bool showSearchDropdown => searchFocused && searchResults.Count > 0;
     CancellationTokenSource? searchCts;
+    int openTaskCount;
+    bool _authChecked;
 
     [Inject] NavigationManager Nav { get; set; } = null!;
+
+    protected override void OnInitialized()
+    {
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _ = RefreshTaskBadgeAsync();
+    }
+
+    private async Task RefreshTaskBadgeAsync()
+    {
+        if (!_authChecked) return;
+        try
+        {
+            openTaskCount = await TaskSvc.GetOpenTaskCountAsync();
+            StateHasChanged();
+        }
+        catch
+        {
+            // не авторизован или нет доступа — бейдж скрыт
+        }
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
 
     string GetActive(string path) =>
         Nav.Uri.Contains(path, StringComparison.OrdinalIgnoreCase) ? "active" : "";
@@ -248,6 +286,7 @@
         var user = authState.User;
         if (user.Identity?.IsAuthenticated == true)
         {
+            _authChecked = true;
             userName = user.FindFirst("FullName")?.Value ?? user.Identity.Name ?? "Пользователь";
             userRole = user.FindFirst("Position")?.Value ?? "";
             userInitial = userName.Length > 0 ? userName[0].ToString().ToUpper() : "?";
@@ -258,6 +297,7 @@
                 canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
                 canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
             }
+            await RefreshTaskBadgeAsync();
         }
     }
 

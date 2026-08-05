@@ -25,6 +25,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
 
     public ApplicationUser SystemAdminUser { get; private set; } = null!;
     public ApplicationUser NormAdminA { get; private set; } = null!;
+    public ApplicationUser NormAdminA2 { get; private set; } = null!;
     public ApplicationUser OperatorA { get; private set; } = null!;
     public ApplicationUser HeadA { get; private set; } = null!;
     public ApplicationUser GuestA { get; private set; } = null!;
@@ -43,12 +44,15 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
             .AddRoles<IdentityRole>()
             .AddEntityFrameworkStores<AppDbContext>();
         services.AddMemoryCache();
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<FakeCurrentUser>();
         services.AddScoped<ICurrentUserService>(sp => sp.GetRequiredService<FakeCurrentUser>());
         services.AddScoped<IPermissionService, PermissionService>();
         services.AddScoped<AuditService>();
         services.AddScoped<TaskService>();
         services.AddScoped<NotificationService>();
+        services.AddScoped<HKCardValidationService>();
+        services.AddScoped<HKCardService>();
         Services = services.BuildServiceProvider();
 
         await using var scope = Services.CreateAsyncScope();
@@ -67,6 +71,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
 
         SystemAdminUser = await CreateUserAsync(um, "sysadmin", nameof(UserRole.SystemAdmin), null);
         NormAdminA = await CreateUserAsync(um, "normadmin_a", nameof(UserRole.NormAdmin), BranchA);
+        NormAdminA2 = await CreateUserAsync(um, "normadmin_a2", nameof(UserRole.NormAdmin), BranchA);
         OperatorA = await CreateUserAsync(um, "operator_a", nameof(UserRole.Operator), BranchA);
         HeadA = await CreateUserAsync(um, "head_a", nameof(UserRole.HeadOfDepartment), BranchA);
         GuestA = await CreateUserAsync(um, "guest_a", nameof(UserRole.Guest), BranchA);

@@ -65,10 +65,26 @@ public class WorkTasksController : ControllerBase
     }
 
     [HttpPut("{id}/complete")]
-    public async Task<ActionResult> Complete(Guid id)
+    public async Task<ActionResult> Complete(Guid id, [FromBody] CompleteWorkTaskRequest? request = null)
     {
-        await _tasks.CompleteAsync(new CompleteWorkTaskCommand(id));
+        await _tasks.CompleteAsync(new CompleteWorkTaskCommand(id, request?.Comment));
         return NoContent();
+    }
+
+    [HttpPost("{id}/start")]
+    public async Task<ActionResult<WorkTaskDto>> Start(Guid id)
+    {
+        var dto = await _tasks.StartAsync(id);
+        return Ok(dto);
+    }
+
+    [HttpGet("{id}")]
+    public async Task<ActionResult<WorkTaskDto>> GetById(Guid id)
+    {
+        var dto = await _tasks.GetByIdAsync(id);
+        if (dto == null)
+            return NotFound();
+        return Ok(dto);
     }
 
     [HttpDelete("{id}")]
