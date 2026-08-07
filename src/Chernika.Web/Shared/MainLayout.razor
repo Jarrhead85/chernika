@@ -154,7 +154,11 @@
                 }
             </div>
             <div class="bellWrap">
-                <button class="iconBtn" title="Уведомления" @onclick="ToggleBell">🔔
+                <button class="iconBtn" id="notificationBellButton" title="Уведомления"
+                        aria-label="Уведомления"
+                        aria-expanded="@(showBellDropdown ? "true" : "false")"
+                        aria-controls="notificationBellDropdown"
+                        @onclick="ToggleBell">🔔
                     @if (unreadCount > 0)
                     {
                         <span class="bellBadge">@UnreadLabel</span>
@@ -162,13 +166,16 @@
                 </button>
                 @if (showBellDropdown)
                 {
-                    <div class="bellBackdrop" @onclick="CloseBell"></div>
-                    <div class="bellDropdown" @onclick:stopPropagation>
+                    <div class="bellBackdrop" @onclick="CloseBell" aria-hidden="true"></div>
+                    <div class="bellDropdown" id="notificationBellDropdown" role="dialog" aria-label="Последние уведомления" @onclick:stopPropagation>
                         <div class="bellDropdownHeader">
                             <span>Уведомления</span>
                             @if (unreadCount > 0)
                             {
-                                <button class="linkBtn" @onclick="MarkAllRead">Прочитать все</button>
+                                <span class="bellHeaderActions">
+                                    <span class="tag warn">@UnreadLabel новых</span>
+                                    <button class="linkBtn" @onclick="MarkAllRead">Прочитать все</button>
+                                </span>
                             }
                         </div>
                         <div class="bellDropdownList">
@@ -186,7 +193,7 @@
                                         {
                                             <div class="bellItemMsg">@n.Message</div>
                                         }
-                                        <div class="bellItemMeta">@NotificationTypeLabel(n.Type) • @n.CreatedAtUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</div>
+                                        <div class="bellItemMeta">@NotificationTypeLabel(n.Type) • @RelativeTime(n.CreatedAtUtc)</div>
                                     </button>
                                 }
                             }
@@ -239,7 +246,10 @@
     int openTaskCount;
     int unreadCount;
     bool showBellDropdown;
-    IReadOnlyList<NotificationDto> recentNotifications = [];    bool _authChecked;
+    IReadOnlyList<NotificationDto> recentNotifications = [];
+    DotNetObjectReference<MainLayout>? _bellRef;
+    bool _bellPositioned;
+    bool _authChecked;
 
     [Inject] NavigationManager Nav { get; set; } = null!;
     [Inject] NotificationService NotifSvc { get; set; } = null!;
@@ -285,7 +295,7 @@
         {
             unreadCount = await NotifSvc.GetUnreadCountAsync();
             if (showBellDropdown)
-                recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 20 })).Items;
+                recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 5 })).Items;
             StateHasChanged();
         }
         catch
@@ -298,12 +308,24 @@
     {
         showBellDropdown = !showBellDropdown;
         if (showBellDropdown)
+        {
             await RefreshBellAsync();
+            _bellPositioned = false;
+        }
         else
+        {
             StateHasChanged();
+        }
     }
 
-    private void CloseBell() => showBellDropdown = false;
+    private void CloseBell()
+    {
+        showBellDropdown = false;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void CloseDropdown() => CloseBell();
 
     private async Task OpenNotification(NotificationDto n)
     {
@@ -353,10 +375,25 @@
         _ => type.ToString(),
     };
 
+    private static string RelativeTime(DateTime utc)
+    {
+        var localNow = DateTime.Now;
+        var local = utc.ToLocalTime();
+        var diff = localNow - local;
+        if (diff.TotalSeconds < 60) return "только что";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes} мин назад";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours} ч назад";
+        if (diff.TotalDays < 2) return "вчера";
+        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays} дн назад";
+        return local.ToString("dd.MM.yyyy");
+    }
+
     public void Dispose()
     {
         Nav.LocationChanged -= OnLocationChanged;
         NotifRefresh.Changed -= OnNotifRefresh;
+        try { _ = JS.InvokeVoidAsync("bellDropdown.clear"); } catch { }
+        _bellRef?.Dispose();
     }
 
     string GetActive(string path) =>
@@ -411,6 +448,14 @@
             await JS.InvokeVoidAsync("applyTheme", _isDark);
             await LoadUserInfo();
             StateHasChanged();
+        }
+
+        if (showBellDropdown && !_bellPositioned)
+        {
+            _bellPositioned = true;
+            _bellRef ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("bellDropdown.position", "notificationBellDropdown", "notificationBellButton");
+            await JS.InvokeVoidAsync("bellDropdown.onEscape", _bellRef);
         }
     }
 
