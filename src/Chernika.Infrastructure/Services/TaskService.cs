@@ -95,9 +95,10 @@ public class TaskService
         return await MapToDtoAsync(task, ct);
     }
 
-    public async Task<WorkTask> CreateFromWorkflowAsync(CreateWorkflowTaskCommand command, CancellationToken ct = default)
+    public async Task<WorkTask> CreateFromWorkflowAsync(
+        CreateWorkflowTaskCommand command, Guid? actorUserId = null, CancellationToken ct = default)
     {
-        var actorId = _currentUser.GetRequiredUserId();
+        var actorId = actorUserId ?? _currentUser.GetRequiredUserId();
 
         if (string.IsNullOrWhiteSpace(command.AssignedToUserId))
             throw new ArgumentException("Workflow-задача должна быть назначена пользователю.");
@@ -132,7 +133,7 @@ public class TaskService
             Type = command.Type,
             Status = WorkTaskStatus.Open,
             Priority = command.Priority,
-            CreatedByUserId = actorId.ToString(),
+            CreatedByUserId = actorId == Guid.Empty ? null : actorId.ToString(),
             AssignedToUserId = command.AssignedToUserId,
             BranchId = command.BranchId,
             EntityType = command.EntityType,
@@ -293,7 +294,7 @@ public class TaskService
                 Details: command.CompletionComment),
             ct);
 
-        if (task.CreatedByUserId != actorId.ToString())
+        if (!string.IsNullOrEmpty(task.CreatedByUserId) && task.CreatedByUserId != actorId.ToString())
         {
             await _notifications.CreateFromWorkflowAsync(task.CreatedByUserId, new CreateNotificationCommand(
                 Type: NotificationType.TaskCompleted,

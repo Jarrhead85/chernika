@@ -13,7 +13,7 @@ public class WorkTask
     public WorkTaskStatus Status { get; set; }
     public WorkTaskPriority Priority { get; set; }
 
-    public string CreatedByUserId { get; set; } = null!;
+    public string? CreatedByUserId { get; set; }
     public string? AssignedToUserId { get; set; }
     public string? AssignedRole { get; set; }
 

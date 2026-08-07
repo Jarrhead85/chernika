@@ -362,7 +362,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Type).HasConversion<int>();
             e.Property(x => x.Status).HasConversion<int>();
             e.Property(x => x.Priority).HasConversion<int>();
-            e.Property(x => x.CreatedByUserId).HasMaxLength(450).IsRequired();
+            e.Property(x => x.CreatedByUserId).HasMaxLength(450);
             e.Property(x => x.AssignedToUserId).HasMaxLength(450);
             e.Property(x => x.AssignedRole).HasMaxLength(100);
             e.Property(x => x.EntityType).HasMaxLength(100);

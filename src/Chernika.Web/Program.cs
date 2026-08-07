@@ -88,6 +88,9 @@ builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
 builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
 builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection("FileStorage"));
+builder.Services.Configure<HKExpirationOptions>(builder.Configuration.GetSection("HKExpiration"));
+builder.Services.AddScoped<HKCardExpirationService>();
+builder.Services.AddHostedService<HKExpirationBackgroundService>();
 builder.Services.AddScoped<AuthenticationStateProvider, RevalidatingIdentityAuthenticationStateProvider<ApplicationUser>>();
 
 var app = builder.Build();

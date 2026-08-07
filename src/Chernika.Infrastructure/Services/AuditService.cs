@@ -45,6 +45,7 @@ public class AuditService
             EntityDisplayName = LimitLength(request.EntityDisplayName, 150),
             ActorFullName = LimitLength(actorFullName, 200),
             ActorLogin = LimitLength(actorLogin, 150),
+            Source = request.Source ?? (request.ActorUserId == Guid.Empty ? AuditSource.System : AuditSource.User),
         };
 
         _db.AuditLogs.Add(log);
@@ -85,6 +86,7 @@ public class AuditService
             EntityDisplayName = LimitLength(request.EntityDisplayName, 150),
             ActorFullName = LimitLength(actorFullName, 200),
             ActorLogin = LimitLength(actorLogin, 150),
+            Source = request.Source ?? (request.ActorUserId == Guid.Empty ? AuditSource.System : AuditSource.User),
         };
 
         _db.AuditLogs.Add(log);

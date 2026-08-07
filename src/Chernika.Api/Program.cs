@@ -12,6 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -82,6 +83,9 @@ builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
 builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
 builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection("FileStorage"));
+builder.Services.Configure<HKExpirationOptions>(builder.Configuration.GetSection("HKExpiration"));
+builder.Services.AddScoped<HKCardExpirationService>();
+builder.Services.AddHostedService<HKExpirationBackgroundService>();
 builder.Services.AddScoped<SearchService>();
 
 var app = builder.Build();

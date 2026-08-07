@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Chernika.Domain;
 
 namespace Chernika.Domain.Entities;
 
@@ -20,4 +21,6 @@ public class AuditLog
 
     [StringLength(150)]
     public string? ActorLogin { get; set; }
+
+    public AuditSource Source { get; set; } = AuditSource.User;
 }

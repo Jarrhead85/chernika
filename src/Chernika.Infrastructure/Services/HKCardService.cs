@@ -1018,6 +1018,43 @@ public class HKCardService
         return (true, null);
     }
 
+    public async Task<bool> ArchiveExpiredAsync(Guid cardId, CancellationToken ct = default)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var card = await _db.HKCards
+            .FirstOrDefaultAsync(c => c.Id == cardId && c.Status == HKCardStatus.Approved, ct);
+        if (card == null)
+            return false;
+
+        var oldStatus = card.Status;
+        card.Status = HKCardStatus.Archived;
+        card.UpdatedAt = now;
+
+        _db.HKCardStatusLogs.Add(new HKCardStatusLog
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = card.Id,
+            FromStatus = oldStatus,
+            ToStatus = HKCardStatus.Archived,
+            ChangedByUserId = Guid.Empty,
+            Comment = "Автоматическое архивирование по истечении срока действия",
+            ChangedAt = now
+        });
+
+        await CloseOpenWorkflowTasksAsync(WorkTaskType.HKExpirationReview, "HKCard", card.Id, cancelled: true, Guid.Empty, ct);
+        await CloseOpenWorkflowTasksAsync(WorkTaskType.HKReview, "HKCard", card.Id, cancelled: true, Guid.Empty, ct);
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            EntityType: "HKCard",
+            EntityId: card.Id.ToString(),
+            Action: "HK.ExpiredArchived",
+            ActorUserId: Guid.Empty,
+            EntityDisplayName: $"{card.Code} v{card.Version}",
+            Details: $"ХК {card.Code} (v{card.Version}) автоматически переведена в архив по истечении срока действия."), ct);
+
+        return true;
+    }
+
     public async Task<(bool Success, string? Error)> DeleteAsync(Guid id, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
@@ -1144,7 +1181,7 @@ public class HKCardService
             EntityCodeSnapshot: card.Code,
             EntityTitleSnapshot: $"v{card.Version}",
             DueDateUtc: dueDays.HasValue ? _time.GetUtcNow().UtcDateTime.AddDays(dueDays.Value) : null,
-            NotifyAssignee: true), ct);
+            NotifyAssignee: true), ct: ct);
     }
 
     private async Task CloseOpenWorkflowTasksAsync(
@@ -1255,7 +1292,7 @@ public class HKCardService
                 EntityCodeSnapshot: card.Code,
                 EntityTitleSnapshot: $"v{card.Version}",
                 DueDateUtc: _time.GetUtcNow().UtcDateTime.AddDays(14),
-                NotifyAssignee: true), ct);
+                NotifyAssignee: true), ct: ct);
         }
     }
 
@@ -1302,7 +1339,7 @@ public class HKCardService
         }
     }
 
-    private async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)
+    public async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)
     {
         var roleEntity = await _db.Roles.FirstOrDefaultAsync(r => r.Name == role);
         if (roleEntity == null) return new();
@@ -1493,7 +1530,7 @@ public class HKCardService
                 EntityCodeSnapshot: card.Code,
                 EntityTitleSnapshot: name,
                 DueDateUtc: _time.GetUtcNow().UtcDateTime.AddDays(7),
-                NotifyAssignee: false), ct);
+                NotifyAssignee: false), ct: ct);
 
             await _notifications.CreateFromWorkflowAsync(reviewerId, new CreateNotificationCommand(
                 Type: NotificationType.ReferenceProposalPending,
@@ -1549,7 +1586,7 @@ public class HKCardService
             EntityId: proposal.Id,
             EntityCodeSnapshot: card.Code,
             EntityTitleSnapshot: name,
-            NotifyAssignee: true), ct);
+            NotifyAssignee: true), ct: ct);
     }
 
     private async Task LogWorkflowNoAssigneeAsync(HKCard card, string role, string taskTitle, CancellationToken ct)

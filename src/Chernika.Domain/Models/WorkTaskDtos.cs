@@ -12,7 +12,7 @@ public sealed class WorkTaskDto
     public WorkTaskStatus Status { get; init; }
     public WorkTaskPriority Priority { get; init; }
 
-    public string CreatedByUserId { get; init; } = null!;
+    public string? CreatedByUserId { get; init; }
     public string? CreatedByUserName { get; init; }
     public string? AssignedToUserId { get; init; }
     public string? AssignedToUserName { get; init; }

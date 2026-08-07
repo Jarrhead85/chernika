@@ -6,4 +6,5 @@ public sealed record AuditWriteRequest(
     string Action,
     Guid ActorUserId,
     string? EntityDisplayName = null,
-    string? Details = null);
+    string? Details = null,
+    AuditSource? Source = null);

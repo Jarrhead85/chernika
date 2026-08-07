@@ -45,6 +45,8 @@ public static class AuditDisplayCatalog
         ["Notification.ReadAll"] = new("Все уведомления прочитаны", AuditSeverity.Neutral),
         ["ReferenceProposal.NoNormAdmin"] = new("Нет NormAdmin в филиале", AuditSeverity.Warning),
         ["Workflow.NoAssignee"] = new("Нет исполнителя в филиале", AuditSeverity.Warning),
+        ["HK.ExpirationWarningCreated"] = new("Предупреждение об истечении срока ХК", AuditSeverity.Warning),
+        ["HK.ExpiredArchived"] = new("ХК автоматически архивирована по истечении срока", AuditSeverity.Warning),
     };
 
     private static readonly Dictionary<string, string> EntityTypes = new()
@@ -90,6 +92,7 @@ public static class AuditDisplayCatalog
         ["Security"] = ["RoleCreated", "ViewerMigrated", "Repaired"],
         ["Tasks"] = ["Task.Created", "Task.Assigned", "Task.Started", "Task.Completed", "Task.Cancelled", "Task.Overdue", "Task.Deleted"],
         ["Notifications"] = ["Notification.Created", "Notification.Read", "Notification.ReadAll"],
+        ["Expiration"] = ["HK.ExpirationWarningCreated", "HK.ExpiredArchived", "Task.Overdue"],
     };
 
     public static AuditActionDisplay GetAction(string action)
