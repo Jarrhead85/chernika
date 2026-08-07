@@ -82,7 +82,40 @@ public class HKCardWorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task RepeatedRevisionRequired_DoesNotDuplicateRevisionTask()
+    public async Task ChangeStatus_Resubmit_CompletesRevisionTaskForAuthor()
+    {
+        await using var s = _fixture.CreateScope();
+        var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.RevisionRequired);
+        var (success, error) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+        Assert.True(success, error);
+
+        var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
+        Assert.Equal(HKCardStatus.OnReview, card.Status);
+
+        var revision = await s.Db.WorkTasks.AsNoTracking().SingleAsync(t =>
+            t.EntityType == "HKCard" && t.EntityId == cardId && t.Type == WorkTaskType.HKRevision);
+        Assert.Equal(WorkTaskStatus.Completed, revision.Status);
+        Assert.Equal("ХК повторно отправлена на проверку", revision.CompletionComment);
+        Assert.Equal(_fixture.NormAdminA.Id, revision.CompletedByUserId);
+        Assert.NotNull(revision.CompletedAtUtc);
+
+        var completedAudit = await s.Db.AuditLogs.AsNoTracking()
+            .SingleAsync(a => a.EntityType == "WorkTask" && a.EntityId == revision.Id.ToString() && a.Action == "Task.Completed");
+        Assert.Equal(Guid.Parse(_fixture.NormAdminA.Id), completedAudit.UserId);
+        Assert.Equal("ХК повторно отправлена на проверку", completedAudit.Details);
+
+        var review = await s.Db.WorkTasks.AsNoTracking().SingleAsync(t =>
+            t.EntityType == "HKCard" && t.EntityId == cardId && t.Type == WorkTaskType.HKReview
+            && t.Status == WorkTaskStatus.Open);
+        Assert.Equal(WorkTaskStatus.Open, review.Status);
+    }
+
+    [Fact]
+    public async Task RepeatedRevisionRequired_AfterResubmit_CreatesFreshRevision()
     {
         await using var s = _fixture.CreateScope();
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
@@ -96,15 +129,54 @@ public class HKCardWorkflowIntegrationTests
 
         var revisions = await s.Db.WorkTasks.AsNoTracking()
             .Where(t => t.EntityType == "HKCard" && t.EntityId == cardId && t.Type == WorkTaskType.HKRevision)
+            .OrderBy(t => t.CreatedAtUtc)
             .ToListAsync();
-        Assert.Single(revisions);
-        Assert.Equal(WorkTaskStatus.Open, revisions[0].Status);
+        Assert.Equal(2, revisions.Count);
+        Assert.Equal(WorkTaskStatus.Completed, revisions[0].Status);
+        Assert.Equal("ХК повторно отправлена на проверку", revisions[0].CompletionComment);
+        Assert.Equal(WorkTaskStatus.Open, revisions[1].Status);
 
         var reviewTasks = await s.Db.WorkTasks.AsNoTracking()
             .Where(t => t.EntityType == "HKCard" && t.EntityId == cardId && t.Type == WorkTaskType.HKReview)
             .ToListAsync();
         Assert.Equal(2, reviewTasks.Count);
         Assert.All(reviewTasks, t => Assert.Equal(WorkTaskStatus.Cancelled, t.Status));
+    }
+
+    [Fact]
+    public async Task ChangeStatus_Approved_ArchivesPreviousApprovedVersion()
+    {
+        await using var s = _fixture.CreateScope();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
+        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.Approved);
+        var v1 = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
+        Assert.Equal(HKCardStatus.Approved, v1.Status);
+
+        var cardId2 = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
+        var v2 = await s.Db.HKCards.FirstAsync(h => h.Id == cardId2);
+        v2.Code = v1.Code;
+        v2.Version = "vTEST2";
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.HK.ChangeStatusAsync(cardId2, HKCardStatus.OnReview);
+        var (success, error) = await s.HK.ChangeStatusAsync(cardId2, HKCardStatus.Approved);
+        Assert.True(success, error);
+
+        var v1After = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
+        Assert.Equal(HKCardStatus.Archived, v1After.Status);
+
+        var archiveLog = await s.Db.HKCardStatusLogs.AsNoTracking()
+            .AnyAsync(l => l.HKCardId == cardId && l.ToStatus == HKCardStatus.Archived);
+        Assert.True(archiveLog);
+
+        var archiveAudit = await s.Db.AuditLogs.AsNoTracking()
+            .AnyAsync(a => a.EntityType == "HKCard" && a.EntityId == cardId.ToString()
+                && a.Action == $"Status:{HKCardStatus.Archived}");
+        Assert.True(archiveAudit);
     }
 
     [Fact]

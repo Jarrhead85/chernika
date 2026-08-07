@@ -1,0 +1,250 @@
+@page "/уведомления"
+@attribute [Authorize(Policy = "ViewNotifications")]
+@using Chernika.Domain
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@using Chernika.Web.Services
+@inject NotificationService NotifSvc
+@inject NavigationManager Nav
+@inject NotificationRefreshService NotifRefresh
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Уведомления</h2>
+            <div class="hint">@unreadCount непрочитанных</div>
+        </div>
+        <div class="panelBody">
+            <div class="hero">
+                <div class="heroBox">
+                    <div class="eyebrow">Колокольчик • Уведомления</div>
+                    <h3>События задач и workflow ХК</h3>
+                    <p>Назначенные задачи, возвраты и утверждения ХК, предложения справочника</p>
+                </div>
+                <div class="heroGrid">
+                    <div class="heroStat">
+                        <div class="label">Непрочитано</div>
+                        <div class="value">@unreadCount</div>
+                        <div class="trend">обновляется после чтения</div>
+                    </div>
+                    <div class="heroStat">
+                        <div class="label">Всего</div>
+                        <div class="value">@result.TotalCount</div>
+                        <div class="trend">@recentCreated за последние 7 дней</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>@TabTitle</h2>
+            <div class="hint">@result.TotalCount записей</div>
+        </div>
+        <div class="panelBody">
+            <div class="chips" style="margin-bottom:12px">
+                <button class="pill @(unreadOnly ? "pillOn" : "")" @onclick="() => SetTab(true)">Непрочитанные @unreadCount</button>
+                <button class="pill @(!unreadOnly ? "pillOn" : "")" @onclick="() => SetTab(false)">Все</button>
+                @if (unreadCount > 0)
+                {
+                    <button class="linkBtn" @onclick="MarkAllRead" style="margin-left:12px">✓ Прочитать все</button>
+                }
+            </div>
+
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!result.Items.Any())
+            {
+                <div class="empty-state">Уведомлений нет</div>
+            }
+            else
+            {
+                <div style="overflow-x:auto">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Событие</th>
+                                <th>Тип</th>
+                                <th>Дата</th>
+                                <th>Статус</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var n in result.Items)
+                            {
+                                <tr>
+                                    <td style="max-width:480px">
+                                        <div class="bellItemTitle" style="@(n.IsRead ? "opacity:.62" : "font-weight:700")">@n.Title</div>
+                                        @if (!string.IsNullOrEmpty(n.Message))
+                                        {
+                                            <div class="bellItemMsg" style="font-size:12px;color:var(--muted);margin-top:2px">@n.Message</div>
+                                        }
+                                    </td>
+                                    <td><span class="tag">@TypeLabel(n.Type)</span></td>
+                                    <td class="mono">@n.CreatedAtUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</td>
+                                    <td><span class="tag @(n.IsRead ? "" : "warn")">@(n.IsRead ? "Прочитано" : "Новое")</span></td>
+                                    <td>
+                                        <div class="rowActions">
+                                            <button class="linkBtn" @onclick="() => OpenNotification(n)">Открыть</button>
+                                            @if (!n.IsRead)
+                                            {
+                                                <button class="linkBtn" @onclick="() => MarkRead(n.Id)">Прочитано</button>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="footer">
+                    <div>
+                        @if (result.Page > 1)
+                        {
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page - 1)">← Назад</button>
+                        }
+                        <span class="mono">стр. @result.Page из @Math.Max(1, result.TotalPages)</span>
+                        @if (result.Page < result.TotalPages)
+                        {
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page + 1)">Вперёд →</button>
+                        }
+                    </div>
+                    <div class="mono">Показано @result.Items.Count из @result.TotalCount</div>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="note" style="margin-top:12px">@errorMessage</div>
+}
+
+@code {
+    private PagedResult<NotificationDto> result = new();
+    private bool unreadOnly = true;
+    private int unreadCount;
+    private int recentCreated;
+    private int page = 1;
+    private const int PageSize = 20;
+    private bool loading = true;
+    private string? errorMessage;
+
+    private string TabTitle => unreadOnly ? "Непрочитанные уведомления" : "Все уведомления";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task SetTab(bool unread)
+    {
+        unreadOnly = unread;
+        page = 1;
+        await LoadAsync();
+    }
+
+    private async Task GoToPage(int p)
+    {
+        page = p;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        errorMessage = null;
+        try
+        {
+            result = await NotifSvc.GetMyNotificationsAsync(new NotificationQuery
+            {
+                Page = page,
+                PageSize = PageSize,
+                UnreadOnly = unreadOnly,
+            });
+            unreadCount = await NotifSvc.GetUnreadCountAsync();
+            recentCreated = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery
+            {
+                Page = 1,
+                PageSize = 1,
+                Days = 7,
+            })).TotalCount;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            errorMessage = ex.Message;
+            result = new PagedResult<NotificationDto>();
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task OpenNotification(NotificationDto n)
+    {
+        if (!n.IsRead)
+        {
+            try
+            {
+                await NotifSvc.MarkAsReadAsync(n.Id);
+            }
+            catch
+            {
+                // не критично
+            }
+        }
+        await NotifRefresh.NotifyChangedAsync();
+        Nav.NavigateTo(NotificationRouteGuard.Normalize(n.NavigationUrl) ?? "/уведомления");
+    }
+
+    private async Task MarkRead(Guid id)
+    {
+        try
+        {
+            await NotifSvc.MarkAsReadAsync(id);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            return;
+        }
+        await LoadAsync();
+        await NotifRefresh.NotifyChangedAsync();
+    }
+
+    private async Task MarkAllRead()
+    {
+        try
+        {
+            await NotifSvc.MarkAllAsReadAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            return;
+        }
+        await LoadAsync();
+        await NotifRefresh.NotifyChangedAsync();
+    }
+
+    private static string TypeLabel(NotificationType type) => type switch
+    {
+        NotificationType.TaskAssigned => "Задача назначена",
+        NotificationType.TaskCompleted => "Задача выполнена",
+        NotificationType.HKSubmittedForReview => "ХК на проверке",
+        NotificationType.HKReturnedForRevision => "ХК на доработке",
+        NotificationType.HKApproved => "ХК утверждена",
+        NotificationType.HKExpiring => "Срок действия ХК",
+        NotificationType.HKExpired => "ХК просрочена",
+        NotificationType.ReferenceProposalPending => "Предложение справочника",
+        NotificationType.Information => "Информация",
+        NotificationType.System => "Система",
+        _ => type.ToString(),
+    };
+}

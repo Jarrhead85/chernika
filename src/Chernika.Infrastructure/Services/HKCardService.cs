@@ -15,6 +15,7 @@ public class HKCardService
 {
     private readonly AppDbContext _db;
     private readonly TaskService _tasks;
+    private readonly NotificationService _notifications;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ICurrentUserService _currentUser;
     private readonly IPermissionService _permissions;
@@ -26,6 +27,7 @@ public class HKCardService
     public HKCardService(
         AppDbContext db,
         TaskService tasks,
+        NotificationService notifications,
         UserManager<ApplicationUser> userManager,
         ICurrentUserService currentUser,
         IPermissionService permissions,
@@ -36,6 +38,7 @@ public class HKCardService
     {
         _db = db;
         _tasks = tasks;
+        _notifications = notifications;
         _userManager = userManager;
         _currentUser = currentUser;
         _permissions = permissions;
@@ -984,7 +987,9 @@ public class HKCardService
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
             try
             {
-                await ApplyWorkflowTasksAsync(card, newStatus, actorId, ct);
+                await ApplyWorkflowTasksAsync(card, newStatus, actorId, comment, ct);
+                if (newStatus == HKCardStatus.Approved)
+                    await ArchivePreviousApprovedVersionsAsync(card, actorId, ct);
                 await _db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
             }
@@ -998,9 +1003,6 @@ public class HKCardService
         {
             return (false, "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
         }
-
-        if (newStatus == HKCardStatus.Approved)
-            await ArchivePreviousApprovedVersionsAsync(card, actorId, ct);
 
         return (true, null);
     }
@@ -1029,7 +1031,7 @@ public class HKCardService
         return await ChangeStatusAsync(id, HKCardStatus.Deleted, null, ct);
     }
 
-    private async Task ApplyWorkflowTasksAsync(HKCard card, HKCardStatus to, Guid actorUserId, CancellationToken ct)
+    private async Task ApplyWorkflowTasksAsync(HKCard card, HKCardStatus to, Guid actorUserId, string? comment, CancellationToken ct)
     {
         switch (to)
         {
@@ -1042,6 +1044,14 @@ public class HKCardService
                     role: "NormAdmin",
                     dueDays: 7,
                     ct: ct);
+                await CloseOpenWorkflowTasksAsync(
+                    WorkTaskType.HKRevision,
+                    "HKCard",
+                    card.Id,
+                    cancelled: false,
+                    actorUserId,
+                    ct,
+                    completionComment: "ХК повторно отправлена на проверку");
                 break;
 
             case HKCardStatus.RevisionRequired:
@@ -1056,12 +1066,31 @@ public class HKCardService
                         assignee: card.AuthorId.Value.ToString(),
                         dueDays: 7,
                         ct: ct);
+                    await _notifications.AddAsync(card.AuthorId.Value.ToString(), new CreateNotificationCommand(
+                        Type: NotificationType.HKReturnedForRevision,
+                        Title: $"ХК {card.Code} возвращена на доработку",
+                        Message: string.IsNullOrWhiteSpace(comment) ? null : comment,
+                        EntityType: "HKCard",
+                        EntityId: card.Id,
+                        NavigationUrl: $"/хк/{card.Id}",
+                        BranchId: card.BranchId), ct);
                 }
                 break;
 
             case HKCardStatus.Approved:
                 await CloseOpenWorkflowTasksAsync(WorkTaskType.HKReview, "HKCard", card.Id, cancelled: false, actorUserId, ct);
                 await CreateRecalculationTasksAsync(card, actorUserId, ct);
+                if (card.AuthorId.HasValue)
+                {
+                    await _notifications.AddAsync(card.AuthorId.Value.ToString(), new CreateNotificationCommand(
+                        Type: NotificationType.HKApproved,
+                        Title: $"ХК {card.Code} утверждена",
+                        Message: comment,
+                        EntityType: "HKCard",
+                        EntityId: card.Id,
+                        NavigationUrl: $"/хк/{card.Id}",
+                        BranchId: card.BranchId), ct);
+                }
                 break;
 
             case HKCardStatus.Archived:
@@ -1100,12 +1129,13 @@ public class HKCardService
             EntityId: card.Id,
             EntityCodeSnapshot: card.Code,
             EntityTitleSnapshot: $"v{card.Version}",
-            DueDateUtc: dueDays.HasValue ? DateTime.UtcNow.AddDays(dueDays.Value) : null,
+            DueDateUtc: dueDays.HasValue ? _time.GetUtcNow().UtcDateTime.AddDays(dueDays.Value) : null,
             NotifyAssignee: true), ct);
     }
 
     private async Task CloseOpenWorkflowTasksAsync(
-        WorkTaskType type, string entityType, Guid entityId, bool cancelled, Guid actorUserId, CancellationToken ct)
+        WorkTaskType type, string entityType, Guid entityId, bool cancelled, Guid actorUserId, CancellationToken ct,
+        string? completionComment = null)
     {
         var open = await _db.WorkTasks
             .Where(t => !t.IsDeleted
@@ -1135,10 +1165,11 @@ public class HKCardService
             }
             else
             {
+                var finalComment = completionComment ?? "ХК утверждена";
                 task.Status = WorkTaskStatus.Completed;
                 task.CompletedAtUtc = now;
                 task.CompletedByUserId = actorUserId.ToString();
-                task.CompletionComment = "ХК утверждена";
+                task.CompletionComment = finalComment;
                 await _audit.CreateLogAsync(
                     new AuditWriteRequest(
                         EntityType: "WorkTask",
@@ -1146,7 +1177,7 @@ public class HKCardService
                         Action: "Task.Completed",
                         ActorUserId: actorUserId,
                         EntityDisplayName: task.Title,
-                        Details: "ХК утверждена"),
+                        Details: finalComment),
                     ct);
             }
             task.UpdatedAtUtc = now;
@@ -1208,7 +1239,7 @@ public class HKCardService
                 EntityId: instanceId,
                 EntityCodeSnapshot: card.Code,
                 EntityTitleSnapshot: $"v{card.Version}",
-                DueDateUtc: DateTime.UtcNow.AddDays(14),
+                DueDateUtc: _time.GetUtcNow().UtcDateTime.AddDays(14),
                 NotifyAssignee: true), ct);
         }
     }
@@ -1253,15 +1284,6 @@ public class HKCardService
                 CreatedAt = now,
                 Details = comment
             });
-        }
-
-        try
-        {
-            await _db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            // Concurrency conflict during archival is non-fatal
         }
     }
 
@@ -1360,7 +1382,8 @@ public class HKCardService
 
     public async Task<ReferenceProposal> CreateProposalAsync(
         Guid hkCardId, ProposalTargetType targetType,
-        string code, string name, string? description, string? gost, string? type)
+        string code, string name, string? description, string? gost, string? type,
+        CancellationToken ct = default)
     {
         var card = await _db.HKCards.FindAsync(hkCardId)
             ?? throw new ArgumentException("ХК не найдена.");
@@ -1438,7 +1461,29 @@ public class HKCardService
             EntityDisplayName = $"Предложение для {card.Code}: {name}"
         });
 
-        await _db.SaveChangesAsync();
+        var proposalReviewers = await GetBranchUsersInRoleAsync(card.BranchId, "NormAdmin");
+        if (proposalReviewers.Count == 0)
+        {
+            var fallback = await GetAnyUserInRoleAsync("NormAdmin");
+            if (fallback != null)
+                proposalReviewers.Add(fallback);
+        }
+
+        foreach (var reviewerId in proposalReviewers.Distinct(StringComparer.Ordinal))
+        {
+            await _notifications.AddAsync(reviewerId, new CreateNotificationCommand(
+                Type: NotificationType.ReferenceProposalPending,
+                Title: $"Новое предложение справочника: {name}",
+                Message: card.Code,
+                EntityType: "ReferenceProposal",
+                EntityId: proposal.Id,
+                WorkTaskId: null,
+                NavigationUrl: $"/хк/{hkCardId}",
+                BranchId: card.BranchId,
+                DeduplicationKey: $"ref-proposal:{proposal.Id}:{reviewerId}"), ct);
+        }
+
+        await _db.SaveChangesAsync(ct);
         return proposal;
     }
 

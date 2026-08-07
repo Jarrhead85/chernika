@@ -64,6 +64,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("SystemConfig", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.SystemConfig)));
     options.AddPolicy("ViewAuditLog", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.AuditView)));
     options.AddPolicy("ViewTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskViewOwn)));
+    options.AddPolicy("ViewNotifications", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.NotificationView)));
     options.AddPolicy("ManageReference", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("ManageComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionEdit)));
     options.AddPolicy("ManageIndividualCards", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
@@ -80,6 +81,7 @@ builder.Services.AddScoped<IndividualCardService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<TaskService>();
 builder.Services.AddScoped<NotificationService>();
+builder.Services.AddScoped<Chernika.Web.Services.NotificationRefreshService>();
 builder.Services.AddScoped<ReportService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<UserManagementService>();

@@ -5,8 +5,10 @@
 @inject TaskService TaskSvc
 @using Chernika.Domain
 @using Chernika.Domain.Entities
+@using Chernika.Domain.Enums
 @using Chernika.Domain.Models
 @using Chernika.Infrastructure.Services
+@using Chernika.Web.Services
 @using Microsoft.AspNetCore.Identity
 @inherits LayoutComponentBase
 @implements IDisposable
@@ -151,7 +153,50 @@
                     </div>
                 }
             </div>
-            <button class="iconBtn" title="Уведомления">🔔</button>
+            <div class="bellWrap">
+                <button class="iconBtn" title="Уведомления" @onclick="ToggleBell">🔔
+                    @if (unreadCount > 0)
+                    {
+                        <span class="bellBadge">@UnreadLabel</span>
+                    }
+                </button>
+                @if (showBellDropdown)
+                {
+                    <div class="bellBackdrop" @onclick="CloseBell"></div>
+                    <div class="bellDropdown" @onclick:stopPropagation>
+                        <div class="bellDropdownHeader">
+                            <span>Уведомления</span>
+                            @if (unreadCount > 0)
+                            {
+                                <button class="linkBtn" @onclick="MarkAllRead">Прочитать все</button>
+                            }
+                        </div>
+                        <div class="bellDropdownList">
+                            @if (recentNotifications.Count == 0)
+                            {
+                                <div class="bellEmpty">Уведомлений нет</div>
+                            }
+                            else
+                            {
+                                @foreach (var n in recentNotifications)
+                                {
+                                    <button class="bellItem @(n.IsRead ? "read" : "unread")" @onclick="() => OpenNotification(n)">
+                                        <div class="bellItemTitle">@n.Title</div>
+                                        @if (!string.IsNullOrEmpty(n.Message))
+                                        {
+                                            <div class="bellItemMsg">@n.Message</div>
+                                        }
+                                        <div class="bellItemMeta">@NotificationTypeLabel(n.Type) • @n.CreatedAtUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</div>
+                                    </button>
+                                }
+                            }
+                        </div>
+                        <div class="bellDropdownFooter">
+                            <a href="/уведомления" class="linkBtn" @onclick="CloseBell">Все уведомления →</a>
+                        </div>
+                    </div>
+                }
+            </div>
             <button class="modeBtn" @onclick="ToggleTheme" id="themeToggle">☀</button>
             <div class="user" title="Профиль пользователя">
                 <div class="avatar">@userInitial</div>
@@ -192,18 +237,31 @@
     bool showSearchDropdown => searchFocused && searchResults.Count > 0;
     CancellationTokenSource? searchCts;
     int openTaskCount;
-    bool _authChecked;
+    int unreadCount;
+    bool showBellDropdown;
+    IReadOnlyList<NotificationDto> recentNotifications = [];    bool _authChecked;
 
     [Inject] NavigationManager Nav { get; set; } = null!;
+    [Inject] NotificationService NotifSvc { get; set; } = null!;
+    [Inject] NotificationRefreshService NotifRefresh { get; set; } = null!;
+
+    string UnreadLabel => unreadCount >= 100 ? "99+" : unreadCount.ToString();
 
     protected override void OnInitialized()
     {
         Nav.LocationChanged += OnLocationChanged;
+        NotifRefresh.Changed += OnNotifRefresh;
     }
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
         _ = RefreshTaskBadgeAsync();
+        _ = RefreshBellAsync();
+    }
+
+    private async Task OnNotifRefresh()
+    {
+        await RefreshBellAsync();
     }
 
     private async Task RefreshTaskBadgeAsync()
@@ -220,9 +278,85 @@
         }
     }
 
+    private async Task RefreshBellAsync()
+    {
+        if (!_authChecked) return;
+        try
+        {
+            unreadCount = await NotifSvc.GetUnreadCountAsync();
+            if (showBellDropdown)
+                recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 20 })).Items;
+            StateHasChanged();
+        }
+        catch
+        {
+            // не авторизован или нет доступа — счётчик скрыт
+        }
+    }
+
+    private async Task ToggleBell()
+    {
+        showBellDropdown = !showBellDropdown;
+        if (showBellDropdown)
+            await RefreshBellAsync();
+        else
+            StateHasChanged();
+    }
+
+    private void CloseBell() => showBellDropdown = false;
+
+    private async Task OpenNotification(NotificationDto n)
+    {
+        if (!n.IsRead)
+        {
+            try
+            {
+                await NotifSvc.MarkAsReadAsync(n.Id);
+            }
+            catch
+            {
+                // не критично: уведомление всё равно можно открыть
+            }
+        }
+        showBellDropdown = false;
+        await RefreshBellAsync();
+        await NotifRefresh.NotifyChangedAsync();
+        Nav.NavigateTo(NotificationRouteGuard.Normalize(n.NavigationUrl) ?? "/уведомления");
+    }
+
+    private async Task MarkAllRead()
+    {
+        try
+        {
+            await NotifSvc.MarkAllAsReadAsync();
+        }
+        catch
+        {
+            // ignore
+        }
+        await RefreshBellAsync();
+        await NotifRefresh.NotifyChangedAsync();
+    }
+
+    private static string NotificationTypeLabel(NotificationType type) => type switch
+    {
+        NotificationType.TaskAssigned => "Задача",
+        NotificationType.TaskCompleted => "Задача выполнена",
+        NotificationType.HKSubmittedForReview => "ХК на проверке",
+        NotificationType.HKReturnedForRevision => "ХК на доработке",
+        NotificationType.HKApproved => "ХК утверждена",
+        NotificationType.HKExpiring => "Срок действия ХК",
+        NotificationType.HKExpired => "ХК просрочена",
+        NotificationType.ReferenceProposalPending => "Предложение справочника",
+        NotificationType.Information => "Информация",
+        NotificationType.System => "Система",
+        _ => type.ToString(),
+    };
+
     public void Dispose()
     {
         Nav.LocationChanged -= OnLocationChanged;
+        NotifRefresh.Changed -= OnNotifRefresh;
     }
 
     string GetActive(string path) =>
@@ -298,6 +432,7 @@
                 canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
             }
             await RefreshTaskBadgeAsync();
+            await RefreshBellAsync();
         }
     }
 
