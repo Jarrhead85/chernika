@@ -213,6 +213,27 @@ public class NotificationService
         return notification;
     }
 
+    public async Task<Notification?> CreateFromWorkflowAsync(
+        string recipientUserId,
+        CreateNotificationCommand command,
+        Guid actorUserId,
+        CancellationToken ct = default)
+    {
+        var created = await AddAsync(recipientUserId, command, ct);
+        if (created == null) return null;
+
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest(
+                EntityType: "Notification",
+                EntityId: created.Id.ToString(),
+                Action: "Notification.Created",
+                ActorUserId: actorUserId,
+                EntityDisplayName: created.Title),
+            ct);
+
+        return created;
+    }
+
     private static Notification CreateEntity(string userId, CreateNotificationCommand command) => new()
     {
         Id = Guid.NewGuid(),

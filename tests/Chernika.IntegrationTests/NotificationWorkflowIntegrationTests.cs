@@ -61,7 +61,7 @@ public class NotificationWorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task CreateProposalAsync_NotifiesBranchNormAdmins_WithReferenceProposalPending()
+    public async Task CreateProposalAsync_AssignsReviewTaskAndNotifiesSingleBranchNormAdmin()
     {
         await using var s = _fixture.CreateScope();
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
@@ -76,25 +76,80 @@ public class NotificationWorkflowIntegrationTests
                 && n.EntityType == "ReferenceProposal" && n.EntityId == proposal.Id)
             .ToListAsync();
 
-        Assert.Equal(2, notifications.Count);
-        Assert.Contains(notifications, n => n.UserId == _fixture.NormAdminA.Id);
-        Assert.Contains(notifications, n => n.UserId == _fixture.NormAdminA2.Id);
+        var notification = Assert.Single(notifications);
+        Assert.Equal(_fixture.NormAdminA2.Id, notification.UserId);
+        Assert.Equal("Новое предложение справочника: Новый узел", notification.Title);
+        Assert.Equal($"/хк/{cardId}", notification.NavigationUrl);
+        Assert.Equal($"ref-proposal:{proposal.Id}:{notification.UserId}", notification.DeduplicationKey);
+        Assert.Equal(_fixture.BranchA, notification.BranchId);
+        Assert.False(notification.IsRead);
 
-        foreach (var n in notifications)
-        {
-            Assert.Equal("Новое предложение справочника: Новый узел", n.Title);
-            Assert.Equal($"/хк/{cardId}", n.NavigationUrl);
-            Assert.Equal($"ref-proposal:{proposal.Id}:{n.UserId}", n.DeduplicationKey);
-            Assert.False(n.IsRead);
-        }
+        var task = await s.Db.WorkTasks.AsNoTracking()
+            .SingleAsync(t => t.EntityType == "ReferenceProposal" && t.EntityId == proposal.Id
+                && t.Type == WorkTaskType.ReferenceProposalReview);
+        Assert.Equal(_fixture.NormAdminA2.Id, task.AssignedToUserId);
+        Assert.Equal(_fixture.BranchA, task.BranchId);
+        Assert.Equal(WorkTaskStatus.Open, task.Status);
+        Assert.Equal(task.Id, notification.WorkTaskId);
 
         var createdAudit = await s.Db.AuditLogs.AsNoTracking()
             .AnyAsync(a => a.EntityType == "ReferenceProposal" && a.EntityId == proposal.Id.ToString() && a.Action == "Created");
         Assert.True(createdAudit);
+
+        var notificationAudit = await s.Db.AuditLogs.AsNoTracking()
+            .AnyAsync(a => a.EntityType == "Notification" && a.EntityId == notification.Id.ToString() && a.Action == "Notification.Created");
+        Assert.True(notificationAudit);
+
+        var taskAudit = await s.Db.AuditLogs.AsNoTracking()
+            .AnyAsync(a => a.EntityType == "WorkTask" && a.EntityId == task.Id.ToString() && a.Action == "Task.Created");
+        Assert.True(taskAudit);
     }
 
     [Fact]
-    public async Task CreateProposalAsync_NotifiesBranchNormAdminsExactlyOnce()
+    public async Task CreateProposalAsync_DoesNotNotifyNormAdminOfAnotherBranch()
+    {
+        await using var s = _fixture.CreateScope();
+
+        var branchC = Guid.NewGuid();
+        var branchD = Guid.NewGuid();
+        s.Db.Branches.AddRange(
+            new Branch { Id = branchC, Name = "Филиал В", Code = "C" },
+            new Branch { Id = branchD, Name = "Филиал Г", Code = "D" });
+        await s.Db.SaveChangesAsync();
+
+        var author = await CreateUserAsync(s, "normadmin_c", nameof(UserRole.NormAdmin), branchC);
+        var otherBranchNormAdmin = await CreateUserAsync(s, "normadmin_d", nameof(UserRole.NormAdmin), branchD);
+
+        var cardId = await CreateDraftCardAsync(s, author.Id);
+
+        s.User.CurrentUserId = Guid.Parse(author.Id);
+        var proposal = await s.HK.CreateProposalAsync(
+            cardId, ProposalTargetType.Node,
+            "N-NO-2", "Узел без проверяющего в филиале", description: null, gost: null, type: null);
+
+        var notifications = await s.Db.Notifications.AsNoTracking()
+            .Where(n => n.Type == NotificationType.ReferenceProposalPending
+                && n.EntityType == "ReferenceProposal" && n.EntityId == proposal.Id)
+            .ToListAsync();
+
+        Assert.Empty(notifications);
+        Assert.DoesNotContain(notifications, n => n.UserId == otherBranchNormAdmin.Id);
+
+        var warning = await s.Db.AuditLogs.AsNoTracking()
+            .SingleOrDefaultAsync(a => a.EntityType == "ReferenceProposal" && a.EntityId == proposal.Id.ToString()
+                && a.Action == "ReferenceProposal.NoNormAdmin");
+        Assert.NotNull(warning);
+
+        var adminTask = await s.Db.WorkTasks.AsNoTracking()
+            .SingleOrDefaultAsync(t => t.EntityType == "ReferenceProposal" && t.EntityId == proposal.Id
+                && t.Type == WorkTaskType.UserAdministration);
+        Assert.NotNull(adminTask);
+        Assert.Equal(_fixture.SystemAdminUser.Id, adminTask!.AssignedToUserId);
+        Assert.Equal(branchC, adminTask.BranchId);
+    }
+
+    [Fact]
+    public async Task CreateProposalAsync_SingleReviewer_NotifiesExactlyOnce()
     {
         await using var s = _fixture.CreateScope();
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
@@ -102,15 +157,41 @@ public class NotificationWorkflowIntegrationTests
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         var proposal = await s.HK.CreateProposalAsync(
             cardId, ProposalTargetType.Node,
-            "N-NEW-2", "Новый узел 2", description: null, gost: null, type: null);
+            "N-NEW-3", "Новый узел 3", description: null, gost: null, type: null);
 
         var notifications = await s.Db.Notifications.AsNoTracking()
             .Where(n => n.Type == NotificationType.ReferenceProposalPending
                 && n.EntityType == "ReferenceProposal" && n.EntityId == proposal.Id)
             .ToListAsync();
 
-        Assert.Equal(2, notifications.Count);
-        Assert.All(notifications, n => Assert.Equal($"ref-proposal:{proposal.Id}:{n.UserId}", n.DeduplicationKey));
+        var notification = Assert.Single(notifications);
+        Assert.Equal($"ref-proposal:{proposal.Id}:{notification.UserId}", notification.DeduplicationKey);
+        Assert.Equal(_fixture.NormAdminA2.Id, notification.UserId);
+    }
+
+    private static async Task<ApplicationUser> CreateUserAsync(
+        TestScope s, string login, string role, Guid branchId)
+    {
+        var user = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = login,
+            FullName = "Тест " + login,
+            BranchId = branchId,
+            IsActive = true,
+        };
+
+        var result = await s.Users.CreateAsync(user);
+        if (!result.Succeeded)
+            throw new InvalidOperationException(
+                "Создание пользователя не удалось: " + string.Join("; ", result.Errors.Select(e => e.Description)));
+
+        var roleResult = await s.Users.AddToRoleAsync(user, role);
+        if (!roleResult.Succeeded)
+            throw new InvalidOperationException(
+                "Назначение роли не удалось: " + string.Join("; ", roleResult.Errors.Select(e => e.Description)));
+
+        return user;
     }
 
     private async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)

@@ -84,6 +84,71 @@ public class NotificationServiceIntegrationTests
     }
 
     [Fact]
+    public async Task CreateFromWorkflowAsync_AddsNotificationAndAudit_WithoutOwnSave()
+    {
+        await using var s = _fixture.CreateScope();
+        var actorId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        s.User.CurrentUserId = actorId;
+        var entityId = Guid.NewGuid();
+
+        var notification = await s.Notifications.CreateFromWorkflowAsync(
+            _fixture.OperatorA.Id,
+            new CreateNotificationCommand(
+                Type: NotificationType.Information,
+                Title: "Атомарное уведомление",
+                EntityType: "System",
+                EntityId: entityId,
+                DeduplicationKey: "atomic:" + entityId),
+            actorId);
+
+        Assert.NotNull(notification);
+        Assert.Equal(0, await s.Db.Notifications.CountAsync(n => n.Id == notification!.Id));
+
+        await s.Db.SaveChangesAsync();
+
+        var row = await s.Db.Notifications.AsNoTracking().SingleAsync(n => n.Id == notification!.Id);
+        Assert.False(row.IsRead);
+
+        var audit = await s.Db.AuditLogs.AsNoTracking()
+            .SingleOrDefaultAsync(a => a.EntityType == "Notification" && a.EntityId == notification!.Id.ToString()
+                && a.Action == "Notification.Created");
+        Assert.NotNull(audit);
+        Assert.Equal(actorId, audit!.UserId);
+    }
+
+    [Fact]
+    public async Task CreateFromWorkflowAsync_DuplicateDeduplicationKey_ReturnsNull_AndNoAudit()
+    {
+        await using var s = _fixture.CreateScope();
+        var actorId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        s.User.CurrentUserId = actorId;
+        var entityId = Guid.NewGuid();
+
+        var command = new CreateNotificationCommand(
+            Type: NotificationType.Information,
+            Title: "Дед уведомление",
+            DeduplicationKey: "wfd:" + entityId);
+
+        var first = await s.Notifications.CreateFromWorkflowAsync(_fixture.OperatorA.Id, command, actorId);
+        Assert.NotNull(first);
+        await s.Db.SaveChangesAsync();
+
+        var second = await s.Notifications.CreateFromWorkflowAsync(_fixture.OperatorA.Id, command, actorId);
+        Assert.Null(second);
+        await s.Db.SaveChangesAsync();
+
+        var rows = await s.Db.Notifications.AsNoTracking()
+            .Where(n => n.DeduplicationKey == "wfd:" + entityId)
+            .ToListAsync();
+        Assert.Single(rows);
+
+        var audits = await s.Db.AuditLogs.AsNoTracking()
+            .CountAsync(a => a.EntityType == "Notification" && a.EntityId == first!.Id.ToString()
+                && a.Action == "Notification.Created");
+        Assert.Equal(1, audits);
+    }
+
+    [Fact]
     public async Task GetMyNotificationsAsync_ReturnsOnlyOwnAndUnreadFilter()
     {
         await using var s = _fixture.CreateScope();

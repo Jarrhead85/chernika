@@ -77,7 +77,7 @@ public class TaskService
 
         if (command.AssignedToUserId != null && command.NotifyAssignee)
         {
-            await _notifications.AddAsync(command.AssignedToUserId, new CreateNotificationCommand(
+            await _notifications.CreateFromWorkflowAsync(command.AssignedToUserId, new CreateNotificationCommand(
                 Type: NotificationType.TaskAssigned,
                 Title: $"Назначена задача: {task.Title}",
                 Message: command.Description,
@@ -86,7 +86,7 @@ public class TaskService
                 WorkTaskId: task.Id,
                 NavigationUrl: $"/задачи/{task.Id}",
                 BranchId: task.BranchId,
-                DeduplicationKey: $"task-assigned:{task.Id}:{command.AssignedToUserId}"), ct);
+                DeduplicationKey: $"task-assigned:{task.Id}:{command.AssignedToUserId}"), actorId, ct);
         }
 
         await _db.SaveChangesAsync(ct);
@@ -156,7 +156,7 @@ public class TaskService
 
         if (command.NotifyAssignee)
         {
-            await _notifications.AddAsync(command.AssignedToUserId, new CreateNotificationCommand(
+            await _notifications.CreateFromWorkflowAsync(command.AssignedToUserId, new CreateNotificationCommand(
                 Type: NotificationType.TaskAssigned,
                 Title: $"Назначена задача: {task.Title}",
                 Message: command.Description,
@@ -165,7 +165,7 @@ public class TaskService
                 WorkTaskId: task.Id,
                 NavigationUrl: $"/задачи/{task.Id}",
                 BranchId: task.BranchId,
-                DeduplicationKey: $"task-assigned:{task.Id}:{command.AssignedToUserId}"), ct);
+                DeduplicationKey: $"task-assigned:{task.Id}:{command.AssignedToUserId}"), actorId, ct);
         }
 
         return task;
@@ -214,7 +214,7 @@ public class TaskService
 
         if (command.AssignedToUserId != null)
         {
-            await _notifications.AddAsync(command.AssignedToUserId, new CreateNotificationCommand(
+            await _notifications.CreateFromWorkflowAsync(command.AssignedToUserId, new CreateNotificationCommand(
                 Type: NotificationType.TaskAssigned,
                 Title: $"Назначена задача: {task.Title}",
                 Message: command.Comment,
@@ -223,7 +223,7 @@ public class TaskService
                 WorkTaskId: task.Id,
                 NavigationUrl: $"/задачи/{task.Id}",
                 BranchId: task.BranchId,
-                DeduplicationKey: $"task-assigned:{task.Id}:{command.AssignedToUserId}"), ct);
+                DeduplicationKey: $"task-assigned:{task.Id}:{command.AssignedToUserId}"), actorId, ct);
         }
 
         await _db.SaveChangesAsync(ct);
@@ -295,7 +295,7 @@ public class TaskService
 
         if (task.CreatedByUserId != actorId.ToString())
         {
-            await _notifications.AddAsync(task.CreatedByUserId, new CreateNotificationCommand(
+            await _notifications.CreateFromWorkflowAsync(task.CreatedByUserId, new CreateNotificationCommand(
                 Type: NotificationType.TaskCompleted,
                 Title: $"Задача выполнена: {task.Title}",
                 Message: command.CompletionComment,
@@ -304,7 +304,7 @@ public class TaskService
                 WorkTaskId: task.Id,
                 NavigationUrl: $"/задачи/{task.Id}",
                 BranchId: task.BranchId,
-                DeduplicationKey: $"task-completed:{task.Id}:{task.CreatedByUserId}"), ct);
+                DeduplicationKey: $"task-completed:{task.Id}:{task.CreatedByUserId}"), actorId, ct);
         }
 
         await _db.SaveChangesAsync(ct);

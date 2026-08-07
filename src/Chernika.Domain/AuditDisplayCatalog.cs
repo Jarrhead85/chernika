@@ -43,6 +43,8 @@ public static class AuditDisplayCatalog
         ["Notification.Created"] = new("Уведомление создано", AuditSeverity.Neutral),
         ["Notification.Read"] = new("Уведомление прочитано", AuditSeverity.Neutral),
         ["Notification.ReadAll"] = new("Все уведомления прочитаны", AuditSeverity.Neutral),
+        ["ReferenceProposal.NoNormAdmin"] = new("Нет NormAdmin в филиале", AuditSeverity.Warning),
+        ["Workflow.NoAssignee"] = new("Нет исполнителя в филиале", AuditSeverity.Warning),
     };
 
     private static readonly Dictionary<string, string> EntityTypes = new()
@@ -74,6 +76,7 @@ public static class AuditDisplayCatalog
         ["MilitaryBranch"] = "Род войск",
         ["HKCardAttachment"] = "PDF-вложение ХК",
         ["Notification"] = "Уведомление",
+        ["ReferenceProposal"] = "Предложение справочника",
     };
 
     private static readonly Dictionary<string, string[]> ActionFilterGroups = new()

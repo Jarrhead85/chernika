@@ -1066,14 +1066,14 @@ public class HKCardService
                         assignee: card.AuthorId.Value.ToString(),
                         dueDays: 7,
                         ct: ct);
-                    await _notifications.AddAsync(card.AuthorId.Value.ToString(), new CreateNotificationCommand(
+                    await _notifications.CreateFromWorkflowAsync(card.AuthorId.Value.ToString(), new CreateNotificationCommand(
                         Type: NotificationType.HKReturnedForRevision,
                         Title: $"ХК {card.Code} возвращена на доработку",
                         Message: string.IsNullOrWhiteSpace(comment) ? null : comment,
                         EntityType: "HKCard",
                         EntityId: card.Id,
                         NavigationUrl: $"/хк/{card.Id}",
-                        BranchId: card.BranchId), ct);
+                        BranchId: card.BranchId), actorUserId, ct);
                 }
                 break;
 
@@ -1082,14 +1082,14 @@ public class HKCardService
                 await CreateRecalculationTasksAsync(card, actorUserId, ct);
                 if (card.AuthorId.HasValue)
                 {
-                    await _notifications.AddAsync(card.AuthorId.Value.ToString(), new CreateNotificationCommand(
+                    await _notifications.CreateFromWorkflowAsync(card.AuthorId.Value.ToString(), new CreateNotificationCommand(
                         Type: NotificationType.HKApproved,
                         Title: $"ХК {card.Code} утверждена",
                         Message: comment,
                         EntityType: "HKCard",
                         EntityId: card.Id,
                         NavigationUrl: $"/хк/{card.Id}",
-                        BranchId: card.BranchId), ct);
+                        BranchId: card.BranchId), actorUserId, ct);
                 }
                 break;
 
@@ -1113,10 +1113,13 @@ public class HKCardService
         if (string.IsNullOrWhiteSpace(resolvedAssignee) && !string.IsNullOrWhiteSpace(role))
         {
             var users = await GetBranchUsersInRoleAsync(card.BranchId, role);
-            resolvedAssignee = users.Count > 0 ? users[0] : await GetAnyUserInRoleAsync(role);
+            resolvedAssignee = users.Count > 0 ? users[0] : null;
         }
         if (string.IsNullOrWhiteSpace(resolvedAssignee))
+        {
+            await LogWorkflowNoAssigneeAsync(card, role ?? "исполнитель", title, ct);
             return;
+        }
 
         await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
             Title: title,
@@ -1220,11 +1223,12 @@ public class HKCardService
             return;
 
         var operators = await GetBranchUsersInRoleAsync(card.BranchId, "Operator");
-        var assignee = operators.Count > 0
-            ? operators[0]
-            : await GetAnyUserInRoleAsync("Operator");
+        var assignee = operators.Count > 0 ? operators[0] : null;
         if (assignee == null)
+        {
+            await LogWorkflowNoAssigneeAsync(card, "Operator", "Пересчёт инд. карт — экземпляр", ct);
             return;
+        }
 
         foreach (var instanceId in instanceIds)
         {
@@ -1450,41 +1454,104 @@ public class HKCardService
         }
 
         _db.ReferenceProposals.Add(proposal);
-        _db.AuditLogs.Add(new AuditLog
-        {
-            Id = Guid.NewGuid(),
-            EntityType = "ReferenceProposal",
-            EntityId = proposal.Id.ToString(),
-            Action = "Created",
-            UserId = actorId,
-            CreatedAt = DateTime.UtcNow,
-            EntityDisplayName = $"Предложение для {card.Code}: {name}"
-        });
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest(
+                EntityType: "ReferenceProposal",
+                EntityId: proposal.Id.ToString(),
+                Action: "Created",
+                ActorUserId: actorId,
+                EntityDisplayName: $"Предложение для {card.Code}: {name}"),
+            ct);
 
-        var proposalReviewers = await GetBranchUsersInRoleAsync(card.BranchId, "NormAdmin");
-        if (proposalReviewers.Count == 0)
+        var reviewerId = await PickBranchReviewerAsync(card.BranchId, "NormAdmin", actorId.ToString(), ct);
+        if (reviewerId == null)
         {
-            var fallback = await GetAnyUserInRoleAsync("NormAdmin");
-            if (fallback != null)
-                proposalReviewers.Add(fallback);
+            await HandleProposalWithoutReviewerAsync(card, proposal, actorId, name, ct);
         }
-
-        foreach (var reviewerId in proposalReviewers.Distinct(StringComparer.Ordinal))
+        else
         {
-            await _notifications.AddAsync(reviewerId, new CreateNotificationCommand(
+            var task = await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
+                Title: $"Проверка предложения справочника: {name}",
+                Type: WorkTaskType.ReferenceProposalReview,
+                Priority: WorkTaskPriority.Normal,
+                Description: $"Предложение создано для ХК {card.Code} (v{card.Version}). Требуется проверка и принятие/отклонение.",
+                AssignedToUserId: reviewerId,
+                BranchId: card.BranchId,
+                EntityType: "ReferenceProposal",
+                EntityId: proposal.Id,
+                EntityCodeSnapshot: card.Code,
+                EntityTitleSnapshot: name,
+                DueDateUtc: _time.GetUtcNow().UtcDateTime.AddDays(7),
+                NotifyAssignee: false), ct);
+
+            await _notifications.CreateFromWorkflowAsync(reviewerId, new CreateNotificationCommand(
                 Type: NotificationType.ReferenceProposalPending,
                 Title: $"Новое предложение справочника: {name}",
                 Message: card.Code,
                 EntityType: "ReferenceProposal",
                 EntityId: proposal.Id,
-                WorkTaskId: null,
+                WorkTaskId: task.Id,
                 NavigationUrl: $"/хк/{hkCardId}",
                 BranchId: card.BranchId,
-                DeduplicationKey: $"ref-proposal:{proposal.Id}:{reviewerId}"), ct);
+                DeduplicationKey: $"ref-proposal:{proposal.Id}:{reviewerId}"), actorId, ct);
         }
 
         await _db.SaveChangesAsync(ct);
         return proposal;
+    }
+
+    private async Task<string?> PickBranchReviewerAsync(
+        Guid branchId, string role, string? excludeUserId, CancellationToken ct)
+    {
+        var reviewers = (await GetBranchUsersInRoleAsync(branchId, role))
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+
+        return reviewers.FirstOrDefault(r => !string.Equals(r, excludeUserId, StringComparison.Ordinal));
+    }
+
+    private async Task HandleProposalWithoutReviewerAsync(
+        HKCard card, ReferenceProposal proposal, Guid actorUserId, string name, CancellationToken ct)
+    {
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest(
+                EntityType: "ReferenceProposal",
+                EntityId: proposal.Id.ToString(),
+                Action: "ReferenceProposal.NoNormAdmin",
+                ActorUserId: actorUserId,
+                EntityDisplayName: $"Предложение для {card.Code}: {name}",
+                Details: $"В филиале карты {card.Code} нет активного NormAdmin для проверки предложения «{name}»."),
+            ct);
+
+        var systemAdminId = await GetAnyUserInRoleAsync("SystemAdmin");
+        if (systemAdminId == null)
+            return;
+
+        await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
+            Title: $"Нет NormAdmin для проверки предложения: {name}",
+            Type: WorkTaskType.UserAdministration,
+            Priority: WorkTaskPriority.Normal,
+            Description: $"В филиале карты {card.Code} (v{card.Version}) нет активного NormAdmin. Предложение справочника «{name}» некому проверять. Назначьте NormAdmin в филиал.",
+            AssignedToUserId: systemAdminId,
+            BranchId: card.BranchId,
+            EntityType: "ReferenceProposal",
+            EntityId: proposal.Id,
+            EntityCodeSnapshot: card.Code,
+            EntityTitleSnapshot: name,
+            NotifyAssignee: true), ct);
+    }
+
+    private async Task LogWorkflowNoAssigneeAsync(HKCard card, string role, string taskTitle, CancellationToken ct)
+    {
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest(
+                EntityType: "HKCard",
+                EntityId: card.Id.ToString(),
+                Action: "Workflow.NoAssignee",
+                ActorUserId: Guid.Empty,
+                EntityDisplayName: $"{card.Code} v{card.Version}",
+                Details: $"Нет активного пользователя с ролью {role} в филиале для задачи «{taskTitle}»."),
+            ct);
     }
 
     public async Task<List<ReferenceProposal>> GetProposalsAsync(Guid hkCardId)
