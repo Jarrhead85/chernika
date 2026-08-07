@@ -20,4 +20,7 @@ public class AuditLogDisplayDto
     public string ActorFullName { get; set; } = string.Empty;
     public string ActorLogin { get; set; } = string.Empty;
     public string DetailsDisplay { get; set; } = string.Empty;
+
+    public AuditSource Source { get; set; }
+    public string SourceDisplay { get; set; } = string.Empty;
 }

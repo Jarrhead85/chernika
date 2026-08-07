@@ -16,6 +16,7 @@ public class TaskService
     private readonly IPermissionService _permissions;
     private readonly AuditService _audit;
     private readonly NotificationService _notifications;
+    private readonly TimeProvider _time;
 
     public TaskService(
         AppDbContext db,
@@ -23,7 +24,8 @@ public class TaskService
         ICurrentUserService currentUser,
         IPermissionService permissions,
         AuditService audit,
-        NotificationService notifications)
+        NotificationService notifications,
+        TimeProvider time)
     {
         _db = db;
         _userManager = userManager;
@@ -31,6 +33,7 @@ public class TaskService
         _permissions = permissions;
         _audit = audit;
         _notifications = notifications;
+        _time = time;
     }
 
     public async Task<WorkTaskDto> CreateAsync(CreateWorkTaskCommand command, CancellationToken ct = default)
@@ -431,7 +434,7 @@ public class TaskService
 
     public async Task ProcessOverdueTasksAsync(CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         var overdueIds = await _db.WorkTasks
             .Where(t => !t.IsDeleted
                 && (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress)

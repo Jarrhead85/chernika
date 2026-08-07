@@ -12,7 +12,7 @@
             <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
-            <div class="form" style="grid-template-columns:1fr 1fr 1fr auto">
+            <div class="form" style="grid-template-columns:1fr 1fr 1fr 1fr auto">
                 <div class="field"><label>Тип сущности</label>
                     <select @bind="filterEntityType" class="field-select">
                         <option value="">Все</option>
@@ -46,6 +46,14 @@
                         <option value="UserManagement">Управление пользователями</option>
                         <option value="PermissionOverride">Индивидуальные полномочия</option>
                         <option value="Security">Конфигурация безопасности</option>
+                        <option value="Expiration">Сроки ХК</option>
+                    </select>
+                </div>
+                <div class="field"><label>Источник</label>
+                    <select @bind="filterSource" class="field-select">
+                        <option value="">Все</option>
+                        <option value="User">Пользователь</option>
+                        <option value="System">Система</option>
                     </select>
                 </div>
                 <div class="field"><label>Период</label>
@@ -87,6 +95,7 @@
                             <th>Сущность</th>
                             <th>Объект</th>
                             <th>Детали</th>
+                            <th>Источник</th>
                             <th>Пользователь</th>
                         </tr>
                     </thead>
@@ -116,6 +125,7 @@
                                         <span class="muted">—</span>
                                     }
                                 </td>
+                                <td><span class="tag">@log.SourceDisplay</span></td>
                                 <td>
                                     <div class="auditActorName">@log.ActorFullName</div>
                                     @if (!string.IsNullOrWhiteSpace(log.ActorLogin) && log.ActorLogin != "system")
@@ -177,6 +187,10 @@
                         <div style="white-space:pre-wrap;font-size:13px">@selectedLog.DetailsDisplay</div>
                     </div>
                     <div class="field">
+                        <label>Источник</label>
+                        <div><span class="tag">@selectedLog.SourceDisplay</span></div>
+                    </div>
+                    <div class="field">
                         <label>Пользователь</label>
                         <div>@selectedLog.ActorFullName</div>
                         @if (!string.IsNullOrWhiteSpace(selectedLog.ActorLogin))
@@ -200,6 +214,7 @@
 
     private string filterEntityType = "";
     private string filterAction = "";
+    private string filterSource = "";
     private string filterPeriod = "7";
 
     private bool showDetails = false;
@@ -218,8 +233,8 @@
     async Task LoadLogs()
     {
         loading = true;
-        logs = await AuditService.GetLogsWithEntityNamesAsync(currentPage, PageSize, filterEntityType, filterAction, filterPeriod);
-        totalCount = await AuditService.GetTotalCountAsync(filterEntityType, filterAction, filterPeriod);
+        logs = await AuditService.GetLogsWithEntityNamesAsync(currentPage, PageSize, filterEntityType, filterAction, filterPeriod, filterSource);
+        totalCount = await AuditService.GetTotalCountAsync(filterEntityType, filterAction, filterPeriod, filterSource);
         totalPages = Math.Max(1, (int)Math.Ceiling(totalCount / (double)PageSize));
         loading = false;
     }

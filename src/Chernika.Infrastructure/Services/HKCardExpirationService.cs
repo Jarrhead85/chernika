@@ -108,15 +108,18 @@ public class HKCardExpirationService
     private async Task CreateWarningAsync(HKCard card, int daysLeft, HKExpirationOptions options, CancellationToken ct)
     {
         var thresholds = options.WarningDays
+            .Distinct()
             .Where(d => d > 0)
             .OrderByDescending(d => d)
             .ToArray();
         if (thresholds.Length == 0)
             return;
 
-        var threshold = thresholds.FirstOrDefault(d => daysLeft <= d);
-        if (threshold <= 0)
+        var threshold = thresholds.FirstOrDefault(d => daysLeft == d);
+        if (threshold == 0)
             return;
+
+        var anyCreated = false;
 
         var recipients = await GetRecipientIdsAsync(card, ct);
         var warning = new CreateNotificationCommand(
@@ -130,21 +133,28 @@ public class HKCardExpirationService
             DeduplicationKey: $"hk-exp-warning:{card.Id}:{threshold}");
 
         foreach (var userId in recipients)
-            await _notifications.CreateFromWorkflowAsync(userId, warning, Guid.Empty, ct);
+        {
+            var created = await _notifications.CreateFromWorkflowAsync(userId, warning, Guid.Empty, ct);
+            if (created != null)
+                anyCreated = true;
+        }
 
-        if (threshold < thresholds[0])
-            await CreateReviewTaskAsync(card, options, ct);
+        if (threshold < thresholds[0] && await CreateReviewTaskAsync(card, options, ct))
+            anyCreated = true;
 
-        await _audit.CreateLogAsync(new AuditWriteRequest(
-            EntityType: "HKCard",
-            EntityId: card.Id.ToString(),
-            Action: "HK.ExpirationWarningCreated",
-            ActorUserId: Guid.Empty,
-            EntityDisplayName: $"{card.Code} v{card.Version}",
-            Details: $"Срок действия истекает {card.ExpirationDate!.Value:dd.MM.yyyy} (порог: {threshold} дн.)."), ct);
+        if (anyCreated)
+        {
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                EntityType: "HKCard",
+                EntityId: card.Id.ToString(),
+                Action: "HK.ExpirationWarningCreated",
+                ActorUserId: Guid.Empty,
+                EntityDisplayName: $"{card.Code} v{card.Version}",
+                Details: $"Срок действия истекает {card.ExpirationDate!.Value:dd.MM.yyyy} (порог: {threshold} дн.)."), ct);
+        }
     }
 
-    private async Task CreateReviewTaskAsync(HKCard card, HKExpirationOptions options, CancellationToken ct)
+    private async Task<bool> CreateReviewTaskAsync(HKCard card, HKExpirationOptions options, CancellationToken ct)
     {
         var assignee = (await _hkCards.GetBranchUsersInRoleAsync(card.BranchId, "NormAdmin")).FirstOrDefault();
         if (string.IsNullOrWhiteSpace(assignee))
@@ -156,8 +166,19 @@ public class HKCardExpirationService
                 ActorUserId: Guid.Empty,
                 EntityDisplayName: $"{card.Code} v{card.Version}",
                 Details: $"Нет активного пользователя с ролью NormAdmin в филиале для задачи «Пересмотр ХК {card.Code}»."), ct);
-            return;
+            return false;
         }
+
+        var hasOpenTask = await _db.WorkTasks.AnyAsync(t =>
+            !t.IsDeleted
+            && t.Type == WorkTaskType.HKExpirationReview
+            && t.EntityType == "HKCard"
+            && t.EntityId == card.Id
+            && (t.Status == WorkTaskStatus.Open
+                || t.Status == WorkTaskStatus.InProgress
+                || t.Status == WorkTaskStatus.Overdue), ct);
+        if (hasOpenTask)
+            return false;
 
         await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
             Title: $"Пересмотр ХК {card.Code}",
@@ -173,6 +194,8 @@ public class HKCardExpirationService
             DueDateUtc: _time.GetUtcNow().UtcDateTime.AddDays(options.ReviewTaskDueDays)),
             actorUserId: Guid.Empty,
             ct: ct);
+
+        return true;
     }
 
     private async Task CreateExpiredNotificationAsync(HKCard card, CancellationToken ct)

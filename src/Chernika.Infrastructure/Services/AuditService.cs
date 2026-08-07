@@ -99,8 +99,8 @@ public class AuditService
         return await LogAsync(new AuditWriteRequest(entityType, entityId, action, userId, Details: details));
     }
 
-    public Task<List<AuditLog>> GetLogsAsync(int page = 1, int pageSize = 50, string? entityType = null, string? action = null, string? period = null) =>
-        BuildFilteredQuery(entityType, action, period)
+    public Task<List<AuditLog>> GetLogsAsync(int page = 1, int pageSize = 50, string? entityType = null, string? action = null, string? period = null, string? source = null) =>
+        BuildFilteredQuery(entityType, action, period, source)
             .OrderByDescending(l => l.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -108,9 +108,9 @@ public class AuditService
 
     public async Task<List<AuditLogDisplayDto>> GetLogsWithEntityNamesAsync(
         int page = 1, int pageSize = 50,
-        string? entityType = null, string? action = null, string? period = null)
+        string? entityType = null, string? action = null, string? period = null, string? source = null)
     {
-        var query = BuildFilteredQuery(entityType, action, period);
+        var query = BuildFilteredQuery(entityType, action, period, source);
 
         var totalCount = await query.CountAsync();
 
@@ -222,12 +222,15 @@ public class AuditService
                 ActorFullName = actorFullName,
                 ActorLogin = actorLogin,
                 DetailsDisplay = detailsDisplay,
+                Source = l.Source,
+                SourceDisplay = l.Source == AuditSource.System ? "Система" : "Пользователь",
             };
         }).ToList();
     }
 
-    public Task<int> GetTotalCountAsync(string? entityType = null, string? action = null, string? period = null) =>
-        BuildFilteredQuery(entityType, action, period).CountAsync();
+    public Task<int> GetTotalCountAsync(
+        string? entityType = null, string? action = null, string? period = null, string? source = null) =>
+        BuildFilteredQuery(entityType, action, period, source).CountAsync();
 
     public Task<List<AuditLog>> GetLogsByEntityAsync(string entityType, string entityId) =>
         _db.AuditLogs
@@ -235,7 +238,7 @@ public class AuditService
             .OrderByDescending(l => l.CreatedAt)
             .ToListAsync();
 
-    private IQueryable<AuditLog> BuildFilteredQuery(string? entityType, string? action, string? period)
+    private IQueryable<AuditLog> BuildFilteredQuery(string? entityType, string? action, string? period, string? source)
     {
         var query = _db.AuditLogs.AsQueryable();
 
@@ -244,22 +247,25 @@ public class AuditService
 
         if (!string.IsNullOrEmpty(action))
         {
-            if (action == "Create")
-                query = query.Where(l => l.Action == "Create" || l.Action == "Created");
-            else if (action == "Update")
-                query = query.Where(l => l.Action == "Update" || l.Action == "Updated");
-            else if (action == "Delete")
-                query = query.Where(l => l.Action == "Delete" || l.Action == "Deleted");
-            else if (action == "StatusChange")
+            if (action == "StatusChange")
                 query = query.Where(l => l.Action.StartsWith("Status:"));
             else
-                query = query.Where(l => l.Action == action);
+            {
+                var actions = AuditDisplayCatalog.GetFilterActions(action);
+                query = query.Where(l => actions.Contains(l.Action));
+            }
         }
 
         if (!string.IsNullOrEmpty(period) && int.TryParse(period, out var days) && days > 0)
         {
             var from = DateTime.UtcNow.AddDays(-days);
             query = query.Where(l => l.CreatedAt >= from);
+        }
+
+        if (!string.IsNullOrEmpty(source))
+        {
+            var sourceValue = source == "System" ? AuditSource.System : AuditSource.User;
+            query = query.Where(l => l.Source == sourceValue);
         }
 
         return query;
