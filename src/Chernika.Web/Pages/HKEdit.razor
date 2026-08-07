@@ -1091,8 +1091,16 @@
 
     private async Task SendToApprove()
     {
-        var (sent, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, "Отправлена на проверку");
-        if (sent) card.Status = HKCardStatus.OnReview;
+        errorMessage = null;
+        var (sent, error) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, "Отправлена на проверку");
+        if (sent)
+        {
+            card.Status = HKCardStatus.OnReview;
+        }
+        else if (!string.IsNullOrEmpty(error))
+        {
+            errorMessage = error;
+        }
     }
 
     private async Task ApproveCard()

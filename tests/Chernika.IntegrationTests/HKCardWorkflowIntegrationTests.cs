@@ -2,6 +2,7 @@ using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -48,6 +49,37 @@ public class HKCardWorkflowIntegrationTests
             .SingleAsync(n => n.WorkTaskId == task.Id);
         Assert.Equal(NotificationType.TaskAssigned, notification.Type);
         Assert.Equal("task-assigned:" + task.Id + ":" + task.AssignedToUserId, notification.DeduplicationKey);
+    }
+
+    [Fact]
+    public async Task ChangeStatus_OnReview_WithoutBranchNormAdmin_BlocksAndAudits()
+    {
+        await using var s = _fixture.CreateScope();
+
+        var branchC = Guid.NewGuid();
+        s.Db.Branches.Add(new Branch { Id = branchC, Name = "Филиал В", Code = "C" });
+        await s.Db.SaveChangesAsync();
+
+        var author = await CreateUserAsync(s, "normadmin_nr" + Guid.NewGuid().ToString("N")[..6], nameof(UserRole.NormAdmin), branchC);
+        var cardId = await CreateDraftCardAsync(s, author.Id);
+
+        var user = await s.Db.Users.SingleAsync(u => u.Id == author.Id);
+        user.IsActive = false;
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(author.Id);
+        var (success, error) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+        Assert.False(success);
+        Assert.Equal("Невозможно отправить ХК на проверку: в филиале не назначен нормативный администратор.", error);
+
+        var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
+        Assert.Equal(HKCardStatus.Draft, card.Status);
+
+        var warning = await s.Db.AuditLogs.AsNoTracking()
+            .SingleOrDefaultAsync(a => a.EntityType == "HKCard" && a.EntityId == cardId.ToString()
+                && a.Action == "Workflow.NoAssignee");
+        Assert.NotNull(warning);
+        Assert.Equal(Guid.Empty, warning.UserId);
     }
 
     [Fact]
@@ -304,6 +336,31 @@ public class HKCardWorkflowIntegrationTests
             .ToDictionaryAsync(g => g.Status, g => g.Count);
 
         Assert.Equal(expected, counts);
+    }
+
+    private static async Task<ApplicationUser> CreateUserAsync(
+        TestScope s, string login, string role, Guid branchId)
+    {
+        var user = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = login,
+            FullName = "Тест " + login,
+            BranchId = branchId,
+            IsActive = true,
+        };
+
+        var result = await s.Users.CreateAsync(user);
+        if (!result.Succeeded)
+            throw new InvalidOperationException(
+                "Создание пользователя не удалось: " + string.Join("; ", result.Errors.Select(e => e.Description)));
+
+        var roleResult = await s.Users.AddToRoleAsync(user, role);
+        if (!roleResult.Succeeded)
+            throw new InvalidOperationException(
+                "Назначение роли не удалось: " + string.Join("; ", roleResult.Errors.Select(e => e.Description)));
+
+        return user;
     }
 
     private async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)

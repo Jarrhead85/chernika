@@ -932,6 +932,17 @@ public class HKCardService
             }
         }
 
+        if (newStatus == HKCardStatus.OnReview)
+        {
+            var branchNormAdmins = await GetBranchUsersInRoleAsync(card.BranchId, "NormAdmin");
+            if (branchNormAdmins.Count == 0)
+            {
+                await LogWorkflowNoAssigneeAsync(card, "NormAdmin", $"Проверка ХК {card.Code}", ct);
+                await _db.SaveChangesAsync(ct);
+                return (false, "Невозможно отправить ХК на проверку: в филиале не назначен нормативный администратор.");
+            }
+        }
+
         card.Status = newStatus;
         card.UpdatedAt = DateTime.UtcNow;
 
