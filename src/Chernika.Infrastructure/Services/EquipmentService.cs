@@ -1207,28 +1207,120 @@ public class EquipmentService
         return true;
     }
 
-    public Task<List<MilitaryBranch>> GetMilitaryBranchesAsync() =>
-        _db.MilitaryBranches.OrderBy(m => m.Code).ToListAsync();
+    public async Task<List<MilitaryBranch>> GetMilitaryBranchesAsync(
+        string? search = null,
+        string? armedForcesType = null,
+        bool? showDeleted = false,
+        string? sortBy = null,
+        bool sortDesc = false,
+        CancellationToken ct = default)
+    {
+        IQueryable<MilitaryBranch> query = _db.MilitaryBranches;
+
+        if (showDeleted == null)
+        {
+            query = query.IgnoreQueryFilters();
+        }
+        else if (showDeleted == true)
+        {
+            query = query.IgnoreQueryFilters().Where(b => b.IsDeleted);
+        }
+        else
+        {
+            query = query.Where(b => !b.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(b => EF.Functions.ILike(b.ArmedForcesType, $"%{term}%")
+                || EF.Functions.ILike(b.Name, $"%{term}%")
+                || EF.Functions.ILike(b.Description ?? "", $"%{term}%"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(armedForcesType))
+            query = query.Where(b => b.ArmedForcesType == armedForcesType);
+
+        IOrderedQueryable<MilitaryBranch> ordered = sortBy switch
+        {
+            "Name" => sortDesc
+                ? query.OrderByDescending(b => b.Name).ThenByDescending(b => b.ArmedForcesType)
+                : query.OrderBy(b => b.Name).ThenBy(b => b.ArmedForcesType),
+            "CreatedAt" => sortDesc
+                ? query.OrderByDescending(b => b.CreatedAt)
+                : query.OrderBy(b => b.CreatedAt),
+            _ => sortDesc
+                ? query.OrderByDescending(b => b.ArmedForcesType).ThenByDescending(b => b.Name)
+                : query.OrderBy(b => b.ArmedForcesType).ThenBy(b => b.Name),
+        };
+
+        return await ordered.ToListAsync(ct);
+    }
+
+    public async Task<List<string>> GetMilitaryBranchTypesAsync(CancellationToken ct = default) =>
+        await _db.MilitaryBranches
+            .Where(b => !b.IsDeleted)
+            .OrderBy(b => b.ArmedForcesType)
+            .Select(b => b.ArmedForcesType)
+            .Distinct()
+            .ToListAsync(ct);
+
+    private static void ValidateMilitaryBranch(MilitaryBranch branch)
+    {
+        branch.ArmedForcesType = branch.ArmedForcesType?.Trim() ?? "";
+        branch.Name = branch.Name?.Trim() ?? "";
+        branch.Description = branch.Description?.Trim() ?? "";
+
+        if (string.IsNullOrWhiteSpace(branch.ArmedForcesType))
+            throw new InvalidOperationException("Укажите вид ВС РФ.");
+        if (branch.ArmedForcesType.Length > 250)
+            throw new InvalidOperationException("Вид ВС РФ должен быть не длиннее 250 символов.");
+        if (string.IsNullOrWhiteSpace(branch.Name))
+            throw new InvalidOperationException("Укажите наименование.");
+        if (branch.Name.Length > 250)
+            throw new InvalidOperationException("Наименование должно быть не длиннее 250 символов.");
+        if (branch.Description?.Length > 1000)
+            throw new InvalidOperationException("Описание должно быть не длиннее 1000 символов.");
+    }
+
+    private async Task EnsureNoDuplicateMilitaryBranchAsync(string armedForcesType, string name, Guid? selfId, CancellationToken ct = default)
+    {
+        var type = armedForcesType.ToUpperInvariant();
+        var normalizedName = name.ToUpperInvariant();
+        var query = _db.MilitaryBranches
+            .Where(b => !b.IsDeleted
+                && b.ArmedForcesType.ToUpper() == type
+                && b.Name.ToUpper() == normalizedName);
+        if (selfId.HasValue)
+            query = query.Where(b => b.Id != selfId.Value);
+
+        if (await query.AnyAsync(ct))
+            throw new InvalidOperationException($"Род войск «{armedForcesType} — {name}» уже существует.");
+    }
 
     public async Task<MilitaryBranch> CreateMilitaryBranchAsync(MilitaryBranch branch)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        ValidateMilitaryBranch(branch);
+        await EnsureNoDuplicateMilitaryBranchAsync(branch.ArmedForcesType, branch.Name, null);
         branch.Id = Guid.NewGuid();
         branch.CreatedAt = DateTime.UtcNow;
         branch.UpdatedAt = DateTime.UtcNow;
         _db.MilitaryBranches.Add(branch);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", branch.Id.ToString(), "Create", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{branch.Code} — {branch.Name}"));
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", branch.Id.ToString(), "Create", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{branch.ArmedForcesType} — {branch.Name}"));
         return branch;
     }
 
     public async Task<MilitaryBranch> UpdateMilitaryBranchAsync(MilitaryBranch branch)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        ValidateMilitaryBranch(branch);
+        await EnsureNoDuplicateMilitaryBranchAsync(branch.ArmedForcesType, branch.Name, branch.Id);
         branch.UpdatedAt = DateTime.UtcNow;
         _db.MilitaryBranches.Update(branch);
         await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", branch.Id.ToString(), "Update", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{branch.Code} — {branch.Name}"));
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", branch.Id.ToString(), "Update", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{branch.ArmedForcesType} — {branch.Name}"));
         return branch;
     }
 
@@ -1247,7 +1339,22 @@ public class EquipmentService
         b.IsDeleted = true;
         b.DeletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", id.ToString(), "Delete", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{b.Code} — {b.Name}"));
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", id.ToString(), "Delete", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{b.ArmedForcesType} — {b.Name}"));
+        return true;
+    }
+
+    public async Task<bool> RestoreMilitaryBranchAsync(Guid id)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+
+        var b = await _db.MilitaryBranches.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+        if (b == null || !b.IsDeleted) return false;
+        await EnsureNoDuplicateMilitaryBranchAsync(b.ArmedForcesType, b.Name, id);
+        b.IsDeleted = false;
+        b.DeletedAt = null;
+        b.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", id.ToString(), "Restore", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{b.ArmedForcesType} — {b.Name}"));
         return true;
     }
 
@@ -1296,7 +1403,8 @@ public class EquipmentService
         return await _db.HKCardMilitaryBranches
             .Where(mb => mb.HKCardId == hkCardId)
             .Select(mb => mb.MilitaryBranch)
-            .OrderBy(b => b.Code)
+            .OrderBy(b => b.ArmedForcesType)
+            .ThenBy(b => b.Name)
             .ToListAsync(ct);
     }
 }

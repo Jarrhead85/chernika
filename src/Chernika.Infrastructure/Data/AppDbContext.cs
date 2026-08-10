@@ -449,10 +449,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<MilitaryBranch>(e =>
         {
             e.HasKey(x => x.Id);
-            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            e.Property(x => x.ArmedForcesType).HasMaxLength(250).IsRequired();
             e.Property(x => x.Name).HasMaxLength(250).IsRequired();
             e.Property(x => x.Description).HasMaxLength(1000);
-            e.HasIndex(x => x.Code).IsUnique().HasFilter("\"IsDeleted\" = false");
+            e.HasIndex(x => new { x.ArmedForcesType, x.Name })
+                .IsUnique()
+                .HasFilter("\"IsDeleted\" = false")
+                .HasDatabaseName("UX_MilitaryBranches_ArmedForcesType_Name_Active");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 

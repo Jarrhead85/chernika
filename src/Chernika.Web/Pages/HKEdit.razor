@@ -14,6 +14,7 @@
 @inject IPermissionService Perms
 @inject IJSRuntime JS
 @inject IOptions<FileStorageOptions> FileOptions
+@inject ILogger<HKEdit> Logger
 
 <div class="stack">
     <section class="panel">
@@ -22,6 +23,12 @@
             <div class="hint">@card.Version</div>
         </div>
         <div class="panelBody">
+            @if (_loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else
+            {
             <EditForm Model="@card" OnValidSubmit="SaveCard">
                 <DataAnnotationsValidator />
                 <div class="form">
@@ -97,7 +104,7 @@
                                         if (mb != null)
                                         {
                                             <span class="hki-mat-tag">
-                                                <span>@mb.Code — @mb.Name</span>
+                                                <span>@mb.ArmedForcesType — @mb.Name</span>
                                                 @if (canEdit)
                                                 {
                                                     <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
@@ -120,7 +127,7 @@
                                         <input class="gsm-dropdown-search" @bind="_mbSearch" @oninput="() => { }" placeholder="Поиск..." />
                                         @foreach (var mb in FilteredMilitaryBranches())
                                         {
-                                            <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMilitaryBranch(mb.Id)">@mb.Code — @mb.Name</div>
+                                            <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMilitaryBranch(mb.Id)">@mb.ArmedForcesType — @mb.Name</div>
                                         }
                                         @if (!FilteredMilitaryBranches().Any())
                                         {
@@ -650,6 +657,7 @@
                     <ValidationSummary />
                 </div>
             </EditForm>
+            }
         </div>
     </section>
 </div>
@@ -743,7 +751,7 @@
     [Parameter] public Guid? Id { get; set; }
     [SupplyParameterFromQuery(Name = "nodeId")] public Guid? NodeId { get; set; }
 
-    private HKCard card = new()
+    private static HKCard CreateEmptyCard() => new()
     {
         Id = Guid.NewGuid(),
         Version = "v" + DateTime.UtcNow.ToString("MMyy"),
@@ -752,6 +760,10 @@
         CreatedAt = DateTime.UtcNow,
         UpdatedAt = DateTime.UtcNow,
     };
+
+    private HKCard card = CreateEmptyCard();
+    private bool _loading = true;
+    private CancellationTokenSource? _loadCts;
 
     private string statusStr = "Draft";
     private HKObjectLevel selectedLevel = HKObjectLevel.Node;
@@ -838,6 +850,8 @@
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
         try
         {
             await JS.InvokeVoidAsync("dropdownPortal.cleanup");
@@ -886,61 +900,133 @@
         gsmMaterials = await EquipmentService.GetGsmMaterialsAsync();
         allMilitaryBranches = await EquipmentService.GetMilitaryBranchesAsync();
 
-        if (NodeId.HasValue && NodeId.Value != Guid.Empty)
-        {
-            selectedLevel = HKObjectLevel.Node;
-            selectedNodeId = NodeId.Value;
-        }
-        else if (IsNew)
-        {
-            selectedLevel = HKObjectLevel.Node;
-            selectedNodeId = Guid.Empty;
-        }
-
         if (!IsNew && Id.HasValue)
-        {
-            await LoadCardAsync(Id.Value);
-            _loadedCardId = Id;
-        }
+            await ReloadForRouteAsync();
         else
-        {
-            canEdit = await Perms.HasPermissionAsync(currentUserId, selectedLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
-                selectedLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
-                selectedLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
-                PermissionCodes.HKComplexEditDraft);
-            canQuickCreate = canEdit;
-
-            if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
-            {
-                card.Items.Add(new HKCardItem
-                {
-                    Id = Guid.NewGuid(),
-                    HKCardId = card.Id,
-                    AssemblyUnitId = Guid.Empty,
-                    Quantity = 1,
-                    Volume = 1.000m,
-                    UnitOfMeasure = "кг",
-                    SortOrder = 1
-                });
-            }
-
-            InitItemDicts();
-        }
+            await InitCreateModeAsync();
     }
 
     protected override async Task OnParametersSetAsync()
     {
-        if (!IsNew && Id.HasValue && Id != _loadedCardId)
+        if (IsNew || !Id.HasValue)
         {
-            await LoadCardAsync(Id.Value);
-            _loadedCardId = Id;
+            if (_loadedCardId != null)
+                await InitCreateModeAsync();
+            return;
         }
+
+        if (Id != _loadedCardId)
+            await ReloadForRouteAsync();
     }
 
-    private async Task LoadCardAsync(Guid cardId)
+    private async Task ReloadForRouteAsync()
     {
-        var existing = await HKCardService.GetByIdAsync(cardId);
-        if (existing == null) return;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+        var requestedId = Id!.Value;
+
+        _loading = true;
+        errorMessage = null;
+
+        Logger.LogInformation("HKEdit.LoadCardAsync начало: {Id}", requestedId);
+
+        try
+        {
+            await LoadCardAsync(requestedId, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            Logger.LogInformation("HKEdit.LoadCardAsync отменена: {Id}", requestedId);
+            return;
+        }
+        catch (Exception ex)
+        {
+            if (!ct.IsCancellationRequested && requestedId == Id)
+            {
+                Logger.LogWarning(ex, "HKEdit.LoadCardAsync ошибка: {Id}", requestedId);
+                errorMessage = ex.Message;
+                card = CreateEmptyCard();
+                InitItemDicts();
+                canEdit = false;
+                canQuickCreate = false;
+            }
+            return;
+        }
+
+        if (ct.IsCancellationRequested) return;
+
+        _loadedCardId = requestedId;
+        _loading = false;
+        Logger.LogInformation("HKEdit.LoadCardAsync завершение: {Id}", requestedId);
+    }
+
+    private async Task InitCreateModeAsync()
+    {
+        _loading = true;
+        errorMessage = null;
+        card = CreateEmptyCard();
+        statusStr = "Draft";
+        _existingActiveCard = null;
+        _activeCardWarning = null;
+        _attachment = null;
+        _components = new();
+        _aggregatedRows = new();
+        _availableChildCards = new();
+        selectedMilitaryBranchIds = new();
+        _loadedCardId = null;
+
+        selectedLevel = HKObjectLevel.Node;
+        selectedComplexId = Guid.Empty;
+        selectedModelId = Guid.Empty;
+        selectedAggregateId = Guid.Empty;
+        selectedNodeId = NodeId.HasValue && NodeId.Value != Guid.Empty ? NodeId.Value : Guid.Empty;
+
+        canEdit = await Perms.HasPermissionAsync(currentUserId, selectedLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
+            selectedLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
+            selectedLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
+            PermissionCodes.HKComplexEditDraft);
+        canQuickCreate = canEdit;
+
+        if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
+        {
+            card.Items.Add(new HKCardItem
+            {
+                Id = Guid.NewGuid(),
+                HKCardId = card.Id,
+                AssemblyUnitId = Guid.Empty,
+                Quantity = 1,
+                Volume = 1.000m,
+                UnitOfMeasure = "кг",
+                SortOrder = 1
+            });
+        }
+
+        InitItemDicts();
+        _loading = false;
+    }
+
+    private async Task LoadCardAsync(Guid cardId, CancellationToken ct)
+    {
+        var existing = await HKCardService.GetByIdAsync(cardId, ct);
+        if (ct.IsCancellationRequested) return;
+
+        if (existing == null)
+        {
+            Logger.LogWarning("HKEdit.LoadCardAsync: ХК не найдена или нет доступа: {Id}", cardId);
+            errorMessage = "ХК не найдена или у вас нет доступа.";
+            card = CreateEmptyCard();
+            InitItemDicts();
+            canEdit = false;
+            canQuickCreate = false;
+            _existingActiveCard = null;
+            _activeCardWarning = null;
+            _attachment = null;
+            _components = new();
+            _aggregatedRows = new();
+            return;
+        }
 
         card = existing;
         selectedLevel = card.ObjectLevel;
@@ -955,6 +1041,7 @@
             card.ObjectLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
             card.ObjectLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
             PermissionCodes.HKComplexEditDraft);
+        if (ct.IsCancellationRequested) return;
         canEdit = canEditLevel && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
         canQuickCreate = canEdit;
 
@@ -976,34 +1063,41 @@
 
         if (selectedLevel != HKObjectLevel.Node)
         {
-            _components = await HKCardService.GetComponentsAsync(cardId);
-            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(cardId);
+            _components = await HKCardService.GetComponentsAsync(cardId, ct);
+            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(cardId, ct);
         }
 
         if (selectedLevel == HKObjectLevel.EquipmentModel)
         {
-            var cardBranches = await EquipmentService.GetHKCardMilitaryBranchesAsync(cardId);
+            var cardBranches = await EquipmentService.GetHKCardMilitaryBranchesAsync(cardId, ct);
+            if (ct.IsCancellationRequested) return;
             selectedMilitaryBranchIds = cardBranches.Select(b => b.Id).ToList();
         }
 
-        await LoadAttachmentAsync(cardId);
+        await LoadAttachmentAsync(cardId, ct);
     }
 
-    private async Task LoadAttachmentAsync(Guid cardId)
+    private async Task LoadAttachmentAsync(Guid cardId, CancellationToken ct)
     {
         try
         {
             using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
-            var response = await http.GetAsync($"/api/HKCards/{cardId}/attachment");
+            var response = await http.GetAsync($"/api/HKCards/{cardId}/attachment", ct);
+            if (ct.IsCancellationRequested) return;
             if (response.IsSuccessStatusCode)
             {
-                var json = await response.Content.ReadFromJsonAsync<AttachmentInfo>();
-                _attachment = json;
+                var json = await response.Content.ReadFromJsonAsync<AttachmentInfo>(cancellationToken: ct);
+                if (!ct.IsCancellationRequested)
+                    _attachment = json;
             }
             else
             {
                 _attachment = null;
             }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // маршрут уже изменился
         }
         catch
         {
@@ -1620,7 +1714,7 @@
         {
             try { await JS.InvokeVoidAsync("dropdownPortal.cleanup"); } catch { }
         }
-        Nav.NavigateTo($"/хк/{_existingActiveCard!.Id}", forceLoad: true);
+        Nav.NavigateTo($"/хк/{_existingActiveCard!.Id}");
     }
 
     private IEnumerable<MilitaryBranch> FilteredMilitaryBranches()
@@ -1628,7 +1722,7 @@
         var search = _mbSearch?.Trim().ToLower() ?? "";
         var available = allMilitaryBranches.Where(b => !selectedMilitaryBranchIds.Contains(b.Id));
         if (string.IsNullOrEmpty(search)) return available;
-        return available.Where(b => (b.Code?.ToLower().Contains(search) ?? false) || (b.Name?.ToLower().Contains(search) ?? false));
+        return available.Where(b => (b.ArmedForcesType?.ToLower().Contains(search) ?? false) || (b.Name?.ToLower().Contains(search) ?? false));
     }
 
     private async Task ToggleMbDropdown(string dropId, string btnId)
@@ -1741,7 +1835,7 @@
                 _previewPending = false;
                 _previewOpen = false;
                 await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
-                await LoadAttachmentAsync(card.Id);
+                await LoadAttachmentAsync(card.Id, CancellationToken.None);
             }
         }
         catch (Exception ex)

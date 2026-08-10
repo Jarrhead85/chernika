@@ -6,8 +6,8 @@ public class MilitaryBranch
 {
     public Guid Id { get; set; }
 
-    [Required, StringLength(50)]
-    public string Code { get; set; } = null!;
+    [Required, StringLength(250)]
+    public string ArmedForcesType { get; set; } = null!;
 
     [Required, StringLength(250)]
     public string Name { get; set; } = null!;

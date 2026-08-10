@@ -910,3 +910,21 @@ input:-webkit-autofill:focus {
   }
   .bellDropdown.open-up{top:auto;bottom:12px}
 }
+
+.mbError{color:var(--bad);font-size:13px;margin-top:6px}
+.mbFilters{
+  display:grid;grid-template-columns:minmax(200px,1fr) 220px 160px 200px auto auto;gap:10px;
+  margin-bottom:14px;align-items:end;
+}
+@media (max-width:1120px){
+  .mbFilters{grid-template-columns:1fr 1fr;align-items:end}
+}
+@media (max-width:560px){
+  .mbFilters{grid-template-columns:1fr}
+}
+.mbSearch{width:100%}
+.tableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.tableWrap table{min-width:760px}
+@media (max-width:560px){
+  .tableWrap table{min-width:620px}
+}

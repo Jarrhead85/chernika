@@ -1,35 +1,36 @@
 @page "/справочник-родов-войск"
 @attribute [Authorize(Policy = "ViewHK")]
+@implements IDisposable
 @using Chernika.Domain
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 
 <div class="stack">
-    <section class="panel">
-        <div class="panelHeader">
-            <h2>Справочник родов войск</h2>
-            <div class="hint">Общесистемный справочник</div>
-        </div>
-        <div class="panelBody">
-            <div class="form">
-                <div class="field"><label>Код</label><input @bind="newBranch.Code" /></div>
-                <div class="field"><label>Наименование</label><input @bind="newBranch.Name" /></div>
-                <div class="field full-width"><label>Описание</label><input @bind="newBranch.Description" /></div>
-                <div class="formActions">
-                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
-                    @if (canEdit)
-                    {
+    @if (canEdit)
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>@(editing ? "Редактирование рода войск" : "Новый род войск")</h2>
+                <div class="hint">Вид ВС РФ — классификационная группа, может повторяться</div>
+            </div>
+            <div class="panelBody">
+                <div class="form">
+                    <div class="field"><label>Вид ВС РФ</label><input @bind="newBranch.ArmedForcesType" maxlength="250" /></div>
+                    <div class="field"><label>Наименование</label><input @bind="newBranch.Name" maxlength="250" /></div>
+                    <div class="field full-width"><label>Описание</label><input @bind="newBranch.Description" maxlength="1000" /></div>
+                    <div class="formActions">
+                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
                         <button class="btn primary" @onclick="SaveBranch">@(editing ? "Сохранить" : "Добавить")</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="mbError">@errorMessage</div>
                     }
                 </div>
-                @if (!string.IsNullOrEmpty(errorMessage))
-                {
-                    <div style="color:var(--bad);font-size:13px;margin-top:6px">@errorMessage</div>
-                }
             </div>
-        </div>
-    </section>
+        </section>
+    }
 
     <section class="panel">
         <div class="panelHeader">
@@ -37,6 +38,32 @@
             <div class="hint">@branches.Count записей</div>
         </div>
         <div class="panelBody">
+            <div class="mbFilters">
+                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="ReloadAsync" placeholder="Поиск по виду ВС РФ, наименованию, описанию..." />
+                <select class="field-select" @bind="typeFilter" @bind:after="ReloadAsync">
+                    <option value="">Все виды ВС РФ</option>
+                    @foreach (var t in branchTypes)
+                    {
+                        <option value="@t">@t</option>
+                    }
+                </select>
+                <select class="field-select" @bind="statusFilter" @bind:after="ReloadAsync">
+                    <option value="0">Активные</option>
+                    <option value="1">Удалённые</option>
+                    <option value="2">Все</option>
+                </select>
+                <select class="field-select" @bind="sortBy" @bind:after="ReloadAsync">
+                    <option value="ArmedForcesType">Сортировка: вид ВС РФ</option>
+                    <option value="Name">Сортировка: наименование</option>
+                    <option value="CreatedAt">Сортировка: дата создания</option>
+                </select>
+                <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
+                @if (HasActiveFilters)
+                {
+                    <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                }
+            </div>
+
             @if (loading)
             {
                 <div class="loading-state">Загрузка...</div>
@@ -47,30 +74,43 @@
             }
             else
             {
-                <table>
-                    <thead>
-                        <tr><th>Код</th><th>Наименование</th><th>Описание</th><th>Действия</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var b in branches)
-                        {
-                            <tr>
-                                <td class="mono">@b.Code</td>
-                                <td>@b.Name</td>
-                                <td>@b.Description</td>
-                                <td>
-                                    <div class="rowActions">
-                                        @if (canEdit)
-                                        {
-                                            <button class="linkBtn" @onclick="() => EditBranch(b)">Изменить</button>
-                                            <button class="linkBtn" style="color:var(--bad)" @onclick="() => DeleteBranch(b.Id)">Удалить</button>
-                                        }
-                                    </div>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                <div class="tableWrap">
+                    <table>
+                        <thead>
+                            <tr><th>Вид ВС РФ</th><th>Наименование</th><th>Описание</th><th>Статус</th><th>Действия</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var b in branches)
+                            {
+                                <tr>
+                                    <td>@b.ArmedForcesType</td>
+                                    <td>@b.Name</td>
+                                    <td>@b.Description</td>
+                                    <td><span class="tag @(b.IsDeleted ? "bad" : "ok")">@(b.IsDeleted ? "Удалён" : "Активен")</span></td>
+                                    <td>
+                                        <div class="rowActions">
+                                            @if (b.IsDeleted)
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreBranch(b.Id)">Восстановить</button>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" @onclick="() => EditBranch(b)">Изменить</button>
+                                                    <button class="linkBtn" style="color:var(--bad)" @onclick="() => DeleteBranch(b.Id)">Удалить</button>
+                                                }
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
             }
         </div>
     </section>
@@ -78,33 +118,63 @@
 
 @code {
     private List<MilitaryBranch> branches = new();
+    private List<string> branchTypes = new();
     private MilitaryBranch newBranch = new();
     private bool editing = false;
     private bool loading = true;
     private bool canEdit;
     private string? errorMessage;
+    private string search = "";
+    private string? typeFilter;
+    private int statusFilter = 0;
+    private string sortBy = "ArmedForcesType";
+    private bool sortDesc = false;
+    private CancellationTokenSource? _cts;
+
+    private bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(typeFilter) || statusFilter != 0;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
-        await LoadBranches();
+        await ReloadAsync();
     }
 
-    async Task LoadBranches()
+    async Task ReloadAsync()
     {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
         loading = true;
-        branches = await EquipService.GetMilitaryBranchesAsync();
-        loading = false;
+        try
+        {
+            bool? showDeleted = statusFilter switch
+            {
+                1 => true,
+                2 => null,
+                _ => false
+            };
+            branches = await EquipService.GetMilitaryBranchesAsync(search, typeFilter, showDeleted, sortBy, sortDesc, _cts.Token);
+            if (showDeleted != true)
+                branchTypes = await EquipService.GetMilitaryBranchTypesAsync(_cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            loading = false;
+        }
     }
 
     async Task SaveBranch()
     {
         errorMessage = null;
-        if (string.IsNullOrWhiteSpace(newBranch.Code) || string.IsNullOrWhiteSpace(newBranch.Name))
+        if (string.IsNullOrWhiteSpace(newBranch.ArmedForcesType) || string.IsNullOrWhiteSpace(newBranch.Name))
         {
-            errorMessage = "Код и наименование обязательны.";
+            errorMessage = "Укажите вид ВС РФ и наименование.";
             return;
         }
 
@@ -115,7 +185,7 @@
             else
                 await EquipService.CreateMilitaryBranchAsync(newBranch);
             ResetForm();
-            await LoadBranches();
+            await ReloadAsync();
         }
         catch (InvalidOperationException ex)
         {
@@ -129,7 +199,7 @@
 
     void EditBranch(MilitaryBranch b)
     {
-        newBranch = new MilitaryBranch { Id = b.Id, Code = b.Code, Name = b.Name, Description = b.Description, IsDeleted = b.IsDeleted, CreatedAt = b.CreatedAt, UpdatedAt = b.UpdatedAt };
+        newBranch = new MilitaryBranch { Id = b.Id, ArmedForcesType = b.ArmedForcesType, Name = b.Name, Description = b.Description, IsDeleted = b.IsDeleted, CreatedAt = b.CreatedAt, UpdatedAt = b.UpdatedAt };
         editing = true;
     }
 
@@ -138,7 +208,20 @@
         try
         {
             await EquipService.DeleteMilitaryBranchAsync(id);
-            await LoadBranches();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    async Task RestoreBranch(Guid id)
+    {
+        try
+        {
+            await EquipService.RestoreMilitaryBranchAsync(id);
+            await ReloadAsync();
         }
         catch (InvalidOperationException ex)
         {
@@ -151,5 +234,27 @@
         newBranch = new MilitaryBranch();
         editing = false;
         errorMessage = null;
+    }
+
+    async Task ToggleSortDir()
+    {
+        sortDesc = !sortDesc;
+        await ReloadAsync();
+    }
+
+    async Task ResetFilters()
+    {
+        search = "";
+        typeFilter = null;
+        statusFilter = 0;
+        sortBy = "ArmedForcesType";
+        sortDesc = false;
+        await ReloadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
     }
 }
