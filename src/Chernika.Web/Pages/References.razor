@@ -1,0 +1,177 @@
+@page "/справочники"
+@attribute [Authorize(Policy = "ViewReferences")]
+@using System.Security.Claims
+@using Chernika.Domain
+@inject ReferenceCatalogService CatalogSvc
+@inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
+@inject NavigationManager Nav
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Справочники</h2>
+            <div class="hint">Единая точка входа в справочники системы</div>
+        </div>
+        <div class="panelBody">
+            <input class="refSearch" placeholder="Поиск справочника..."
+                   value="@search"
+                   @oninput="OnSearchInput" />
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (FilteredGroups.Count == 0)
+            {
+                <div class="empty-state">Справочники не найдены</div>
+            }
+            else
+            {
+                @foreach (var (group, cards) in FilteredGroups)
+                {
+                    <div class="refGroup">
+                        <div class="refGroupHeader">
+                            <h3>@group.Title</h3>
+                            @if (group.RequiresAdmin)
+                            {
+                                <span class="tag warn">Администрирование</span>
+                            }
+                        </div>
+                        <div class="refCards">
+                            @foreach (var card in cards)
+                            {
+                                <div class="refCard">
+                                    <div class="refCardTitle">@card.Title</div>
+                                    <div class="refCardDesc">@card.Description</div>
+                                    <div class="refCardFooter">
+                                        <span class="tag">@ActiveCountText(CountFor(card.Route))</span>
+                                        <div class="refCardActions">
+                                            <button class="btn" @onclick="() => Open(card.Route)">Открыть</button>
+                                            @if (canEdit)
+                                            {
+                                                <button class="btn primary" @onclick="() => Open(card.Route)">Добавить</button>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private sealed record RefGroup(string Title, bool RequiresAdmin);
+    private sealed record RefCard(string Title, string Description, string Route);
+
+    private List<RefGroup> Groups { get; } =
+    [
+        new("Техника", false),
+        new("Материалы", false),
+        new("Классификаторы", false),
+        new("Администрирование", true),
+    ];
+
+    private readonly Dictionary<string, List<RefCard>> _cardsByGroup = new()
+    {
+        ["Техника"] =
+        [
+            new("Модели техники / Изделия", "Номенклатура моделей и базовых изделий техники.", "/справочник-моделей"),
+            new("Комплексы", "Общесистемный справочник комплексов.", "/справочник-комплексов"),
+            new("Агрегаты", "Общесистемный справочник агрегатов.", "/справочник-агрегатов"),
+            new("Узлы", "Общесистемный справочник узлов и изделий.", "/справочник-узлов"),
+            new("Сборочные единицы", "Общесистемный справочник сборочных единиц.", "/справочник-сборочных-единиц"),
+            new("Экземпляры техники", "Учётные экземпляры моделей техники.", "/справочник-экземпляров"),
+        ],
+        ["Материалы"] =
+        [
+            new("Смазочные материалы / ГСМ", "Горюче-смазочные материалы, применяемые при эксплуатации техники.", "/справочник-гсм"),
+        ],
+        ["Классификаторы"] =
+        [
+            new("Рода войск", "Перечень родов войск для привязки документов.", "/справочник-родов-войск"),
+        ],
+        ["Администрирование"] = [],
+    };
+
+    private string search = "";
+    private bool loading = true;
+    private bool isAdmin;
+    private bool canEdit;
+    private readonly Dictionary<string, int> _countByRoute = new();
+
+    private List<(RefGroup Group, List<RefCard> Cards)> FilteredGroups
+    {
+        get
+        {
+            var term = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+            var result = new List<(RefGroup, List<RefCard>)>();
+            foreach (var group in Groups)
+            {
+                if (group.RequiresAdmin && !isAdmin)
+                    continue;
+                if (!_cardsByGroup.TryGetValue(group.Title, out var all))
+                    continue;
+
+                List<RefCard> cards;
+                if (term == null)
+                {
+                    cards = all;
+                }
+                else
+                {
+                    cards = all.Where(c => c.Title.Contains(term, StringComparison.OrdinalIgnoreCase)
+                        || c.Description.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+                }
+
+                if (cards.Count > 0)
+                    result.Add((group, cards));
+            }
+            return result;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (userId != null)
+        {
+            isAdmin = await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
+            canEdit = await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        }
+
+        var counts = await CatalogSvc.GetCountsAsync();
+        _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
+        _countByRoute["/справочник-комплексов"] = counts.Complexes;
+        _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
+        _countByRoute["/справочник-узлов"] = counts.Nodes;
+        _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
+        _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
+        _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
+        _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
+        loading = false;
+    }
+
+    private int CountFor(string route) =>
+        _countByRoute.TryGetValue(route, out var n) ? n : 0;
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        search = e.Value?.ToString() ?? "";
+    }
+
+    private void Open(string route) => Nav.NavigateTo(route);
+
+    private static string ActiveCountText(int n) => n switch
+    {
+        0 => "Нет активных записей",
+        1 => "1 активная запись",
+        _ when n % 10 == 1 && n % 100 != 11 => $"{n} активная запись",
+        _ when n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) => $"{n} активные записи",
+        _ => $"{n} активных записей",
+    };
+}

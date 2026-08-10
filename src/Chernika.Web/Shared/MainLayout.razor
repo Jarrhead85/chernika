@@ -40,29 +40,8 @@
                 @*<span class="badge">Ctrl+3</span>*@
             </a>
             <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
-            <a class="@GetActive("справочник-моделей")" href="справочник-моделей">
-                <span>Модели техники</span>
-            </a>
-            <a class="@GetActive("справочник-экземпляров")" href="справочник-экземпляров">
-                <span>Экземпляры</span>
-            </a>
-            <a class="@GetActive("справочник-узлов")" href="справочник-узлов">
-                <span>Узлы</span>
-            </a>
-            <a class="@GetActive("справочник-агрегатов")" href="справочник-агрегатов">
-                <span>Агрегаты</span>
-            </a>
-            <a class="@GetActive("справочник-комплексов")" href="справочник-комплексов">
-                <span>Комплексы</span>
-            </a>
-            <a class="@GetActive("справочник-гсм")" href="справочник-гсм">
-                <span>Смазочные материалы</span>
-            </a>
-            <a class="@GetActive("справочник-сборочных-единиц")" href="справочник-сборочных-единиц">
-                <span>Сборочные единицы</span>
-            </a>
-            <a class="@GetActive("справочник-родов-войск")" href="справочник-родов-войск">
-                <span>Род войск</span>
+            <a class="@GetReferencesActive()" href="справочники">
+                <span>Справочники</span>
             </a>
             <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
             <a class="@GetActive("задачи")" href="задачи">
@@ -450,6 +429,16 @@
         var target = path.TrimStart('/');
         return relative.Equals(target, StringComparison.OrdinalIgnoreCase)
             || relative.StartsWith(target + "/", StringComparison.OrdinalIgnoreCase)
+            ? "active"
+            : "";
+    }
+
+    private string GetReferencesActive()
+    {
+        var relative = Nav.ToBaseRelativePath(Nav.Uri).TrimStart('/');
+        return relative.Equals("справочники", StringComparison.OrdinalIgnoreCase)
+            || relative.StartsWith("справочники/", StringComparison.OrdinalIgnoreCase)
+            || relative.StartsWith("справочник-", StringComparison.OrdinalIgnoreCase)
             ? "active"
             : "";
     }

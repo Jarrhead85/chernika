@@ -1,0 +1,15 @@
+<div class="refCrumb">
+    <a class="crumbBack" href="/справочники">← Все справочники</a>
+    <div class="crumbPath">
+        <a href="/справочники">Справочники</a>
+        <span class="crumbSep">/</span>
+        <span>@Group</span>
+        <span class="crumbSep">/</span>
+        <span class="crumbCurrent">@Current</span>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Group { get; set; } = "";
+    [Parameter] public string Current { get; set; } = "";
+}
