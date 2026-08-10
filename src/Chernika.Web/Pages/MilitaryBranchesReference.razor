@@ -205,9 +205,11 @@
         {
             errorMessage = ex.Message;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            errorMessage = ex.Message;
+            errorMessage = editing
+                ? "Не удалось изменить запись справочника. Обновите список и повторите попытку."
+                : "Не удалось создать запись справочника. Обновите список и повторите попытку.";
         }
     }
 

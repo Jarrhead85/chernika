@@ -1288,6 +1288,7 @@ public class EquipmentService
         var type = armedForcesType.ToUpperInvariant();
         var normalizedName = name.ToUpperInvariant();
         var query = _db.MilitaryBranches
+            .AsNoTracking()
             .Where(b => !b.IsDeleted
                 && b.ArmedForcesType.ToUpper() == type
                 && b.Name.ToUpper() == normalizedName);
@@ -1312,16 +1313,29 @@ public class EquipmentService
         return branch;
     }
 
-    public async Task<MilitaryBranch> UpdateMilitaryBranchAsync(MilitaryBranch branch)
+    public async Task<MilitaryBranch> UpdateMilitaryBranchAsync(MilitaryBranch branch, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
         ValidateMilitaryBranch(branch);
-        await EnsureNoDuplicateMilitaryBranchAsync(branch.ArmedForcesType, branch.Name, branch.Id);
-        branch.UpdatedAt = DateTime.UtcNow;
-        _db.MilitaryBranches.Update(branch);
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", branch.Id.ToString(), "Update", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{branch.ArmedForcesType} — {branch.Name}"));
-        return branch;
+
+        var existing = await _db.MilitaryBranches
+            .FirstOrDefaultAsync(x => x.Id == branch.Id && !x.IsDeleted, ct);
+
+        if (existing == null)
+            throw new InvalidOperationException("Не удалось изменить запись справочника. Обновите список и повторите попытку.");
+
+        await EnsureNoDuplicateMilitaryBranchAsync(branch.ArmedForcesType, branch.Name, existing.Id, ct);
+
+        existing.ArmedForcesType = branch.ArmedForcesType;
+        existing.Name = branch.Name;
+        existing.Description = branch.Description;
+        existing.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("MilitaryBranch", existing.Id.ToString(), "Update", _currentUser.GetRequiredUserId(), EntityDisplayName: $"{existing.ArmedForcesType} — {existing.Name}"), ct);
+
+        return existing;
     }
 
     public async Task<bool> DeleteMilitaryBranchAsync(Guid id)
