@@ -1,5 +1,6 @@
 @page "/печать-хк/{Id:guid}"
 @attribute [Authorize(Policy = "ViewHK")]
+@implements IDisposable
 @inject HKCardService HKCardService
 @inject ReportService ReportService
 @inject NavigationManager Nav
@@ -176,15 +177,57 @@
     private HKCard? card;
     private bool loading = true;
     private List<AggregatedRowDto> aggregatedRows = new();
+    private CancellationTokenSource? _loadCts;
+    private Guid? _loadedId;
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnParametersSetAsync()
     {
-        card = await HKCardService.GetByIdAsync(Id);
-        if (card != null && card.ObjectLevel != HKObjectLevel.Node)
+        if (_loadedId == Id) return;
+
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+        var requestedId = Id;
+
+        loading = true;
+        card = null;
+        aggregatedRows = new();
+
+        try
         {
-            aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+            var loaded = await HKCardService.GetByIdAsync(requestedId, ct);
+            var rows = loaded != null && loaded.ObjectLevel != HKObjectLevel.Node
+                ? await HKCardService.GetAggregatedRowsAsync(loaded.Id, ct)
+                : new List<AggregatedRowDto>();
+
+            if (!ct.IsCancellationRequested && requestedId == Id)
+            {
+                card = loaded;
+                aggregatedRows = rows;
+                _loadedId = requestedId;
+            }
         }
-        loading = false;
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // маршрут уже изменился
+        }
+        catch (Exception)
+        {
+            if (!ct.IsCancellationRequested && requestedId == Id)
+                card = null;
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested && requestedId == Id)
+                loading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 
     async Task DownloadPdf()

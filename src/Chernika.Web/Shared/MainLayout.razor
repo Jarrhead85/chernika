@@ -3,6 +3,7 @@
 @inject SearchService SearchSvc
 @inject IPermissionService PermSvc
 @inject TaskService TaskSvc
+@inject ILogger<MainLayout> Logger
 @using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
@@ -250,6 +251,8 @@
     DotNetObjectReference<MainLayout>? _bellRef;
     bool _bellPositioned;
     bool _authChecked;
+    bool _disposed;
+    CancellationTokenSource? _navigationRefreshCts;
 
     [Inject] NavigationManager Nav { get; set; } = null!;
     [Inject] NotificationService NotifSvc { get; set; } = null!;
@@ -263,44 +266,83 @@
         NotifRefresh.Changed += OnNotifRefresh;
     }
 
-    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
     {
-        _ = RefreshTaskBadgeAsync();
-        _ = RefreshBellAsync();
+        if (_disposed) return;
+
+        _navigationRefreshCts?.Cancel();
+        _navigationRefreshCts?.Dispose();
+        _navigationRefreshCts = new CancellationTokenSource();
+        var ct = _navigationRefreshCts.Token;
+
+        Logger.LogInformation("Навигация layout: {From} → {To}", Nav.Uri, args.Location);
+
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await RefreshLayoutStateAsync(ct);
+                if (!_disposed)
+                    StateHasChanged();
+            }
+            catch (OperationCanceledException)
+            {
+                // новый маршрут отменил устаревшее обновление
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Ошибка обновления layout после навигации: {Uri}", args.Location);
+            }
+        });
     }
 
     private async Task OnNotifRefresh()
     {
         await RefreshBellAsync();
-    }
-
-    private async Task RefreshTaskBadgeAsync()
-    {
-        if (!_authChecked) return;
-        try
-        {
-            openTaskCount = await TaskSvc.GetOpenTaskCountAsync();
+        if (!_disposed)
             StateHasChanged();
-        }
-        catch
-        {
-            // не авторизован или нет доступа — бейдж скрыт
-        }
     }
 
-    private async Task RefreshBellAsync()
+    private async Task RefreshLayoutStateAsync(CancellationToken ct)
+    {
+        if (!_authChecked) return;
+        await RefreshTaskBadgeAsync(ct);
+        await RefreshBellAsync(ct);
+    }
+
+    private async Task RefreshTaskBadgeAsync(CancellationToken ct = default)
     {
         if (!_authChecked) return;
         try
         {
-            unreadCount = await NotifSvc.GetUnreadCountAsync();
+            openTaskCount = await TaskSvc.GetOpenTaskCountAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Не удалось обновить бейдж открытых задач");
+        }
+    }
+
+    private async Task RefreshBellAsync(CancellationToken ct = default)
+    {
+        if (!_authChecked) return;
+        try
+        {
+            unreadCount = await NotifSvc.GetUnreadCountAsync(ct);
             if (showBellDropdown)
-                recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 5 })).Items;
-            StateHasChanged();
+                recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 5 }, ct)).Items;
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // не авторизован или нет доступа — счётчик скрыт
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Не удалось обновить счётчик уведомлений");
         }
     }
 
@@ -321,6 +363,7 @@
     private void CloseBell()
     {
         showBellDropdown = false;
+        try { _ = JS.InvokeVoidAsync("bellDropdown.clear"); } catch { }
         StateHasChanged();
     }
 
@@ -357,6 +400,8 @@
             // ignore
         }
         await RefreshBellAsync();
+        if (!_disposed)
+            StateHasChanged();
         await NotifRefresh.NotifyChangedAsync();
     }
 
@@ -390,14 +435,24 @@
 
     public void Dispose()
     {
+        _disposed = true;
         Nav.LocationChanged -= OnLocationChanged;
         NotifRefresh.Changed -= OnNotifRefresh;
+        _navigationRefreshCts?.Cancel();
+        _navigationRefreshCts?.Dispose();
         try { _ = JS.InvokeVoidAsync("bellDropdown.clear"); } catch { }
         _bellRef?.Dispose();
     }
 
-    string GetActive(string path) =>
-        Nav.Uri.Contains(path, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+    private string GetActive(string path)
+    {
+        var relative = Nav.ToBaseRelativePath(Nav.Uri).TrimStart('/');
+        var target = path.TrimStart('/');
+        return relative.Equals(target, StringComparison.OrdinalIgnoreCase)
+            || relative.StartsWith(target + "/", StringComparison.OrdinalIgnoreCase)
+            ? "active"
+            : "";
+    }
 
     async Task OnSearchInput(ChangeEventArgs e)
     {
