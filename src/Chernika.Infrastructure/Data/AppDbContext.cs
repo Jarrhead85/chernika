@@ -452,10 +452,6 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.ArmedForcesType).HasMaxLength(250).IsRequired();
             e.Property(x => x.Name).HasMaxLength(250).IsRequired();
             e.Property(x => x.Description).HasMaxLength(1000);
-            e.HasIndex(x => new { x.ArmedForcesType, x.Name })
-                .IsUnique()
-                .HasFilter("\"IsDeleted\" = false")
-                .HasDatabaseName("UX_MilitaryBranches_ArmedForcesType_Name_Active");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 

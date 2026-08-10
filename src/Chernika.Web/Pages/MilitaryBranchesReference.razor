@@ -74,7 +74,7 @@
             }
             else
             {
-                <div class="tableWrap">
+                <div class="militaryBranchesTableWrap">
                     <table>
                         <thead>
                             <tr><th>Вид ВС РФ</th><th>Наименование</th><th>Описание</th><th>Статус</th><th>Действия</th></tr>
@@ -142,30 +142,44 @@
         await ReloadAsync();
     }
 
-    async Task ReloadAsync()
+    private async Task ReloadAsync()
     {
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        bool? showDeleted = statusFilter switch
+        {
+            1 => true,
+            2 => null,
+            _ => false
+        };
+
         loading = true;
         try
         {
-            bool? showDeleted = statusFilter switch
-            {
-                1 => true,
-                2 => null,
-                _ => false
-            };
-            branches = await EquipService.GetMilitaryBranchesAsync(search, typeFilter, showDeleted, sortBy, sortDesc, _cts.Token);
-            if (showDeleted != true)
-                branchTypes = await EquipService.GetMilitaryBranchTypesAsync(_cts.Token);
+            var loadedBranches = await EquipService.GetMilitaryBranchesAsync(
+                search, typeFilter, showDeleted, sortBy, sortDesc, ct);
+
+            var loadedTypes = showDeleted == true
+                ? null
+                : await EquipService.GetMilitaryBranchTypesAsync(ct);
+
+            if (ct.IsCancellationRequested)
+                return;
+
+            branches = loadedBranches;
+            if (loadedTypes != null)
+                branchTypes = loadedTypes;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
         }
         finally
         {
-            loading = false;
+            if (!ct.IsCancellationRequested)
+                loading = false;
         }
     }
 

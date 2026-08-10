@@ -923,8 +923,12 @@ input:-webkit-autofill:focus {
   .mbFilters{grid-template-columns:1fr}
 }
 .mbSearch{width:100%}
-.tableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
-.tableWrap table{min-width:760px}
+.militaryBranchesTableWrap{
+  width:100%;overflow-x:auto;overflow-y:visible;
+  overscroll-behavior-x:contain;overscroll-behavior-y:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.militaryBranchesTableWrap table{min-width:760px}
 @media (max-width:560px){
-  .tableWrap table{min-width:620px}
+  .militaryBranchesTableWrap table{min-width:620px}
 }
