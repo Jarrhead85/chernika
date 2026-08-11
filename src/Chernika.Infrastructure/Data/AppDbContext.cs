@@ -142,9 +142,6 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.TypeGroup).HasMaxLength(250);
             e.Property(x => x.Name).HasMaxLength(250).IsRequired();
             e.Property(x => x.Description).HasMaxLength(1000);
-            e.HasIndex(x => new { x.TypeGroup, x.Name })
-                .HasDatabaseName("UX_EquipmentTypes_TypeGroup_Name_Active_CI")
-                .HasFilter("\"IsDeleted\" = false");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 
