@@ -2,6 +2,7 @@
 @attribute [Authorize(Policy = "ViewReferences")]
 @using System.Security.Claims
 @using Chernika.Domain
+@implements IDisposable
 @inject ReferenceCatalogService CatalogSvc
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
@@ -97,6 +98,8 @@
     private bool loading = true;
     private bool isAdmin;
     private readonly Dictionary<string, int> _countByRoute = new();
+    private CancellationTokenSource? _loadCts;
+    private bool _disposed;
 
     private List<(RefGroup Group, List<RefCard> Cards)> FilteredGroups
     {
@@ -129,25 +132,54 @@
         }
     }
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnParametersSetAsync()
     {
-        var authState = await AuthState.GetAuthenticationStateAsync();
-        var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (userId != null)
-        {
-            isAdmin = await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
-        }
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
 
-        var counts = await CatalogSvc.GetCountsAsync();
-        _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
-        _countByRoute["/справочник-комплексов"] = counts.Complexes;
-        _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
-        _countByRoute["/справочник-узлов"] = counts.Nodes;
-        _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
-        _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
-        _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
-        _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
-        loading = false;
+        loading = true;
+
+        try
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            ct.ThrowIfCancellationRequested();
+            var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (userId != null)
+            {
+                isAdmin = await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig, ct);
+            }
+
+            ct.ThrowIfCancellationRequested();
+            var counts = await CatalogSvc.GetCountsAsync(ct);
+            ct.ThrowIfCancellationRequested();
+
+            _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
+            _countByRoute["/справочник-комплексов"] = counts.Complexes;
+            _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
+            _countByRoute["/справочник-узлов"] = counts.Nodes;
+            _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
+            _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
+            _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
+            _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        finally
+        {
+            if (!_disposed && !ct.IsCancellationRequested)
+                loading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 
     private int CountFor(string route) =>

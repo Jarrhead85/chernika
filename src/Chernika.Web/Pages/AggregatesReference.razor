@@ -14,7 +14,7 @@
         </div>
         <div class="panelBody">
             <div class="form">
-                <div class="field"><label>Код агрегата</label><input @bind="newEntity.Code" /></div>
+                <div class="field"><label>Код агрегата</label><input @ref="_firstField" @bind="newEntity.Code" /></div>
                 <div class="field"><label>Наименование</label><input @bind="newEntity.Name" /></div>
                 <div class="field full-width"><label>Описание</label><input @bind="newEntity.Description" /></div>
                 <div class="formActions">
@@ -48,11 +48,11 @@
                     <tbody>
                         @foreach (var e in entities)
                         {
-                            <tr>
+                            <tr class="@(canEdit ? "clickableRow" : "")" tabindex="@(canEdit ? "0" : "-1")" @ondblclick="() => OnRowDblClick(e)" @onkeydown="(ev) => OnRowKeyDown(ev, e)">
                                 <td class="mono">@e.Code</td>
                                 <td>@e.Name</td>
                                 <td>@e.Description</td>
-                                <td>
+                                <td @ondblclick:stopPropagation="true">
                                     <div class="rowActions">
                                         @if (canEdit) { <button class="linkBtn" @onclick="() => EditEntity(e)">Изменить</button> }
                                         @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteEntity(e.Id)">Удалить</button> }
@@ -73,6 +73,8 @@
     private bool editing;
     private bool loading = true;
     private bool canEdit;
+    private ElementReference _firstField;
+    private bool _focusForm;
 
     protected override async Task OnInitializedAsync()
     {
@@ -80,6 +82,15 @@
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
         await LoadEntities();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusForm)
+        {
+            _focusForm = false;
+            await _firstField.FocusAsync();
+        }
     }
 
     async Task LoadEntities()
@@ -100,10 +111,24 @@
         await LoadEntities();
     }
 
-    void EditEntity(Aggregate a)
+    Task EditEntity(Aggregate a)
     {
         newEntity = new Aggregate { Id = a.Id, Code = a.Code, Name = a.Name, Description = a.Description };
         editing = true;
+        _focusForm = true;
+        return Task.CompletedTask;
+    }
+
+    async Task OnRowDblClick(Aggregate a)
+    {
+        if (!canEdit) return;
+        await EditEntity(a);
+    }
+
+    async Task OnRowKeyDown(KeyboardEventArgs ev, Aggregate a)
+    {
+        if (!canEdit || ev.Key != "Enter") return;
+        await EditEntity(a);
     }
 
     async Task DeleteEntity(Guid id)

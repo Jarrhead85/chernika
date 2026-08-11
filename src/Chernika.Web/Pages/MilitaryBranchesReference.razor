@@ -17,7 +17,7 @@
             </div>
             <div class="panelBody">
                 <div class="form">
-                    <div class="field"><label>Вид ВС РФ</label><input @bind="newBranch.ArmedForcesType" maxlength="250" /></div>
+                    <div class="field"><label>Вид ВС РФ</label><input @ref="_firstField" @bind="newBranch.ArmedForcesType" maxlength="250" /></div>
                     <div class="field"><label>Наименование</label><input @bind="newBranch.Name" maxlength="250" /></div>
                     <div class="field full-width"><label>Описание</label><input @bind="newBranch.Description" maxlength="1000" /></div>
                     <div class="formActions">
@@ -83,12 +83,13 @@
                         <tbody>
                             @foreach (var b in branches)
                             {
-                                <tr>
+                                var rowClickable = canEdit && !b.IsDeleted;
+                                <tr class="@(rowClickable ? "clickableRow" : "")" tabindex="@(rowClickable ? "0" : "-1")" @ondblclick="() => OnRowDblClick(b)" @onkeydown="(ev) => OnRowKeyDown(ev, b)">
                                     <td>@b.ArmedForcesType</td>
                                     <td>@b.Name</td>
                                     <td>@b.Description</td>
                                     <td><span class="tag @(b.IsDeleted ? "bad" : "ok")">@(b.IsDeleted ? "Удалён" : "Активен")</span></td>
-                                    <td>
+                                    <td @ondblclick:stopPropagation="true">
                                         <div class="rowActions">
                                             @if (b.IsDeleted)
                                             {
@@ -131,6 +132,8 @@
     private string sortBy = "ArmedForcesType";
     private bool sortDesc = false;
     private CancellationTokenSource? _cts;
+    private ElementReference _firstField;
+    private bool _focusForm;
 
     private bool HasActiveFilters =>
         !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(typeFilter) || statusFilter != 0;
@@ -141,6 +144,15 @@
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
         await ReloadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusForm)
+        {
+            _focusForm = false;
+            await _firstField.FocusAsync();
+        }
     }
 
     private async Task ReloadAsync()
@@ -214,10 +226,24 @@
         }
     }
 
-    void EditBranch(MilitaryBranch b)
+    Task EditBranch(MilitaryBranch b)
     {
         newBranch = new MilitaryBranch { Id = b.Id, ArmedForcesType = b.ArmedForcesType, Name = b.Name, Description = b.Description, IsDeleted = b.IsDeleted, CreatedAt = b.CreatedAt, UpdatedAt = b.UpdatedAt };
         editing = true;
+        _focusForm = true;
+        return Task.CompletedTask;
+    }
+
+    async Task OnRowDblClick(MilitaryBranch b)
+    {
+        if (!canEdit || b.IsDeleted) return;
+        await EditBranch(b);
+    }
+
+    async Task OnRowKeyDown(KeyboardEventArgs ev, MilitaryBranch b)
+    {
+        if (!canEdit || b.IsDeleted || ev.Key != "Enter") return;
+        await EditBranch(b);
     }
 
     async Task DeleteBranch(Guid id)

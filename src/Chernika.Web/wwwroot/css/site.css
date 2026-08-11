@@ -285,6 +285,9 @@ tbody td{padding:10px;border-bottom:1px solid rgba(32,50,86,.45);font-size:13px;
 [data-theme="light"] tbody td{border-bottom-color:rgba(111,138,178,.16)}
 tbody tr:hover td{background:rgba(79,140,255,.06)}
 [data-theme="light"] tbody tr:hover td{background:rgba(79,140,255,.055)}
+.clickableRow{cursor:pointer}
+.clickableRow:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--accent)}
+[data-theme="light"] .clickableRow:focus-visible{box-shadow:inset 0 0 0 2px rgba(79,140,255,.75)}
 .mono{font-family:var(--mono);color:var(--muted);font-size:12px}
 [data-theme="light"] .mono{color:#70829e}
 .rowActions{display:flex;gap:8px;flex-wrap:wrap}
@@ -952,6 +955,10 @@ input:-webkit-autofill:focus {
   padding:14px;transition:border-color .12s ease, transform .12s ease;
 }
 .refCard:hover{border-color:rgba(79,140,255,.45);transform:translateY(-1px)}
+[data-theme="light"] .refCard{
+  background:linear-gradient(180deg, rgba(255,255,255,.96) 0%, rgba(248,251,255,.90) 100%);
+  border-color:rgba(111,138,178,.24);box-shadow:0 10px 26px rgba(34,61,109,.06),inset 0 1px 0 rgba(255,255,255,.78);
+}
 .refCardTitle{font-size:14px;font-weight:700;line-height:1.3}
 .refCardDesc{font-size:12px;color:var(--muted);line-height:1.45;flex:1}
 .refCardFooter{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}

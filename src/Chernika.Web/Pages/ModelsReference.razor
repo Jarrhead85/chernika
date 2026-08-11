@@ -14,7 +14,7 @@
         </div>
         <div class="panelBody">
             <div class="form">
-                <div class="field"><label>Индекс</label><input @bind="newModel.Index" /></div>
+                <div class="field"><label>Индекс</label><input @ref="_firstField" @bind="newModel.Index" /></div>
                 <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
                 <div class="field"><label>Вид техники</label><input @bind="newModel.Type" /></div>
                 <div class="field"><label>Марка</label><input @bind="newModel.Brand" /></div>
@@ -51,13 +51,13 @@
                     <tbody>
                         @foreach (var m in models)
                         {
-                            <tr>
+                            <tr class="@(canEdit ? "clickableRow" : "")" tabindex="@(canEdit ? "0" : "-1")" @ondblclick="() => OnRowDblClick(m)" @onkeydown="(ev) => OnRowKeyDown(ev, m)">
                                 <td class="mono">@m.Index</td>
                                 <td>@m.Name</td>
                                 <td>@m.Type</td>
                                 <td>@m.Brand</td>
                                 <td>@m.Modification</td>
-                                <td>
+                                <td @ondblclick:stopPropagation="true">
                                     <div class="rowActions">
                                         @if (canEdit) { <button class="linkBtn" @onclick="() => EditModel(m)">Изменить</button> }
                                         @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteModel(m.Id)">Удалить</button> }
@@ -78,6 +78,8 @@
     private bool editing = false;
     private bool loading = true;
     private bool canEdit;
+    private ElementReference _firstField;
+    private bool _focusForm;
 
     protected override async Task OnInitializedAsync()
     {
@@ -85,6 +87,15 @@
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
         await LoadModels();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusForm)
+        {
+            _focusForm = false;
+            await _firstField.FocusAsync();
+        }
     }
 
     async Task LoadModels()
@@ -105,7 +116,7 @@
         await LoadModels();
     }
 
-    void EditModel(EquipmentModel m)
+    Task EditModel(EquipmentModel m)
     {
         newModel = new EquipmentModel
         {
@@ -113,6 +124,20 @@
             Brand = m.Brand, Modification = m.Modification, Description = m.Description
         };
         editing = true;
+        _focusForm = true;
+        return Task.CompletedTask;
+    }
+
+    async Task OnRowDblClick(EquipmentModel m)
+    {
+        if (!canEdit) return;
+        await EditModel(m);
+    }
+
+    async Task OnRowKeyDown(KeyboardEventArgs ev, EquipmentModel m)
+    {
+        if (!canEdit || ev.Key != "Enter") return;
+        await EditModel(m);
     }
 
     async Task DeleteModel(Guid id)
