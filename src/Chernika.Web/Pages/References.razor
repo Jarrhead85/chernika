@@ -47,10 +47,6 @@
                                         <span class="tag">@ActiveCountText(CountFor(card.Route))</span>
                                         <div class="refCardActions">
                                             <button class="btn" @onclick="() => Open(card.Route)">Открыть</button>
-                                            @if (canEdit)
-                                            {
-                                                <button class="btn primary" @onclick="() => Open(card.Route)">Добавить</button>
-                                            }
                                         </div>
                                     </div>
                                 </div>
@@ -100,7 +96,6 @@
     private string search = "";
     private bool loading = true;
     private bool isAdmin;
-    private bool canEdit;
     private readonly Dictionary<string, int> _countByRoute = new();
 
     private List<(RefGroup Group, List<RefCard> Cards)> FilteredGroups
@@ -141,7 +136,6 @@
         if (userId != null)
         {
             isAdmin = await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
-            canEdit = await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
         }
 
         var counts = await CatalogSvc.GetCountsAsync();
