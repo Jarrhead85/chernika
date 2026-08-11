@@ -18,6 +18,10 @@ builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(DatabaseConnection.Build(builder.Configuration)));
 
+builder.Services.AddDbContextFactory<AppDbContext>(
+    options => options.UseNpgsql(DatabaseConnection.Build(builder.Configuration)),
+    ServiceLifetime.Scoped);
+
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
     options.Password.RequiredLength = 8;

@@ -231,7 +231,8 @@
     bool _bellPositioned;
     bool _authChecked;
     bool _disposed;
-    CancellationTokenSource? _navigationRefreshCts;
+    readonly SemaphoreSlim _layoutRefreshGate = new(1, 1);
+    CancellationTokenSource? _layoutRefreshCts;
 
     [Inject] NavigationManager Nav { get; set; } = null!;
     [Inject] NotificationService NotifSvc { get; set; } = null!;
@@ -249,30 +250,9 @@
     {
         if (_disposed) return;
 
-        _navigationRefreshCts?.Cancel();
-        _navigationRefreshCts?.Dispose();
-        _navigationRefreshCts = new CancellationTokenSource();
-        var ct = _navigationRefreshCts.Token;
-
         Logger.LogInformation("Навигация layout: {From} → {To}", Nav.Uri, args.Location);
 
-        _ = InvokeAsync(async () =>
-        {
-            try
-            {
-                await RefreshLayoutStateAsync(ct);
-                if (!_disposed)
-                    StateHasChanged();
-            }
-            catch (OperationCanceledException)
-            {
-                // новый маршрут отменил устаревшее обновление
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Ошибка обновления layout после навигации: {Uri}", args.Location);
-            }
-        });
+        _ = InvokeAsync(RefreshLayoutIndicatorsAsync);
     }
 
     private async Task OnNotifRefresh()
@@ -282,27 +262,49 @@
             StateHasChanged();
     }
 
-    private async Task RefreshLayoutStateAsync(CancellationToken ct)
+    private async Task RefreshLayoutIndicatorsAsync()
     {
-        if (!_authChecked) return;
-        await RefreshTaskBadgeAsync(ct);
-        await RefreshBellAsync(ct);
-    }
+        if (!_authChecked || _disposed)
+            return;
 
-    private async Task RefreshTaskBadgeAsync(CancellationToken ct = default)
-    {
-        if (!_authChecked) return;
+        _layoutRefreshCts?.Cancel();
+        _layoutRefreshCts?.Dispose();
+        _layoutRefreshCts = new CancellationTokenSource();
+        var ct = _layoutRefreshCts.Token;
+
         try
         {
-            openTaskCount = await TaskSvc.GetOpenTaskCountAsync(ct);
+            await _layoutRefreshGate.WaitAsync(ct);
+            try
+            {
+                if (ct.IsCancellationRequested || _disposed)
+                    return;
+
+                openTaskCount = await TaskSvc.GetOpenTaskCountAsync(ct);
+
+                if (ct.IsCancellationRequested || _disposed)
+                    return;
+
+                unreadCount = await NotifSvc.GetUnreadCountAsync(ct);
+
+                if (showBellDropdown && !ct.IsCancellationRequested && !_disposed)
+                    recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 5 }, ct)).Items;
+            }
+            finally
+            {
+                _layoutRefreshGate.Release();
+            }
+
+            if (!ct.IsCancellationRequested && !_disposed)
+                await InvokeAsync(StateHasChanged);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            throw;
+            // новый маршрут отменил устаревшее обновление
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Не удалось обновить бейдж открытых задач");
+            Logger.LogError(ex, "Ошибка обновления индикаторов layout после навигации");
         }
     }
 
@@ -417,8 +419,9 @@
         _disposed = true;
         Nav.LocationChanged -= OnLocationChanged;
         NotifRefresh.Changed -= OnNotifRefresh;
-        _navigationRefreshCts?.Cancel();
-        _navigationRefreshCts?.Dispose();
+        _layoutRefreshCts?.Cancel();
+        _layoutRefreshCts?.Dispose();
+        _layoutRefreshGate.Dispose();
         try { _ = JS.InvokeVoidAsync("bellDropdown.clear"); } catch { }
         _bellRef?.Dispose();
     }
@@ -520,8 +523,7 @@
                 canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
                 canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
             }
-            await RefreshTaskBadgeAsync();
-            await RefreshBellAsync();
+            await RefreshLayoutIndicatorsAsync();
         }
     }
 

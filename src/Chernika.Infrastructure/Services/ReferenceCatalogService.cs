@@ -17,23 +17,25 @@ public sealed class ReferenceCatalogCounts
 
 public sealed class ReferenceCatalogService
 {
-    private readonly AppDbContext _db;
+    private readonly IDbContextFactory<AppDbContext> _dbFactory;
 
-    public ReferenceCatalogService(AppDbContext db)
+    public ReferenceCatalogService(IDbContextFactory<AppDbContext> dbFactory)
     {
-        _db = db;
+        _dbFactory = dbFactory;
     }
 
     public async Task<ReferenceCatalogCounts> GetCountsAsync(CancellationToken ct = default)
     {
-        var models = await _db.EquipmentModels.CountAsync(ct);
-        var complexes = await _db.Complexes.CountAsync(ct);
-        var aggregates = await _db.Aggregates.CountAsync(ct);
-        var nodes = await _db.Nodes.CountAsync(ct);
-        var assemblyUnits = await _db.AssemblyUnits.CountAsync(ct);
-        var instances = await _db.EquipmentInstances.CountAsync(ct);
-        var gsm = await _db.GsmMaterials.CountAsync(ct);
-        var branches = await _db.MilitaryBranches.CountAsync(ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var models = await db.EquipmentModels.CountAsync(ct);
+        var complexes = await db.Complexes.CountAsync(ct);
+        var aggregates = await db.Aggregates.CountAsync(ct);
+        var nodes = await db.Nodes.CountAsync(ct);
+        var assemblyUnits = await db.AssemblyUnits.CountAsync(ct);
+        var instances = await db.EquipmentInstances.CountAsync(ct);
+        var gsm = await db.GsmMaterials.CountAsync(ct);
+        var branches = await db.MilitaryBranches.CountAsync(ct);
 
         return new ReferenceCatalogCounts
         {
