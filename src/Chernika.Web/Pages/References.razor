@@ -7,6 +7,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject NavigationManager Nav
+@inject ILogger<References> Logger
 
 <div class="stack">
     <section class="panel">
@@ -18,7 +19,14 @@
             <input class="refSearch" placeholder="Поиск справочника..."
                    value="@search"
                    @oninput="OnSearchInput" />
-            @if (loading)
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="error">
+                    @errorMessage
+                    <button class="btn" @onclick="StartCatalogLoad">Повторить</button>
+                </div>
+            }
+            else if (loading)
             {
                 <div class="loading-state">Загрузка...</div>
             }
@@ -41,13 +49,21 @@
                         <div class="refCards">
                             @foreach (var card in cards)
                             {
-                                <div class="refCard">
+                                <div class="refCard refCardClickable"
+                                     role="link"
+                                     tabindex="0"
+                                     aria-label="Открыть справочник: @card.Title"
+                                     @ondblclick="() => Open(card.Route)"
+                                     @onkeydown="(e) => OnCardKeyDown(e, card.Route)">
                                     <div class="refCardTitle">@card.Title</div>
                                     <div class="refCardDesc">@card.Description</div>
                                     <div class="refCardFooter">
                                         <span class="tag">@ActiveCountText(CountFor(card.Route))</span>
                                         <div class="refCardActions">
-                                            <button class="btn" @onclick="() => Open(card.Route)">Открыть</button>
+                                            <button class="btn"
+                                                    @onclick:stopPropagation="true"
+                                                    @ondblclick:stopPropagation="true"
+                                                    @onclick="() => Open(card.Route)">Открыть</button>
                                         </div>
                                     </div>
                                 </div>
@@ -97,6 +113,7 @@
     private string search = "";
     private bool loading = true;
     private bool isAdmin;
+    private string? errorMessage;
     private readonly Dictionary<string, int> _countByRoute = new();
     private CancellationTokenSource? _loadCts;
     private bool _disposed;
@@ -132,54 +149,105 @@
         }
     }
 
-    protected override async Task OnParametersSetAsync()
+    protected override void OnInitialized()
     {
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    protected override Task OnInitializedAsync()
+    {
+        StartCatalogLoad();
+        return Task.CompletedTask;
+    }
+
+    private void StartCatalogLoad()
+    {
+        if (_disposed)
+            return;
+
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
-        var ct = _loadCts.Token;
 
-        loading = true;
-
-        try
+        _ = InvokeAsync(async () =>
         {
-            var authState = await AuthState.GetAuthenticationStateAsync();
-            ct.ThrowIfCancellationRequested();
-            var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (userId != null)
+            try
             {
-                isAdmin = await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig, ct);
+                await LoadCatalogAsync(_loadCts.Token);
+                if (!_disposed && !_loadCts.IsCancellationRequested)
+                    StateHasChanged();
             }
+            catch (OperationCanceledException)
+            {
+                // Новый маршрут отменил устаревшую загрузку.
+            }
+            catch (Exception ex)
+            {
+                if (!_disposed && !_loadCts.IsCancellationRequested)
+                {
+                    errorMessage = "Не удалось загрузить справочники. Повторите попытку.";
+                    Logger.LogError(ex, "Ошибка загрузки навигатора справочников");
+                    StateHasChanged();
+                }
+            }
+        });
+    }
 
-            ct.ThrowIfCancellationRequested();
-            var counts = await CatalogSvc.GetCountsAsync(ct);
-            ct.ThrowIfCancellationRequested();
+    private async Task LoadCatalogAsync(CancellationToken ct)
+    {
+        loading = true;
+        errorMessage = null;
 
-            _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
-            _countByRoute["/справочник-комплексов"] = counts.Complexes;
-            _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
-            _countByRoute["/справочник-узлов"] = counts.Nodes;
-            _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
-            _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
-            _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
-            _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        ct.ThrowIfCancellationRequested();
+        var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (userId != null)
         {
+            isAdmin = await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig, ct);
+        }
+
+        ct.ThrowIfCancellationRequested();
+        var counts = await CatalogSvc.GetCountsAsync(ct);
+        ct.ThrowIfCancellationRequested();
+
+        _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
+        _countByRoute["/справочник-комплексов"] = counts.Complexes;
+        _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
+        _countByRoute["/справочник-узлов"] = counts.Nodes;
+        _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
+        _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
+        _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
+        _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
+
+        if (!ct.IsCancellationRequested)
+            loading = false;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        if (_disposed)
             return;
-        }
-        finally
-        {
-            if (!_disposed && !ct.IsCancellationRequested)
-                loading = false;
-        }
+
+        var route = Nav.ToBaseRelativePath(args.Location)
+            .Split('?', '#')[0]
+            .Trim('/');
+
+        if (route.Equals("справочники", StringComparison.OrdinalIgnoreCase))
+            StartCatalogLoad();
     }
 
     public void Dispose()
     {
         _disposed = true;
+        Nav.LocationChanged -= OnLocationChanged;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
+    }
+
+    private void OnCardKeyDown(KeyboardEventArgs e, string route)
+    {
+        if (e.Key is "Enter" or " ")
+            Open(route);
     }
 
     private int CountFor(string route) =>
