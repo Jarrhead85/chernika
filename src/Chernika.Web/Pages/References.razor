@@ -23,7 +23,7 @@
             {
                 <div class="error">
                     @errorMessage
-                    <button class="btn" @onclick="StartCatalogLoad">Повторить</button>
+                    <button class="btn" @onclick="ReloadCatalogAsync">Повторить</button>
                 </div>
             }
             else if (loading)
@@ -115,7 +115,9 @@
     private bool isAdmin;
     private string? errorMessage;
     private readonly Dictionary<string, int> _countByRoute = new();
+    private readonly SemaphoreSlim _catalogLoadGate = new(1, 1);
     private CancellationTokenSource? _loadCts;
+    private int _loadVersion;
     private bool _disposed;
 
     private List<(RefGroup Group, List<RefCard> Cards)> FilteredGroups
@@ -149,67 +151,84 @@
         }
     }
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         Nav.LocationChanged += OnLocationChanged;
+        await ReloadCatalogAsync();
     }
 
-    protected override Task OnInitializedAsync()
-    {
-        StartCatalogLoad();
-        return Task.CompletedTask;
-    }
-
-    private void StartCatalogLoad()
+    private async Task ReloadCatalogAsync()
     {
         if (_disposed)
             return;
 
         _loadCts?.Cancel();
         _loadCts?.Dispose();
-        _loadCts = new CancellationTokenSource();
 
-        _ = InvokeAsync(async () =>
+        var cts = new CancellationTokenSource();
+        _loadCts = cts;
+        var ct = cts.Token;
+        var version = ++_loadVersion;
+
+        loading = true;
+        errorMessage = null;
+
+        try
         {
+            await _catalogLoadGate.WaitAsync(ct);
             try
             {
-                await LoadCatalogAsync(_loadCts.Token);
-                if (!_disposed && !_loadCts.IsCancellationRequested)
-                    StateHasChanged();
+                if (ct.IsCancellationRequested || _disposed || version != _loadVersion)
+                    return;
+
+                await LoadCatalogAsync(ct);
+
+                if (ct.IsCancellationRequested || _disposed || version != _loadVersion)
+                    return;
             }
-            catch (OperationCanceledException)
+            finally
             {
-                // Новый маршрут отменил устаревшую загрузку.
+                _catalogLoadGate.Release();
             }
-            catch (Exception ex)
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Устаревшая навигация отменила загрузку.
+        }
+        catch (Exception ex)
+        {
+            if (!ct.IsCancellationRequested && !_disposed && version == _loadVersion)
             {
-                if (!_disposed && !_loadCts.IsCancellationRequested)
-                {
-                    errorMessage = "Не удалось загрузить справочники. Повторите попытку.";
-                    Logger.LogError(ex, "Ошибка загрузки навигатора справочников");
-                    StateHasChanged();
-                }
+                Logger.LogError(ex,
+                    "Ошибка загрузки справочников. Version={Version}, Route={Route}",
+                    version,
+                    Nav.ToBaseRelativePath(Nav.Uri));
+
+                errorMessage = "Не удалось загрузить справочники. Повторите попытку.";
             }
-        });
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested && !_disposed && version == _loadVersion)
+                loading = false;
+        }
     }
 
     private async Task LoadCatalogAsync(CancellationToken ct)
     {
-        loading = true;
-        errorMessage = null;
-
         var authState = await AuthState.GetAuthenticationStateAsync();
         ct.ThrowIfCancellationRequested();
+
         var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (userId != null)
-        {
-            isAdmin = await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig, ct);
-        }
+        var canAdmin = userId != null
+            && await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig, ct);
 
         ct.ThrowIfCancellationRequested();
+
         var counts = await CatalogSvc.GetCountsAsync(ct);
         ct.ThrowIfCancellationRequested();
 
+        isAdmin = canAdmin;
         _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
         _countByRoute["/справочник-комплексов"] = counts.Complexes;
         _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
@@ -218,9 +237,6 @@
         _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
         _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
         _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
-
-        if (!ct.IsCancellationRequested)
-            loading = false;
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
@@ -232,8 +248,15 @@
             .Split('?', '#')[0]
             .Trim('/');
 
-        if (route.Equals("справочники", StringComparison.OrdinalIgnoreCase))
-            StartCatalogLoad();
+        if (!route.Equals("справочники", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _ = InvokeAsync(async () =>
+        {
+            await ReloadCatalogAsync();
+            if (!_disposed)
+                StateHasChanged();
+        });
     }
 
     public void Dispose()
@@ -242,6 +265,7 @@
         Nav.LocationChanged -= OnLocationChanged;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
+        _catalogLoadGate.Dispose();
     }
 
     private void OnCardKeyDown(KeyboardEventArgs e, string route)
