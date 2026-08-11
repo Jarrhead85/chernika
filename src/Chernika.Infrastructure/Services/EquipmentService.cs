@@ -1421,4 +1421,188 @@ public class EquipmentService
             .ThenBy(b => b.Name)
             .ToListAsync(ct);
     }
+
+    public async Task<List<EquipmentType>> GetEquipmentTypesAsync(
+        string? search = null,
+        string? typeGroup = null,
+        bool? showDeleted = false,
+        string? sortBy = null,
+        bool sortDesc = false,
+        CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<EquipmentType> query = _db.EquipmentTypes;
+
+        if (showDeleted == null)
+        {
+            query = query.IgnoreQueryFilters();
+        }
+        else if (showDeleted == true)
+        {
+            query = query.IgnoreQueryFilters().Where(e => e.IsDeleted);
+        }
+        else
+        {
+            query = query.Where(e => !e.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(e => EF.Functions.ILike(e.TypeGroup ?? "", $"%{term}%")
+                || EF.Functions.ILike(e.Name, $"%{term}%")
+                || EF.Functions.ILike(e.Description ?? "", $"%{term}%"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(typeGroup))
+            query = query.Where(e => e.TypeGroup == typeGroup);
+
+        IOrderedQueryable<EquipmentType> ordered = sortBy switch
+        {
+            "Name" => sortDesc
+                ? query.OrderByDescending(e => e.Name).ThenByDescending(e => e.TypeGroup)
+                : query.OrderBy(e => e.Name).ThenBy(e => e.TypeGroup),
+            "CreatedAt" => sortDesc
+                ? query.OrderByDescending(e => e.CreatedAt)
+                : query.OrderBy(e => e.CreatedAt),
+            _ => sortDesc
+                ? query.OrderByDescending(e => e.TypeGroup).ThenByDescending(e => e.Name)
+                : query.OrderBy(e => e.TypeGroup).ThenBy(e => e.Name),
+        };
+
+        return await ordered.ToListAsync(ct);
+    }
+
+    public async Task<List<string>> GetEquipmentTypeGroupsAsync(CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        return await _db.EquipmentTypes
+            .Where(e => !e.IsDeleted && e.TypeGroup != null)
+            .Select(e => e.TypeGroup!)
+            .Distinct()
+            .OrderBy(g => g)
+            .ToListAsync(ct);
+    }
+
+    public async Task<EquipmentType> CreateEquipmentTypeAsync(EquipmentType type, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        ValidateEquipmentType(type);
+        await EnsureNoDuplicateEquipmentTypeAsync(type.TypeGroup, type.Name, null, ct);
+
+        type.Id = Guid.NewGuid();
+        type.CreatedAt = _time.GetUtcNow().UtcDateTime;
+        type.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        _db.EquipmentTypes.Add(type);
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentType", type.Id.ToString(), "Create", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: EquipmentTypeDisplayName(type)), ct);
+
+        return type;
+    }
+
+    public async Task<EquipmentType> UpdateEquipmentTypeAsync(EquipmentType type, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        ValidateEquipmentType(type);
+
+        var existing = await _db.EquipmentTypes
+            .FirstOrDefaultAsync(x => x.Id == type.Id && !x.IsDeleted, ct);
+
+        if (existing == null)
+            throw new InvalidOperationException("Не удалось изменить запись справочника. Обновите список и повторите попытку.");
+
+        await EnsureNoDuplicateEquipmentTypeAsync(type.TypeGroup, type.Name, existing.Id, ct);
+
+        existing.TypeGroup = type.TypeGroup;
+        existing.Name = type.Name;
+        existing.Description = type.Description;
+        existing.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentType", existing.Id.ToString(), "Update", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: EquipmentTypeDisplayName(existing)), ct);
+
+        return existing;
+    }
+
+    public async Task<bool> DeleteEquipmentTypeAsync(Guid id, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        var existing = await _db.EquipmentTypes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (existing == null || existing.IsDeleted) return false;
+
+        existing.IsDeleted = true;
+        existing.DeletedAt = _time.GetUtcNow().UtcDateTime;
+        existing.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentType", id.ToString(), "Delete", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: EquipmentTypeDisplayName(existing)), ct);
+
+        return true;
+    }
+
+    public async Task<bool> RestoreEquipmentTypeAsync(Guid id, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        var existing = await _db.EquipmentTypes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (existing == null || !existing.IsDeleted) return false;
+
+        await EnsureNoDuplicateEquipmentTypeAsync(existing.TypeGroup, existing.Name, id, ct);
+
+        existing.IsDeleted = false;
+        existing.DeletedAt = null;
+        existing.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentType", id.ToString(), "Restore", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: EquipmentTypeDisplayName(existing)), ct);
+
+        return true;
+    }
+
+    private static void ValidateEquipmentType(EquipmentType type)
+    {
+        type.TypeGroup = string.IsNullOrWhiteSpace(type.TypeGroup) ? null : type.TypeGroup.Trim();
+        type.Name = type.Name?.Trim() ?? "";
+        type.Description = string.IsNullOrWhiteSpace(type.Description) ? null : type.Description.Trim();
+
+        if (string.IsNullOrWhiteSpace(type.Name))
+            throw new InvalidOperationException("Укажите наименование.");
+        if (type.Name.Length > 250)
+            throw new InvalidOperationException("Наименование должно быть не длиннее 250 символов.");
+        if (type.TypeGroup?.Length > 250)
+            throw new InvalidOperationException("Вид техники должен быть не длиннее 250 символов.");
+        if (type.Description?.Length > 1000)
+            throw new InvalidOperationException("Описание должно быть не длиннее 1000 символов.");
+    }
+
+    private async Task EnsureNoDuplicateEquipmentTypeAsync(string? typeGroup, string name, Guid? selfId, CancellationToken ct = default)
+    {
+        var group = (typeGroup ?? "").ToUpperInvariant();
+        var normalizedName = name.ToUpperInvariant();
+
+        var query = _db.EquipmentTypes
+            .AsNoTracking()
+            .Where(e => !e.IsDeleted
+                && (e.TypeGroup ?? "").ToUpper() == group
+                && e.Name.ToUpper() == normalizedName);
+        if (selfId.HasValue)
+            query = query.Where(e => e.Id != selfId.Value);
+
+        if (await query.AnyAsync(ct))
+            throw new InvalidOperationException($"Вид техники «{EquipmentTypeDisplayName(typeGroup, name)}» уже существует.");
+    }
+
+    private static string EquipmentTypeDisplayName(EquipmentType type) =>
+        string.IsNullOrWhiteSpace(type.TypeGroup) ? type.Name : $"{type.TypeGroup} — {type.Name}";
+
+    private static string EquipmentTypeDisplayName(string? typeGroup, string name) =>
+        string.IsNullOrWhiteSpace(typeGroup) ? name : $"{typeGroup} — {name}";
 }

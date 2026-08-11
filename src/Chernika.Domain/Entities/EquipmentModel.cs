@@ -10,6 +10,9 @@ public class EquipmentModel
     public string? Modification { get; set; }
     public string? Description { get; set; }
 
+    public Guid? EquipmentTypeId { get; set; }
+    public EquipmentType? EquipmentType { get; set; }
+
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
 

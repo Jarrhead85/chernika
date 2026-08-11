@@ -16,6 +16,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AssemblyUnit> AssemblyUnits => Set<AssemblyUnit>();
     public DbSet<GsmMaterial> GsmMaterials => Set<GsmMaterial>();
     public DbSet<EquipmentModel> EquipmentModels => Set<EquipmentModel>();
+    public DbSet<EquipmentType> EquipmentTypes => Set<EquipmentType>();
     public DbSet<EquipmentInstance> EquipmentInstances => Set<EquipmentInstance>();
     public DbSet<ProductComposition> ProductCompositions => Set<ProductComposition>();
     public DbSet<ProductCompositionPart> ProductCompositionParts => Set<ProductCompositionPart>();
@@ -130,6 +131,20 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Type).HasMaxLength(128);
             e.Property(x => x.Brand).HasMaxLength(128);
             e.Property(x => x.Modification).HasMaxLength(128);
+            e.HasOne(x => x.EquipmentType).WithMany().HasForeignKey(x => x.EquipmentTypeId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<EquipmentType>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TypeGroup).HasMaxLength(250);
+            e.Property(x => x.Name).HasMaxLength(250).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(1000);
+            e.HasIndex(x => new { x.TypeGroup, x.Name })
+                .HasDatabaseName("UX_EquipmentTypes_TypeGroup_Name_Active_CI")
+                .HasFilter("\"IsDeleted\" = false");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 
