@@ -6,9 +6,15 @@
     <div id="@_anchorId" class="et-select-anchor">
         @if (Selected != null)
         {
-            <div class="et-select-tag">
+            <div class="et-select-tag"
+                 role="button"
+                 tabindex="0"
+                 @onclick="Toggle"
+                 @onkeydown:preventDefault="true"
+                 @onkeydown="OnSelectedKeyDown">
                 <span class="et-select-tag-text" title="@DisplayName(Selected)">@DisplayName(Selected)</span>
-                <button type="button" class="et-select-clear" aria-label="Очистить" title="Убрать вид техники" @onclick="Clear">×</button>
+                <button type="button" class="et-select-clear" aria-label="Очистить" title="Убрать вид техники"
+                        @onclick:stopPropagation="true" @onkeydown:stopPropagation="true" @onclick="Clear">×</button>
             </div>
         }
         else
@@ -113,6 +119,12 @@
         {
             _search = "";
         }
+    }
+
+    private async Task OnSelectedKeyDown(KeyboardEventArgs ev)
+    {
+        if (ev.Key is not ("Enter" or " ")) return;
+        await Toggle();
     }
 
     private async Task Select(EquipmentType t)

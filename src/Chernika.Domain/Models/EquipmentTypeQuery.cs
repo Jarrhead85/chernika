@@ -7,7 +7,7 @@ public sealed class EquipmentTypeQuery
 
     public string? Search { get; init; }
     public string? TypeGroup { get; init; }
-    public bool? ShowDeleted { get; init; }
+    public bool? ShowDeleted { get; init; } = false;
     public string? SortBy { get; init; }
     public bool SortDescending { get; init; }
 }

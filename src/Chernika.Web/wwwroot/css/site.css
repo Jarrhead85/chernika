@@ -928,14 +928,14 @@ input:-webkit-autofill:focus {
   .mbFilters{grid-template-columns:1fr}
 }
 .mbSearch{width:100%}
-.militaryBranchesTableWrap{
+.referenceTableWrap{
   width:100%;overflow-x:auto;overflow-y:visible;
   overscroll-behavior-x:contain;overscroll-behavior-y:auto;
   -webkit-overflow-scrolling:touch;
 }
-.militaryBranchesTableWrap table{min-width:760px}
+.referenceTableWrap table{min-width:760px}
 @media (max-width:560px){
-  .militaryBranchesTableWrap table{min-width:620px}
+  .referenceTableWrap table{min-width:620px}
 }
 
 /* Справочники: навигатор и breadcrumb */

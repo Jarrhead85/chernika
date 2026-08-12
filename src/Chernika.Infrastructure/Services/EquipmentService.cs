@@ -92,12 +92,38 @@ public class EquipmentService
         return model;
     }
 
-    public async Task<EquipmentModel> UpdateModelAsync(EquipmentModel model)
+    public async Task<EquipmentModel> UpdateModelAsync(
+        EquipmentModel updated,
+        CancellationToken ct = default)
     {
-        await ValidateModelEquipmentTypeAsync(model);
-        _db.EquipmentModels.Update(model);
-        await _db.SaveChangesAsync();
-        return model;
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        await ValidateModelEquipmentTypeAsync(updated);
+
+        var existing = await _db.EquipmentModels
+            .FirstOrDefaultAsync(x => x.Id == updated.Id && !x.IsDeleted, ct);
+
+        if (existing == null)
+            throw new InvalidOperationException(
+                "Не удалось изменить модель. Обновите список и повторите попытку.");
+
+        existing.Index = updated.Index?.Trim() ?? string.Empty;
+        existing.Name = updated.Name?.Trim() ?? string.Empty;
+        existing.Type = updated.Type?.Trim();
+        existing.Brand = updated.Brand?.Trim();
+        existing.Modification = updated.Modification?.Trim();
+        existing.Description = updated.Description?.Trim();
+        existing.EquipmentTypeId = updated.EquipmentTypeId;
+
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest(
+            "EquipmentModel",
+            existing.Id.ToString(),
+            "Update",
+            _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{existing.Index} — {existing.Name}"), ct);
+
+        return existing;
     }
 
     public async Task<bool> UpdateModelPropertiesAsync(Guid id, EquipmentModel updated)
@@ -1507,6 +1533,8 @@ public class EquipmentService
 
     public async Task<List<EquipmentType>> GetActiveEquipmentTypesAsync(CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
         return await _db.EquipmentTypes
             .Where(e => !e.IsDeleted)
             .OrderBy(e => e.TypeGroup)
