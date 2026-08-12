@@ -48,6 +48,7 @@ window.dropdownPortal = {
 
     if (this._activeId === dropId) this._activeId = null;
     this._clearHandler();
+    this._clearEscape();
   },
 
   onClickOutside(dropId, dotNet) {
@@ -58,6 +59,7 @@ window.dropdownPortal = {
       const el = document.getElementById(dropId);
       if (!el || !el.contains(e.target)) {
         this._clearHandler();
+        this._clearEscape();
         try {
           dotNet.invokeMethodAsync('CloseDropdown').catch(() => {});
         } catch (_) {}
@@ -69,6 +71,21 @@ window.dropdownPortal = {
     }, 150);
   },
 
+  onEscape(dotNet) {
+    this._clearEscape();
+    this._escHandler = (e) => {
+      if (e.key === 'Escape') {
+        this._clearEscape();
+        try { dotNet.invokeMethodAsync('CloseDropdown').catch(() => {}); } catch (_) {}
+      }
+    };
+    document.addEventListener('keydown', this._escHandler);
+  },
+
+  clearEscape() {
+    this._clearEscape();
+  },
+
   _clearHandler() {
     if (this._handler) {
       document.removeEventListener('mousedown', this._handler, { capture: true });
@@ -77,8 +94,16 @@ window.dropdownPortal = {
     this._dotNet = null;
   },
 
+  _clearEscape() {
+    if (this._escHandler) {
+      document.removeEventListener('keydown', this._escHandler);
+      this._escHandler = null;
+    }
+  },
+
   cleanup() {
     this._clearHandler();
+    this._clearEscape();
     if (this._activeId) {
       const el = document.getElementById(this._activeId);
       if (el) {

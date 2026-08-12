@@ -16,7 +16,8 @@
             <div class="form">
                 <div class="field"><label>Индекс</label><input @ref="_firstField" @bind="newModel.Index" /></div>
                 <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
-                <div class="field"><label>Вид техники</label><input @bind="newModel.Type" /></div>
+                <div class="field"><label>Вид техники из справочника</label><EquipmentTypeSelect @bind-Value="newModel.EquipmentTypeId" /></div>
+                <div class="field"><label>Устаревший текстовый вид техники</label><input @bind="newModel.Type" /></div>
                 <div class="field"><label>Марка</label><input @bind="newModel.Brand" /></div>
                 <div class="field"><label>Модификация</label><input @bind="newModel.Modification" /></div>
                 <div class="field"><label>Описание</label><input @bind="newModel.Description" /></div>
@@ -24,6 +25,10 @@
                     <button class="btn ghost" @onclick="ResetForm">Очистить</button>
                     @if (canEdit) { <button class="btn primary" @onclick="SaveModel">@(editing ? "Сохранить" : "Добавить")</button> }
                 </div>
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="mbError">@errorMessage</div>
+                }
             </div>
         </div>
     </section>
@@ -54,7 +59,7 @@
                             <tr class="@(canEdit ? "clickableRow" : "")" tabindex="@(canEdit ? "0" : "-1")" @ondblclick="() => OnRowDblClick(m)" @onkeydown="(ev) => OnRowKeyDown(ev, m)">
                                 <td class="mono">@m.Index</td>
                                 <td>@m.Name</td>
-                                <td>@m.Type</td>
+                                <td>@TypeDisplay(m)</td>
                                 <td>@m.Brand</td>
                                 <td>@m.Modification</td>
                                 <td @ondblclick:stopPropagation="true">
@@ -78,8 +83,18 @@
     private bool editing = false;
     private bool loading = true;
     private bool canEdit;
+    private string? errorMessage;
     private ElementReference _firstField;
     private bool _focusForm;
+
+    private static string TypeDisplay(EquipmentModel m)
+    {
+        if (m.EquipmentType != null)
+            return string.IsNullOrWhiteSpace(m.EquipmentType.TypeGroup)
+                ? m.EquipmentType.Name
+                : $"{m.EquipmentType.TypeGroup} — {m.EquipmentType.Name}";
+        return m.Type ?? "—";
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -107,13 +122,32 @@
 
     async Task SaveModel()
     {
-        if (string.IsNullOrWhiteSpace(newModel.Name)) return;
-        if (editing)
-            await EquipService.UpdateModelAsync(newModel);
-        else
-            await EquipService.CreateModelAsync(newModel);
-        ResetForm();
-        await LoadModels();
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(newModel.Name))
+        {
+            errorMessage = "Укажите наименование.";
+            return;
+        }
+
+        try
+        {
+            if (editing)
+                await EquipService.UpdateModelAsync(newModel);
+            else
+                await EquipService.CreateModelAsync(newModel);
+            ResetForm();
+            await LoadModels();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception)
+        {
+            errorMessage = editing
+                ? "Не удалось изменить модель. Обновите список и повторите попытку."
+                : "Не удалось создать модель. Обновите список и повторите попытку.";
+        }
     }
 
     Task EditModel(EquipmentModel m)
@@ -121,7 +155,8 @@
         newModel = new EquipmentModel
         {
             Id = m.Id, Index = m.Index, Name = m.Name, Type = m.Type,
-            Brand = m.Brand, Modification = m.Modification, Description = m.Description
+            Brand = m.Brand, Modification = m.Modification, Description = m.Description,
+            EquipmentTypeId = m.EquipmentTypeId
         };
         editing = true;
         _focusForm = true;
@@ -150,5 +185,6 @@
     {
         newModel = new EquipmentModel();
         editing = false;
+        errorMessage = null;
     }
 }

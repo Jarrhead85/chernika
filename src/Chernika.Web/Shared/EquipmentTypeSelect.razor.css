@@ -1,0 +1,116 @@
+.et-select {
+    font-family: var(--font);
+}
+
+.et-select-anchor {
+    position: relative;
+}
+
+.et-select-trigger {
+    width: 100%;
+    border: 1px solid rgba(32, 50, 86, .85);
+    background: rgba(11, 18, 32, .65);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px;
+    outline: none;
+    font-size: 13px;
+    font-family: var(--font);
+    text-align: left;
+    cursor: pointer;
+    color: var(--muted);
+}
+
+.et-select-trigger:hover {
+    border-color: rgba(79, 140, 255, .4);
+}
+
+.et-select-tag {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgba(79, 140, 255, .4);
+    background: rgba(79, 140, 255, .14);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 6px 6px 6px 10px;
+    font-size: 13px;
+}
+
+.et-select-tag-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.et-select-clear {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.et-select-clear:hover {
+    color: var(--bad);
+    background: rgba(255, 80, 80, .1);
+}
+
+.et-select-dropdown {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(32, 50, 86, .85);
+    border-radius: 12px;
+    background: rgba(11, 18, 32, .98);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    padding: 6px;
+    overflow: hidden;
+    font-family: var(--font);
+}
+
+.et-select-search {
+    width: 100%;
+    border: 1px solid rgba(32, 50, 86, .85);
+    background: rgba(11, 18, 32, .65);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    outline: none;
+    font-size: 13px;
+    margin-bottom: 6px;
+    box-sizing: border-box;
+}
+
+.et-select-search:focus {
+    border-color: rgba(79, 140, 255, .4);
+    box-shadow: 0 0 0 3px rgba(79, 140, 255, .12);
+}
+
+.et-select-list {
+    overflow-y: auto;
+}
+
+.et-select-item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.et-select-item:hover {
+    background: rgba(79, 140, 255, .16);
+}
+
+.et-select-empty {
+    padding: 10px;
+    color: var(--muted);
+    font-size: 13px;
+}

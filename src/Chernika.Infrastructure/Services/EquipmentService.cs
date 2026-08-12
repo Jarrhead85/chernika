@@ -28,7 +28,7 @@ public class EquipmentService
     }
 
     public Task<List<EquipmentModel>> GetModelsAsync() =>
-        _db.EquipmentModels.OrderBy(m => m.Index).ToListAsync();
+        _db.EquipmentModels.Include(m => m.EquipmentType).OrderBy(m => m.Index).ToListAsync();
 
     public Task<List<Node>> GetNodesAsync() =>
         _db.Nodes.Where(n => !n.IsDraft).OrderBy(n => n.Code).ToListAsync();
@@ -86,6 +86,7 @@ public class EquipmentService
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         model.Id = Guid.NewGuid();
+        await ValidateModelEquipmentTypeAsync(model);
         _db.EquipmentModels.Add(model);
         await _db.SaveChangesAsync();
         return model;
@@ -93,6 +94,7 @@ public class EquipmentService
 
     public async Task<EquipmentModel> UpdateModelAsync(EquipmentModel model)
     {
+        await ValidateModelEquipmentTypeAsync(model);
         _db.EquipmentModels.Update(model);
         await _db.SaveChangesAsync();
         return model;
@@ -102,14 +104,31 @@ public class EquipmentService
     {
         var model = await _db.EquipmentModels.FindAsync(id);
         if (model == null) return false;
+        await ValidateModelEquipmentTypeAsync(updated);
         model.Index = updated.Index;
         model.Name = updated.Name;
         model.Type = updated.Type;
         model.Brand = updated.Brand;
         model.Modification = updated.Modification;
         model.Description = updated.Description;
+        model.EquipmentTypeId = updated.EquipmentTypeId;
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    private async Task ValidateModelEquipmentTypeAsync(EquipmentModel model)
+    {
+        if (model.EquipmentTypeId == Guid.Empty)
+            model.EquipmentTypeId = null;
+
+        if (model.EquipmentTypeId == null)
+            return;
+
+        var exists = await _db.EquipmentTypes
+            .AnyAsync(e => e.Id == model.EquipmentTypeId.Value && !e.IsDeleted);
+
+        if (!exists)
+            throw new InvalidOperationException("Выбранный вид техники не найден. Обновите справочник и повторите попытку.");
     }
 
     public async Task<bool> DeleteModelAsync(Guid id)
@@ -1422,56 +1441,77 @@ public class EquipmentService
             .ToListAsync(ct);
     }
 
-    public async Task<List<EquipmentType>> GetEquipmentTypesAsync(
-        string? search = null,
-        string? typeGroup = null,
-        bool? showDeleted = false,
-        string? sortBy = null,
-        bool sortDesc = false,
+    public async Task<PagedResult<EquipmentType>> GetEquipmentTypesPagedAsync(
+        EquipmentTypeQuery query,
         CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
-        IQueryable<EquipmentType> query = _db.EquipmentTypes;
+        IQueryable<EquipmentType> queryable = _db.EquipmentTypes;
 
-        if (showDeleted == null)
+        if (query.ShowDeleted == null)
         {
-            query = query.IgnoreQueryFilters();
+            queryable = queryable.IgnoreQueryFilters();
         }
-        else if (showDeleted == true)
+        else if (query.ShowDeleted == true)
         {
-            query = query.IgnoreQueryFilters().Where(e => e.IsDeleted);
+            queryable = queryable.IgnoreQueryFilters().Where(e => e.IsDeleted);
         }
         else
         {
-            query = query.Where(e => !e.IsDeleted);
+            queryable = queryable.Where(e => !e.IsDeleted);
         }
 
-        if (!string.IsNullOrWhiteSpace(search))
+        if (!string.IsNullOrWhiteSpace(query.Search))
         {
-            var term = search.Trim();
-            query = query.Where(e => EF.Functions.ILike(e.TypeGroup ?? "", $"%{term}%")
+            var term = query.Search.Trim();
+            queryable = queryable.Where(e => EF.Functions.ILike(e.TypeGroup ?? "", $"%{term}%")
                 || EF.Functions.ILike(e.Name, $"%{term}%")
                 || EF.Functions.ILike(e.Description ?? "", $"%{term}%"));
         }
 
-        if (!string.IsNullOrWhiteSpace(typeGroup))
-            query = query.Where(e => e.TypeGroup == typeGroup);
+        if (!string.IsNullOrWhiteSpace(query.TypeGroup))
+            queryable = queryable.Where(e => e.TypeGroup == query.TypeGroup);
 
-        IOrderedQueryable<EquipmentType> ordered = sortBy switch
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<EquipmentType> ordered = query.SortBy switch
         {
-            "Name" => sortDesc
-                ? query.OrderByDescending(e => e.Name).ThenByDescending(e => e.TypeGroup)
-                : query.OrderBy(e => e.Name).ThenBy(e => e.TypeGroup),
-            "CreatedAt" => sortDesc
-                ? query.OrderByDescending(e => e.CreatedAt)
-                : query.OrderBy(e => e.CreatedAt),
-            _ => sortDesc
-                ? query.OrderByDescending(e => e.TypeGroup).ThenByDescending(e => e.Name)
-                : query.OrderBy(e => e.TypeGroup).ThenBy(e => e.Name),
+            "Name" => query.SortDescending
+                ? queryable.OrderByDescending(e => e.Name).ThenByDescending(e => e.TypeGroup)
+                : queryable.OrderBy(e => e.Name).ThenBy(e => e.TypeGroup),
+            "CreatedAt" => query.SortDescending
+                ? queryable.OrderByDescending(e => e.CreatedAt)
+                : queryable.OrderBy(e => e.CreatedAt),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(e => e.TypeGroup).ThenByDescending(e => e.Name)
+                : queryable.OrderBy(e => e.TypeGroup).ThenBy(e => e.Name),
         };
 
-        return await ordered.ToListAsync(ct);
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<EquipmentType>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
+    public async Task<List<EquipmentType>> GetActiveEquipmentTypesAsync(CancellationToken ct = default)
+    {
+        return await _db.EquipmentTypes
+            .Where(e => !e.IsDeleted)
+            .OrderBy(e => e.TypeGroup)
+            .ThenBy(e => e.Name)
+            .ToListAsync(ct);
     }
 
     public async Task<List<string>> GetEquipmentTypeGroupsAsync(CancellationToken ct = default)

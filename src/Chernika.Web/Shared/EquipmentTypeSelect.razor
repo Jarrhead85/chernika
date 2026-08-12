@@ -1,0 +1,173 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject EquipmentService EquipService
+
+<div class="et-select">
+    <div id="@_anchorId" class="et-select-anchor">
+        @if (Selected != null)
+        {
+            <div class="et-select-tag">
+                <span class="et-select-tag-text" title="@DisplayName(Selected)">@DisplayName(Selected)</span>
+                <button type="button" class="et-select-clear" aria-label="Очистить" title="Убрать вид техники" @onclick="Clear">×</button>
+            </div>
+        }
+        else
+        {
+            <button type="button" class="et-select-trigger" @onclick="Toggle">Выбрать вид техники</button>
+        }
+    </div>
+
+    @if (_open)
+    {
+        <div id="@_dropId" class="et-select-dropdown" style="display:none" role="listbox">
+            <input class="et-select-search" @bind="_search" @bind:event="oninput" placeholder="Поиск..." @onkeydown:stopPropagation="true" />
+            <div class="et-select-list">
+                @if (FilteredTypes.Count == 0)
+                {
+                    <div class="et-select-empty">Ничего не найдено</div>
+                }
+                else
+                {
+                    @foreach (var t in FilteredTypes)
+                    {
+                        <div class="et-select-item" role="option" @onmousedown:preventDefault="true" @onmousedown="() => Select(t)">@DisplayName(t)</div>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid?> ValueChanged { get; set; }
+
+    private List<EquipmentType> _types = new();
+    private readonly string _dropId = "et-drop-" + Guid.NewGuid().ToString("N");
+    private readonly string _anchorId = "et-anchor-" + Guid.NewGuid().ToString("N");
+    private DotNetObjectReference<EquipmentTypeSelect>? _dotNetRef;
+    private bool _open;
+    private string _search = "";
+    private bool _attached;
+
+    private EquipmentType? Selected => _types.FirstOrDefault(t => t.Id == Value);
+
+    private List<EquipmentType> FilteredTypes
+    {
+        get
+        {
+            var term = string.IsNullOrWhiteSpace(_search) ? null : _search.Trim();
+            IEnumerable<EquipmentType> result = _types;
+            if (term != null)
+            {
+                result = result.Where(t =>
+                    t.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || (t.TypeGroup ?? "").Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || (t.Description ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+            return result.ToList();
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        _dotNetRef = DotNetObjectReference.Create(this);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _types = await EquipService.GetActiveEquipmentTypesAsync();
+        }
+        catch
+        {
+            _types = new List<EquipmentType>();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_open && !_attached)
+        {
+            _attached = true;
+            await JS.InvokeVoidAsync("dropdownPortal.attach", _dropId, _anchorId);
+            await JS.InvokeVoidAsync("dropdownPortal.onClickOutside", _dropId, _dotNetRef);
+            await JS.InvokeVoidAsync("dropdownPortal.onEscape", _dotNetRef);
+        }
+    }
+
+    private async Task Toggle()
+    {
+        _open = !_open;
+        _attached = false;
+        if (!_open)
+        {
+            await JS.InvokeVoidAsync("dropdownPortal.detach", _dropId);
+            await JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+        }
+        else
+        {
+            _search = "";
+        }
+    }
+
+    private async Task Select(EquipmentType t)
+    {
+        if (Value != t.Id)
+            await ValueChanged.InvokeAsync(t.Id);
+        await CloseAsync();
+    }
+
+    private async Task Clear()
+    {
+        if (Value != null)
+            await ValueChanged.InvokeAsync(null);
+    }
+
+    [JSInvokable]
+    public async Task CloseDropdown()
+    {
+        await CloseAsync();
+    }
+
+    private async Task CloseAsync()
+    {
+        if (!_open) return;
+        _open = false;
+        _attached = false;
+        try
+        {
+            await JS.InvokeVoidAsync("dropdownPortal.detach", _dropId);
+            await JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+        }
+        catch
+        {
+            // страница может выгружаться
+        }
+        StateHasChanged();
+    }
+
+    private static string DisplayName(EquipmentType t) =>
+        string.IsNullOrWhiteSpace(t.TypeGroup) ? t.Name : $"{t.TypeGroup} — {t.Name}";
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_open)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("dropdownPortal.detach", _dropId);
+                await JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+            }
+            catch
+            {
+                // компонент удаляется
+            }
+        }
+        _dotNetRef?.Dispose();
+    }
+}
