@@ -113,8 +113,8 @@ public class NotificationWorkflowIntegrationTests
         var branchC = Guid.NewGuid();
         var branchD = Guid.NewGuid();
         s.Db.Branches.AddRange(
-            new Branch { Id = branchC, Name = "Филиал В", Code = "C" },
-            new Branch { Id = branchD, Name = "Филиал Г", Code = "D" });
+            new Branch { Id = branchC, Name = "Филиал Д", Code = "C" },
+            new Branch { Id = branchD, Name = "Филиал Е", Code = "D" });
         await s.Db.SaveChangesAsync();
 
         var author = await CreateUserAsync(s, "normadmin_c", nameof(UserRole.NormAdmin), branchC);

@@ -14,6 +14,7 @@ public sealed class ReferenceCatalogCounts
     public int GsmMaterials { get; init; }
     public int MilitaryBranches { get; init; }
     public int EquipmentTypes { get; init; }
+    public int Branches { get; init; }
 }
 
 public sealed class ReferenceCatalogService
@@ -38,6 +39,7 @@ public sealed class ReferenceCatalogService
         var gsm = await db.GsmMaterials.CountAsync(ct);
         var branches = await db.MilitaryBranches.CountAsync(ct);
         var equipmentTypes = await db.EquipmentTypes.CountAsync(ct);
+        var orgBranches = await db.Branches.CountAsync(ct);
 
         return new ReferenceCatalogCounts
         {
@@ -50,6 +52,7 @@ public sealed class ReferenceCatalogService
             GsmMaterials = gsm,
             MilitaryBranches = branches,
             EquipmentTypes = equipmentTypes,
+            Branches = orgBranches,
         };
     }
 }

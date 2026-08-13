@@ -108,7 +108,9 @@
         [
             new("Рода войск", "Перечень родов войск для привязки документов.", "/справочник-родов-войск"),
         ],
-        ["Администрирование"] = [],
+        ["Администрирование"] = [
+            new("Филиалы", "Справочник филиалов организации.", "/справочники/администрирование/филиалы"),
+        ],
     };
 
     private string search = "";
@@ -239,6 +241,7 @@
         _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
         _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
         _countByRoute["/справочники/техника/виды-техники"] = counts.EquipmentTypes;
+        _countByRoute["/справочники/администрирование/филиалы"] = counts.Branches;
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs args)

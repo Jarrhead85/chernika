@@ -74,6 +74,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
             e.Property(x => x.Code).HasMaxLength(50);
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         modelBuilder.Entity<Complex>(e =>

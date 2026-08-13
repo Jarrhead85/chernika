@@ -585,38 +585,176 @@ public class EquipmentService
     public Task<Branch?> GetBranchAsync(Guid id) =>
         _db.Branches.FirstOrDefaultAsync(b => b.Id == id);
 
-    public async Task<Branch> CreateBranchAsync(Branch branch)
+    public async Task<PagedResult<Branch>> GetBranchesPagedAsync(BranchQuery query, CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.SystemConfig, ct);
+
+        IQueryable<Branch> queryable = _db.Branches;
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(b => b.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(b => !b.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(b => EF.Functions.ILike(b.Name, $"%{term}%")
+                || EF.Functions.ILike(b.Description ?? "", $"%{term}%"));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<Branch> ordered = query.SortBy switch
+        {
+            "CreatedAt" => query.SortDescending
+                ? queryable.OrderByDescending(b => b.CreatedAt)
+                : queryable.OrderBy(b => b.CreatedAt),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(b => b.Name)
+                : queryable.OrderBy(b => b.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<Branch>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
+    public async Task<Branch> CreateBranchAsync(Branch branch, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.SystemConfig, ct);
+        ValidateBranch(branch);
+        await EnsureNoDuplicateBranchAsync(branch.Name, null, ct);
+
         branch.Id = Guid.NewGuid();
+        branch.CreatedAt = _time.GetUtcNow().UtcDateTime;
+        branch.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        branch.IsDeleted = false;
+        branch.DeletedAt = null;
         _db.Branches.Add(branch);
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("Branch", branch.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("Branch", branch.Id.ToString(), "Create", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: branch.Name), ct);
+
         return branch;
     }
 
-    public async Task<bool> UpdateBranchAsync(Branch branch)
+    public async Task<bool> UpdateBranchAsync(Branch branch, CancellationToken ct = default)
     {
-        _db.Branches.Update(branch);
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("Branch", branch.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
+        await _permissions.DemandPermissionAsync(PermissionCodes.SystemConfig, ct);
+        ValidateBranch(branch);
+
+        var existing = await _db.Branches.FirstOrDefaultAsync(x => x.Id == branch.Id && !x.IsDeleted, ct);
+        if (existing == null)
+            throw new InvalidOperationException("Не удалось изменить запись справочника. Обновите список и повторите попытку.");
+
+        await EnsureNoDuplicateBranchAsync(branch.Name, existing.Id, ct);
+
+        existing.Name = branch.Name;
+        existing.Description = branch.Description;
+        existing.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("Branch", existing.Id.ToString(), "Update", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: existing.Name), ct);
+
         return true;
     }
 
-    public async Task<(bool Deleted, string? Error)> DeleteBranchAsync(Guid id)
+    public async Task<(bool Deleted, string? Error)> DeleteBranchAsync(Guid id, CancellationToken ct = default)
     {
-        var b = await _db.Branches.FindAsync(id);
-        if (b == null) return (false, null);
+        await _permissions.DemandPermissionAsync(PermissionCodes.SystemConfig, ct);
 
-        var hasUsers = await _db.Users.AnyAsync(u => u.BranchId == id);
-        if (hasUsers) return (false, "Нельзя удалить: к филиалу привязаны пользователи.");
+        var branch = await _db.Branches.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted, ct);
+        if (branch == null) return (false, null);
 
-        var hasCards = await _db.HKCards.AnyAsync(h => h.BranchId == id);
-        if (hasCards) return (false, "Нельзя удалить: к филиалу привязаны карты.");
+        var hasActiveUsers = await _db.Users.AnyAsync(u => u.BranchId == id && !u.IsDeleted, ct);
+        if (hasActiveUsers) return (false, "Невозможно архивировать филиал: с ним связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
 
-        _db.Branches.Remove(b);
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("Branch", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
+        var hasActiveCards = await _db.HKCards.AnyAsync(h => h.BranchId == id && h.Status != HKCardStatus.Deleted, ct);
+        if (hasActiveCards) return (false, "Невозможно архивировать филиал: с ним связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
+
+        var hasUnfinishedTasks = await _db.WorkTasks.AnyAsync(w => w.BranchId == id && !w.IsDeleted
+            && w.Status != WorkTaskStatus.Completed && w.Status != WorkTaskStatus.Cancelled, ct);
+        if (hasUnfinishedTasks) return (false, "Невозможно архивировать филиал: с ним связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
+
+        branch.IsDeleted = true;
+        branch.DeletedAt = _time.GetUtcNow().UtcDateTime;
+        branch.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("Branch", id.ToString(), "Delete", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: branch.Name), ct);
+
         return (true, null);
+    }
+
+    public async Task<bool> RestoreBranchAsync(Guid id, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.SystemConfig, ct);
+
+        var existing = await _db.Branches.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (existing == null || !existing.IsDeleted) return false;
+
+        await EnsureNoDuplicateBranchAsync(existing.Name, id, ct);
+
+        existing.IsDeleted = false;
+        existing.DeletedAt = null;
+        existing.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("Branch", id.ToString(), "Restore", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: existing.Name), ct);
+
+        return true;
+    }
+
+    private static void ValidateBranch(Branch branch)
+    {
+        branch.Name = branch.Name?.Trim() ?? "";
+        branch.Description = string.IsNullOrWhiteSpace(branch.Description) ? null : branch.Description.Trim();
+
+        if (string.IsNullOrWhiteSpace(branch.Name))
+            throw new InvalidOperationException("Укажите наименование.");
+        if (branch.Name.Length > 256)
+            throw new InvalidOperationException("Наименование должно быть не длиннее 256 символов.");
+        if (branch.Description?.Length > 2000)
+            throw new InvalidOperationException("Описание должно быть не длиннее 2000 символов.");
+    }
+
+    private async Task EnsureNoDuplicateBranchAsync(string name, Guid? selfId, CancellationToken ct = default)
+    {
+        var normalizedName = name.Trim().ToUpperInvariant();
+
+        var query = _db.Branches
+            .AsNoTracking()
+            .Where(b => !b.IsDeleted && b.Name.Trim().ToUpper() == normalizedName);
+        if (selfId.HasValue)
+            query = query.Where(b => b.Id != selfId.Value);
+
+        if (await query.AnyAsync(ct))
+            throw new InvalidOperationException($"Филиал «{name.Trim()}» уже существует.");
     }
 
     public Task<List<Aggregate>> GetAggregatesAsync() =>
