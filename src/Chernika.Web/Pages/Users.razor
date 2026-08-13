@@ -5,6 +5,7 @@
 @using Chernika.Domain.Enums
 @inject UserManagementService UserMgmt
 @inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthState
 @implements IDisposable
 
 <div class="stack">
@@ -141,13 +142,7 @@
                             {
                                 <div class="field">
                                     <label for="new-user-branch">Филиал *</label>
-                                    <select id="new-user-branch" @bind="formBranchId" class="field-select">
-                                        <option value="">— Выберите филиал —</option>
-                                        @foreach (var b in branches)
-                                        {
-                                            <option value="@b.Id">@b.Name (@b.Code)</option>
-                                        }
-                                    </select>
+                                    <BranchSelect @bind-Value="SelectedBranchId" CanCreate="canQuickCreateBranch" />
                                 </div>
                             }
                         </div>
@@ -404,10 +399,10 @@
 
 @code {
     private List<UserListItem> users = new();
-    private List<BranchListItem> branches = new();
     private List<string> allModules = new();
     private bool loading = true;
     private string statusFilter = "";
+    private bool canQuickCreateBranch = false;
 
     private static readonly string[] creatableRoles = new[]
     {
@@ -428,6 +423,12 @@
     private string formPassword = "";
     private string formRole = nameof(UserRole.Guest);
     private string formBranchId = "";
+
+    private Guid? SelectedBranchId
+    {
+        get => Guid.TryParse(formBranchId, out var parsed) ? parsed : null;
+        set => formBranchId = value?.ToString() ?? "";
+    }
 
     private bool showPermissionsModal = false;
     private bool permissionsLoading = false;
@@ -463,8 +464,9 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadUsers();
-        branches = await UserMgmt.GetBranchesAsync();
         allModules = PermissionCatalog.GetAllModules().ToList();
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        canQuickCreateBranch = authState.User.IsInRole(nameof(UserRole.SystemAdmin));
     }
 
     async Task LoadUsers()
