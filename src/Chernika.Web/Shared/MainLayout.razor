@@ -350,8 +350,8 @@
     private void CloseBell()
     {
         showBellDropdown = false;
-        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener"); } catch { }
-        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener"); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener", _bellButtonRef); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener", _bellButtonRef); } catch { }
         StateHasChanged();
     }
 
@@ -429,8 +429,8 @@
         _layoutRefreshCts?.Cancel();
         _layoutRefreshCts?.Dispose();
         _layoutRefreshGate.Dispose();
-        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener"); } catch { }
-        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener"); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener", _bellButtonRef); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener", _bellButtonRef); } catch { }
         _bellRef?.Dispose();
     }
 
@@ -513,7 +513,7 @@
             {
                 _bellPlacement = await JS.InvokeAsync<string>("popoverPositioning.getPlacement", _bellButtonRef, 430);
                 await JS.InvokeVoidAsync("popoverPositioning.addOutsideClickListener", _bellButtonRef, _bellPopoverRef, _bellRef, nameof(CloseDropdown));
-                await JS.InvokeVoidAsync("popoverPositioning.addEscapeListener", _bellRef, nameof(CloseDropdown));
+                await JS.InvokeVoidAsync("popoverPositioning.addEscapeListener", _bellButtonRef, _bellRef, nameof(CloseDropdown));
                 StateHasChanged();
             }
             catch (JSDisconnectedException) { }

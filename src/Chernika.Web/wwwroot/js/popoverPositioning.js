@@ -1,5 +1,9 @@
 // Единый модуль позиционирования и закрытия popover-ов (UI kit v2, раздел «Popover и dropdown»).
 // Используется SearchablePopoverSelect, bell-попапом и всеми будущими popover-компонентами.
+// Обработчики клика/Escape хранятся на DOM-элементе-якоре, чтобы:
+// 1) не накапливать document-level слушатели при повторных открытиях,
+// 2) корректно отключаться при Dispose конкретного компонента,
+// 3) не держать глобальное состояние между разными popover-ами.
 function getScrollableAncestor(element) {
   let parent = element.parentElement;
   while (parent) {
@@ -12,14 +16,13 @@ function getScrollableAncestor(element) {
   return null;
 }
 
-window.popoverPositioning = {
-  _clickHandler: null,
-  _clickAnchor: null,
-  _clickPopover: null,
-  _clickDotNet: null,
-  _clickMethod: null,
-  _escapeHandler: null,
+function ensureElementMap(element) {
+  if (!element) return null;
+  if (!element.__popoverPositioning) element.__popoverPositioning = {};
+  return element.__popoverPositioning;
+}
 
+window.popoverPositioning = {
   getPlacement(anchorElement, popoverMaxHeight) {
     if (!anchorElement) return 'bottom';
     const rect = anchorElement.getBoundingClientRect();
@@ -47,59 +50,51 @@ window.popoverPositioning = {
   },
 
   addOutsideClickListener(anchorElement, popoverElement, dotnetRef, methodName) {
-    this._closePrevious();
-    this._clickAnchor = anchorElement;
-    this._clickPopover = popoverElement || null;
-    this._clickDotNet = dotnetRef;
-    this._clickMethod = methodName;
-    this._clickHandler = (event) => {
-      const anchor = this._clickAnchor;
-      if (!anchor) return;
-      if (anchor.contains(event.target)) return;
-      const popover = this._clickPopover;
-      if (popover && popover.contains(event.target)) return;
-      this.removeOutsideClickListener();
+    if (!anchorElement) return;
+    const map = ensureElementMap(anchorElement);
+    if (!map || map.outsideClickHandler) return; // уже подключён
+
+    const handler = (event) => {
+      if (anchorElement.contains(event.target)) return;
+      if (popoverElement && popoverElement.contains(event.target)) return;
+      this.removeOutsideClickListener(anchorElement);
       try { dotnetRef.invokeMethodAsync(methodName).catch(() => {}); } catch (_) {}
     };
-    document.addEventListener('click', this._clickHandler, true);
+
+    map.outsideClickHandler = handler;
+    document.addEventListener('click', handler, true);
   },
 
-  removeOutsideClickListener() {
-    if (this._clickHandler) {
-      document.removeEventListener('click', this._clickHandler, true);
-      this._clickHandler = null;
-    }
-    this._clickAnchor = null;
-    this._clickPopover = null;
-    this._clickDotNet = null;
-    this._clickMethod = null;
+  removeOutsideClickListener(anchorElement) {
+    if (!anchorElement) return;
+    const map = anchorElement.__popoverPositioning;
+    if (!map || !map.outsideClickHandler) return;
+    document.removeEventListener('click', map.outsideClickHandler, true);
+    delete map.outsideClickHandler;
   },
 
-  addEscapeListener(dotnetRef, methodName) {
-    this.removeEscapeListener();
-    this._escapeHandler = (e) => {
+  addEscapeListener(anchorElement, dotnetRef, methodName) {
+    if (!anchorElement) return;
+    const map = ensureElementMap(anchorElement);
+    if (!map || map.escapeHandler) return; // уже подключён
+
+    const handler = (e) => {
       if (e.key === 'Escape') {
-        this.removeEscapeListener();
+        this.removeEscapeListener(anchorElement);
         try { dotnetRef.invokeMethodAsync(methodName).catch(() => {}); } catch (_) {}
       }
     };
-    document.addEventListener('keydown', this._escapeHandler);
+
+    map.escapeHandler = handler;
+    document.addEventListener('keydown', handler);
   },
 
-  removeEscapeListener() {
-    if (this._escapeHandler) {
-      document.removeEventListener('keydown', this._escapeHandler);
-      this._escapeHandler = null;
-    }
-  },
-
-  _closePrevious() {
-    const dotNet = this._clickDotNet;
-    const method = this._clickMethod;
-    this.removeOutsideClickListener();
-    if (dotNet && method) {
-      try { dotNet.invokeMethodAsync(method).catch(() => {}); } catch (_) {}
-    }
+  removeEscapeListener(anchorElement) {
+    if (!anchorElement) return;
+    const map = anchorElement.__popoverPositioning;
+    if (!map || !map.escapeHandler) return;
+    document.removeEventListener('keydown', map.escapeHandler);
+    delete map.escapeHandler;
   },
 
   focusElement(element) {

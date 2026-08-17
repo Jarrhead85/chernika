@@ -42,7 +42,10 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
     private string _searchText = string.Empty;
     private string _displayText = string.Empty;
     private int _highlightedIndex = -1;
+    private long _lastCloseTimestamp;
     private bool _disposed;
+
+    private const int IgnoreFocusOpenMs = 300;
 
     private string AriaExpanded => _isOpen ? "true" : "false";
 
@@ -85,7 +88,13 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
         }
     }
 
-    private Task OnFocusAsync() => OpenAsync();
+    private Task OnFocusAsync()
+    {
+        // После программного возврата фокуса (Escape/выбор) событие focus не должно снова открывать popover.
+        if (Environment.TickCount64 - _lastCloseTimestamp < IgnoreFocusOpenMs)
+            return Task.CompletedTask;
+        return OpenAsync();
+    }
 
     private Task OnTriggerClickAsync() => OpenAsync();
 
@@ -116,6 +125,7 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
         _highlightedIndex = -1;
         _searchText = string.Empty;
         _displayText = Selected is null ? string.Empty : DisplayTextSelector(Selected);
+        _lastCloseTimestamp = Environment.TickCount64;
         await RemoveListenersAsync();
         if (restoreFocus)
             await FocusTriggerAsync();
@@ -186,9 +196,11 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
     {
         _isOpen = false;
         _listenersAttached = false;
+        _quickCreateExpanded = false;
         _highlightedIndex = -1;
         _searchText = string.Empty;
         _displayText = DisplayTextSelector(item);
+        _lastCloseTimestamp = Environment.TickCount64;
         await RemoveListenersAsync();
         await OnSelected.InvokeAsync(item);
         await FocusTriggerAsync();
@@ -236,7 +248,7 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
     {
         try
         {
-            await JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener");
+            await JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener", _anchorRef);
         }
         catch (JSDisconnectedException)
         {
