@@ -4,6 +4,7 @@
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
 @inject UserManagementService UserMgmt
+@inject EquipmentService EquipService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthState
 @implements IDisposable
@@ -142,7 +143,25 @@
                             {
                                 <div class="field">
                                     <label for="new-user-branch">Филиал *</label>
-                                    <BranchSelect @bind-Value="SelectedBranchId" CanCreate="canQuickCreateBranch" />
+                                    <SearchablePopoverSelect TItem="Branch"
+                                                              Items="_availableBranches"
+                                                              Selected="_selectedBranch"
+                                                              DisplayTextSelector="b => b.Name"
+                                                              SearchPredicate="(b, text) => b.Name.Contains(text, StringComparison.OrdinalIgnoreCase)"
+                                                              Placeholder="Выберите филиал"
+                                                              EmptyText="Филиалы не найдены"
+                                                              AllowQuickCreate="canQuickCreateBranch"
+                                                              QuickCreateLabel="Добавить филиал"
+                                                              OnSelected="OnBranchSelectedAsync"
+                                                              @ref="_branchSelect">
+                                        <ItemTemplate Context="branch">
+                                            @branch.Name
+                                        </ItemTemplate>
+                                        <QuickCreateModalTemplate>
+                                            <BranchQuickCreateModal OnCreated="OnBranchCreatedAsync"
+                                                                    OnCancelled="CloseBranchQuickCreate" />
+                                        </QuickCreateModalTemplate>
+                                    </SearchablePopoverSelect>
                                 </div>
                             }
                         </div>
@@ -403,6 +422,10 @@
     private bool loading = true;
     private string statusFilter = "";
     private bool canQuickCreateBranch = false;
+    private List<Branch> _availableBranches = new();
+    private SearchablePopoverSelect<Branch>? _branchSelect;
+
+    private Branch? _selectedBranch => _availableBranches.FirstOrDefault(b => b.Id == SelectedBranchId);
 
     private static readonly string[] creatableRoles = new[]
     {
@@ -464,10 +487,42 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadUsers();
+        await LoadBranchesAsync();
         allModules = PermissionCatalog.GetAllModules().ToList();
         var authState = await AuthState.GetAuthenticationStateAsync();
         canQuickCreateBranch = authState.User.IsInRole(nameof(UserRole.SystemAdmin));
     }
+
+    private async Task LoadBranchesAsync()
+    {
+        try
+        {
+            _availableBranches = (await EquipService.GetBranchesAsync())
+                .OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            _availableBranches = new List<Branch>();
+        }
+    }
+
+    private Task OnBranchSelectedAsync(Branch branch)
+    {
+        formBranchId = branch.Id.ToString();
+        return Task.CompletedTask;
+    }
+
+    private async Task OnBranchCreatedAsync(Branch branch)
+    {
+        await LoadBranchesAsync();
+        if (_branchSelect != null)
+            await _branchSelect.NotifyQuickCreatedAsync(branch);
+        else
+            formBranchId = branch.Id.ToString();
+    }
+
+    private void CloseBranchQuickCreate() => _branchSelect?.CloseQuickCreate();
 
     async Task LoadUsers()
     {

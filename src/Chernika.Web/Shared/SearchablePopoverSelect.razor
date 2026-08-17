@@ -1,0 +1,58 @@
+@typeparam TItem where TItem : class
+
+<div class="popoverAnchor" @ref="_anchorRef">
+    <input @ref="_inputRef"
+           class="field fieldInput"
+           type="text"
+           placeholder="@Placeholder"
+           disabled="@Disabled"
+           value="@_displayText"
+           autocomplete="off"
+           aria-haspopup="listbox"
+           aria-expanded="@AriaExpanded"
+           @oninput="OnInputAsync"
+           @onfocus="OnFocusAsync"
+           @onclick="OnTriggerClickAsync"
+           @onkeydown="OnKeyDownAsync" />
+
+    @if (_isOpen)
+    {
+        <div class="popover" data-placement="@_placement" role="listbox" @ref="_popoverRef">
+            @{
+                var items = _filteredItems;
+            }
+            @for (var i = 0; i < items.Count; i++)
+            {
+                var index = i;
+                var item = items[i];
+                <div class="popoverItem"
+                     role="option"
+                     aria-selected="@(index == _highlightedIndex ? "true" : "false")"
+                     @onclick="() => SelectItemAsync(item)">
+                    @ItemTemplate(item)
+                </div>
+            }
+
+            @if (items.Count == 0)
+            {
+                <div class="popoverItem" style="color:var(--muted); cursor:default;">
+                    @EmptyText
+                </div>
+            }
+
+            @if (AllowQuickCreate)
+            {
+                <div class="popoverFooter">
+                    <button type="button" class="btn ghost" @onclick="OpenQuickCreateAsync">
+                        @QuickCreateLabel
+                    </button>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@if (AllowQuickCreate && _quickCreateOpen)
+{
+    @QuickCreateModalTemplate
+}

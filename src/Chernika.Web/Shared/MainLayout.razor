@@ -134,7 +134,7 @@
                 }
             </div>
             <div class="bellWrap">
-                <button class="iconBtn" id="notificationBellButton" title="Уведомления"
+                <button class="iconBtn" id="notificationBellButton" @ref="_bellButtonRef" title="Уведомления"
                         aria-label="Уведомления"
                         aria-expanded="@(showBellDropdown ? "true" : "false")"
                         aria-controls="notificationBellDropdown"
@@ -146,9 +146,10 @@
                 </button>
                 @if (showBellDropdown)
                 {
-                    <div class="bellBackdrop" @onclick="CloseBell" aria-hidden="true"></div>
-                    <div class="bellDropdown" id="notificationBellDropdown" role="dialog" aria-label="Последние уведомления" @onclick:stopPropagation>
-                        <div class="bellDropdownHeader">
+                    <div class="popover bellPopover" id="notificationBellDropdown" @ref="_bellPopoverRef"
+                         role="dialog" aria-label="Последние уведомления"
+                         data-placement="@_bellPlacement" @onclick:stopPropagation>
+                        <div class="popoverHeader">
                             <span>Уведомления</span>
                             @if (unreadCount > 0)
                             {
@@ -158,7 +159,7 @@
                                 </span>
                             }
                         </div>
-                        <div class="bellDropdownList">
+                        <div class="popoverList">
                             @if (recentNotifications.Count == 0)
                             {
                                 <div class="bellEmpty">Уведомлений нет</div>
@@ -178,7 +179,7 @@
                                 }
                             }
                         </div>
-                        <div class="bellDropdownFooter">
+                        <div class="popoverFooter">
                             <a href="/уведомления" class="linkBtn" @onclick="CloseBell">Все уведомления →</a>
                         </div>
                     </div>
@@ -229,6 +230,9 @@
     IReadOnlyList<NotificationDto> recentNotifications = [];
     DotNetObjectReference<MainLayout>? _bellRef;
     bool _bellPositioned;
+    string _bellPlacement = "bottom";
+    ElementReference _bellButtonRef;
+    ElementReference _bellPopoverRef;
     bool _authChecked;
     bool _disposed;
     readonly SemaphoreSlim _layoutRefreshGate = new(1, 1);
@@ -251,6 +255,9 @@
         if (_disposed) return;
 
         Logger.LogInformation("Навигация layout: {From} → {To}", Nav.Uri, args.Location);
+
+        if (showBellDropdown)
+            CloseBell();
 
         _ = InvokeAsync(RefreshLayoutIndicatorsAsync);
     }
@@ -329,22 +336,22 @@
 
     private async Task ToggleBell()
     {
-        showBellDropdown = !showBellDropdown;
         if (showBellDropdown)
         {
-            await RefreshBellAsync();
-            _bellPositioned = false;
+            CloseBell();
+            return;
         }
-        else
-        {
-            StateHasChanged();
-        }
+        showBellDropdown = true;
+        await RefreshBellAsync();
+        _bellPositioned = false;
+        StateHasChanged();
     }
 
     private void CloseBell()
     {
         showBellDropdown = false;
-        try { _ = JS.InvokeVoidAsync("bellDropdown.clear"); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener"); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener"); } catch { }
         StateHasChanged();
     }
 
@@ -422,7 +429,8 @@
         _layoutRefreshCts?.Cancel();
         _layoutRefreshCts?.Dispose();
         _layoutRefreshGate.Dispose();
-        try { _ = JS.InvokeVoidAsync("bellDropdown.clear"); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener"); } catch { }
+        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener"); } catch { }
         _bellRef?.Dispose();
     }
 
@@ -501,8 +509,14 @@
         {
             _bellPositioned = true;
             _bellRef ??= DotNetObjectReference.Create(this);
-            await JS.InvokeVoidAsync("bellDropdown.position", "notificationBellDropdown", "notificationBellButton");
-            await JS.InvokeVoidAsync("bellDropdown.onEscape", _bellRef);
+            try
+            {
+                _bellPlacement = await JS.InvokeAsync<string>("popoverPositioning.getPlacement", _bellButtonRef, 430);
+                await JS.InvokeVoidAsync("popoverPositioning.addOutsideClickListener", _bellButtonRef, _bellPopoverRef, _bellRef, nameof(CloseDropdown));
+                await JS.InvokeVoidAsync("popoverPositioning.addEscapeListener", _bellRef, nameof(CloseDropdown));
+                StateHasChanged();
+            }
+            catch (JSDisconnectedException) { }
         }
     }
 

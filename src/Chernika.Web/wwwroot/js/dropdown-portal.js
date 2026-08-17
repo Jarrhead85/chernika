@@ -119,48 +119,6 @@ window.dropdownPortal = {
   }
 };
 
-window.bellDropdown = {
-  _escHandler: null,
-
-  position(dropId, btnId) {
-    const el = document.getElementById(dropId);
-    const btn = document.getElementById(btnId);
-    if (!el || !btn) return;
-
-    const r = btn.getBoundingClientRect();
-    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-    const gap = 20;
-    const spaceBelow = vh - r.bottom - gap;
-    const openUp = spaceBelow < 220 && r.top > spaceBelow;
-
-    el.classList.toggle('open-up', openUp);
-    const max = Math.max(160, Math.min(430, openUp ? r.top - gap : spaceBelow));
-    el.style.setProperty('--bell-max', max + 'px');
-  },
-
-  onEscape(dotNet) {
-    this._clearEscape();
-    this._escHandler = (e) => {
-      if (e.key === 'Escape') {
-        this._clearEscape();
-        try { dotNet.invokeMethodAsync('CloseDropdown').catch(() => {}); } catch (_) {}
-      }
-    };
-    document.addEventListener('keydown', this._escHandler);
-  },
-
-  clear() {
-    this._clearEscape();
-  },
-
-  _clearEscape() {
-    if (this._escHandler) {
-      document.removeEventListener('keydown', this._escHandler);
-      this._escHandler = null;
-    }
-  }
-};
-
 window.hkPdfPreview = {
   async load(streamRef, iframeId) {
     const iframe = document.getElementById(iframeId);

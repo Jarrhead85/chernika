@@ -16,7 +16,21 @@
             <div class="form">
                 <div class="field"><label>Индекс</label><input @ref="_firstField" @bind="newModel.Index" /></div>
                 <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
-                <div class="field"><label>Вид техники из справочника</label><EquipmentTypeSelect @bind-Value="newModel.EquipmentTypeId" /></div>
+                <div class="field">
+                    <label>Вид техники из справочника</label>
+                    <SearchablePopoverSelect TItem="EquipmentType"
+                                              Items="_equipmentTypes"
+                                              Selected="_selectedEquipmentType"
+                                              DisplayTextSelector="TypeDisplayName"
+                                              SearchPredicate="TypeMatchesSearch"
+                                              Placeholder="Выберите вид техники"
+                                              EmptyText="Виды техники не найдены"
+                                              OnSelected="OnEquipmentTypeSelectedAsync">
+                        <ItemTemplate Context="type">
+                            @TypeDisplayName(type)
+                        </ItemTemplate>
+                    </SearchablePopoverSelect>
+                </div>
                 <div class="field"><label>Устаревший текстовый вид техники</label><input @bind="newModel.Type" /></div>
                 <div class="field"><label>Марка</label><input @bind="newModel.Brand" /></div>
                 <div class="field"><label>Модификация</label><input @bind="newModel.Modification" /></div>
@@ -80,12 +94,27 @@
 @code {
     private List<EquipmentModel> models = new();
     private EquipmentModel newModel = new();
+    private List<EquipmentType> _equipmentTypes = new();
     private bool editing = false;
     private bool loading = true;
     private bool canEdit;
     private string? errorMessage;
     private ElementReference _firstField;
     private bool _focusForm;
+
+    private EquipmentType? _selectedEquipmentType => _equipmentTypes.FirstOrDefault(t => t.Id == newModel.EquipmentTypeId);
+
+    private static string TypeDisplayName(EquipmentType t) =>
+        string.IsNullOrWhiteSpace(t.TypeGroup) ? t.Name : $"{t.TypeGroup} — {t.Name}";
+
+    private static bool TypeMatchesSearch(EquipmentType t, string text) =>
+        ((t.TypeGroup ?? "") + " " + t.Name).Contains(text, StringComparison.OrdinalIgnoreCase);
+
+    private Task OnEquipmentTypeSelectedAsync(EquipmentType type)
+    {
+        newModel.EquipmentTypeId = type.Id;
+        return Task.CompletedTask;
+    }
 
     private static string TypeDisplay(EquipmentModel m)
     {
@@ -101,7 +130,20 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
+        await LoadEquipmentTypes();
         await LoadModels();
+    }
+
+    private async Task LoadEquipmentTypes()
+    {
+        try
+        {
+            _equipmentTypes = await EquipService.GetActiveEquipmentTypesAsync();
+        }
+        catch
+        {
+            _equipmentTypes = new List<EquipmentType>();
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
