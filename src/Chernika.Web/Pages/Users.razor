@@ -157,10 +157,24 @@
                                         <ItemTemplate Context="branch">
                                             @branch.Name
                                         </ItemTemplate>
-                                        <QuickCreateModalTemplate>
-                                            <BranchQuickCreateModal OnCreated="OnBranchCreatedAsync"
-                                                                    OnCancelled="CloseBranchQuickCreate" />
-                                        </QuickCreateModalTemplate>
+                                        <QuickCreateFormTemplate>
+                                            <div class="field">
+                                                <label>Название</label>
+                                                <input @bind="_newBranchName" @bind:event="oninput" placeholder="Название филиала" />
+                                            </div>
+                                            <div class="field">
+                                                <label>Описание</label>
+                                                <input @bind="_newBranchDescription" @bind:event="oninput" placeholder="Необязательно" />
+                                            </div>
+                                            @if (!string.IsNullOrEmpty(_branchCreateError))
+                                            {
+                                                <div class="loginError">@_branchCreateError</div>
+                                            }
+                                            <div class="popoverQuickCreateFormActions">
+                                                <button type="button" class="btn ghost" @onclick="CancelBranchQuickCreate">Отмена</button>
+                                                <button type="button" class="btn primary" @onclick="SaveBranchQuickCreateAsync">Создать</button>
+                                            </div>
+                                        </QuickCreateFormTemplate>
                                     </SearchablePopoverSelect>
                                 </div>
                             }
@@ -424,6 +438,9 @@
     private bool canQuickCreateBranch = false;
     private List<Branch> _availableBranches = new();
     private SearchablePopoverSelect<Branch>? _branchSelect;
+    private string _newBranchName = "";
+    private string _newBranchDescription = "";
+    private string? _branchCreateError;
 
     private Branch? _selectedBranch => _availableBranches.FirstOrDefault(b => b.Id == SelectedBranchId);
 
@@ -513,16 +530,47 @@
         return Task.CompletedTask;
     }
 
-    private async Task OnBranchCreatedAsync(Branch branch)
+    private void CancelBranchQuickCreate()
     {
-        await LoadBranchesAsync();
-        if (_branchSelect != null)
-            await _branchSelect.NotifyQuickCreatedAsync(branch);
-        else
-            formBranchId = branch.Id.ToString();
+        _newBranchName = "";
+        _newBranchDescription = "";
+        _branchCreateError = null;
+        _branchSelect?.CloseQuickCreate();
     }
 
-    private void CloseBranchQuickCreate() => _branchSelect?.CloseQuickCreate();
+    private async Task SaveBranchQuickCreateAsync()
+    {
+        _branchCreateError = null;
+        var name = _newBranchName.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            _branchCreateError = "Укажите наименование.";
+            return;
+        }
+        try
+        {
+            var branch = await EquipService.CreateBranchAsync(new Branch
+            {
+                Name = name,
+                Description = string.IsNullOrWhiteSpace(_newBranchDescription) ? null : _newBranchDescription.Trim()
+            });
+            await LoadBranchesAsync();
+            _newBranchName = "";
+            _newBranchDescription = "";
+            if (_branchSelect != null)
+                await _branchSelect.NotifyQuickCreatedAsync(branch);
+            else
+                formBranchId = branch.Id.ToString();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _branchCreateError = ex.Message;
+        }
+        catch (Exception)
+        {
+            _branchCreateError = "Не удалось создать филиал. Обновите список и повторите попытку.";
+        }
+    }
 
     async Task LoadUsers()
     {

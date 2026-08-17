@@ -24,7 +24,7 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
     [Parameter] public string EmptyText { get; set; } = "Ничего не найдено";
     [Parameter] public bool AllowQuickCreate { get; set; }
     [Parameter] public string QuickCreateLabel { get; set; } = "Добавить новый";
-    [Parameter] public RenderFragment? QuickCreateModalTemplate { get; set; }
+    [Parameter] public RenderFragment? QuickCreateFormTemplate { get; set; }
     [Parameter] public bool Disabled { get; set; }
 
     [Inject] private IJSRuntime JS { get; set; } = null!;
@@ -36,14 +36,17 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
     private DotNetObjectReference<SearchablePopoverSelect<TItem>>? _dotNetRef;
     private bool _isOpen;
     private bool _listenersAttached;
-    private bool _quickCreateOpen;
+    private bool _quickCreateExpanded;
     private string _placement = "bottom";
+    private int _availableHeight;
     private string _searchText = string.Empty;
     private string _displayText = string.Empty;
     private int _highlightedIndex = -1;
     private bool _disposed;
 
     private string AriaExpanded => _isOpen ? "true" : "false";
+
+    private string PopoverStyle => _availableHeight > 0 ? $"max-height:{_availableHeight}px" : string.Empty;
 
     private List<TItem> _filteredItems => Items
         .Where(i => string.IsNullOrWhiteSpace(_searchText) || SearchPredicate(i, _searchText))
@@ -69,6 +72,7 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
             try
             {
                 _placement = await JS.InvokeAsync<string>("popoverPositioning.getPlacement", _anchorRef, PopoverMaxHeightPx);
+                _availableHeight = await JS.InvokeAsync<int>("popoverPositioning.getAvailableHeight", _anchorRef, _placement);
                 await JS.InvokeVoidAsync("popoverPositioning.addOutsideClickListener", _anchorRef, _popoverRef, _dotNetRef, nameof(CloseFromOutsideClick));
                 StateHasChanged();
             }
@@ -92,6 +96,8 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
 
         _isOpen = true;
         _listenersAttached = false;
+        _quickCreateExpanded = false;
+        _availableHeight = 0;
         _highlightedIndex = -1;
         _searchText = string.Empty;
         _displayText = Selected is null ? string.Empty : DisplayTextSelector(Selected);
@@ -105,6 +111,8 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
 
         _isOpen = false;
         _listenersAttached = false;
+        _quickCreateExpanded = false;
+        _availableHeight = 0;
         _highlightedIndex = -1;
         _searchText = string.Empty;
         _displayText = Selected is null ? string.Empty : DisplayTextSelector(Selected);
@@ -187,39 +195,39 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
         StateHasChanged();
     }
 
-    private Task OpenQuickCreateAsync()
+    private Task ExpandQuickCreateAsync()
     {
-        _quickCreateOpen = true;
-        return CloseAsync(restoreFocus: false);
+        _quickCreateExpanded = true;
+        return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Закрывает quick-create модалку без создания (вызывается родителем по отмене).
+    /// Сворачивает inline-форму quick-create обратно к кнопке (вызывается родителем по отмене).
     /// </summary>
     public void CloseQuickCreate()
     {
-        _quickCreateOpen = false;
+        _quickCreateExpanded = false;
         StateHasChanged();
     }
 
     /// <summary>
     /// Сообщает компоненту об успешном создании элемента через quick-create:
-    /// закрывает модалку, выбирает элемент и уведомляет родителя через <see cref="OnSelected"/>.
+    /// сворачивает форму, выбирает элемент и уведомляет родителя через <see cref="OnSelected"/>.
     /// </summary>
     public Task NotifyQuickCreatedAsync(TItem item)
     {
-        _quickCreateOpen = false;
+        _quickCreateExpanded = false;
         return SelectItemAsync(item);
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        if (_disposed || (!_isOpen && !_quickCreateOpen))
+        if (_disposed || (!_isOpen && !_quickCreateExpanded))
             return;
 
         _ = InvokeAsync(async () =>
         {
-            _quickCreateOpen = false;
+            _quickCreateExpanded = false;
             await CloseAsync(restoreFocus: false);
         });
     }

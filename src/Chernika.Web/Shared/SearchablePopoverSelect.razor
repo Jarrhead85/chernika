@@ -17,7 +17,7 @@
 
     @if (_isOpen)
     {
-        <div class="popover" data-placement="@_placement" role="listbox" @ref="_popoverRef">
+        <div class="popover" data-placement="@_placement" role="listbox" @ref="_popoverRef" style="@PopoverStyle">
             @{
                 var items = _filteredItems;
             }
@@ -43,16 +43,20 @@
             @if (AllowQuickCreate)
             {
                 <div class="popoverFooter">
-                    <button type="button" class="btn ghost" @onclick="OpenQuickCreateAsync">
-                        @QuickCreateLabel
-                    </button>
+                    @if (!_quickCreateExpanded)
+                    {
+                        <button type="button" class="btn ghost" @onclick="ExpandQuickCreateAsync">
+                            @QuickCreateLabel
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="popoverQuickCreateForm" @onclick:stopPropagation="true">
+                            @QuickCreateFormTemplate
+                        </div>
+                    }
                 </div>
             }
         </div>
     }
 </div>
-
-@if (AllowQuickCreate && _quickCreateOpen)
-{
-    @QuickCreateModalTemplate
-}

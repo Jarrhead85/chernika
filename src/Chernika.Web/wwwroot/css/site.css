@@ -397,7 +397,7 @@ tbody tr:hover td{background:rgba(79,140,255,.06)}
 .searchResultMeta{margin-top:6px;font-size:12px}
 .modalOverlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(4px)}
 [data-theme="light"] .modalOverlay{background:rgba(0,0,0,.35)}
-.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.3)}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.3);position:relative;z-index:0}
 .modalHeader{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
 .modalHeader h3{margin:0;font-size:16px}
 .modalBody{padding:20px}
@@ -890,6 +890,18 @@ input:-webkit-autofill:focus {
   justify-content:flex-end;
   gap:8px;
 }
+
+.popoverQuickCreateForm{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:8px 4px 2px;
+  border-top:1px solid var(--line);
+  margin-top:4px;
+  width:100%;
+}
+.popoverQuickCreateForm .field input{font-size:13px}
+.popoverQuickCreateFormActions{display:flex;justify-content:flex-end;gap:8px}
 
 @media (max-width: 560px){
   .popover{
