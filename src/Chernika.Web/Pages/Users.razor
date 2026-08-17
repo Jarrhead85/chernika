@@ -4,7 +4,6 @@
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
 @inject UserManagementService UserMgmt
-@inject EquipmentService EquipService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthState
 @implements IDisposable
@@ -59,15 +58,15 @@
                                 <td>
                                     @if (user.IsDeleted)
                                     {
-                                        <span class="badge" style="background:var(--text3)">Удалён</span>
+                                        <span class="auditAction auditAction--danger">Удалён</span>
                                     }
                                     else if (user.IsActive)
                                     {
-                                        <span class="badge" style="background:var(--ok)">Активен</span>
+                                        <span class="auditAction auditAction--success">Активен</span>
                                     }
                                     else
                                     {
-                                        <span class="badge" style="background:var(--warn)">Заблокирован</span>
+                                        <span class="auditAction auditAction--warning">Заблокирован</span>
                                     }
                                 </td>
                                 <td>
@@ -143,39 +142,7 @@
                             {
                                 <div class="field">
                                     <label for="new-user-branch">Филиал *</label>
-                                    <SearchablePopoverSelect TItem="Branch"
-                                                              Items="_availableBranches"
-                                                              Selected="_selectedBranch"
-                                                              DisplayTextSelector="b => b.Name"
-                                                              SearchPredicate="(b, text) => b.Name.Contains(text, StringComparison.OrdinalIgnoreCase)"
-                                                              Placeholder="Выберите филиал"
-                                                              EmptyText="Филиалы не найдены"
-                                                              AllowQuickCreate="canQuickCreateBranch"
-                                                              QuickCreateLabel="Добавить филиал"
-                                                              OnSelected="OnBranchSelectedAsync"
-                                                              @ref="_branchSelect">
-                                        <ItemTemplate Context="branch">
-                                            @branch.Name
-                                        </ItemTemplate>
-                                        <QuickCreateFormTemplate>
-                                            <div class="field">
-                                                <label>Название</label>
-                                                <input @bind="_newBranchName" @bind:event="oninput" placeholder="Название филиала" />
-                                            </div>
-                                            <div class="field">
-                                                <label>Описание</label>
-                                                <input @bind="_newBranchDescription" @bind:event="oninput" placeholder="Необязательно" />
-                                            </div>
-                                            @if (!string.IsNullOrEmpty(_branchCreateError))
-                                            {
-                                                <div class="loginError">@_branchCreateError</div>
-                                            }
-                                            <div class="popoverQuickCreateFormActions">
-                                                <button type="button" class="btn ghost" @onclick="CancelBranchQuickCreate">Отмена</button>
-                                                <button type="button" class="btn primary" @onclick="SaveBranchQuickCreateAsync">Создать</button>
-                                            </div>
-                                        </QuickCreateFormTemplate>
-                                    </SearchablePopoverSelect>
+                                    <BranchSelect @bind-Value="SelectedBranchId" CanCreate="canQuickCreateBranch" />
                                 </div>
                             }
                         </div>
@@ -399,7 +366,7 @@
                         <div style="margin-bottom:12px">
                             <div style="font-weight:700;font-size:14px">@grantDenyTarget.Name</div>
                             <div style="font-size:12px;color:var(--text2)">@grantDenyTarget.Module</div>
-                            <div style="font-size:11px;color:var(--text3);margin-top:4px">@grantDenyTarget.Description</div>
+                            <div style="font-size:11px;color:var(--muted);margin-top:4px">@grantDenyTarget.Description</div>
                             <code style="display:inline-block;margin-top:7px;padding:2px 6px;border:1px solid var(--line);border-radius:5px;color:var(--muted);background:var(--panel2);font-family:var(--mono);font-size:11px">Код системы: @grantDenyTarget.Code</code>
                         </div>
                         @if (grantDenyAction == "deny" && grantDenyTarget.GrantedByRole)
@@ -436,13 +403,6 @@
     private bool loading = true;
     private string statusFilter = "";
     private bool canQuickCreateBranch = false;
-    private List<Branch> _availableBranches = new();
-    private SearchablePopoverSelect<Branch>? _branchSelect;
-    private string _newBranchName = "";
-    private string _newBranchDescription = "";
-    private string? _branchCreateError;
-
-    private Branch? _selectedBranch => _availableBranches.FirstOrDefault(b => b.Id == SelectedBranchId);
 
     private static readonly string[] creatableRoles = new[]
     {
@@ -504,72 +464,9 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadUsers();
-        await LoadBranchesAsync();
         allModules = PermissionCatalog.GetAllModules().ToList();
         var authState = await AuthState.GetAuthenticationStateAsync();
         canQuickCreateBranch = authState.User.IsInRole(nameof(UserRole.SystemAdmin));
-    }
-
-    private async Task LoadBranchesAsync()
-    {
-        try
-        {
-            _availableBranches = (await EquipService.GetBranchesAsync())
-                .OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-        catch
-        {
-            _availableBranches = new List<Branch>();
-        }
-    }
-
-    private Task OnBranchSelectedAsync(Branch branch)
-    {
-        formBranchId = branch.Id.ToString();
-        return Task.CompletedTask;
-    }
-
-    private void CancelBranchQuickCreate()
-    {
-        _newBranchName = "";
-        _newBranchDescription = "";
-        _branchCreateError = null;
-        _branchSelect?.CloseQuickCreate();
-    }
-
-    private async Task SaveBranchQuickCreateAsync()
-    {
-        _branchCreateError = null;
-        var name = _newBranchName.Trim();
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            _branchCreateError = "Укажите наименование.";
-            return;
-        }
-        try
-        {
-            var branch = await EquipService.CreateBranchAsync(new Branch
-            {
-                Name = name,
-                Description = string.IsNullOrWhiteSpace(_newBranchDescription) ? null : _newBranchDescription.Trim()
-            });
-            await LoadBranchesAsync();
-            _newBranchName = "";
-            _newBranchDescription = "";
-            if (_branchSelect != null)
-                await _branchSelect.NotifyQuickCreatedAsync(branch);
-            else
-                formBranchId = branch.Id.ToString();
-        }
-        catch (InvalidOperationException ex)
-        {
-            _branchCreateError = ex.Message;
-        }
-        catch (Exception)
-        {
-            _branchCreateError = "Не удалось создать филиал. Обновите список и повторите попытку.";
-        }
     }
 
     async Task LoadUsers()

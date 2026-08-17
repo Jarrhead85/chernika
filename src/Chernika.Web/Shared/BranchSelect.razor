@@ -1,0 +1,304 @@
+﻿@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject EquipmentService EquipService
+
+<div class="bs-select">
+    <div id="@_anchorId" class="bs-select-anchor">
+        @if (Selected != null)
+        {
+            <div class="bs-select-tag"
+                 role="button"
+                 tabindex="0"
+                 @onclick="Toggle"
+                 @onkeydown:preventDefault="true"
+                 @onkeydown="OnSelectedKeyDown">
+                <span class="bs-select-tag-text" title="@Selected.Name">@Selected.Name</span>
+                <button type="button" class="bs-select-clear" aria-label="╨Ю╤З╨╕╤Б╤В╨╕╤В╤М" title="╨г╨▒╤А╨░╤В╤М ╤Д╨╕╨╗╨╕╨░╨╗"
+                        @onclick:stopPropagation="true" @onkeydown:stopPropagation="true" @onclick="Clear">├Ч</button>
+            </div>
+        }
+        else
+        {
+            <button type="button" class="bs-select-trigger" @onclick="Toggle">╨Т╤Л╨▒╤А╨░╤В╤М ╤Д╨╕╨╗╨╕╨░╨╗</button>
+        }
+    </div>
+
+    @if (_open)
+    {
+        <div id="@_dropId" class="bs-select-dropdown" style="display:none" role="listbox">
+            <input class="bs-select-search" @bind="_search" @bind:event="oninput" placeholder="╨Я╨╛╨╕╤Б╨║..." @onkeydown:stopPropagation="true" />
+            <div class="bs-select-list">
+                @if (FilteredBranches.Count == 0)
+                {
+                    <div class="bs-select-empty">╨Э╨╕╤З╨╡╨│╨╛ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛</div>
+                }
+                else
+                {
+                    @foreach (var b in FilteredBranches)
+                    {
+                        <div class="bs-select-item" role="option" @onmousedown:preventDefault="true" @onmousedown="() => Select(b)">@b.Name</div>
+                    }
+                }
+                @if (CanCreate && !string.IsNullOrWhiteSpace(_search))
+                {
+                    <div class="bs-select-item bs-select-create" role="button" @onmousedown:preventDefault="true" @onmousedown="OpenCreateModal">
+                        + ╨б╨╛╨╖╨┤╨░╤В╤М ┬л@_search.Trim()┬╗
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@if (_showCreate)
+{
+    <div class="modalOverlay" style="z-index:10000" @onclick="CloseCreateModal" @onkeydown="OnCreateKeyDown">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bs-create-title" @onclick:stopPropagation="true" style="max-width:420px">
+            <div class="modalHeader">
+                <h3 id="bs-create-title">╨Э╨╛╨▓╤Л╨╣ ╤Д╨╕╨╗╨╕╨░╨╗</h3>
+                <button type="button" class="linkBtn" @onclick="CloseCreateModal" aria-label="╨Ч╨░╨║╤А╤Л╤В╤М">тЬХ</button>
+            </div>
+            <div class="modalBody">
+                <div class="form">
+                    <div class="field">
+                        <label for="bs-create-name">╨Э╨░╨╕╨╝╨╡╨╜╨╛╨▓╨░╨╜╨╕╨╡ *</label>
+                        <input id="bs-create-name" @ref="_createNameRef" type="text" @bind="_createName" @bind:event="oninput" class="fieldInput" autocomplete="off" maxlength="256" placeholder="╨Э╨░╨╕╨╝╨╡╨╜╨╛╨▓╨░╨╜╨╕╨╡ ╤Д╨╕╨╗╨╕╨░╨╗╨░" />
+                    </div>
+                    <div class="field">
+                        <label for="bs-create-desc">╨Ю╨┐╨╕╤Б╨░╨╜╨╕╨╡</label>
+                        <textarea id="bs-create-desc" @bind="_createDescription" @bind:event="oninput" class="fieldInput" maxlength="2000" rows="3" placeholder="╨Ю╨┐╨╕╤Б╨░╨╜╨╕╨╡"></textarea>
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(_createError))
+                {
+                    <div class="loginError" style="margin-top:12px">@_createError</div>
+                }
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn" @onclick="CloseCreateModal" disabled="@_creating">╨Ю╤В╨╝╨╡╨╜╨░</button>
+                <button type="button" class="btn primary" @onclick="CreateAndSelect" disabled="@_creating">@(_creating ? "╨б╨╛╨╖╨┤╨░╨╜╨╕╨╡..." : "╨б╨╛╨╖╨┤╨░╤В╤М ╨╕ ╨▓╤Л╨▒╤А╨░╤В╤М")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public Guid? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid?> ValueChanged { get; set; }
+
+    [Parameter]
+    public bool CanCreate { get; set; }
+
+    private List<Branch> _branches = new();
+    private readonly string _dropId = "bs-drop-" + Guid.NewGuid().ToString("N");
+    private readonly string _anchorId = "bs-anchor-" + Guid.NewGuid().ToString("N");
+    private DotNetObjectReference<BranchSelect>? _dotNetRef;
+    private bool _open;
+    private string _search = "";
+    private bool _attached;
+
+    private bool _showCreate;
+    private string _createName = "";
+    private string _createDescription = "";
+    private string? _createError;
+    private bool _creating;
+    private ElementReference _createNameRef;
+    private bool _createFocused;
+
+    private Branch? Selected => _branches.FirstOrDefault(b => b.Id == Value);
+
+    private List<Branch> FilteredBranches
+    {
+        get
+        {
+            var term = string.IsNullOrWhiteSpace(_search) ? null : _search.Trim();
+            IEnumerable<Branch> result = _branches;
+            if (term != null)
+            {
+                result = result.Where(b =>
+                    b.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || (b.Description ?? "").Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+            return result.ToList();
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        _dotNetRef = DotNetObjectReference.Create(this);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadBranchesAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_open && !_attached)
+        {
+            _attached = true;
+            await JS.InvokeVoidAsync("dropdownPortal.attach", _dropId, _anchorId);
+            await JS.InvokeVoidAsync("dropdownPortal.onClickOutside", _dropId, _dotNetRef);
+            await JS.InvokeVoidAsync("dropdownPortal.onEscape", _dotNetRef);
+        }
+
+        if (_showCreate && !_createFocused)
+        {
+            _createFocused = true;
+            await _createNameRef.FocusAsync();
+        }
+    }
+
+    private async Task LoadBranchesAsync()
+    {
+        try
+        {
+            _branches = (await EquipService.GetBranchesAsync())
+                .OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            _branches = new List<Branch>();
+        }
+    }
+
+    private async Task Toggle()
+    {
+        _open = !_open;
+        _attached = false;
+        if (!_open)
+        {
+            await JS.InvokeVoidAsync("dropdownPortal.detach", _dropId);
+            await JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+        }
+        else
+        {
+            _search = "";
+        }
+    }
+
+    private async Task OnSelectedKeyDown(KeyboardEventArgs ev)
+    {
+        if (ev.Key is not ("Enter" or " ")) return;
+        await Toggle();
+    }
+
+    private async Task Select(Branch b)
+    {
+        if (Value != b.Id)
+            await ValueChanged.InvokeAsync(b.Id);
+        await CloseAsync();
+    }
+
+    private async Task Clear()
+    {
+        if (Value != null)
+            await ValueChanged.InvokeAsync(null);
+    }
+
+    [JSInvokable]
+    public async Task CloseDropdown()
+    {
+        await CloseAsync();
+    }
+
+    private async Task CloseAsync()
+    {
+        if (!_open) return;
+        _open = false;
+        _attached = false;
+        try
+        {
+            await JS.InvokeVoidAsync("dropdownPortal.detach", _dropId);
+            await JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+        }
+        catch
+        {
+            // ╤Б╤В╤А╨░╨╜╨╕╤Ж╨░ ╨╝╨╛╨╢╨╡╤В ╨▓╤Л╨│╤А╤Г╨╢╨░╤В╤М╤Б╤П
+        }
+        StateHasChanged();
+    }
+
+    private void OpenCreateModal()
+    {
+        _createName = _search.Trim();
+        _createDescription = "";
+        _createError = null;
+        _creating = false;
+        _createFocused = false;
+        _showCreate = true;
+        _ = JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+    }
+
+    private void CloseCreateModal()
+    {
+        _showCreate = false;
+        _createError = null;
+        if (_open)
+            _ = JS.InvokeVoidAsync("dropdownPortal.onEscape", _dotNetRef);
+    }
+
+    private void OnCreateKeyDown(KeyboardEventArgs ev)
+    {
+        if (ev.Key == "Escape")
+            CloseCreateModal();
+    }
+
+    private async Task CreateAndSelect()
+    {
+        if (_creating) return;
+        _createError = null;
+        var name = _createName.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            _createError = "╨г╨║╨░╨╢╨╕╤В╨╡ ╨╜╨░╨╕╨╝╨╡╨╜╨╛╨▓╨░╨╜╨╕╨╡.";
+            return;
+        }
+        var description = string.IsNullOrWhiteSpace(_createDescription) ? null : _createDescription.Trim();
+        _creating = true;
+        try
+        {
+            var created = await EquipService.CreateBranchAsync(new Branch { Name = name, Description = description });
+            await LoadBranchesAsync();
+            if (Value != created.Id)
+                await ValueChanged.InvokeAsync(created.Id);
+            _showCreate = false;
+            await CloseAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _createError = ex.Message;
+        }
+        catch (Exception)
+        {
+            _createError = "╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╤Б╨╛╨╖╨┤╨░╤В╤М ╤Д╨╕╨╗╨╕╨░╨╗. ╨Ю╨▒╨╜╨╛╨▓╨╕╤В╨╡ ╤Б╨┐╨╕╤Б╨╛╨║ ╨╕ ╨┐╨╛╨▓╤В╨╛╤А╨╕╤В╨╡ ╨┐╨╛╨┐╤Л╤В╨║╤Г.";
+        }
+        finally
+        {
+            _creating = false;
+            StateHasChanged();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_open)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("dropdownPortal.detach", _dropId);
+                await JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+            }
+            catch
+            {
+                // ╨║╨╛╨╝╨┐╨╛╨╜╨╡╨╜╤В ╤Г╨┤╨░╨╗╤П╨╡╤В╤Б╤П
+            }
+        }
+        _dotNetRef?.Dispose();
+    }
+}
