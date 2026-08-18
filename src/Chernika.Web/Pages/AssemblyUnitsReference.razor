@@ -1,36 +1,63 @@
 @page "/справочник-сборочных-единиц"
-@attribute [Authorize(Policy = "ViewHK")]
+@attribute [Authorize(Policy = "ViewReferences")]
+@implements IDisposable
 @using Chernika.Domain
+@using Chernika.Domain.Models
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Техника" Current="Сборочные единицы" />
-    <section class="panel">
-        <div class="panelHeader">
-            <h2>Справочник сборочных единиц</h2>
-            <div class="hint">Сборочные единицы изделий</div>
-        </div>
-        <div class="panelBody">
-            <div class="form">
-                <div class="field"><label>Код</label><input @ref="_firstField" @bind="newUnit.Code" /></div>
-                <div class="field"><label>Наименование</label><input @bind="newUnit.Name" /></div>
-                <div class="field full-width"><label>Описание</label><input @bind="newUnit.Description" /></div>
-                <div class="formActions">
-                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
-                    @if (canEdit) { <button class="btn primary" @onclick="SaveUnit">@(editing ? "Сохранить" : "Добавить")</button> }
+    @if (canEdit)
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>@(editing ? "Редактирование сборочной единицы" : "Новая сборочная единица")</h2>
+                <div class="hint">Сборочные единицы изделий</div>
+            </div>
+            <div class="panelBody">
+                <div class="form">
+                    <div class="field"><label>Код</label><input @ref="_firstField" @bind="newUnit.Code" /></div>
+                    <div class="field"><label>Наименование</label><input @bind="newUnit.Name" /></div>
+                    <div class="field full-width"><label>Описание</label><input @bind="newUnit.Description" /></div>
+                    <div class="formActions">
+                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                        <button class="btn primary" @onclick="SaveUnit">@(editing ? "Сохранить" : "Добавить")</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="mbError">@errorMessage</div>
+                    }
                 </div>
             </div>
-        </div>
-    </section>
+        </section>
+    }
 
     <section class="panel">
         <div class="panelHeader">
             <h2>Список сборочных единиц</h2>
-            <div class="hint">@units.Count записей</div>
+            <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
+            <div class="mbFilters">
+                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по коду, наименованию, описанию..." />
+                <select class="field-select" @bind="statusFilter" @bind:after="OnFiltersChanged">
+                    <option value="0">Активные</option>
+                    <option value="1">Удалённые</option>
+                    <option value="2">Все</option>
+                </select>
+                <select class="field-select" @bind="sortBy" @bind:after="OnFiltersChanged">
+                    <option value="Code">Сортировка: код</option>
+                    <option value="Name">Сортировка: наименование</option>
+                </select>
+                <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
+                @if (HasActiveFilters)
+                {
+                    <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                }
+            </div>
+
             @if (loading)
             {
                 <div class="loading-state">Загрузка...</div>
@@ -41,27 +68,52 @@
             }
             else
             {
-                <table>
-                    <thead>
-                        <tr><th>Код</th><th>Наименование</th><th>Описание</th><th>Действия</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var u in units)
-                        {
-                            <tr class="@(canEdit ? "clickableRow" : "")" tabindex="@(canEdit ? "0" : "-1")" @ondblclick="() => OnRowDblClick(u)" @onkeydown="(ev) => OnRowKeyDown(ev, u)">
-                                <td class="mono">@u.Code</td>
-                                <td>@u.Name</td>
-                                <td>@u.Description</td>
-                                <td @ondblclick:stopPropagation="true">
-                                    <div class="rowActions">
-                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditUnit(u)">Изменить</button> }
-                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteUnit(u.Id)">Удалить</button> }
-                                    </div>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                <div class="referenceTableWrap">
+                    <table>
+                        <thead>
+                            <tr><th>Код</th><th>Наименование</th><th>Описание</th><th>Статус</th><th>Действия</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var u in units)
+                            {
+                                var rowClickable = canEdit && !u.IsDeleted;
+                                <tr class="@(rowClickable ? "clickableRow" : "")" tabindex="@(rowClickable ? "0" : "-1")" @ondblclick="() => OnRowDblClick(u)" @onkeydown="(ev) => OnRowKeyDown(ev, u)">
+                                    <td class="mono">@u.Code</td>
+                                    <td>@u.Name</td>
+                                    <td>@u.Description</td>
+                                    <td><span class="tag @(u.IsDeleted ? "bad" : "ok")">@(u.IsDeleted ? "Удалён" : "Активен")</span></td>
+                                    <td @ondblclick:stopPropagation="true">
+                                        <div class="rowActions">
+                                            @if (u.IsDeleted)
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreUnit(u.Id)">Восстановить</button>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" @onclick="() => EditUnit(u)">Изменить</button>
+                                                    <button class="linkBtn" style="color:var(--bad)" @onclick="() => DeleteUnit(u.Id)">Удалить</button>
+                                                }
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="footer">
+                    <div>
+                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
+                        <span style="margin:0 8px">Стр. @currentPage из @totalPages</span>
+                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
+                    </div>
+                    <div class="mono">Показано @units.Count из @totalCount</div>
+                </div>
             }
         </div>
     </section>
@@ -73,15 +125,27 @@
     private bool editing = false;
     private bool loading = true;
     private bool canEdit;
+    private string? errorMessage;
+    private string search = "";
+    private int statusFilter = 0;
+    private string sortBy = "Code";
+    private bool sortDesc = false;
+    private int currentPage = 1;
+    private int totalPages = 1;
+    private int totalCount;
+    private CancellationTokenSource? _cts;
     private ElementReference _firstField;
     private bool _focusForm;
+
+    private bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(search) || statusFilter != 0;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
-        await LoadUnits();
+        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        await ReloadAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -93,22 +157,89 @@
         }
     }
 
-    async Task LoadUnits()
+    private async Task OnFiltersChanged()
     {
+        currentPage = 1;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        bool? showDeleted = statusFilter switch
+        {
+            1 => true,
+            2 => null,
+            _ => false
+        };
+
         loading = true;
-        units = await EquipService.GetAssemblyUnitsAsync();
-        loading = false;
+        try
+        {
+            var result = await EquipService.GetAssemblyUnitsPagedAsync(new AssemblyUnitQuery
+            {
+                Page = currentPage,
+                Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+                ShowDeleted = showDeleted,
+                SortBy = sortBy,
+                SortDescending = sortDesc,
+            }, ct);
+
+            if (ct.IsCancellationRequested)
+                return;
+
+            units = result.Items.ToList();
+            totalCount = result.TotalCount;
+            totalPages = result.TotalPages;
+            if (currentPage > totalPages && totalPages > 0)
+            {
+                currentPage = totalPages;
+                await ReloadAsync();
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested)
+                loading = false;
+        }
     }
 
     async Task SaveUnit()
     {
-        if (string.IsNullOrWhiteSpace(newUnit.Name)) return;
-        if (editing)
-            await EquipService.UpdateAssemblyUnitAsync(newUnit);
-        else
-            await EquipService.CreateAssemblyUnitAsync(newUnit);
-        ResetForm();
-        await LoadUnits();
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(newUnit.Name))
+        {
+            errorMessage = "Укажите наименование.";
+            return;
+        }
+
+        try
+        {
+            if (editing)
+                await EquipService.UpdateAssemblyUnitAsync(newUnit);
+            else
+                await EquipService.CreateAssemblyUnitAsync(newUnit);
+            ResetForm();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception)
+        {
+            errorMessage = editing
+                ? "Не удалось изменить запись справочника. Обновите список и повторите попытку."
+                : "Не удалось создать запись справочника. Обновите список и повторите попытку.";
+        }
     }
 
     Task EditUnit(AssemblyUnit u)
@@ -121,25 +252,86 @@
 
     async Task OnRowDblClick(AssemblyUnit u)
     {
-        if (!canEdit) return;
+        if (!canEdit || u.IsDeleted) return;
         await EditUnit(u);
     }
 
     async Task OnRowKeyDown(KeyboardEventArgs ev, AssemblyUnit u)
     {
-        if (!canEdit || ev.Key != "Enter") return;
+        if (!canEdit || u.IsDeleted || ev.Key != "Enter") return;
         await EditUnit(u);
     }
 
     async Task DeleteUnit(Guid id)
     {
-        await EquipService.DeleteAssemblyUnitAsync(id);
-        await LoadUnits();
+        errorMessage = null;
+        try
+        {
+            var ok = await EquipService.DeleteAssemblyUnitAsync(id);
+            if (!ok) errorMessage = "Не удалось удалить запись. Обновите список и повторите попытку.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    async Task RestoreUnit(Guid id)
+    {
+        errorMessage = null;
+        try
+        {
+            var ok = await EquipService.RestoreAssemblyUnitAsync(id);
+            if (!ok) errorMessage = "Не удалось восстановить запись. Обновите список и повторите попытку.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
     }
 
     void ResetForm()
     {
         newUnit = new AssemblyUnit();
         editing = false;
+        errorMessage = null;
+    }
+
+    async Task ToggleSortDir()
+    {
+        sortDesc = !sortDesc;
+        await ReloadAsync();
+    }
+
+    async Task ResetFilters()
+    {
+        search = "";
+        statusFilter = 0;
+        sortBy = "Code";
+        sortDesc = false;
+        currentPage = 1;
+        await ReloadAsync();
+    }
+
+    async Task PrevPage()
+    {
+        if (currentPage <= 1) return;
+        currentPage--;
+        await ReloadAsync();
+    }
+
+    async Task NextPage()
+    {
+        if (currentPage >= totalPages) return;
+        currentPage++;
+        await ReloadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
     }
 }

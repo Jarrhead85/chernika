@@ -1,58 +1,88 @@
 @page "/справочник-моделей"
-@attribute [Authorize(Policy = "ViewHK")]
+@attribute [Authorize(Policy = "ViewReferences")]
+@implements IDisposable
 @using Chernika.Domain
+@using Chernika.Domain.Models
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Техника" Current="Модели техники" />
-    <section class="panel">
-        <div class="panelHeader">
-            <h2>Справочник моделей техники</h2>
-            <div class="hint">Модели / образцы</div>
-        </div>
-        <div class="panelBody">
-            <div class="form">
-                <div class="field"><label>Индекс</label><input @ref="_firstField" @bind="newModel.Index" /></div>
-                <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
-                <div class="field">
-                    <label>Вид техники из справочника</label>
-                    <SearchablePopoverSelect TItem="EquipmentType"
-                                              Items="_equipmentTypes"
-                                              Selected="_selectedEquipmentType"
-                                              DisplayTextSelector="TypeDisplayName"
-                                              SearchPredicate="TypeMatchesSearch"
-                                              Placeholder="Выберите вид техники"
-                                              EmptyText="Виды техники не найдены"
-                                              OnSelected="OnEquipmentTypeSelectedAsync">
-                        <ItemTemplate Context="type">
-                            @TypeDisplayName(type)
-                        </ItemTemplate>
-                    </SearchablePopoverSelect>
-                </div>
-                <div class="field"><label>Устаревший текстовый вид техники</label><input @bind="newModel.Type" /></div>
-                <div class="field"><label>Марка</label><input @bind="newModel.Brand" /></div>
-                <div class="field"><label>Модификация</label><input @bind="newModel.Modification" /></div>
-                <div class="field"><label>Описание</label><input @bind="newModel.Description" /></div>
-                <div class="formActions">
-                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
-                    @if (canEdit) { <button class="btn primary" @onclick="SaveModel">@(editing ? "Сохранить" : "Добавить")</button> }
-                </div>
-                @if (!string.IsNullOrEmpty(errorMessage))
-                {
-                    <div class="mbError">@errorMessage</div>
-                }
+    @if (canEdit)
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>@(editing ? "Редактирование модели" : "Новая модель техники")</h2>
+                <div class="hint">Модели / образцы</div>
             </div>
-        </div>
-    </section>
+            <div class="panelBody">
+                <div class="form">
+                    <div class="field"><label>Индекс</label><input @ref="_firstField" @bind="newModel.Index" /></div>
+                    <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
+                    <div class="field">
+                        <label>Вид техники из справочника</label>
+                        <SearchablePopoverSelect TItem="EquipmentType"
+                                                  Items="_equipmentTypes"
+                                                  Selected="_selectedEquipmentType"
+                                                  DisplayTextSelector="TypeDisplayName"
+                                                  SearchPredicate="TypeMatchesSearch"
+                                                  Placeholder="Выберите вид техники"
+                                                  EmptyText="Виды техники не найдены"
+                                                  OnSelected="OnEquipmentTypeSelectedAsync">
+                            <ItemTemplate Context="type">@TypeDisplayName(type)</ItemTemplate>
+                        </SearchablePopoverSelect>
+                    </div>
+                    <div class="field"><label>Устаревший текстовый вид техники</label><input @bind="newModel.Type" /></div>
+                    <div class="field"><label>Марка</label><input @bind="newModel.Brand" /></div>
+                    <div class="field"><label>Модификация</label><input @bind="newModel.Modification" /></div>
+                    <div class="field full-width"><label>Описание</label><input @bind="newModel.Description" /></div>
+                    <div class="formActions">
+                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                        <button class="btn primary" @onclick="SaveModel">@(editing ? "Сохранить" : "Добавить")</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="mbError">@errorMessage</div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
 
     <section class="panel">
         <div class="panelHeader">
             <h2>Список моделей</h2>
-            <div class="hint">@models.Count записей</div>
+            <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
+            <div class="mbFilters">
+                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по индексу, наименованию, виду, марке..." />
+                <select class="field-select" @bind="typeFilter" @bind:after="OnFiltersChanged">
+                    <option value="">Все виды техники</option>
+                    @foreach (var t in _equipmentTypes)
+                    {
+                        <option value="@t.Id">@TypeDisplayName(t)</option>
+                    }
+                </select>
+                <select class="field-select" @bind="statusFilter" @bind:after="OnFiltersChanged">
+                    <option value="0">Активные</option>
+                    <option value="1">Удалённые</option>
+                    <option value="2">Все</option>
+                </select>
+                <select class="field-select" @bind="sortBy" @bind:after="OnFiltersChanged">
+                    <option value="Index">Сортировка: индекс</option>
+                    <option value="Name">Сортировка: наименование</option>
+                    <option value="Type">Сортировка: вид техники</option>
+                    <option value="Brand">Сортировка: марка</option>
+                </select>
+                <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
+                @if (HasActiveFilters)
+                {
+                    <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                }
+            </div>
+
             @if (loading)
             {
                 <div class="loading-state">Загрузка...</div>
@@ -63,29 +93,54 @@
             }
             else
             {
-                <table>
-                    <thead>
-                        <tr><th>Индекс</th><th>Наименование</th><th>Вид</th><th>Марка</th><th>Модификация</th><th>Действия</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var m in models)
-                        {
-                            <tr class="@(canEdit ? "clickableRow" : "")" tabindex="@(canEdit ? "0" : "-1")" @ondblclick="() => OnRowDblClick(m)" @onkeydown="(ev) => OnRowKeyDown(ev, m)">
-                                <td class="mono">@m.Index</td>
-                                <td>@m.Name</td>
-                                <td>@TypeDisplay(m)</td>
-                                <td>@m.Brand</td>
-                                <td>@m.Modification</td>
-                                <td @ondblclick:stopPropagation="true">
-                                    <div class="rowActions">
-                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditModel(m)">Изменить</button> }
-                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteModel(m.Id)">Удалить</button> }
-                                    </div>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                <div class="referenceTableWrap">
+                    <table>
+                        <thead>
+                            <tr><th>Индекс</th><th>Наименование</th><th>Вид</th><th>Марка</th><th>Модификация</th><th>Статус</th><th>Действия</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in models)
+                            {
+                                var rowClickable = canEdit && !m.IsDeleted;
+                                <tr class="@(rowClickable ? "clickableRow" : "")" tabindex="@(rowClickable ? "0" : "-1")" @ondblclick="() => OnRowDblClick(m)" @onkeydown="(ev) => OnRowKeyDown(ev, m)">
+                                    <td class="mono">@m.Index</td>
+                                    <td>@m.Name</td>
+                                    <td>@TypeDisplay(m)</td>
+                                    <td>@m.Brand</td>
+                                    <td>@m.Modification</td>
+                                    <td><span class="tag @(m.IsDeleted ? "bad" : "ok")">@(m.IsDeleted ? "Удалён" : "Активен")</span></td>
+                                    <td @ondblclick:stopPropagation="true">
+                                        <div class="rowActions">
+                                            @if (m.IsDeleted)
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreModel(m.Id)">Восстановить</button>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" @onclick="() => EditModel(m)">Изменить</button>
+                                                    <button class="linkBtn" style="color:var(--bad)" @onclick="() => DeleteModel(m.Id)">Удалить</button>
+                                                }
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="footer">
+                    <div>
+                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
+                        <span style="margin:0 8px">Стр. @currentPage из @totalPages</span>
+                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
+                    </div>
+                    <div class="mono">Показано @models.Count из @totalCount</div>
+                </div>
             }
         </div>
     </section>
@@ -93,22 +148,29 @@
 
 @code {
     private List<EquipmentModel> models = new();
-    private EquipmentModel newModel = new();
     private List<EquipmentType> _equipmentTypes = new();
-    private bool editing = false;
+    private EquipmentModel newModel = new();
+    private bool editing;
     private bool loading = true;
     private bool canEdit;
     private string? errorMessage;
+    private string search = "";
+    private string? typeFilter;
+    private int statusFilter;
+    private string sortBy = "Index";
+    private bool sortDesc;
+    private int currentPage = 1;
+    private int totalPages = 1;
+    private int totalCount;
+    private CancellationTokenSource? _cts;
     private ElementReference _firstField;
     private bool _focusForm;
 
     private EquipmentType? _selectedEquipmentType => _equipmentTypes.FirstOrDefault(t => t.Id == newModel.EquipmentTypeId);
-
-    private static string TypeDisplayName(EquipmentType t) =>
-        string.IsNullOrWhiteSpace(t.TypeGroup) ? t.Name : $"{t.TypeGroup} — {t.Name}";
-
-    private static bool TypeMatchesSearch(EquipmentType t, string text) =>
-        ((t.TypeGroup ?? "") + " " + t.Name).Contains(text, StringComparison.OrdinalIgnoreCase);
+    private static string TypeDisplayName(EquipmentType t) => string.IsNullOrWhiteSpace(t.TypeGroup) ? t.Name : $"{t.TypeGroup} — {t.Name}";
+    private static bool TypeMatchesSearch(EquipmentType t, string text) => ((t.TypeGroup ?? "") + " " + t.Name).Contains(text, StringComparison.OrdinalIgnoreCase);
+    private static string TypeDisplay(EquipmentModel m) => m.EquipmentType != null ? TypeDisplayName(m.EquipmentType) : (m.Type ?? "—");
+    private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(typeFilter) || statusFilter != 0;
 
     private Task OnEquipmentTypeSelectedAsync(EquipmentType type)
     {
@@ -116,74 +178,62 @@
         return Task.CompletedTask;
     }
 
-    private static string TypeDisplay(EquipmentModel m)
-    {
-        if (m.EquipmentType != null)
-            return string.IsNullOrWhiteSpace(m.EquipmentType.TypeGroup)
-                ? m.EquipmentType.Name
-                : $"{m.EquipmentType.TypeGroup} — {m.EquipmentType.Name}";
-        return m.Type ?? "—";
-    }
-
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
         await LoadEquipmentTypes();
-        await LoadModels();
+        await ReloadAsync();
     }
 
     private async Task LoadEquipmentTypes()
     {
-        try
-        {
-            _equipmentTypes = await EquipService.GetActiveEquipmentTypesAsync();
-        }
-        catch
-        {
-            _equipmentTypes = new List<EquipmentType>();
-        }
+        try { _equipmentTypes = await EquipService.GetActiveEquipmentTypesAsync(); }
+        catch { _equipmentTypes = new List<EquipmentType>(); }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_focusForm)
-        {
-            _focusForm = false;
-            await _firstField.FocusAsync();
-        }
+        if (_focusForm) { _focusForm = false; await _firstField.FocusAsync(); }
     }
 
-    async Task LoadModels()
+    private async Task OnFiltersChanged() { currentPage = 1; await ReloadAsync(); }
+
+    private async Task ReloadAsync()
     {
+        _cts?.Cancel(); _cts?.Dispose(); _cts = new CancellationTokenSource(); var ct = _cts.Token;
+        bool? showDeleted = statusFilter switch { 1 => true, 2 => null, _ => false };
         loading = true;
-        models = await EquipService.GetModelsAsync();
-        loading = false;
+        try
+        {
+            var result = await EquipService.GetModelsPagedAsync(new EquipmentModelQuery
+            {
+                Page = currentPage,
+                Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+                EquipmentTypeId = string.IsNullOrEmpty(typeFilter) ? null : Guid.Parse(typeFilter),
+                ShowDeleted = showDeleted,
+                SortBy = sortBy,
+                SortDescending = sortDesc,
+            }, ct);
+            if (ct.IsCancellationRequested) return;
+            models = result.Items.ToList(); totalCount = result.TotalCount; totalPages = result.TotalPages;
+            if (currentPage > totalPages && totalPages > 0) { currentPage = totalPages; await ReloadAsync(); return; }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        finally { if (!ct.IsCancellationRequested) loading = false; }
     }
 
     async Task SaveModel()
     {
         errorMessage = null;
-        if (string.IsNullOrWhiteSpace(newModel.Name))
-        {
-            errorMessage = "Укажите наименование.";
-            return;
-        }
-
+        if (string.IsNullOrWhiteSpace(newModel.Name)) { errorMessage = "Укажите наименование."; return; }
         try
         {
-            if (editing)
-                await EquipService.UpdateModelAsync(newModel);
-            else
-                await EquipService.CreateModelAsync(newModel);
-            ResetForm();
-            await LoadModels();
+            if (editing) await EquipService.UpdateModelAsync(newModel); else await EquipService.CreateModelAsync(newModel);
+            ResetForm(); await ReloadAsync();
         }
-        catch (InvalidOperationException ex)
-        {
-            errorMessage = ex.Message;
-        }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
         catch (Exception)
         {
             errorMessage = editing
@@ -200,33 +250,37 @@
             Brand = m.Brand, Modification = m.Modification, Description = m.Description,
             EquipmentTypeId = m.EquipmentTypeId
         };
-        editing = true;
-        _focusForm = true;
-        return Task.CompletedTask;
+        editing = true; _focusForm = true; return Task.CompletedTask;
     }
 
-    async Task OnRowDblClick(EquipmentModel m)
-    {
-        if (!canEdit) return;
-        await EditModel(m);
-    }
-
-    async Task OnRowKeyDown(KeyboardEventArgs ev, EquipmentModel m)
-    {
-        if (!canEdit || ev.Key != "Enter") return;
-        await EditModel(m);
-    }
+    async Task OnRowDblClick(EquipmentModel m) { if (!canEdit || m.IsDeleted) return; await EditModel(m); }
+    async Task OnRowKeyDown(KeyboardEventArgs ev, EquipmentModel m) { if (!canEdit || m.IsDeleted || ev.Key != "Enter") return; await EditModel(m); }
 
     async Task DeleteModel(Guid id)
     {
-        await EquipService.DeleteModelAsync(id);
-        await LoadModels();
+        errorMessage = null;
+        try { var ok = await EquipService.DeleteModelAsync(id); if (!ok) errorMessage = "Не удалось удалить запись."; await ReloadAsync(); }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
     }
 
-    void ResetForm()
+    async Task RestoreModel(Guid id)
     {
-        newModel = new EquipmentModel();
-        editing = false;
         errorMessage = null;
+        try { var ok = await EquipService.RestoreModelAsync(id); if (!ok) errorMessage = "Не удалось восстановить запись."; await ReloadAsync(); }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
     }
+
+    void ResetForm() { newModel = new EquipmentModel(); editing = false; errorMessage = null; }
+    async Task ToggleSortDir() { sortDesc = !sortDesc; await ReloadAsync(); }
+
+    async Task ResetFilters()
+    {
+        search = ""; typeFilter = null; statusFilter = 0; sortBy = "Index"; sortDesc = false; currentPage = 1;
+        await ReloadAsync();
+    }
+
+    async Task PrevPage() { if (currentPage <= 1) return; currentPage--; await ReloadAsync(); }
+    async Task NextPage() { if (currentPage >= totalPages) return; currentPage++; await ReloadAsync(); }
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
 }

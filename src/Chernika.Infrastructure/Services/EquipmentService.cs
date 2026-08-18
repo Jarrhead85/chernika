@@ -36,10 +36,67 @@ public class EquipmentService
     public Task<Node?> GetNodeAsync(Guid id) =>
         _db.Nodes.FirstOrDefaultAsync(n => n.Id == id);
 
+    public async Task<PagedResult<Node>> GetNodesPagedAsync(NodeQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<Node> queryable = _db.Nodes.Where(n => !n.IsDraft);
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(n => n.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(n => !n.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(n => EF.Functions.ILike(n.Code, $"%{term}%")
+                || EF.Functions.ILike(n.Name, $"%{term}%")
+                || EF.Functions.ILike(n.Description ?? "", $"%{term}%"));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<Node> ordered = query.SortBy switch
+        {
+            "Name" => query.SortDescending
+                ? queryable.OrderByDescending(n => n.Name).ThenByDescending(n => n.Code)
+                : queryable.OrderBy(n => n.Name).ThenBy(n => n.Code),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(n => n.Code).ThenByDescending(n => n.Name)
+                : queryable.OrderBy(n => n.Code).ThenBy(n => n.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<Node>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
     public async Task<Node> CreateNodeAsync(Node node)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         node.Id = Guid.NewGuid();
+        node.IsDraft = false;
         _db.Nodes.Add(node);
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("Node", node.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
@@ -48,6 +105,7 @@ public class EquipmentService
 
     public async Task<Node> UpdateNodeAsync(Node node)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         _db.Nodes.Update(node);
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("Node", node.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
@@ -56,12 +114,25 @@ public class EquipmentService
 
     public async Task<bool> DeleteNodeAsync(Guid id)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         var n = await _db.Nodes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
         if (n == null || n.IsDeleted) return false;
         n.IsDeleted = true;
-        n.DeletedAt = DateTime.UtcNow;
+        n.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("Node", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
+        return true;
+    }
+
+    public async Task<bool> RestoreNodeAsync(Guid id)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        var n = await _db.Nodes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+        if (n == null || !n.IsDeleted) return false;
+        n.IsDeleted = false;
+        n.DeletedAt = null;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("Node", id.ToString(), "Restore", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -81,6 +152,76 @@ public class EquipmentService
             .Include(m => m.Instances)
             .Include(m => m.ProductCompositions)
             .FirstOrDefaultAsync(m => m.Id == id);
+
+    public async Task<PagedResult<EquipmentModel>> GetModelsPagedAsync(EquipmentModelQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<EquipmentModel> queryable = _db.EquipmentModels.Include(m => m.EquipmentType);
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(m => m.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(m => !m.IsDeleted);
+        }
+
+        if (query.EquipmentTypeId.HasValue)
+            queryable = queryable.Where(m => m.EquipmentTypeId == query.EquipmentTypeId.Value);
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(m =>
+                EF.Functions.ILike(m.Index ?? "", $"%{term}%")
+                || EF.Functions.ILike(m.Name, $"%{term}%")
+                || EF.Functions.ILike(m.Type ?? "", $"%{term}%")
+                || EF.Functions.ILike(m.Brand ?? "", $"%{term}%")
+                || EF.Functions.ILike(m.Modification ?? "", $"%{term}%")
+                || EF.Functions.ILike(m.Description ?? "", $"%{term}%")
+                || (m.EquipmentType != null && (EF.Functions.ILike(m.EquipmentType.TypeGroup ?? "", $"%{term}%") || EF.Functions.ILike(m.EquipmentType.Name, $"%{term}%"))));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<EquipmentModel> ordered = query.SortBy switch
+        {
+            "Name" => query.SortDescending
+                ? queryable.OrderByDescending(m => m.Name).ThenByDescending(m => m.Index)
+                : queryable.OrderBy(m => m.Name).ThenBy(m => m.Index),
+            "Type" => query.SortDescending
+                ? queryable.OrderByDescending(m => m.Type).ThenByDescending(m => m.Name)
+                : queryable.OrderBy(m => m.Type).ThenBy(m => m.Name),
+            "Brand" => query.SortDescending
+                ? queryable.OrderByDescending(m => m.Brand).ThenByDescending(m => m.Name)
+                : queryable.OrderBy(m => m.Brand).ThenBy(m => m.Name),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(m => m.Index).ThenByDescending(m => m.Name)
+                : queryable.OrderBy(m => m.Index).ThenBy(m => m.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<EquipmentModel>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
 
     public async Task<EquipmentModel> CreateModelAsync(EquipmentModel model)
     {
@@ -128,6 +269,7 @@ public class EquipmentService
 
     public async Task<bool> UpdateModelPropertiesAsync(Guid id, EquipmentModel updated)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         var model = await _db.EquipmentModels.FindAsync(id);
         if (model == null) return false;
         await ValidateModelEquipmentTypeAsync(updated);
@@ -139,6 +281,8 @@ public class EquipmentService
         model.Description = updated.Description;
         model.EquipmentTypeId = updated.EquipmentTypeId;
         await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentModel", id.ToString(), "Update", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{model.Index} — {model.Name}"));
         return true;
     }
 
@@ -159,11 +303,27 @@ public class EquipmentService
 
     public async Task<bool> DeleteModelAsync(Guid id)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         var m = await _db.EquipmentModels.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
         if (m == null || m.IsDeleted) return false;
         m.IsDeleted = true;
-        m.DeletedAt = DateTime.UtcNow;
+        m.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentModel", id.ToString(), "Delete", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{m.Index} — {m.Name}"));
+        return true;
+    }
+
+    public async Task<bool> RestoreModelAsync(Guid id)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        var m = await _db.EquipmentModels.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+        if (m == null || !m.IsDeleted) return false;
+        m.IsDeleted = false;
+        m.DeletedAt = null;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentModel", id.ToString(), "Restore", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{m.Index} — {m.Name}"));
         return true;
     }
 
@@ -186,9 +346,77 @@ public class EquipmentService
 
     public async Task<EquipmentInstance> UpdateInstanceAsync(EquipmentInstance inst)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         _db.EquipmentInstances.Update(inst);
         await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentInstance", inst.Id.ToString(), "Update", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{inst.SerialNumber} — {inst.Name}"));
         return inst;
+    }
+
+    public async Task<PagedResult<EquipmentInstance>> GetInstancesPagedAsync(EquipmentInstanceQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<EquipmentInstance> queryable = _db.EquipmentInstances.Include(i => i.EquipmentModel);
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(i => i.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(i => !i.IsDeleted);
+        }
+
+        if (query.EquipmentModelId.HasValue)
+            queryable = queryable.Where(i => i.EquipmentModelId == query.EquipmentModelId.Value);
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(i =>
+                EF.Functions.ILike(i.SerialNumber, $"%{term}%")
+                || EF.Functions.ILike(i.Index, $"%{term}%")
+                || EF.Functions.ILike(i.Name, $"%{term}%")
+                || EF.Functions.ILike(i.Description ?? "", $"%{term}%")
+                || (i.EquipmentModel != null && (EF.Functions.ILike(i.EquipmentModel.Index, $"%{term}%") || EF.Functions.ILike(i.EquipmentModel.Name, $"%{term}%"))));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<EquipmentInstance> ordered = query.SortBy switch
+        {
+            "Name" => query.SortDescending
+                ? queryable.OrderByDescending(i => i.Name).ThenByDescending(i => i.SerialNumber)
+                : queryable.OrderBy(i => i.Name).ThenBy(i => i.SerialNumber),
+            "Index" => query.SortDescending
+                ? queryable.OrderByDescending(i => i.Index).ThenByDescending(i => i.Name)
+                : queryable.OrderBy(i => i.Index).ThenBy(i => i.Name),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(i => i.SerialNumber).ThenByDescending(i => i.Name)
+                : queryable.OrderBy(i => i.SerialNumber).ThenBy(i => i.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<EquipmentInstance>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
     }
 
     public async Task<PagedResult<EquipmentInstance>> GetInstancesPagedAsync(int page = 1, int pageSize = 50)
@@ -215,11 +443,27 @@ public class EquipmentService
 
     public async Task<bool> DeleteInstanceAsync(Guid id)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         var i = await _db.EquipmentInstances.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
         if (i == null || i.IsDeleted) return false;
         i.IsDeleted = true;
-        i.DeletedAt = DateTime.UtcNow;
+        i.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentInstance", id.ToString(), "Delete", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{i.SerialNumber} — {i.Name}"));
+        return true;
+    }
+
+    public async Task<bool> RestoreInstanceAsync(Guid id)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        var i = await _db.EquipmentInstances.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+        if (i == null || !i.IsDeleted) return false;
+        i.IsDeleted = false;
+        i.DeletedAt = null;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("EquipmentInstance", id.ToString(), "Restore", _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{i.SerialNumber} — {i.Name}"));
         return true;
     }
 
@@ -587,7 +831,7 @@ public class EquipmentService
 
     public async Task<PagedResult<Branch>> GetBranchesPagedAsync(BranchQuery query, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.SystemConfig, ct);
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
         IQueryable<Branch> queryable = _db.Branches;
 
@@ -763,8 +1007,65 @@ public class EquipmentService
     public Task<Aggregate?> GetAggregateAsync(Guid id) =>
         _db.Aggregates.FirstOrDefaultAsync(a => a.Id == id);
 
+    public async Task<PagedResult<Aggregate>> GetAggregatesPagedAsync(AggregateQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<Aggregate> queryable = _db.Aggregates;
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(a => a.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(a => !a.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(a => EF.Functions.ILike(a.Code, $"%{term}%")
+                || EF.Functions.ILike(a.Name, $"%{term}%")
+                || EF.Functions.ILike(a.Description ?? "", $"%{term}%"));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<Aggregate> ordered = query.SortBy switch
+        {
+            "Name" => query.SortDescending
+                ? queryable.OrderByDescending(a => a.Name).ThenByDescending(a => a.Code)
+                : queryable.OrderBy(a => a.Name).ThenBy(a => a.Code),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(a => a.Code).ThenByDescending(a => a.Name)
+                : queryable.OrderBy(a => a.Code).ThenBy(a => a.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<Aggregate>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
     public async Task<Aggregate> CreateAggregateAsync(CreateAggregateRequest request, CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
         var entity = new Aggregate
         {
             Id = Guid.NewGuid(),
@@ -774,24 +1075,27 @@ public class EquipmentService
         };
         _db.Aggregates.Add(entity);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("Aggregate", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
+        await _audit.LogAsync(new AuditWriteRequest("Aggregate", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId()), ct);
         return entity;
     }
 
     public async Task<bool> UpdateAggregateAsync(UpdateAggregateRequest request, CancellationToken ct = default)
     {
-        var a = await _db.Aggregates.FindAsync(new object[] { request.Id }, ct);
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        var a = await _db.Aggregates.FirstOrDefaultAsync(x => x.Id == request.Id && !x.IsDeleted, ct);
         if (a == null) return false;
         a.Code = request.Code.Trim();
         a.Name = request.Name.Trim();
         a.Description = request.Description?.Trim();
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("Aggregate", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
+        await _audit.LogAsync(new AuditWriteRequest("Aggregate", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()), ct);
         return true;
     }
 
     public async Task<(bool Deleted, string? Error)> DeleteAggregateAsync(Guid id, CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
         var a = await _db.Aggregates.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (a == null || a.IsDeleted) return (false, null);
         var inActiveComposition = await _db.ProductCompositionAggregates
@@ -803,10 +1107,25 @@ public class EquipmentService
                           && acn.Node.HKCards.Any(h => h.Status == HKCardStatus.Approved), ct);
         if (inApprovedHK) return (false, "Нельзя удалить: агрегат используется в утверждённой ХК (через узел).");
         a.IsDeleted = true;
-        a.DeletedAt = DateTime.UtcNow;
+        a.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("Aggregate", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
+        await _audit.LogAsync(new AuditWriteRequest("Aggregate", id.ToString(), "Delete", _currentUser.GetRequiredUserId()), ct);
         return (true, null);
+    }
+
+    public async Task<bool> RestoreAggregateAsync(Guid id, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        var a = await _db.Aggregates.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (a == null || !a.IsDeleted) return false;
+
+        a.IsDeleted = false;
+        a.DeletedAt = null;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("Aggregate", id.ToString(), "Restore", _currentUser.GetRequiredUserId()), ct);
+        return true;
     }
 
     // ── AggregateComposition ───────────────────────────────────
@@ -1025,8 +1344,65 @@ public class EquipmentService
     public Task<Complex?> GetComplexAsync(Guid id) =>
         _db.Complexes.FirstOrDefaultAsync(c => c.Id == id);
 
+    public async Task<PagedResult<Complex>> GetComplexesPagedAsync(ComplexQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<Complex> queryable = _db.Complexes;
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(c => c.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(c => !c.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(c => EF.Functions.ILike(c.Code, $"%{term}%")
+                || EF.Functions.ILike(c.Name, $"%{term}%")
+                || EF.Functions.ILike(c.Description ?? "", $"%{term}%"));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<Complex> ordered = query.SortBy switch
+        {
+            "Name" => query.SortDescending
+                ? queryable.OrderByDescending(c => c.Name).ThenByDescending(c => c.Code)
+                : queryable.OrderBy(c => c.Name).ThenBy(c => c.Code),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(c => c.Code).ThenByDescending(c => c.Name)
+                : queryable.OrderBy(c => c.Code).ThenBy(c => c.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<Complex>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
     public async Task<Complex> CreateComplexAsync(CreateComplexRequest request, CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
         var entity = new Complex
         {
             Id = Guid.NewGuid(),
@@ -1036,24 +1412,27 @@ public class EquipmentService
         };
         _db.Complexes.Add(entity);
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("Complex", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
+        await _audit.LogAsync(new AuditWriteRequest("Complex", entity.Id.ToString(), "Create", _currentUser.GetRequiredUserId()), ct);
         return entity;
     }
 
     public async Task<bool> UpdateComplexAsync(UpdateComplexRequest request, CancellationToken ct = default)
     {
-        var c = await _db.Complexes.FindAsync(new object[] { request.Id }, ct);
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        var c = await _db.Complexes.FirstOrDefaultAsync(x => x.Id == request.Id && !x.IsDeleted, ct);
         if (c == null) return false;
         c.Code = request.Code.Trim();
         c.Name = request.Name.Trim();
         c.Description = request.Description?.Trim();
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("Complex", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
+        await _audit.LogAsync(new AuditWriteRequest("Complex", request.Id.ToString(), "Update", _currentUser.GetRequiredUserId()), ct);
         return true;
     }
 
     public async Task<(bool Deleted, string? Error)> DeleteComplexAsync(Guid id, CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
         var c = await _db.Complexes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (c == null || c.IsDeleted) return (false, null);
         var inActiveComposition = await _db.ComplexCompositions
@@ -1070,10 +1449,25 @@ public class EquipmentService
                                               && ac.Nodes.Any(n => n.Node.HKCards.Any(h => h.Status == HKCardStatus.Approved))))), ct);
         if (inApprovedHK) return (false, "Нельзя удалить: комплекс используется в утверждённой ХК.");
         c.IsDeleted = true;
-        c.DeletedAt = DateTime.UtcNow;
+        c.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("Complex", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
+        await _audit.LogAsync(new AuditWriteRequest("Complex", id.ToString(), "Delete", _currentUser.GetRequiredUserId()), ct);
         return (true, null);
+    }
+
+    public async Task<bool> RestoreComplexAsync(Guid id, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        var c = await _db.Complexes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (c == null || !c.IsDeleted) return false;
+
+        c.IsDeleted = false;
+        c.DeletedAt = null;
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.LogAsync(new AuditWriteRequest("Complex", id.ToString(), "Restore", _currentUser.GetRequiredUserId()), ct);
+        return true;
     }
 
     // ── ComplexComposition ──────────────────────────────────────
@@ -1326,10 +1720,67 @@ public class EquipmentService
     public Task<AssemblyUnit?> GetAssemblyUnitAsync(Guid id) =>
         _db.AssemblyUnits.FirstOrDefaultAsync(a => a.Id == id);
 
+    public async Task<PagedResult<AssemblyUnit>> GetAssemblyUnitsPagedAsync(AssemblyUnitQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<AssemblyUnit> queryable = _db.AssemblyUnits.Where(a => !a.IsDraft);
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(a => a.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(a => !a.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(a => EF.Functions.ILike(a.Code, $"%{term}%")
+                || EF.Functions.ILike(a.Name, $"%{term}%")
+                || EF.Functions.ILike(a.Description ?? "", $"%{term}%"));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<AssemblyUnit> ordered = query.SortBy switch
+        {
+            "Name" => query.SortDescending
+                ? queryable.OrderByDescending(a => a.Name).ThenByDescending(a => a.Code)
+                : queryable.OrderBy(a => a.Name).ThenBy(a => a.Code),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(a => a.Code).ThenByDescending(a => a.Name)
+                : queryable.OrderBy(a => a.Code).ThenBy(a => a.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<AssemblyUnit>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
     public async Task<AssemblyUnit> CreateAssemblyUnitAsync(AssemblyUnit unit)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         unit.Id = Guid.NewGuid();
+        unit.IsDraft = false;
         _db.AssemblyUnits.Add(unit);
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", unit.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
@@ -1338,6 +1789,7 @@ public class EquipmentService
 
     public async Task<bool> UpdateAssemblyUnitAsync(AssemblyUnit unit)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         _db.AssemblyUnits.Update(unit);
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", unit.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
@@ -1346,12 +1798,25 @@ public class EquipmentService
 
     public async Task<bool> DeleteAssemblyUnitAsync(Guid id)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         var a = await _db.AssemblyUnits.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
         if (a == null || a.IsDeleted) return false;
         a.IsDeleted = true;
-        a.DeletedAt = DateTime.UtcNow;
+        a.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
+        return true;
+    }
+
+    public async Task<bool> RestoreAssemblyUnitAsync(Guid id)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        var a = await _db.AssemblyUnits.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+        if (a == null || !a.IsDeleted) return false;
+        a.IsDeleted = false;
+        a.DeletedAt = null;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", id.ToString(), "Restore", _currentUser.GetRequiredUserId()));
         return true;
     }
 
@@ -1361,10 +1826,70 @@ public class EquipmentService
     public Task<GsmMaterial?> GetGsmMaterialAsync(Guid id) =>
         _db.GsmMaterials.FirstOrDefaultAsync(m => m.Id == id);
 
+    public async Task<PagedResult<GsmMaterial>> GetGsmMaterialsPagedAsync(GsmMaterialQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<GsmMaterial> queryable = _db.GsmMaterials.Where(m => !m.IsDraft);
+
+        if (query.ShowDeleted == null)
+        {
+            queryable = queryable.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            queryable = queryable.IgnoreQueryFilters().Where(m => m.IsDeleted);
+        }
+        else
+        {
+            queryable = queryable.Where(m => !m.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            queryable = queryable.Where(m => EF.Functions.ILike(m.Name, $"%{term}%")
+                || EF.Functions.ILike(m.Type, $"%{term}%")
+                || EF.Functions.ILike(m.Gost ?? "", $"%{term}%"));
+        }
+
+        var totalCount = await queryable.CountAsync(ct);
+
+        IOrderedQueryable<GsmMaterial> ordered = query.SortBy switch
+        {
+            "Type" => query.SortDescending
+                ? queryable.OrderByDescending(m => m.Type).ThenByDescending(m => m.Name)
+                : queryable.OrderBy(m => m.Type).ThenBy(m => m.Name),
+            "Gost" => query.SortDescending
+                ? queryable.OrderByDescending(m => m.Gost).ThenByDescending(m => m.Name)
+                : queryable.OrderBy(m => m.Gost).ThenBy(m => m.Name),
+            _ => query.SortDescending
+                ? queryable.OrderByDescending(m => m.Name).ThenByDescending(m => m.Type)
+                : queryable.OrderBy(m => m.Name).ThenBy(m => m.Type),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<GsmMaterial>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
     public async Task<GsmMaterial> CreateGsmMaterialAsync(GsmMaterial material)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         material.Id = Guid.NewGuid();
+        material.IsDraft = false;
         _db.GsmMaterials.Add(material);
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("GsmMaterial", material.Id.ToString(), "Create", _currentUser.GetRequiredUserId()));
@@ -1373,6 +1898,7 @@ public class EquipmentService
 
     public async Task<bool> UpdateGsmMaterialAsync(GsmMaterial material)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         _db.GsmMaterials.Update(material);
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("GsmMaterial", material.Id.ToString(), "Update", _currentUser.GetRequiredUserId()));
@@ -1381,13 +1907,88 @@ public class EquipmentService
 
     public async Task<bool> DeleteGsmMaterialAsync(Guid id)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
         var m = await _db.GsmMaterials.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
         if (m == null || m.IsDeleted) return false;
         m.IsDeleted = true;
-        m.DeletedAt = DateTime.UtcNow;
+        m.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("GsmMaterial", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
         return true;
+    }
+
+    public async Task<bool> RestoreGsmMaterialAsync(Guid id)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        var m = await _db.GsmMaterials.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
+        if (m == null || !m.IsDeleted) return false;
+        m.IsDeleted = false;
+        m.DeletedAt = null;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync(new AuditWriteRequest("GsmMaterial", id.ToString(), "Restore", _currentUser.GetRequiredUserId()));
+        return true;
+    }
+
+    public async Task<PagedResult<MilitaryBranch>> GetMilitaryBranchesPagedAsync(MilitaryBranchQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<MilitaryBranch> q = _db.MilitaryBranches;
+
+        if (query.ShowDeleted == null)
+        {
+            q = q.IgnoreQueryFilters();
+        }
+        else if (query.ShowDeleted == true)
+        {
+            q = q.IgnoreQueryFilters().Where(b => b.IsDeleted);
+        }
+        else
+        {
+            q = q.Where(b => !b.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            q = q.Where(b => EF.Functions.ILike(b.ArmedForcesType, $"%{term}%")
+                || EF.Functions.ILike(b.Name, $"%{term}%")
+                || EF.Functions.ILike(b.Description ?? "", $"%{term}%"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ArmedForcesType))
+            q = q.Where(b => b.ArmedForcesType == query.ArmedForcesType);
+
+        var totalCount = await q.CountAsync(ct);
+
+        IOrderedQueryable<MilitaryBranch> ordered = query.SortBy switch
+        {
+            "Name" => query.SortDescending
+                ? q.OrderByDescending(b => b.Name).ThenByDescending(b => b.ArmedForcesType)
+                : q.OrderBy(b => b.Name).ThenBy(b => b.ArmedForcesType),
+            "CreatedAt" => query.SortDescending
+                ? q.OrderByDescending(b => b.CreatedAt)
+                : q.OrderBy(b => b.CreatedAt),
+            _ => query.SortDescending
+                ? q.OrderByDescending(b => b.ArmedForcesType).ThenByDescending(b => b.Name)
+                : q.OrderBy(b => b.ArmedForcesType).ThenBy(b => b.Name),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<MilitaryBranch>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
     }
 
     public async Task<List<MilitaryBranch>> GetMilitaryBranchesAsync(
@@ -1398,6 +1999,8 @@ public class EquipmentService
         bool sortDesc = false,
         CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
         IQueryable<MilitaryBranch> query = _db.MilitaryBranches;
 
         if (showDeleted == null)
@@ -1440,13 +2043,16 @@ public class EquipmentService
         return await ordered.ToListAsync(ct);
     }
 
-    public async Task<List<string>> GetMilitaryBranchTypesAsync(CancellationToken ct = default) =>
-        await _db.MilitaryBranches
+    public async Task<List<string>> GetMilitaryBranchTypesAsync(CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+        return await _db.MilitaryBranches
             .Where(b => !b.IsDeleted)
             .OrderBy(b => b.ArmedForcesType)
             .Select(b => b.ArmedForcesType)
             .Distinct()
             .ToListAsync(ct);
+    }
 
     private static void ValidateMilitaryBranch(MilitaryBranch branch)
     {

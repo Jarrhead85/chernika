@@ -1,46 +1,82 @@
 @page "/справочник-экземпляров"
-@attribute [Authorize(Policy = "ViewHK")]
+@attribute [Authorize(Policy = "ViewReferences")]
+@implements IDisposable
 @using Chernika.Domain
+@using Chernika.Domain.Models
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Техника" Current="Экземпляры техники" />
-    <section class="panel">
-        <div class="panelHeader">
-            <h2>Справочник экземпляров техники</h2>
-            <div class="hint">Конкретные единицы</div>
-        </div>
-        <div class="panelBody">
-            <div class="form">
-                <div class="field"><label>Заводской номер</label><input @ref="_firstField" @bind="newInst.SerialNumber" /></div>
-                <div class="field"><label>Индекс</label><input @bind="newInst.Index" /></div>
-                <div class="field"><label>Наименование</label><input @bind="newInst.Name" /></div>
-                <div class="field"><label>Модель</label>
-                    <select @bind="newInst.EquipmentModelId" class="field-select">
-                        <option value="">— Выберите —</option>
-                        @foreach (var m in models)
-                        {
-                            <option value="@m.Id">@m.Index — @m.Name</option>
-                        }
-                    </select>
-                </div>
-                <div class="field full-width"><label>Описание</label><input @bind="newInst.Description" /></div>
-                <div class="formActions">
-                    <button class="btn ghost" @onclick="ResetForm">Очистить</button>
-                    @if (canEdit) { <button class="btn primary" @onclick="SaveInst">@(editing ? "Сохранить" : "Добавить")</button> }
+    @if (canEdit)
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>@(editing ? "Редактирование экземпляра" : "Новый экземпляр техники")</h2>
+                <div class="hint">Конкретные единицы</div>
+            </div>
+            <div class="panelBody">
+                <div class="form">
+                    <div class="field"><label>Заводской номер</label><input @ref="_firstField" @bind="newInst.SerialNumber" /></div>
+                    <div class="field"><label>Индекс</label><input @bind="newInst.Index" /></div>
+                    <div class="field"><label>Наименование</label><input @bind="newInst.Name" /></div>
+                    <div class="field">
+                        <label>Модель</label>
+                        <select @bind="newInst.EquipmentModelId" class="field-select">
+                            <option value="">— Выберите —</option>
+                            @foreach (var m in models)
+                            {
+                                <option value="@m.Id">@m.Index — @m.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="field full-width"><label>Описание</label><input @bind="newInst.Description" /></div>
+                    <div class="formActions">
+                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                        <button class="btn primary" @onclick="SaveInst">@(editing ? "Сохранить" : "Добавить")</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="mbError">@errorMessage</div>
+                    }
                 </div>
             </div>
-        </div>
-    </section>
+        </section>
+    }
 
     <section class="panel">
         <div class="panelHeader">
             <h2>Список экземпляров</h2>
-            <div class="hint">@instances.Count записей</div>
+            <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
+            <div class="mbFilters">
+                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по зав. №, индексу, наименованию, модели..." />
+                <select class="field-select" @bind="modelFilter" @bind:after="OnFiltersChanged">
+                    <option value="">Все модели</option>
+                    @foreach (var m in models)
+                    {
+                        <option value="@m.Id">@m.Index — @m.Name</option>
+                    }
+                </select>
+                <select class="field-select" @bind="statusFilter" @bind:after="OnFiltersChanged">
+                    <option value="0">Активные</option>
+                    <option value="1">Удалённые</option>
+                    <option value="2">Все</option>
+                </select>
+                <select class="field-select" @bind="sortBy" @bind:after="OnFiltersChanged">
+                    <option value="SerialNumber">Сортировка: зав. №</option>
+                    <option value="Name">Сортировка: наименование</option>
+                    <option value="Index">Сортировка: индекс</option>
+                </select>
+                <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
+                @if (HasActiveFilters)
+                {
+                    <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                }
+            </div>
+
             @if (loading)
             {
                 <div class="loading-state">Загрузка...</div>
@@ -51,28 +87,53 @@
             }
             else
             {
-                <table>
-                    <thead>
-                        <tr><th>Зав. №</th><th>Индекс</th><th>Наименование</th><th>Модель</th><th>Действия</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var i in instances)
-                        {
-                            <tr class="@(canEdit ? "clickableRow" : "")" tabindex="@(canEdit ? "0" : "-1")" @ondblclick="() => OnRowDblClick(i)" @onkeydown="(ev) => OnRowKeyDown(ev, i)">
-                                <td class="mono">@i.SerialNumber</td>
-                                <td>@i.Index</td>
-                                <td>@i.Name</td>
-                                <td>@i.EquipmentModel?.Name</td>
-                                <td @ondblclick:stopPropagation="true">
-                                    <div class="rowActions">
-                                        @if (canEdit) { <button class="linkBtn" @onclick="() => EditInst(i)">Изменить</button> }
-                                        @if (canEdit) { <button class="linkBtn" @onclick="() => DeleteInst(i.Id)">Удалить</button> }
-                                    </div>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                <div class="referenceTableWrap">
+                    <table>
+                        <thead>
+                            <tr><th>Зав. №</th><th>Индекс</th><th>Наименование</th><th>Модель</th><th>Статус</th><th>Действия</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var i in instances)
+                            {
+                                var rowClickable = canEdit && !i.IsDeleted;
+                                <tr class="@(rowClickable ? "clickableRow" : "")" tabindex="@(rowClickable ? "0" : "-1")" @ondblclick="() => OnRowDblClick(i)" @onkeydown="(ev) => OnRowKeyDown(ev, i)">
+                                    <td class="mono">@i.SerialNumber</td>
+                                    <td>@i.Index</td>
+                                    <td>@i.Name</td>
+                                    <td>@i.EquipmentModel?.Name</td>
+                                    <td><span class="tag @(i.IsDeleted ? "bad" : "ok")">@(i.IsDeleted ? "Удалён" : "Активен")</span></td>
+                                    <td @ondblclick:stopPropagation="true">
+                                        <div class="rowActions">
+                                            @if (i.IsDeleted)
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreInst(i.Id)">Восстановить</button>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                @if (canEdit)
+                                                {
+                                                    <button class="linkBtn" @onclick="() => EditInst(i)">Изменить</button>
+                                                    <button class="linkBtn" style="color:var(--bad)" @onclick="() => DeleteInst(i.Id)">Удалить</button>
+                                                }
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="footer">
+                    <div>
+                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
+                        <span style="margin:0 8px">Стр. @currentPage из @totalPages</span>
+                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
+                    </div>
+                    <div class="mono">Показано @instances.Count из @totalCount</div>
+                </div>
             }
         </div>
     </section>
@@ -82,46 +143,80 @@
     private List<EquipmentInstance> instances = new();
     private List<EquipmentModel> models = new();
     private EquipmentInstance newInst = new();
-    private bool editing = false;
+    private bool editing;
     private bool loading = true;
     private bool canEdit;
+    private string? errorMessage;
+    private string search = "";
+    private string? modelFilter;
+    private int statusFilter;
+    private string sortBy = "SerialNumber";
+    private bool sortDesc;
+    private int currentPage = 1;
+    private int totalPages = 1;
+    private int totalCount;
+    private CancellationTokenSource? _cts;
     private ElementReference _firstField;
     private bool _focusForm;
+
+    private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(modelFilter) || statusFilter != 0;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
         models = await EquipService.GetModelsAsync();
-        await LoadInstances();
+        await ReloadAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_focusForm)
-        {
-            _focusForm = false;
-            await _firstField.FocusAsync();
-        }
+        if (_focusForm) { _focusForm = false; await _firstField.FocusAsync(); }
     }
 
-    async Task LoadInstances()
+    private async Task OnFiltersChanged() { currentPage = 1; await ReloadAsync(); }
+
+    private async Task ReloadAsync()
     {
+        _cts?.Cancel(); _cts?.Dispose(); _cts = new CancellationTokenSource(); var ct = _cts.Token;
+        bool? showDeleted = statusFilter switch { 1 => true, 2 => null, _ => false };
         loading = true;
-        instances = await EquipService.GetInstancesAsync();
-        loading = false;
+        try
+        {
+            var result = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery
+            {
+                Page = currentPage,
+                Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+                EquipmentModelId = string.IsNullOrEmpty(modelFilter) ? null : Guid.Parse(modelFilter),
+                ShowDeleted = showDeleted,
+                SortBy = sortBy,
+                SortDescending = sortDesc,
+            }, ct);
+            if (ct.IsCancellationRequested) return;
+            instances = result.Items.ToList(); totalCount = result.TotalCount; totalPages = result.TotalPages;
+            if (currentPage > totalPages && totalPages > 0) { currentPage = totalPages; await ReloadAsync(); return; }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        finally { if (!ct.IsCancellationRequested) loading = false; }
     }
 
     async Task SaveInst()
     {
-        if (string.IsNullOrWhiteSpace(newInst.SerialNumber)) return;
-        if (editing)
-            await EquipService.UpdateInstanceAsync(newInst);
-        else
-            await EquipService.CreateInstanceAsync(newInst);
-        ResetForm();
-        await LoadInstances();
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(newInst.SerialNumber)) { errorMessage = "Укажите заводской номер."; return; }
+        try
+        {
+            if (editing) await EquipService.UpdateInstanceAsync(newInst); else await EquipService.CreateInstanceAsync(newInst);
+            ResetForm(); await ReloadAsync();
+        }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
+        catch (Exception)
+        {
+            errorMessage = editing
+                ? "Не удалось изменить экземпляр. Обновите список и повторите попытку."
+                : "Не удалось создать экземпляр. Обновите список и повторите попытку.";
+        }
     }
 
     Task EditInst(EquipmentInstance i)
@@ -131,32 +226,37 @@
             Id = i.Id, SerialNumber = i.SerialNumber, Index = i.Index, Name = i.Name,
             EquipmentModelId = i.EquipmentModelId, Description = i.Description
         };
-        editing = true;
-        _focusForm = true;
-        return Task.CompletedTask;
+        editing = true; _focusForm = true; return Task.CompletedTask;
     }
 
-    async Task OnRowDblClick(EquipmentInstance i)
-    {
-        if (!canEdit) return;
-        await EditInst(i);
-    }
-
-    async Task OnRowKeyDown(KeyboardEventArgs ev, EquipmentInstance i)
-    {
-        if (!canEdit || ev.Key != "Enter") return;
-        await EditInst(i);
-    }
+    async Task OnRowDblClick(EquipmentInstance i) { if (!canEdit || i.IsDeleted) return; await EditInst(i); }
+    async Task OnRowKeyDown(KeyboardEventArgs ev, EquipmentInstance i) { if (!canEdit || i.IsDeleted || ev.Key != "Enter") return; await EditInst(i); }
 
     async Task DeleteInst(Guid id)
     {
-        await EquipService.DeleteInstanceAsync(id);
-        await LoadInstances();
+        errorMessage = null;
+        try { var ok = await EquipService.DeleteInstanceAsync(id); if (!ok) errorMessage = "Не удалось удалить запись."; await ReloadAsync(); }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
     }
 
-    void ResetForm()
+    async Task RestoreInst(Guid id)
     {
-        newInst = new EquipmentInstance();
-        editing = false;
+        errorMessage = null;
+        try { var ok = await EquipService.RestoreInstanceAsync(id); if (!ok) errorMessage = "Не удалось восстановить запись."; await ReloadAsync(); }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
     }
+
+    void ResetForm() { newInst = new EquipmentInstance(); editing = false; errorMessage = null; }
+    async Task ToggleSortDir() { sortDesc = !sortDesc; await ReloadAsync(); }
+
+    async Task ResetFilters()
+    {
+        search = ""; modelFilter = null; statusFilter = 0; sortBy = "SerialNumber"; sortDesc = false; currentPage = 1;
+        await ReloadAsync();
+    }
+
+    async Task PrevPage() { if (currentPage <= 1) return; currentPage--; await ReloadAsync(); }
+    async Task NextPage() { if (currentPage >= totalPages) return; currentPage++; await ReloadAsync(); }
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
 }

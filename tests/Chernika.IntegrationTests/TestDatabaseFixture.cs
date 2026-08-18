@@ -61,6 +61,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
             o.ReviewTaskDueDays = 14;
         });
         services.AddScoped<HKCardExpirationService>();
+        services.AddScoped<EquipmentService>();
         Services = services.BuildServiceProvider();
 
         await using var scope = Services.CreateAsyncScope();

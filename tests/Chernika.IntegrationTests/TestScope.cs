@@ -23,6 +23,7 @@ public sealed class TestScope : IAsyncDisposable
         Audit = scope.ServiceProvider.GetRequiredService<AuditService>();
         Permissions = scope.ServiceProvider.GetRequiredService<IPermissionService>();
         Users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        Equipment = scope.ServiceProvider.GetRequiredService<EquipmentService>();
     }
 
     public FakeCurrentUser User { get; }
@@ -34,6 +35,7 @@ public sealed class TestScope : IAsyncDisposable
     public AuditService Audit { get; }
     public IPermissionService Permissions { get; }
     public UserManager<ApplicationUser> Users { get; }
+    public EquipmentService Equipment { get; }
 
     public async ValueTask DisposeAsync()
     {

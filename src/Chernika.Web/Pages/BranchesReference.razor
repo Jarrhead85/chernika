@@ -1,5 +1,5 @@
 @page "/справочники/администрирование/филиалы"
-@attribute [Authorize(Policy = "SystemConfig")]
+@attribute [Authorize(Policy = "ViewReferences")]
 @implements IDisposable
 @using Chernika.Domain
 @using Chernika.Domain.Entities
@@ -269,8 +269,6 @@
         {
             if (error != null)
                 errorMessage = error.Replace("\n", " ");
-            await ReloadAsync();
-            return;
         }
         await ReloadAsync();
     }
