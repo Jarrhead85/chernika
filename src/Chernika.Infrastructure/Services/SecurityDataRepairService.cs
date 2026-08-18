@@ -35,7 +35,8 @@ public class SecurityDataRepairService : ISecurityDataRepairService
             PermissionCodes.HKAggregateCreate, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKAggregateSubmit,
             PermissionCodes.HKEquipmentCreate, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKEquipmentSubmit,
             PermissionCodes.HKComplexCreate, PermissionCodes.HKComplexEditDraft, PermissionCodes.HKComplexSubmit,
-            PermissionCodes.HKReview, PermissionCodes.HKApprove, PermissionCodes.HKArchive, PermissionCodes.HKDelete,
+            PermissionCodes.HKReview, PermissionCodes.HKApprove, PermissionCodes.HKArchive,
+            PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteRevisionRequired,
             PermissionCodes.ReferenceView, PermissionCodes.ReferenceEdit,
             PermissionCodes.CompositionView, PermissionCodes.CompositionEdit,
             PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
@@ -46,6 +47,7 @@ public class SecurityDataRepairService : ISecurityDataRepairService
         [
             PermissionCodes.HKView,
             PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
+            PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteRevisionRequired,
             PermissionCodes.ReferenceView,
             PermissionCodes.CompositionView,
             PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,
@@ -95,6 +97,12 @@ public class SecurityDataRepairService : ISecurityDataRepairService
 
         try
         {
+            var validCodes = PermissionCodes.All.ToHashSet();
+            var removedTemplates = await _db.RolePermissionTemplates
+                .Where(t => !validCodes.Contains(t.PermissionCode))
+                .ExecuteDeleteAsync(ct);
+            result.TemplatesRemoved = removedTemplates;
+
             foreach (var roleName in BaseBusinessRoles)
             {
                 if (!await _roleManager.RoleExistsAsync(roleName))
@@ -270,7 +278,8 @@ public class SecurityDataRepairService : ISecurityDataRepairService
 
         await _audit.LogAsync(new AuditWriteRequest("SecurityRepair", "System", "Repaired", Guid.Empty,
             EntityDisplayName: "Система",
-            Details: $"Ролей создано: {result.RolesCreated}; шаблонов добавлено: {result.TemplatesAdded}; " +
+            Details:             $"Ролей создано: {result.RolesCreated}; шаблонов добавлено: {result.TemplatesAdded}; " +
+            $"шаблонов удалено (устаревших): {result.TemplatesRemoved}; " +
             $"перенесено Viewer→Guest: {result.ViewerToGuestMigrated}; кэш обновлён: {result.CacheCleared}; " +
             $"требуют ручного исправления: {manualCount}; время: {sw.ElapsedMilliseconds}ms"));
 
@@ -403,6 +412,11 @@ public class SecurityDataRepairService : ISecurityDataRepairService
 
         diagnostics.UnexpectedTemplates = diagnostics.Roles
             .Sum(r => r.UnexpectedPermissionCodes);
+
+        var invalidRoleTemplates = allRoleTemplates.Count(t => !validCodes.Contains(t.PermissionCode));
+        var invalidUserOverrides = await _db.UserPermissionOverrides
+            .CountAsync(o => !validCodes.Contains(o.PermissionCode), ct);
+        diagnostics.InvalidTemplates = invalidRoleTemplates + invalidUserOverrides;
 
         var hasIssues = diagnostics.UsersWithoutBaseRole > 0
             || diagnostics.UsersWithMultipleRoles > 0

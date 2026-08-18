@@ -271,6 +271,13 @@ body{
   border-color:rgba(79,140,255,.26);
 }
 .btn.ghost{background:transparent}[data-theme="light"] .btn.ghost{background:transparent;box-shadow:none}
+.btn.bad{color:var(--bad);background:color-mix(in srgb, var(--bad) 10%, transparent);border-color:color-mix(in srgb, var(--bad) 30%, var(--line))}
+[data-theme="light"] .btn.bad{background:linear-gradient(180deg, rgba(255,255,255,.96) 0%, rgba(255,245,245,.92) 100%);border-color:color-mix(in srgb, var(--bad) 25%, rgba(111,138,178,.22))}
+.btn.bad:hover{background:color-mix(in srgb, var(--bad) 18%, transparent)}
+[data-theme="light"] .btn.bad:hover{background:linear-gradient(180deg, rgba(255,235,235,.98) 0%, rgba(255,225,225,.94) 100%)}
+.btn.bad:disabled{opacity:.55;cursor:not-allowed}
+.note.bad{border-color:color-mix(in srgb, var(--bad) 30%, var(--line));background:color-mix(in srgb, var(--bad) 10%, transparent);color:var(--bad)}
+[data-theme="light"] .note.bad{background:linear-gradient(180deg, rgba(255,245,245,.96) 0%, rgba(255,235,235,.90) 100%);color:#bb4f4f}
 [data-theme="light"] .btnRow{}
 .btnRow{display:flex;gap:10px;flex-wrap:wrap}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}

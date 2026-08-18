@@ -4,6 +4,7 @@ public class SecurityRepairResult
 {
     public int RolesCreated { get; set; }
     public int TemplatesAdded { get; set; }
+    public int TemplatesRemoved { get; set; }
     public int ViewerToGuestMigrated { get; set; }
     public int CacheCleared { get; set; }
     public List<UserDiagnosticInfo> UsersWithoutBaseRole { get; set; } = new();

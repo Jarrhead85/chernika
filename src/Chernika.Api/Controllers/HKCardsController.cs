@@ -211,9 +211,9 @@ public class HKCardsController : ControllerBase
 
     [HttpDelete("{id}")]
     [Authorize(Policy = "DeleteHK")]
-    public async Task<ActionResult> Delete(Guid id)
+    public async Task<ActionResult> Delete(Guid id, [FromBody] DeleteHKCardRequest request)
     {
-        var (success, error) = await _hkCards.DeleteAsync(id);
+        var (success, error) = await _hkCards.DeleteAsync(id, request.Reason);
         if (!success) return BadRequest(error ?? "Невозможно удалить карточку в текущем статусе.");
         return NoContent();
     }

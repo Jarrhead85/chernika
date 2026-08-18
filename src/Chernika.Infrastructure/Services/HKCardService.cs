@@ -917,6 +917,9 @@ public class HKCardService
         if (!HKCardStatusTransitions.IsAllowed(oldStatus, newStatus))
             return (false, HKCardStatusTransitions.GetErrorMessage(oldStatus, newStatus));
 
+        if (newStatus == HKCardStatus.Deleted && string.IsNullOrWhiteSpace(comment))
+            return (false, "Укажите причину удаления ХК.");
+
         if (newStatus is HKCardStatus.OnReview or HKCardStatus.Approved)
         {
             var validationCard = await _db.HKCards.AsNoTracking()
@@ -1055,28 +1058,40 @@ public class HKCardService
         return true;
     }
 
-    public async Task<(bool Success, string? Error)> DeleteAsync(Guid id, CancellationToken ct = default)
+    public async Task<(bool Success, string? Error)> DeleteAsync(Guid id, string reason, CancellationToken ct = default)
     {
+        reason = reason?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(reason))
+            return (false, "Укажите причину удаления ХК.");
+
         var actorId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             return (false, "Пользователь не найден");
-        var roles = await _userManager.GetRolesAsync(actor);
 
         var card = await _db.HKCards.FindAsync(id, ct);
-        if (card == null)
-            return (false, "Карточка не найдена");
+        if (card == null || card.Status == HKCardStatus.Deleted)
+            return (false, "ХК не найдена или уже удалена.");
 
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig) && actor.BranchId != card.BranchId)
-            return (false, "Нет доступа к карточке другого филиала");
+        if (!HKCardStatusTransitions.IsAllowed(card.Status, HKCardStatus.Deleted))
+            return (false, $"Удаление ХК из статуса «{card.Status}» не предусмотрено.");
 
-        var actorRole = ResolveUserRole(roles);
-        if (!HKCardStatusTransitions.CanDelete(card.Status, actorRole))
-            return (false,
-                $"Нельзя удалить карточку со статусом «{card.Status}». " +
-                "Утверждённые карточки можно только архивировать.");
+        var requiredPermission = card.Status switch
+        {
+            HKCardStatus.Draft => PermissionCodes.HKDeleteDraft,
+            HKCardStatus.OnReview => PermissionCodes.HKDeleteOnReview,
+            HKCardStatus.RevisionRequired => PermissionCodes.HKDeleteRevisionRequired,
+            _ => null
+        };
 
-        return await ChangeStatusAsync(id, HKCardStatus.Deleted, null, ct);
+        if (requiredPermission == null || !await _permissions.HasPermissionAsync(actorId.ToString(), requiredPermission))
+            return (false, "Недостаточно прав для удаления ХК в этом статусе.");
+
+        var isSystemAdmin = await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig);
+        if (!isSystemAdmin && actor.BranchId != card.BranchId)
+            return (false, "Нельзя удалить ХК другого филиала.");
+
+        return await ChangeStatusAsync(id, HKCardStatus.Deleted, reason, ct);
     }
 
     private async Task ApplyWorkflowTasksAsync(HKCard card, HKCardStatus to, Guid actorUserId, string? comment, CancellationToken ct)
@@ -1411,25 +1426,18 @@ public class HKCardService
                 break;
 
             case HKCardStatus.Deleted:
-                if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKDelete))
+                if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKDeleteDraft)
+                    && !await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKDeleteOnReview)
+                    && !await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKDeleteRevisionRequired))
+                {
                     return "Недостаточно прав для удаления ХК.";
-                var actor = await _userManager.FindByIdAsync(actorId.ToString());
-                var roles = actor != null ? await _userManager.GetRolesAsync(actor) : [];
-                if (!HKCardStatusTransitions.CanDelete(card.Status, ResolveUserRole(roles)))
+                }
+                if (!HKCardStatusTransitions.CanDelete(card.Status))
                     return "Нельзя удалить карточку в текущем статусе.";
                 break;
         }
 
         return null;
-    }
-
-    private static UserRole ResolveUserRole(IList<string> roles)
-    {
-        if (roles.Contains(nameof(UserRole.SystemAdmin))) return UserRole.SystemAdmin;
-        if (roles.Contains(nameof(UserRole.NormAdmin))) return UserRole.NormAdmin;
-        if (roles.Contains(nameof(UserRole.HeadOfDepartment))) return UserRole.HeadOfDepartment;
-        if (roles.Contains(nameof(UserRole.Guest))) return UserRole.Guest;
-        return UserRole.Operator;
     }
 
     public async Task<ReferenceProposal> CreateProposalAsync(

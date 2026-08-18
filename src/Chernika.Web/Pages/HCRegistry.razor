@@ -207,6 +207,33 @@
     </div>
 </div>
 
+@if (_showDeleteDialog && _deleteCard != null)
+{
+    <div class="modalOverlay" @onclick="CloseDeleteDialog">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-title" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3 id="delete-title">Удаление ХК</h3>
+                <button type="button" class="modalCloseButton" @onclick="CloseDeleteDialog">×</button>
+            </div>
+            <div class="modalBody">
+                <p>ХК «@_deleteCard.Code», версия @_deleteCard.Version, будет переведена в статус «Удалена».</p>
+                <div class="field">
+                    <label>Причина удаления <span class="text-danger">*</span></label>
+                    <textarea @bind="_deleteReason" rows="3" style="width:100%;resize:vertical;padding:8px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:14px" placeholder="Укажите причину…"></textarea>
+                </div>
+                @if (!string.IsNullOrEmpty(_deleteError))
+                {
+                    <div class="note bad" style="margin-top:12px">@_deleteError</div>
+                }
+            </div>
+            <div class="modalFooter">
+                <button class="btn ghost" @onclick="CloseDeleteDialog">Отмена</button>
+                <button class="btn bad" @onclick="ConfirmDeleteAsync" disabled="@string.IsNullOrWhiteSpace(_deleteReason)">Удалить</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<HKCardListItemDto> filteredCards = new();
     private List<HKCardListItemDto> taskCardsOnReview = new();
@@ -222,8 +249,15 @@
     private bool canReturn;
     private string userBranchId = "";
     private string currentUserId = "";
-    private bool hasDeletePermission;
+    private readonly HashSet<HKCardStatus> _deletableStatuses = new();
+    private bool canSystemConfig;
     private System.Security.Claims.ClaimsPrincipal? _currentUser;
+
+    private bool _showDeleteDialog;
+    private Guid _deleteCardId;
+    private string _deleteReason = "";
+    private string? _deleteError;
+    private HKCardListItemDto? _deleteCard;
 
     private string filterCode = "";
     private string filterStatus = "";
@@ -242,7 +276,20 @@
         canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
         canVerify = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
         canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
-        hasDeletePermission = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKDelete);
+        canSystemConfig = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
+
+        var checks = new (HKCardStatus Status, string PermissionCode)[]
+        {
+            (HKCardStatus.Draft, PermissionCodes.HKDeleteDraft),
+            (HKCardStatus.OnReview, PermissionCodes.HKDeleteOnReview),
+            (HKCardStatus.RevisionRequired, PermissionCodes.HKDeleteRevisionRequired),
+        };
+        foreach (var (status, permissionCode) in checks)
+        {
+            if (await Perms.HasPermissionAsync(currentUserId, permissionCode))
+                _deletableStatuses.Add(status);
+        }
+
         var claim = user.FindFirst("BranchId");
         if (claim != null) userBranchId = claim.Value;
         await LoadCards();
@@ -300,10 +347,48 @@
 
     private bool CanDeleteCard(HKCardListItemDto card)
     {
-        if (!hasDeletePermission) return false;
-        if (_currentUser?.IsInRole("SystemAdmin") == true) return card.Status == HKCardStatus.Archived;
-        return card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired
-               && card.BranchId.ToString() == userBranchId;
+        if (!_deletableStatuses.Contains(card.Status)) return false;
+        if (canSystemConfig) return true;
+        return card.BranchId.ToString() == userBranchId;
+    }
+
+    private void OpenDeleteDialog(HKCardListItemDto card)
+    {
+        if (!CanDeleteCard(card)) return;
+        _deleteCard = card;
+        _deleteCardId = card.Id;
+        _deleteReason = "";
+        _deleteError = null;
+        _showDeleteDialog = true;
+    }
+
+    private void CloseDeleteDialog()
+    {
+        _showDeleteDialog = false;
+        _deleteCard = null;
+        _deleteCardId = Guid.Empty;
+        _deleteReason = "";
+        _deleteError = null;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        var reason = _deleteReason?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            _deleteError = "Укажите причину удаления ХК.";
+            return;
+        }
+
+        var (success, error) = await HKCardService.DeleteAsync(_deleteCardId, reason);
+        if (!success)
+        {
+            _deleteError = error ?? "Не удалось удалить ХК.";
+            return;
+        }
+
+        CloseDeleteDialog();
+        await LoadCards();
     }
 
     private static string LevelName(HKObjectLevel level) => level switch
@@ -315,20 +400,10 @@
         _ => "—"
     };
 
-    private async Task DeleteCard(Guid id)
+    private void DeleteCard(Guid id)
     {
         var card = filteredCards.FirstOrDefault(c => c.Id == id);
         if (card == null || !CanDeleteCard(card)) return;
-
-        var (success, error) = await HKCardService.DeleteAsync(id);
-        if (!success)
-        {
-            errorMessage = error ?? "Не удалось удалить ХК.";
-            return;
-        }
-        errorMessage = null;
-        await LoadCards();
+        OpenDeleteDialog(card);
     }
-
-    private string? errorMessage;
 }

@@ -47,6 +47,18 @@ public class PermissionMatrixTests
         // SystemAdmin: all codes
         var allCodes = PermissionCodes.All;
         Assert.True(allCodes.IsSubsetOf(permsByRole["SystemAdmin"]));
+
+        // HK delete permissions are granular; old HK.Delete is not seeded
+        Assert.DoesNotContain("HK.Delete", permsByRole["NormAdmin"]);
+        Assert.DoesNotContain("HK.Delete", permsByRole["Operator"]);
+        Assert.Contains(PermissionCodes.HKDeleteDraft, permsByRole["NormAdmin"]);
+        Assert.Contains(PermissionCodes.HKDeleteRevisionRequired, permsByRole["NormAdmin"]);
+        Assert.DoesNotContain(PermissionCodes.HKDeleteOnReview, permsByRole["NormAdmin"]);
+        Assert.Contains(PermissionCodes.HKDeleteDraft, permsByRole["Operator"]);
+        Assert.Contains(PermissionCodes.HKDeleteRevisionRequired, permsByRole["Operator"]);
+        Assert.DoesNotContain(PermissionCodes.HKDeleteOnReview, permsByRole["Operator"]);
+        Assert.DoesNotContain(PermissionCodes.HKDeleteDraft, permsByRole["HeadOfDepartment"]);
+        Assert.DoesNotContain(PermissionCodes.HKDeleteDraft, permsByRole["Guest"]);
     }
 
     [Fact]

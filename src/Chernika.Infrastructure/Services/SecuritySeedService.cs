@@ -28,6 +28,10 @@ public static class SecuritySeedService
                 $"Extra in catalog: {catalogDefined.Except(catalogCodes).FirstOrDefault() ?? "none"}.");
         var codesToSeed = catalogCodes;
 
+        await db.RolePermissionTemplates
+            .Where(x => !codesToSeed.Contains(x.PermissionCode))
+            .ExecuteDeleteAsync();
+
         var existing = await db.RolePermissionTemplates
             .Select(x => new { x.RoleName, x.PermissionCode })
             .ToListAsync();
@@ -103,7 +107,8 @@ internal static class RolePermissionDefaults
             PermissionCodes.HKAggregateCreate, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKAggregateSubmit,
             PermissionCodes.HKEquipmentCreate, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKEquipmentSubmit,
             PermissionCodes.HKComplexCreate, PermissionCodes.HKComplexEditDraft, PermissionCodes.HKComplexSubmit,
-            PermissionCodes.HKReview, PermissionCodes.HKApprove, PermissionCodes.HKArchive, PermissionCodes.HKDelete,
+            PermissionCodes.HKReview, PermissionCodes.HKApprove, PermissionCodes.HKArchive,
+            PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteRevisionRequired,
             PermissionCodes.HKAttachmentView, PermissionCodes.HKAttachmentEdit,
             PermissionCodes.ReferenceView, PermissionCodes.ReferenceEdit,
             PermissionCodes.CompositionView, PermissionCodes.CompositionEdit,
@@ -119,6 +124,7 @@ internal static class RolePermissionDefaults
             PermissionCodes.HKView,
             PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
             PermissionCodes.HKAttachmentView,
+            PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteRevisionRequired,
             PermissionCodes.ReferenceView,
             PermissionCodes.CompositionView,
             PermissionCodes.IndividualCardView, PermissionCodes.IndividualCardGenerate,

@@ -97,6 +97,8 @@ public record UpdateHKCardRequest(
 
 public record StatusChangeRequest(HKCardStatus NewStatus, string? Comment = null);
 
+public record DeleteHKCardRequest(string Reason);
+
 public static class HKCardMapper
 {
     public static string? GetObjectName(HKCard c) => c.ObjectLevel switch
