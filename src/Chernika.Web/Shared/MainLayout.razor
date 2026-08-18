@@ -235,12 +235,12 @@
     ElementReference _bellPopoverRef;
     bool _authChecked;
     bool _disposed;
-    readonly SemaphoreSlim _layoutRefreshGate = new(1, 1);
     CancellationTokenSource? _layoutRefreshCts;
 
     [Inject] NavigationManager Nav { get; set; } = null!;
     [Inject] NotificationService NotifSvc { get; set; } = null!;
     [Inject] NotificationRefreshService NotifRefresh { get; set; } = null!;
+    [Inject] CircuitDbLock DbLock { get; set; } = null!;
 
     string UnreadLabel => unreadCount >= 100 ? "99+" : unreadCount.ToString();
 
@@ -281,8 +281,7 @@
 
         try
         {
-            await _layoutRefreshGate.WaitAsync(ct);
-            try
+            await using (await DbLock.WaitAsync(ct))
             {
                 if (ct.IsCancellationRequested || _disposed)
                     return;
@@ -296,10 +295,6 @@
 
                 if (showBellDropdown && !ct.IsCancellationRequested && !_disposed)
                     recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 5 }, ct)).Items;
-            }
-            finally
-            {
-                _layoutRefreshGate.Release();
             }
 
             if (!ct.IsCancellationRequested && !_disposed)
@@ -428,7 +423,7 @@
         NotifRefresh.Changed -= OnNotifRefresh;
         _layoutRefreshCts?.Cancel();
         _layoutRefreshCts?.Dispose();
-        _layoutRefreshGate.Dispose();
+        // CircuitDbLock управляется DI scope, не dispose-им его из компонента
         try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener", _bellButtonRef); } catch { }
         try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener", _bellButtonRef); } catch { }
         _bellRef?.Dispose();

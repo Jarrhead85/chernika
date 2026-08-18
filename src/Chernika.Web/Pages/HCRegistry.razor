@@ -1,13 +1,16 @@
 @page "/реестр-хк"
 @attribute [Authorize(Policy = "ViewHK")]
+@implements System.IDisposable
 @using Chernika.Domain
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Models
+@using Chernika.Web.Services
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <section class="panel">
@@ -258,6 +261,7 @@
     private string _deleteReason = "";
     private string? _deleteError;
     private HKCardListItemDto? _deleteCard;
+    private CancellationTokenSource? _loadCts;
 
     private string filterCode = "";
     private string filterStatus = "";
@@ -292,39 +296,55 @@
 
         var claim = user.FindFirst("BranchId");
         if (claim != null) userBranchId = claim.Value;
+        _loadCts = new CancellationTokenSource();
         await LoadCards();
     }
 
     private async Task LoadCards()
     {
+        if (_loadCts is null)
+            return;
+
+        var ct = _loadCts.Token;
         loading = true;
         try
         {
-            Guid? branchFilter = Guid.TryParse(userBranchId, out var branchId) ? branchId : null;
-            statusCounts = await HKCardService.GetStatusCountsAsync(branchFilter);
-            totalCount = statusCounts.Values.Sum();
+            await using (await DbLock.WaitAsync(ct))
+            {
+                if (ct.IsCancellationRequested)
+                    return;
 
-            HKCardStatus? statusFilter = null;
-            if (!string.IsNullOrEmpty(filterStatus) && Enum.TryParse<HKCardStatus>(filterStatus, out var parsedStatus))
-                statusFilter = parsedStatus;
+                Guid? branchFilter = Guid.TryParse(userBranchId, out var branchId) ? branchId : null;
+                statusCounts = await HKCardService.GetStatusCountsAsync(branchFilter, ct);
+                totalCount = statusCounts.Values.Sum();
 
-            HKObjectLevel? levelFilter = null;
-            if (!string.IsNullOrEmpty(filterLevel) && Enum.TryParse<HKObjectLevel>(filterLevel, out var parsedLevel))
-                levelFilter = parsedLevel;
+                HKCardStatus? statusFilter = null;
+                if (!string.IsNullOrEmpty(filterStatus) && Enum.TryParse<HKCardStatus>(filterStatus, out var parsedStatus))
+                    statusFilter = parsedStatus;
 
-            var paged = await HKCardService.GetFilteredAsync(
-                code: string.IsNullOrWhiteSpace(filterCode) ? null : filterCode,
-                status: statusFilter,
-                objectLevel: levelFilter,
-                version: string.IsNullOrWhiteSpace(filterVersion) ? null : filterVersion,
-                nodeSearch: string.IsNullOrWhiteSpace(filterNode) ? null : filterNode,
-                branchId: branchFilter,
-                page: 1,
-                pageSize: 200);
-            filteredCards = paged.Items.ToList();
+                HKObjectLevel? levelFilter = null;
+                if (!string.IsNullOrEmpty(filterLevel) && Enum.TryParse<HKObjectLevel>(filterLevel, out var parsedLevel))
+                    levelFilter = parsedLevel;
 
-            taskCardsOnReview = await HKCardService.GetTaskCardsAsync(HKCardStatus.OnReview, branchFilter);
-            taskCardsRevision = await HKCardService.GetTaskCardsAsync(HKCardStatus.RevisionRequired, branchFilter);
+                var paged = await HKCardService.GetFilteredAsync(
+                    code: string.IsNullOrWhiteSpace(filterCode) ? null : filterCode,
+                    status: statusFilter,
+                    objectLevel: levelFilter,
+                    version: string.IsNullOrWhiteSpace(filterVersion) ? null : filterVersion,
+                    nodeSearch: string.IsNullOrWhiteSpace(filterNode) ? null : filterNode,
+                    branchId: branchFilter,
+                    page: 1,
+                    pageSize: 200,
+                    ct: ct);
+                filteredCards = paged.Items.ToList();
+
+                taskCardsOnReview = await HKCardService.GetTaskCardsAsync(HKCardStatus.OnReview, branchFilter, ct);
+                taskCardsRevision = await HKCardService.GetTaskCardsAsync(HKCardStatus.RevisionRequired, branchFilter, ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // компонент уже уничтожен, не обновляем UI
         }
         finally
         {
@@ -405,5 +425,11 @@
         var card = filteredCards.FirstOrDefault(c => c.Id == id);
         if (card == null || !CanDeleteCard(card)) return;
         OpenDeleteDialog(card);
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 }

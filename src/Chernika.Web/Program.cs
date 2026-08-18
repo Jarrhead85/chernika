@@ -4,6 +4,7 @@ using Chernika.Infrastructure;
 using Chernika.Infrastructure.Data;
 using Chernika.Infrastructure.Services;
 using Chernika.Web.Auth;
+using Chernika.Web.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -26,6 +27,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+builder.Services.AddScoped<CircuitDbLock>();
 
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
