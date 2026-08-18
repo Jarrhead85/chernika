@@ -3,9 +3,11 @@
 @implements IDisposable
 @using Chernika.Domain
 @using Chernika.Domain.Models
+@using Chernika.Web.Services
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Техника" Current="Виды техники" />
@@ -190,6 +192,8 @@
         loading = true;
         try
         {
+            await using (await DbLock.WaitAsync(ct))
+            {
             var result = await EquipService.GetEquipmentTypesPagedAsync(new EquipmentTypeQuery
             {
                 Page = currentPage,
@@ -218,6 +222,7 @@
             }
             if (loadedGroups != null)
                 groups = loadedGroups;
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

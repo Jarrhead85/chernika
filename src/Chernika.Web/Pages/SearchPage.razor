@@ -3,6 +3,9 @@
 @using Chernika.Domain.Models
 @inject SearchService SearchSvc
 @inject NavigationManager Nav
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -87,9 +90,11 @@
     private string query = "";
     private List<SearchResultItem> results = [];
     private bool loading = false;
+    private CancellationTokenSource? _loadCts;
 
     protected override async Task OnInitializedAsync()
     {
+        _loadCts = new CancellationTokenSource();
         var uri = new Uri(Nav.Uri);
         var q = System.Web.HttpUtility.ParseQueryString(uri.Query).Get("q");
         if (!string.IsNullOrEmpty(q))
@@ -113,13 +118,23 @@
     async Task DoSearch()
     {
         if (string.IsNullOrWhiteSpace(query) || query.Length < 2) return;
-        loading = true;
-        results = await SearchSvc.SearchAsync(query.Trim(), 100);
-        loading = false;
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            results = await SearchSvc.SearchAsync(query.Trim(), 100);
+            loading = false;
+        }
     }
 
     void NavigateTo(string url)
     {
         Nav.NavigateTo(url);
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 }

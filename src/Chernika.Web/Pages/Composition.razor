@@ -6,6 +6,9 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -344,6 +347,7 @@
     private ProductComposition? selectedComposition;
     private bool loading = true;
     private bool canEdit;
+    private CancellationTokenSource? _loadCts;
 
     private Guid selectedModelId;
     private string comment = "";
@@ -374,20 +378,26 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEdit);
+        _loadCts = new CancellationTokenSource();
         await LoadData();
     }
 
     private async Task LoadData()
     {
-        loading = true;
-        models = await EquipService.GetModelsAsync();
-        aggregates = await EquipService.GetAggregatesAsync();
-        await LoadCompositions();
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            models = await EquipService.GetModelsAsync();
+            aggregates = await EquipService.GetAggregatesAsync();
+            await LoadCompositions();
+        }
     }
 
     async Task LoadCompositions()
     {
-        compositions = await EquipService.GetCompositionsWithCoverageAsync(selectedModelId != Guid.Empty ? selectedModelId : null);
+        var ct = _loadCts?.Token ?? default;
+        compositions = await EquipService.GetCompositionsWithCoverageAsync(selectedModelId != Guid.Empty ? selectedModelId : null, ct);
         loading = false;
     }
 
@@ -556,6 +566,12 @@
     void OpenHK(Guid hkId) => Nav.NavigateTo($"/хк/{hkId}");
 
     void CreateHKForAggregate(Guid aggregateId) => Nav.NavigateTo($"/хк/создать?aggregateId={aggregateId}");
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
 
     // ── Coverage helpers (TBD: re-enable when Aggregate → Node → HK chain is available) ──
 

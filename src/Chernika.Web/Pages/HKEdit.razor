@@ -12,10 +12,12 @@
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
 @using Microsoft.Extensions.Options
+@using Chernika.Web.Services
 @inject IPermissionService Perms
 @inject IJSRuntime JS
 @inject IOptions<FileStorageOptions> FileOptions
 @inject ILogger<HKEdit> Logger
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <section class="panel">
@@ -1010,72 +1012,75 @@
 
     private async Task LoadCardAsync(Guid cardId, CancellationToken ct)
     {
-        var existing = await HKCardService.GetByIdAsync(cardId, ct);
-        if (ct.IsCancellationRequested) return;
-
-        if (existing == null)
+        await using (await DbLock.WaitAsync(ct))
         {
-            Logger.LogWarning("HKEdit.LoadCardAsync: ХК не найдена или нет доступа: {Id}", cardId);
-            errorMessage = "ХК не найдена или у вас нет доступа.";
-            card = CreateEmptyCard();
-            InitItemDicts();
-            canEdit = false;
-            canQuickCreate = false;
-            _existingActiveCard = null;
-            _activeCardWarning = null;
-            _attachment = null;
-            _components = new();
-            _aggregatedRows = new();
-            return;
-        }
-
-        card = existing;
-        selectedLevel = card.ObjectLevel;
-        selectedComplexId = card.ComplexId ?? Guid.Empty;
-        selectedModelId = card.EquipmentModelId ?? Guid.Empty;
-        selectedAggregateId = card.AggregateId ?? Guid.Empty;
-        selectedNodeId = card.NodeId ?? Guid.Empty;
-        statusStr = card.Status.ToString();
-
-        var canEditLevel = await Perms.HasPermissionAsync(currentUserId,
-            card.ObjectLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
-            card.ObjectLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
-            card.ObjectLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
-            PermissionCodes.HKComplexEditDraft);
-        if (ct.IsCancellationRequested) return;
-        canEdit = canEditLevel && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
-        canQuickCreate = canEdit;
-
-        if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
-        {
-            card.Items.Add(new HKCardItem
-            {
-                Id = Guid.NewGuid(),
-                HKCardId = card.Id,
-                AssemblyUnitId = Guid.Empty,
-                Quantity = 1,
-                Volume = 1.000m,
-                UnitOfMeasure = "кг",
-                SortOrder = 1
-            });
-        }
-
-        InitItemDicts();
-
-        if (selectedLevel != HKObjectLevel.Node)
-        {
-            _components = await HKCardService.GetComponentsAsync(cardId, ct);
-            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(cardId, ct);
-        }
-
-        if (selectedLevel == HKObjectLevel.EquipmentModel)
-        {
-            var cardBranches = await EquipmentService.GetHKCardMilitaryBranchesAsync(cardId, ct);
+            var existing = await HKCardService.GetByIdAsync(cardId, ct);
             if (ct.IsCancellationRequested) return;
-            selectedMilitaryBranchIds = cardBranches.Select(b => b.Id).ToList();
-        }
 
-        await LoadAttachmentAsync(cardId, ct);
+            if (existing == null)
+            {
+                Logger.LogWarning("HKEdit.LoadCardAsync: ХК не найдена или нет доступа: {Id}", cardId);
+                errorMessage = "ХК не найдена или у вас нет доступа.";
+                card = CreateEmptyCard();
+                InitItemDicts();
+                canEdit = false;
+                canQuickCreate = false;
+                _existingActiveCard = null;
+                _activeCardWarning = null;
+                _attachment = null;
+                _components = new();
+                _aggregatedRows = new();
+                return;
+            }
+
+            card = existing;
+            selectedLevel = card.ObjectLevel;
+            selectedComplexId = card.ComplexId ?? Guid.Empty;
+            selectedModelId = card.EquipmentModelId ?? Guid.Empty;
+            selectedAggregateId = card.AggregateId ?? Guid.Empty;
+            selectedNodeId = card.NodeId ?? Guid.Empty;
+            statusStr = card.Status.ToString();
+
+            var canEditLevel = await Perms.HasPermissionAsync(currentUserId,
+                card.ObjectLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
+                card.ObjectLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
+                card.ObjectLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
+                PermissionCodes.HKComplexEditDraft);
+            if (ct.IsCancellationRequested) return;
+            canEdit = canEditLevel && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
+            canQuickCreate = canEdit;
+
+            if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
+            {
+                card.Items.Add(new HKCardItem
+                {
+                    Id = Guid.NewGuid(),
+                    HKCardId = card.Id,
+                    AssemblyUnitId = Guid.Empty,
+                    Quantity = 1,
+                    Volume = 1.000m,
+                    UnitOfMeasure = "кг",
+                    SortOrder = 1
+                });
+            }
+
+            InitItemDicts();
+
+            if (selectedLevel != HKObjectLevel.Node)
+            {
+                _components = await HKCardService.GetComponentsAsync(cardId, ct);
+                _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(cardId, ct);
+            }
+
+            if (selectedLevel == HKObjectLevel.EquipmentModel)
+            {
+                var cardBranches = await EquipmentService.GetHKCardMilitaryBranchesAsync(cardId, ct);
+                if (ct.IsCancellationRequested) return;
+                selectedMilitaryBranchIds = cardBranches.Select(b => b.Id).ToList();
+            }
+
+            await LoadAttachmentAsync(cardId, ct);
+        }
     }
 
     private async Task LoadAttachmentAsync(Guid cardId, CancellationToken ct)

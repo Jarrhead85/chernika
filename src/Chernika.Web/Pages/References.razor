@@ -2,12 +2,14 @@
 @attribute [Authorize(Policy = "ViewReferences")]
 @using System.Security.Claims
 @using Chernika.Domain
+@using Chernika.Web.Services
 @implements IDisposable
 @inject ReferenceCatalogService CatalogSvc
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject NavigationManager Nav
 @inject ILogger<References> Logger
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <section class="panel">
@@ -219,29 +221,32 @@
 
     private async Task LoadCatalogAsync(CancellationToken ct)
     {
-        var authState = await AuthState.GetAuthenticationStateAsync();
-        ct.ThrowIfCancellationRequested();
+        await using (await DbLock.WaitAsync(ct))
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            ct.ThrowIfCancellationRequested();
 
-        var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var canAdmin = userId != null
-            && await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig, ct);
+            var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var canAdmin = userId != null
+                && await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig, ct);
 
-        ct.ThrowIfCancellationRequested();
+            ct.ThrowIfCancellationRequested();
 
-        var counts = await CatalogSvc.GetCountsAsync(ct);
-        ct.ThrowIfCancellationRequested();
+            var counts = await CatalogSvc.GetCountsAsync(ct);
+            ct.ThrowIfCancellationRequested();
 
-        isAdmin = canAdmin;
-        _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
-        _countByRoute["/справочник-комплексов"] = counts.Complexes;
-        _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
-        _countByRoute["/справочник-узлов"] = counts.Nodes;
-        _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
-        _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
-        _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
-        _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
-        _countByRoute["/справочники/техника/виды-техники"] = counts.EquipmentTypes;
-        _countByRoute["/справочники/администрирование/филиалы"] = counts.Branches;
+            isAdmin = canAdmin;
+            _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
+            _countByRoute["/справочник-комплексов"] = counts.Complexes;
+            _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
+            _countByRoute["/справочник-узлов"] = counts.Nodes;
+            _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
+            _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
+            _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
+            _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
+            _countByRoute["/справочники/техника/виды-техники"] = counts.EquipmentTypes;
+            _countByRoute["/справочники/администрирование/филиалы"] = counts.Branches;
+        }
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs args)

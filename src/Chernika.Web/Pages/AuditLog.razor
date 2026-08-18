@@ -4,6 +4,9 @@
 @using Chernika.Infrastructure.Dtos
 @inject AuditService AuditService
 @inject NavigationManager Nav
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -219,8 +222,13 @@
 
     private bool showDetails = false;
     private AuditLogDisplayDto? selectedLog;
+    private CancellationTokenSource? _loadCts;
 
-    protected override async Task OnInitializedAsync() => await LoadLogs();
+    protected override async Task OnInitializedAsync()
+    {
+        _loadCts = new CancellationTokenSource();
+        await LoadLogs();
+    }
 
     static string GetSeverityClass(AuditSeverity severity) => severity switch
     {
@@ -232,11 +240,15 @@
 
     async Task LoadLogs()
     {
-        loading = true;
-        logs = await AuditService.GetLogsWithEntityNamesAsync(currentPage, PageSize, filterEntityType, filterAction, filterPeriod, filterSource);
-        totalCount = await AuditService.GetTotalCountAsync(filterEntityType, filterAction, filterPeriod, filterSource);
-        totalPages = Math.Max(1, (int)Math.Ceiling(totalCount / (double)PageSize));
-        loading = false;
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            logs = await AuditService.GetLogsWithEntityNamesAsync(currentPage, PageSize, filterEntityType, filterAction, filterPeriod, filterSource);
+            totalCount = await AuditService.GetTotalCountAsync(filterEntityType, filterAction, filterPeriod, filterSource);
+            totalPages = Math.Max(1, (int)Math.Ceiling(totalCount / (double)PageSize));
+            loading = false;
+        }
     }
 
     async Task ApplyFilters()
@@ -258,5 +270,11 @@
     {
         showDetails = false;
         selectedLog = null;
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 }

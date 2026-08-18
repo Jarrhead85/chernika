@@ -3,9 +3,11 @@
 @implements IDisposable
 @using Chernika.Domain
 @using Chernika.Domain.Models
+@using Chernika.Web.Services
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Техника" Current="Агрегаты" />
@@ -180,6 +182,8 @@
         loading = true;
         try
         {
+            await using (await DbLock.WaitAsync(ct))
+            {
             var result = await EquipService.GetAggregatesPagedAsync(new AggregateQuery
             {
                 Page = currentPage,
@@ -200,6 +204,7 @@
                 currentPage = totalPages;
                 await ReloadAsync();
                 return;
+            }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

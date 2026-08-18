@@ -6,6 +6,8 @@
 @inject UserManagementService UserMgmt
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthState
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
 @implements IDisposable
 
 <div class="stack">
@@ -403,6 +405,7 @@
     private bool loading = true;
     private string statusFilter = "";
     private bool canQuickCreateBranch = false;
+    private CancellationTokenSource? _loadCts;
 
     private static readonly string[] creatableRoles = new[]
     {
@@ -463,6 +466,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _loadCts = new CancellationTokenSource();
         await LoadUsers();
         allModules = PermissionCatalog.GetAllModules().ToList();
         var authState = await AuthState.GetAuthenticationStateAsync();
@@ -471,10 +475,14 @@
 
     async Task LoadUsers()
     {
-        loading = true;
-        users = await UserMgmt.GetUsersAsync(statusFilter: statusFilter);
-        loading = false;
-        StateHasChanged();
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            users = await UserMgmt.GetUsersAsync(statusFilter: statusFilter);
+            loading = false;
+            StateHasChanged();
+        }
     }
 
     string GetRoleDisplayName(string role) => role switch
@@ -703,5 +711,9 @@
         StateHasChanged();
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
 }

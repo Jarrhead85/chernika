@@ -9,6 +9,9 @@
 @inject NavigationManager Nav
 @inject IPermissionService PermSvc
 @inject AuthenticationStateProvider AuthState
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -237,6 +240,7 @@
     private string completeComment = "";
     private bool showCompleteModal;
     private string? errorMessage;
+    private CancellationTokenSource? _loadCts;
 
     private int countOpen => statusCounts.GetValueOrDefault(WorkTaskStatus.Open);
     private int countInProgress => statusCounts.GetValueOrDefault(WorkTaskStatus.InProgress);
@@ -265,6 +269,7 @@
             _canCancel = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskCancel);
             _canSystemConfig = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
         }
+        _loadCts = new CancellationTokenSource();
         await LoadBranchesAsync();
         await LoadAsync();
     }
@@ -315,41 +320,45 @@
 
     private async Task LoadAsync()
     {
-        loading = true;
-        errorMessage = null;
-        try
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
         {
-            var query = new WorkTaskQuery
+            loading = true;
+            errorMessage = null;
+            try
             {
-                Page = page,
-                PageSize = PageSize,
-                Text = string.IsNullOrWhiteSpace(text) ? null : text.Trim(),
-                DueFilter = dueFilter,
-                SortBy = sortBy,
-                SortDescending = sortDescStr == "true",
-                BranchId = Guid.TryParse(branchFilterId, out var b) ? b : null,
-                Status = activeTab,
-                ActiveOnly = activeTab == null,
-            };
-            result = await TaskService.GetMyTasksAsync(query);
-            statusCounts = await TaskService.GetStatusCountsAsync();
-            activeCount = await TaskService.GetOpenTaskCountAsync();
-            completedWithin7 = (await TaskService.GetMyTasksAsync(new WorkTaskQuery
+                var query = new WorkTaskQuery
+                {
+                    Page = page,
+                    PageSize = PageSize,
+                    Text = string.IsNullOrWhiteSpace(text) ? null : text.Trim(),
+                    DueFilter = dueFilter,
+                    SortBy = sortBy,
+                    SortDescending = sortDescStr == "true",
+                    BranchId = Guid.TryParse(branchFilterId, out var b) ? b : null,
+                    Status = activeTab,
+                    ActiveOnly = activeTab == null,
+                };
+                result = await TaskService.GetMyTasksAsync(query, ct);
+                statusCounts = await TaskService.GetStatusCountsAsync(ct);
+                activeCount = await TaskService.GetOpenTaskCountAsync(ct);
+                completedWithin7 = (await TaskService.GetMyTasksAsync(new WorkTaskQuery
+                {
+                    Page = 1,
+                    PageSize = 1,
+                    Status = WorkTaskStatus.Completed,
+                    CompletedWithinDays = 7,
+                }, ct)).TotalCount;
+            }
+            catch (UnauthorizedAccessException ex)
             {
-                Page = 1,
-                PageSize = 1,
-                Status = WorkTaskStatus.Completed,
-                CompletedWithinDays = 7,
-            })).TotalCount;
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            errorMessage = ex.Message;
-            result = new PagedResult<WorkTaskListItemDto>();
-        }
-        finally
-        {
-            loading = false;
+                errorMessage = ex.Message;
+                result = new PagedResult<WorkTaskListItemDto>();
+            }
+            finally
+            {
+                loading = false;
+            }
         }
     }
 
@@ -465,6 +474,12 @@
         WorkTaskPriority.Critical => "bad",
         _ => ""
     };
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
 
     private static string TypeLabel(WorkTaskType type) => type switch
     {

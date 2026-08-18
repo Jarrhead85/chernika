@@ -3,6 +3,9 @@
 @using Chernika.Domain
 @inject ISecurityDataRepairService RepairService
 @inject NavigationManager Nav
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -264,8 +267,19 @@
     private bool repairing;
     private string? errorMessage;
     private bool showConfirmRepair;
+    private CancellationTokenSource? _loadCts;
 
-    protected override async Task OnInitializedAsync() => await LoadDiagnostics();
+    protected override async Task OnInitializedAsync()
+    {
+        _loadCts = new CancellationTokenSource();
+        await LoadDiagnostics();
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
 
     string GetRoleDisplayName(string role) => role switch
     {
@@ -279,17 +293,21 @@
 
     async Task LoadDiagnostics()
     {
-        loading = true;
-        errorMessage = null;
-        try
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
         {
-            diagnostics = await RepairService.GetDiagnosticsAsync();
+            loading = true;
+            errorMessage = null;
+            try
+            {
+                diagnostics = await RepairService.GetDiagnosticsAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+            }
+            loading = false;
         }
-        catch (Exception ex)
-        {
-            errorMessage = ex.Message;
-        }
-        loading = false;
     }
 
     async Task RunRepair()

@@ -11,6 +11,8 @@
 @inject IPermissionService PermSvc
 @inject AuthenticationStateProvider AuthState
 @inject ILogger<TaskCard> Logger
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
 
 <div class="stack">
     <section class="panel">
@@ -199,41 +201,44 @@
     {
         Logger.LogInformation("TaskCard.LoadAsync РЅР°С‡Р°Р»Рѕ: {Id}", requestedId);
 
-        loading = true;
-        errorMessage = null;
-        task = null;
-        auditLogs = new();
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            errorMessage = null;
+            task = null;
+            auditLogs = new();
 
-        try
-        {
-            var loaded = await TaskService.GetByIdAsync(requestedId, ct);
-            var logs = loaded == null
-                ? new List<Chernika.Domain.Entities.AuditLog>()
-                : await AuditSvc.GetLogsByEntityAsync("WorkTask", requestedId.ToString());
+            try
+            {
+                var loaded = await TaskService.GetByIdAsync(requestedId, ct);
+                var logs = loaded == null
+                    ? new List<Chernika.Domain.Entities.AuditLog>()
+                    : await AuditSvc.GetLogsByEntityAsync("WorkTask", requestedId.ToString());
 
-            if (!ct.IsCancellationRequested && requestedId == Id)
-            {
-                task = loaded;
-                auditLogs = logs;
-                Logger.LogInformation("TaskCard.LoadAsync Р·Р°РІРµСЂС€РµРЅРёРµ: {Id}", requestedId);
+                if (!ct.IsCancellationRequested && requestedId == Id)
+                {
+                    task = loaded;
+                    auditLogs = logs;
+                    Logger.LogInformation("TaskCard.LoadAsync Р·Р°РІРµСЂС€РµРЅРёРµ: {Id}", requestedId);
+                }
             }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            Logger.LogInformation("TaskCard.LoadAsync РѕС‚РјРµРЅРµРЅР°: {Id}", requestedId);
-        }
-        catch (Exception ex)
-        {
-            if (!ct.IsCancellationRequested && requestedId == Id)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                Logger.LogWarning(ex, "TaskCard.LoadAsync РѕС€РёР±РєР°: {Id}", requestedId);
-                errorMessage = ex.Message;
+                Logger.LogInformation("TaskCard.LoadAsync РѕС‚РјРµРЅРµРЅР°: {Id}", requestedId);
             }
-        }
-        finally
-        {
-            if (!ct.IsCancellationRequested && requestedId == Id)
-                loading = false;
+            catch (Exception ex)
+            {
+                if (!ct.IsCancellationRequested && requestedId == Id)
+                {
+                    Logger.LogWarning(ex, "TaskCard.LoadAsync РѕС€РёР±РєР°: {Id}", requestedId);
+                    errorMessage = ex.Message;
+                }
+            }
+            finally
+            {
+                if (!ct.IsCancellationRequested && requestedId == Id)
+                    loading = false;
+            }
         }
     }
 

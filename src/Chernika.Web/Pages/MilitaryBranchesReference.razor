@@ -3,9 +3,11 @@
 @implements IDisposable
 @using Chernika.Domain
 @using Chernika.Domain.Models
+@using Chernika.Web.Services
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Классификаторы" Current="Рода войск" />
@@ -190,6 +192,8 @@
         loading = true;
         try
         {
+            await using (await DbLock.WaitAsync(ct))
+            {
             var result = await EquipService.GetMilitaryBranchesPagedAsync(new MilitaryBranchQuery
             {
                 Page = currentPage,
@@ -218,6 +222,7 @@
             }
             if (loadedTypes != null)
                 branchTypes = loadedTypes;
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

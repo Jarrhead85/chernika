@@ -7,6 +7,9 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -234,6 +237,7 @@
     private AggregateComposition? selectedComposition;
     private bool loading = true;
     private bool canEdit;
+    private CancellationTokenSource? _loadCts;
 
     private Guid selectedAggregateId;
     private string comment = "";
@@ -257,21 +261,27 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEdit);
+        _loadCts = new CancellationTokenSource();
         await LoadData();
     }
 
     private async Task LoadData()
     {
-        loading = true;
-        aggregates = await EquipService.GetAggregatesAsync();
-        nodes = await EquipService.GetNodesAsync();
-        await LoadCompositions();
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            aggregates = await EquipService.GetAggregatesAsync();
+            nodes = await EquipService.GetNodesAsync();
+            await LoadCompositions();
+        }
     }
 
     async Task LoadCompositions()
     {
+        var ct = _loadCts?.Token ?? default;
         compositions = selectedAggregateId != Guid.Empty
-            ? await EquipService.GetAggregateCompositionsAsync(selectedAggregateId)
+            ? await EquipService.GetAggregateCompositionsAsync(selectedAggregateId, ct)
             : new();
         loading = false;
     }
@@ -389,6 +399,12 @@
         await EquipService.DeleteAggregateCompositionDraftAsync(id);
         compositions.RemoveAll(c => c.Id == id);
         if (selectedComposition?.Id == id) selectedComposition = null;
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 
     static string StatusLabel(ProductCompositionStatus status) => status switch

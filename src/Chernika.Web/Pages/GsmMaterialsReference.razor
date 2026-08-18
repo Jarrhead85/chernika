@@ -3,9 +3,11 @@
 @implements IDisposable
 @using Chernika.Domain
 @using Chernika.Domain.Models
+@using Chernika.Web.Services
 @inject GsmMaterialService GsmService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Материалы" Current="Смазочные материалы" />
@@ -181,6 +183,8 @@
         loading = true;
         try
         {
+            await using (await DbLock.WaitAsync(ct))
+            {
             var result = await GsmService.GetPagedAsync(new GsmMaterialQuery
             {
                 Page = currentPage,
@@ -201,6 +205,7 @@
                 currentPage = totalPages;
                 await ReloadAsync();
                 return;
+            }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

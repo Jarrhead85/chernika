@@ -5,6 +5,9 @@
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -256,6 +259,7 @@
     private bool loading = true;
     private bool canManage;
     private bool canGenerate => selectedInstanceId != Guid.Empty && canManage;
+    private CancellationTokenSource? _loadCts;
 
     private Guid selectedInstanceId;
 
@@ -264,21 +268,30 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canManage = await Perms.HasPermissionAsync(userId!, PermissionCodes.IndividualCardGenerate);
-        instances = await EquipService.GetInstancesAsync();
-        var allCoeffs = await IndCardService.GetAvailableCoefficientsAsync();
-        coeffTypes = await IndCardService.GetCoefficientTypesAsync();
-
-        foreach (var type in coeffTypes)
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+        await using (await DbLock.WaitAsync(ct))
         {
-            coeffByType[type] = allCoeffs.Where(c => c.CoefficientTypeId == type.Id).ToList();
+            instances = await EquipService.GetInstancesAsync();
+            var allCoeffs = await IndCardService.GetAvailableCoefficientsAsync();
+            coeffTypes = await IndCardService.GetCoefficientTypesAsync();
+
+            foreach (var type in coeffTypes)
+            {
+                coeffByType[type] = allCoeffs.Where(c => c.CoefficientTypeId == type.Id).ToList();
+            }
         }
     }
 
     async Task LoadCards()
     {
-        loading = true;
-        cards = await IndCardService.GetCardsByInstanceAsync(selectedInstanceId);
-        loading = false;
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            cards = await IndCardService.GetCardsByInstanceAsync(selectedInstanceId);
+            loading = false;
+        }
     }
 
     async Task GenerateCards()
@@ -307,6 +320,12 @@
         await IndCardService.DeleteCardAsync(id);
         cards.RemoveAll(c => c.Id == id);
         if (selectedCard?.Id == id) selectedCard = null;
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 
     void RecalculateCoefficients()

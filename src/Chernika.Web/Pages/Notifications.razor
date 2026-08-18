@@ -7,6 +7,8 @@
 @inject NotificationService NotifSvc
 @inject NavigationManager Nav
 @inject NotificationRefreshService NotifRefresh
+@inject CircuitDbLock DbLock
+@implements IDisposable
 
 <div class="stack">
     <section class="panel">
@@ -134,11 +136,13 @@
     private const int PageSize = 20;
     private bool loading = true;
     private string? errorMessage;
+    private CancellationTokenSource? _loadCts;
 
     private string TabTitle => unreadOnly ? "Непрочитанные уведомления" : "Все уведомления";
 
     protected override async Task OnInitializedAsync()
     {
+        _loadCts = new CancellationTokenSource();
         await LoadAsync();
     }
 
@@ -157,32 +161,36 @@
 
     private async Task LoadAsync()
     {
-        loading = true;
-        errorMessage = null;
-        try
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
         {
-            result = await NotifSvc.GetMyNotificationsAsync(new NotificationQuery
+            loading = true;
+            errorMessage = null;
+            try
             {
-                Page = page,
-                PageSize = PageSize,
-                UnreadOnly = unreadOnly,
-            });
-            unreadCount = await NotifSvc.GetUnreadCountAsync();
-            recentCreated = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery
+                result = await NotifSvc.GetMyNotificationsAsync(new NotificationQuery
+                {
+                    Page = page,
+                    PageSize = PageSize,
+                    UnreadOnly = unreadOnly,
+                }, ct);
+                unreadCount = await NotifSvc.GetUnreadCountAsync(ct);
+                recentCreated = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery
+                {
+                    Page = 1,
+                    PageSize = 1,
+                    Days = 7,
+                }, ct)).TotalCount;
+            }
+            catch (UnauthorizedAccessException ex)
             {
-                Page = 1,
-                PageSize = 1,
-                Days = 7,
-            })).TotalCount;
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            errorMessage = ex.Message;
-            result = new PagedResult<NotificationDto>();
-        }
-        finally
-        {
-            loading = false;
+                errorMessage = ex.Message;
+                result = new PagedResult<NotificationDto>();
+            }
+            finally
+            {
+                loading = false;
+            }
         }
     }
 
@@ -231,6 +239,12 @@
         }
         await LoadAsync();
         await NotifRefresh.NotifyChangedAsync();
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
     }
 
     private static string TypeLabel(NotificationType type) => type switch
