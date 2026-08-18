@@ -117,4 +117,99 @@ public class ReferencePermissionsIntegrationTests
         var all = await s.Equipment.GetEquipmentTypesPagedAsync(new EquipmentTypeQuery { ShowDeleted = null, Search = name }, default);
         Assert.Contains(all.Items, x => x.Id == created.Id);
     }
+
+    [Fact]
+    public async Task Operator_WithReferenceView_CanListGsmMaterials()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.OperatorA.Id);
+
+        var result = await s.GsmMaterials.GetPagedAsync(new GsmMaterialQuery(), default);
+
+        Assert.NotNull(result);
+        Assert.True(result.TotalCount >= 0);
+    }
+
+    [Fact]
+    public async Task Operator_WithoutReferenceEdit_CannotCreateGsmMaterial()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.OperatorA.Id);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => s.GsmMaterials.CreateAsync(new GsmMaterial { Name = "Тестовый ГСМ", Type = "Бензин" }));
+    }
+
+    [Fact]
+    public async Task NormAdmin_WithReferenceEdit_CanCrudGsmMaterial()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var created = await s.GsmMaterials.CreateAsync(new GsmMaterial
+        {
+            Name = $"CRUD ГСМ {Guid.NewGuid():N}",
+            Type = "Бензин",
+            Gost = "ГОСТ 123"
+        });
+        Assert.NotEqual(Guid.Empty, created.Id);
+
+        created.Name = $"CRUD ГСМ обновлён {Guid.NewGuid():N}";
+        var updated = await s.GsmMaterials.UpdateAsync(created);
+        Assert.True(updated);
+
+        var byId = await s.GsmMaterials.GetByIdAsync(created.Id, default);
+        Assert.NotNull(byId);
+        Assert.Equal(created.Name, byId.Name);
+
+        var deleted = await s.GsmMaterials.DeleteAsync(created.Id);
+        Assert.True(deleted);
+
+        var restored = await s.GsmMaterials.RestoreAsync(created.Id);
+        Assert.True(restored);
+    }
+
+    [Fact]
+    public async Task GsmMaterial_IsDeletedFilter_AppliedInDatabase()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var name = $"Filter ГСМ {Guid.NewGuid():N}";
+        var created = await s.GsmMaterials.CreateAsync(new GsmMaterial { Name = name, Type = "Дизель" });
+        await s.GsmMaterials.DeleteAsync(created.Id);
+
+        var active = await s.GsmMaterials.GetPagedAsync(new GsmMaterialQuery { ShowDeleted = false }, default);
+        Assert.DoesNotContain(active.Items, x => x.Id == created.Id);
+
+        var archived = await s.GsmMaterials.GetPagedAsync(new GsmMaterialQuery { ShowDeleted = true }, default);
+        Assert.Contains(archived.Items, x => x.Id == created.Id);
+
+        var all = await s.GsmMaterials.GetPagedAsync(new GsmMaterialQuery { ShowDeleted = null, Search = name }, default);
+        Assert.Contains(all.Items, x => x.Id == created.Id);
+    }
+
+    [Fact]
+    public async Task GsmMaterial_ActiveSelection_ExcludesDeletedAndDrafts()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var name = $"Active ГСМ {Guid.NewGuid():N}";
+        var created = await s.GsmMaterials.CreateAsync(new GsmMaterial { Name = name, Type = "Масло" });
+        await s.GsmMaterials.DeleteAsync(created.Id);
+
+        s.Db.GsmMaterials.Add(new GsmMaterial
+        {
+            Id = Guid.NewGuid(),
+            Name = "Черновик ГСМ",
+            Type = "Масло",
+            IsDraft = true
+        });
+        await s.Db.SaveChangesAsync();
+
+        var active = await s.GsmMaterials.GetActiveForSelectionAsync(name);
+        Assert.DoesNotContain(active, x => x.Id == created.Id);
+        Assert.DoesNotContain(active, x => x.IsDraft);
+    }
 }

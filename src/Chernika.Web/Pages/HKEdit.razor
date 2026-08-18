@@ -8,6 +8,7 @@
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject EquipmentService EquipmentService
+@inject GsmMaterialService GsmMaterialService
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
 @using Microsoft.Extensions.Options
@@ -897,7 +898,7 @@
         aggregates = await EquipmentService.GetAggregatesAsync();
         nodes = await EquipmentService.GetNodesAsync();
         assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
-        gsmMaterials = await EquipmentService.GetGsmMaterialsAsync();
+        gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
         allMilitaryBranches = await EquipmentService.GetMilitaryBranchesAsync();
 
         if (!IsNew && Id.HasValue)
@@ -1992,14 +1993,14 @@
                 }
                 case QuickCreateKind.GsmMaterial:
                 {
-                    var created = await EquipmentService.CreateGsmMaterialAsync(new GsmMaterial
+                    var created = await GsmMaterialService.CreateAsync(new GsmMaterial
                     {
                         Name = _qcName.Trim(),
                         Type = _qcType.Trim(),
                         Gost = string.IsNullOrWhiteSpace(_qcGost) ? null : _qcGost.Trim(),
                         Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
                     });
-                    gsmMaterials = await EquipmentService.GetGsmMaterialsAsync();
+        gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
                     if (_quickCreateItemUiKey.HasValue && _quickCreateCategory.HasValue)
                     {
                         var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);

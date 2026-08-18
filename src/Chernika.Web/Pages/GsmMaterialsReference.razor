@@ -3,7 +3,7 @@
 @implements IDisposable
 @using Chernika.Domain
 @using Chernika.Domain.Models
-@inject EquipmentService EquipService
+@inject GsmMaterialService GsmService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 
@@ -181,7 +181,7 @@
         loading = true;
         try
         {
-            var result = await EquipService.GetGsmMaterialsPagedAsync(new GsmMaterialQuery
+            var result = await GsmService.GetPagedAsync(new GsmMaterialQuery
             {
                 Page = currentPage,
                 Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
@@ -225,9 +225,9 @@
         try
         {
             if (editing)
-                await EquipService.UpdateGsmMaterialAsync(newGsm);
+                await GsmService.UpdateAsync(newGsm);
             else
-                await EquipService.CreateGsmMaterialAsync(newGsm);
+                await GsmService.CreateAsync(newGsm);
             ResetForm();
             await ReloadAsync();
         }
@@ -268,7 +268,7 @@
         errorMessage = null;
         try
         {
-            var ok = await EquipService.DeleteGsmMaterialAsync(id);
+            var ok = await GsmService.DeleteAsync(id);
             if (!ok) errorMessage = "Не удалось удалить запись. Обновите список и повторите попытку.";
             await ReloadAsync();
         }
@@ -283,7 +283,7 @@
         errorMessage = null;
         try
         {
-            var ok = await EquipService.RestoreGsmMaterialAsync(id);
+            var ok = await GsmService.RestoreAsync(id);
             if (!ok) errorMessage = "Не удалось восстановить запись. Обновите список и повторите попытку.";
             await ReloadAsync();
         }

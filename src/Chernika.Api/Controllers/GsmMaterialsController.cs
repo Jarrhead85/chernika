@@ -10,21 +10,21 @@ namespace Chernika.Api.Controllers;
 [Route("api/[controller]")]
 public class GsmMaterialsController : ControllerBase
 {
-    private readonly EquipmentService _equip;
+    private readonly GsmMaterialService _gsmService;
 
-    public GsmMaterialsController(EquipmentService equip) => _equip = equip;
+    public GsmMaterialsController(GsmMaterialService gsmService) => _gsmService = gsmService;
 
     [HttpGet]
     public async Task<ActionResult<List<GsmMaterialDto>>> GetAll()
     {
-        var materials = await _equip.GetGsmMaterialsAsync();
+        var materials = await _gsmService.GetActiveForSelectionAsync();
         return Ok(materials.Select(GsmMaterialMapper.ToDto).ToList());
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<GsmMaterialDto>> GetById(Guid id)
     {
-        var m = await _equip.GetGsmMaterialAsync(id);
+        var m = await _gsmService.GetByIdAsync(id);
         if (m == null) return NotFound();
         return Ok(GsmMaterialMapper.ToDto(m));
     }
@@ -34,7 +34,7 @@ public class GsmMaterialsController : ControllerBase
     public async Task<ActionResult<GsmMaterialDto>> Create([FromBody] CreateGsmMaterialRequest request)
     {
         var material = GsmMaterialMapper.FromCreate(request);
-        var created = await _equip.CreateGsmMaterialAsync(material);
+        var created = await _gsmService.CreateAsync(material);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, GsmMaterialMapper.ToDto(created));
     }
 
@@ -42,10 +42,10 @@ public class GsmMaterialsController : ControllerBase
     [Authorize(Policy = "EditEquipment")]
     public async Task<ActionResult> Update(Guid id, [FromBody] UpdateGsmMaterialRequest request)
     {
-        var m = await _equip.GetGsmMaterialAsync(id);
+        var m = await _gsmService.GetByIdAsync(id);
         if (m == null) return NotFound();
         GsmMaterialMapper.ApplyUpdate(m, request);
-        await _equip.UpdateGsmMaterialAsync(m);
+        await _gsmService.UpdateAsync(m);
         return NoContent();
     }
 
@@ -53,7 +53,7 @@ public class GsmMaterialsController : ControllerBase
     [Authorize(Policy = "DeleteEquipment")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        if (!await _equip.DeleteGsmMaterialAsync(id)) return NotFound();
+        if (!await _gsmService.DeleteAsync(id)) return NotFound();
         return NoContent();
     }
 }
