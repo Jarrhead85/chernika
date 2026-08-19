@@ -59,6 +59,13 @@ public class PermissionMatrixTests
         Assert.DoesNotContain(PermissionCodes.HKDeleteOnReview, permsByRole["Operator"]);
         Assert.DoesNotContain(PermissionCodes.HKDeleteDraft, permsByRole["HeadOfDepartment"]);
         Assert.DoesNotContain(PermissionCodes.HKDeleteDraft, permsByRole["Guest"]);
+
+        // HK archive: NormAdmin only
+        Assert.Contains(PermissionCodes.HKArchive, permsByRole["NormAdmin"]);
+        Assert.Contains(PermissionCodes.HKArchive, permsByRole["SystemAdmin"]);
+        Assert.DoesNotContain(PermissionCodes.HKArchive, permsByRole["Operator"]);
+        Assert.DoesNotContain(PermissionCodes.HKArchive, permsByRole["HeadOfDepartment"]);
+        Assert.DoesNotContain(PermissionCodes.HKArchive, permsByRole["Guest"]);
     }
 
     [Fact]

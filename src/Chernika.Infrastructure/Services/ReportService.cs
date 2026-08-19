@@ -26,6 +26,10 @@ public class ReportService
                     {
                         col.Item().Text("ХИММОТОЛОГИЧЕСКАЯ КАРТА").FontSize(16).Bold().AlignCenter();
                         col.Item().Text($"Шифр: {card.Code}  |  Версия: {card.Version}  |  Статус: {card.Status}").FontSize(10).AlignCenter();
+                        if (card.SupersedesHKCard != null)
+                        {
+                            col.Item().Text($"Заменяет: {card.SupersedesHKCard.Code}, версия {card.SupersedesHKCard.Version}").FontSize(9).AlignCenter();
+                        }
                         col.Item().LineHorizontal(1);
                     });
 

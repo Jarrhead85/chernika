@@ -1303,12 +1303,11 @@ public class HKCardService
             return (false, "Заменяющая ХК не может совпадать с архивируемой.");
 
         var actorId = _currentUser.GetRequiredUserId();
+        await _permissions.DemandPermissionAsync(PermissionCodes.HKArchive, ct);
+
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             return (false, "Пользователь не найден.");
-
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKArchive))
-            return (false, "Недостаточно прав для ручного архивирования ХК.");
 
         var card = await _db.HKCards.FindAsync(id, ct);
         if (card == null || card.Status == HKCardStatus.Deleted)

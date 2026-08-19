@@ -669,6 +669,58 @@
     </section>
 </div>
 
+<section class="panel">
+    <div class="panelHeader">
+        <h2>Версии ХК</h2>
+        <div class="hint">История версий по объекту</div>
+    </div>
+    <div class="panelBody">
+        @if (_versions.Any())
+        {
+            <table class="hk-items-table">
+                <thead>
+                    <tr>
+                        <th>Версия</th>
+                        <th>Статус</th>
+                        <th>Утверждена</th>
+                        <th>Создана</th>
+                        <th>Примечание</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var v in _versions.OrderByDescending(v => v.CreatedAt))
+                    {
+                        <tr>
+                            <td class="mono">@v.Version</td>
+                            <td><StatusBadge Status="@v.Status" /></td>
+                            <td>@(v.ApprovedDate?.ToString("dd.MM.yyyy") ?? "—")</td>
+                            <td>@v.CreatedAt.ToString("dd.MM.yyyy")</td>
+                            <td>
+                                @if (v.IsCurrent)
+                                {
+                                    <span class="tag ok">текущая</span>
+                                }
+                                @if (v.SupersedesHKCardId == card.Id)
+                                {
+                                    <span class="tag warn">заменяет текущую</span>
+                                }
+                                else if (card.SupersedesHKCardId == v.Id)
+                                {
+                                    <span class="tag warn">предшественник</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <div class="note">Других версий нет</div>
+        }
+    </div>
+</section>
+
 @if (_quickCreateKind.HasValue)
 {
     <div class="modalOverlay" @onclick="CloseQuickCreateModal">

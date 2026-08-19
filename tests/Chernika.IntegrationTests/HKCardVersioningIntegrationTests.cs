@@ -173,6 +173,200 @@ public class HKCardVersioningIntegrationTests
         Assert.Single(versions, v => v.IsCurrent);
     }
 
+    [Fact]
+    public async Task ArchiveAsync_EmptyReason_Fails()
+    {
+        await using var s = _fixture.CreateScope();
+        var oldId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+        var replacementId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+
+        await AlignReplacementAsync(s, oldId, replacementId);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (success, error) = await s.HK.ArchiveAsync(oldId, replacementId, "   ");
+        Assert.False(success);
+        Assert.NotNull(error);
+
+        var old = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == oldId);
+        Assert.Equal(HKCardStatus.Approved, old.Status);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_OperatorWithoutPermission_Throws()
+    {
+        await using var s = _fixture.CreateScope();
+        var oldId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+        var replacementId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+
+        await AlignReplacementAsync(s, oldId, replacementId);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.OperatorA.Id);
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            s.HK.ArchiveAsync(oldId, replacementId, "Заменена новой версией"));
+        Assert.Contains(PermissionCodes.HKArchive, ex.Message);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_ReplacementWrongObject_Fails()
+    {
+        await using var s = _fixture.CreateScope();
+        var oldId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+        var replacementId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+
+        await AlignReplacementAsync(s, oldId, replacementId);
+        var replacement = await s.Db.HKCards.SingleAsync(c => c.Id == replacementId);
+        var otherAggregate = new Aggregate { Id = Guid.NewGuid(), Code = "A-" + Guid.NewGuid().ToString("N")[..6], Name = "Агрегат тест" };
+        s.Db.Aggregates.Add(otherAggregate);
+        replacement.ObjectLevel = HKObjectLevel.Aggregate;
+        replacement.AggregateId = otherAggregate.Id;
+        replacement.NodeId = null;
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (success, error) = await s.HK.ArchiveAsync(oldId, replacementId, "Заменена новой версией");
+        Assert.False(success);
+        Assert.NotNull(error);
+
+        var old = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == oldId);
+        Assert.Equal(HKCardStatus.Approved, old.Status);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_ReplacementNotApproved_Fails()
+    {
+        await using var s = _fixture.CreateScope();
+        var oldId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+        var replacementId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
+
+        var oldCard = await s.Db.HKCards.SingleAsync(c => c.Id == oldId);
+        var replacement = await s.Db.HKCards.SingleAsync(c => c.Id == replacementId);
+        replacement.Code = oldCard.Code;
+        replacement.Version = "vR2";
+        replacement.NodeId = oldCard.NodeId;
+        replacement.ObjectLevel = oldCard.ObjectLevel;
+        replacement.BranchId = oldCard.BranchId;
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (success, error) = await s.HK.ArchiveAsync(oldId, replacementId, "Заменена новой версией");
+        Assert.False(success);
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_ReplacementExpired_Fails()
+    {
+        await using var s = _fixture.CreateScope();
+        var oldId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+        var replacementId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+
+        await AlignReplacementAsync(s, oldId, replacementId);
+        var replacement = await s.Db.HKCards.SingleAsync(c => c.Id == replacementId);
+        replacement.ExpirationDate = DateTime.UtcNow.AddDays(-1);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (success, error) = await s.HK.ArchiveAsync(oldId, replacementId, "Заменена новой версией");
+        Assert.False(success);
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public async Task ChangeStatus_Approved_NewVersion_PredecessorDeleted_RollsBackApproval()
+    {
+        await using var s = _fixture.CreateScope();
+        var sourceId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (created, newCardId, createError) = await s.HK.CreateNewVersionAsync(sourceId);
+        Assert.True(created, createError);
+
+        var source = await s.Db.HKCards.SingleAsync(c => c.Id == sourceId);
+        source.Status = HKCardStatus.Deleted;
+        await s.Db.SaveChangesAsync();
+
+        await s.HK.ChangeStatusAsync(newCardId.Value, HKCardStatus.OnReview);
+        var (approved, approveError) = await s.HK.ChangeStatusAsync(newCardId.Value, HKCardStatus.Approved);
+        Assert.False(approved);
+        Assert.NotNull(approveError);
+
+        var successor = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == newCardId.Value);
+        Assert.NotEqual(HKCardStatus.Approved, successor.Status);
+    }
+
+    [Fact]
+    public void SupersedesHKCardId_IsExplicitEntityProperty()
+    {
+        var property = typeof(HKCard).GetProperty(nameof(HKCard.SupersedesHKCardId));
+        Assert.NotNull(property);
+        Assert.Equal(typeof(Guid?), property.PropertyType);
+
+        var nav = typeof(HKCard).GetProperty(nameof(HKCard.SupersedesHKCard));
+        Assert.NotNull(nav);
+        Assert.Equal(typeof(HKCard), nav.PropertyType);
+
+        var collection = typeof(HKCard).GetProperty(nameof(HKCard.SupersededBy));
+        Assert.NotNull(collection);
+    }
+
+    [Fact]
+    public async Task CreateNewVersionAsync_AuditLogContainsSourceAndNewSnapshots()
+    {
+        await using var s = _fixture.CreateScope();
+        var sourceId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+        var source = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == sourceId);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (success, newCardId, error) = await s.HK.CreateNewVersionAsync(sourceId);
+        Assert.True(success, error);
+
+        Assert.Equal("Создана новая версия ХК", AuditDisplayCatalog.GetAction("HKCard.NewVersionCreated").Title);
+
+        var audit = await s.Db.AuditLogs.AsNoTracking()
+            .SingleOrDefaultAsync(a => a.EntityType == "HKCard" && a.EntityId == newCardId.ToString() && a.Action == "HKCard.NewVersionCreated");
+        Assert.NotNull(audit);
+        Assert.Contains(source.Code, audit.Details);
+        Assert.Contains(source.Version, audit.Details);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_AuditAndStatusLogContainReasonAndReplacement()
+    {
+        await using var s = _fixture.CreateScope();
+        var oldId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+        var replacementId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
+
+        await AlignReplacementAsync(s, oldId, replacementId);
+        var replacement = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == replacementId);
+        var reason = "Заменена новой версией";
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (success, error) = await s.HK.ArchiveAsync(oldId, replacementId, reason);
+        Assert.True(success, error);
+
+        var statusLog = await s.Db.HKCardStatusLogs.AsNoTracking()
+            .SingleAsync(l => l.HKCardId == oldId && l.ToStatus == HKCardStatus.Archived);
+        Assert.Equal(reason, statusLog.Comment);
+
+        var audit = await s.Db.AuditLogs.AsNoTracking()
+            .SingleAsync(a => a.EntityType == "HKCard" && a.EntityId == oldId.ToString() && a.Action == $"Status:{HKCardStatus.Archived}");
+        Assert.Contains(reason, audit.Details);
+        Assert.Contains(replacement.Code, audit.Details);
+        Assert.Contains(replacement.Version, audit.Details);
+    }
+
+    private async Task AlignReplacementAsync(TestScope s, Guid oldId, Guid replacementId)
+    {
+        var oldCard = await s.Db.HKCards.SingleAsync(c => c.Id == oldId);
+        var replacement = await s.Db.HKCards.SingleAsync(c => c.Id == replacementId);
+        replacement.Code = oldCard.Code;
+        replacement.Version = "vR2";
+        replacement.NodeId = oldCard.NodeId;
+        replacement.ObjectLevel = oldCard.ObjectLevel;
+        replacement.BranchId = oldCard.BranchId;
+        await s.Db.SaveChangesAsync();
+    }
+
     private async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)
     {
         s.User.CurrentUserId = Guid.Parse(actorId);
