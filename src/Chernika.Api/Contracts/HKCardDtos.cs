@@ -40,7 +40,9 @@ public record HKCardDetailDto(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     uint RowVersion,
-    IReadOnlyList<HKCardItemDto> Items);
+    Guid? SupersedesHKCardId,
+    IReadOnlyList<HKCardItemDto> Items,
+    IReadOnlyList<Chernika.Domain.Models.HKCardVersionDto> Versions);
 
 public record HKCardItemDto(
     Guid Id,
@@ -99,6 +101,10 @@ public record StatusChangeRequest(HKCardStatus NewStatus, string? Comment = null
 
 public record DeleteHKCardRequest(string Reason);
 
+public record ArchiveHKCardRequest(Guid ReplacementCardId, string Reason);
+
+public record CreateNewHKCardVersionResponse(Guid NewCardId);
+
 public static class HKCardMapper
 {
     public static string? GetObjectName(HKCard c) => c.ObjectLevel switch
@@ -110,7 +116,7 @@ public static class HKCardMapper
         _ => null
     };
 
-    public static HKCardDetailDto ToDetail(HKCard c) => new(
+    public static HKCardDetailDto ToDetail(HKCard c, IReadOnlyList<HKCardVersionDto>? versions = null) => new(
         c.Id, c.Code, c.Version, c.Status, c.ObjectLevel,
         c.BranchId, c.Branch?.Name,
         c.ComplexId, c.EquipmentModelId, c.AggregateId, c.NodeId,
@@ -122,7 +128,9 @@ public static class HKCardMapper
         c.AuthorId, c.ReviewerId,
         c.ApprovedDate, c.EffectiveDate, c.ExpirationDate,
         c.CreatedAt, c.UpdatedAt, c.RowVersion,
-        c.Items.Select(ToItemDto).ToList());
+        c.SupersedesHKCardId,
+        c.Items.Select(ToItemDto).ToList(),
+        versions ?? Array.Empty<HKCardVersionDto>());
 
     private static HKCardItemDto ToItemDto(HKCardItem i) =>
         new(

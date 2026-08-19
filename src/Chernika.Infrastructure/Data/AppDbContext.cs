@@ -256,6 +256,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasOne(x => x.SupersedesHKCard).WithMany(x => x.SupersededBy)
                 .HasForeignKey(x => x.SupersedesHKCardId)
                 .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.SupersedesHKCardId)
+                .HasDatabaseName("IX_HKCards_SupersedesHKCardId");
             e.HasIndex(x => new { x.Code, x.Version }).IsUnique();
             e.HasIndex(x => x.NodeId)
                 .HasDatabaseName("UX_HKCards_OneActivePerNode")

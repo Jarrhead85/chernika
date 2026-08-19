@@ -59,11 +59,13 @@ public class HKCardsController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [Authorize(Policy = "ViewHK")]
     public async Task<ActionResult<HKCardDetailDto>> GetById(Guid id)
     {
         var card = await _hkCards.GetByIdAsync(id);
         if (card == null) return NotFound();
-        return Ok(HKCardMapper.ToDetail(card));
+        var versions = await _hkCards.GetVersionsAsync(id);
+        return Ok(HKCardMapper.ToDetail(card, versions));
     }
 
     [HttpPost]
@@ -385,6 +387,44 @@ public class HKCardsController : ControllerBase
         await _db.SaveChangesAsync();
         await _fileStorage.DeleteAsync(storageKey);
 
+        return NoContent();
+    }
+
+    [HttpPost("{id}/versions")]
+    [Authorize(Policy = "CreateHK")]
+    public async Task<ActionResult<CreateNewHKCardVersionResponse>> CreateNewVersion(Guid id)
+    {
+        try
+        {
+            var (success, newCardId, error) = await _hkCards.CreateNewVersionAsync(id);
+            if (!success || !newCardId.HasValue)
+                return BadRequest(error ?? "Не удалось создать новую версию.");
+
+            var loaded = await _hkCards.GetByIdAsync(newCardId.Value);
+            return CreatedAtAction(nameof(GetById), new { id = newCardId.Value },
+                new CreateNewHKCardVersionResponse(newCardId.Value));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
+    [HttpGet("{id}/versions")]
+    [Authorize(Policy = "ViewHK")]
+    public async Task<ActionResult<IReadOnlyList<HKCardVersionDto>>> GetVersions(Guid id)
+    {
+        var versions = await _hkCards.GetVersionsAsync(id);
+        return Ok(versions);
+    }
+
+    [HttpPost("{id}/archive")]
+    [Authorize(Policy = "ArchiveHK")]
+    public async Task<ActionResult> Archive(Guid id, [FromBody] ArchiveHKCardRequest request)
+    {
+        var (success, error) = await _hkCards.ArchiveAsync(id, request.ReplacementCardId, request.Reason);
+        if (!success)
+            return BadRequest(error ?? "Не удалось заархивировать ХК.");
         return NoContent();
     }
 

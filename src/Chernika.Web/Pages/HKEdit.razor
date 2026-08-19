@@ -642,9 +642,13 @@
                                 <button type="button" class="btn primary" @onclick="ApproveCard">✓ Утвердить</button>
                                 <button type="button" class="btn ghost" @onclick="ReturnForRevision">↩ Вернуть на доработку</button>
                             }
+                            @if (card.Status == HKCardStatus.Approved && canCreateNewVersion)
+                            {
+                                <button type="button" class="btn" @onclick="CreateNewVersion">Создать новую версию</button>
+                            }
                             @if (card.Status == HKCardStatus.Approved && canArchive)
                             {
-                                <button type="button" class="btn ghost" @onclick="ArchiveCard">В архив</button>
+                                <button type="button" class="btn ghost" @onclick="OpenArchiveModal">В архив</button>
                             }
                         </div>
                         <div class="hk-form-actions-buttons">
@@ -735,6 +739,43 @@
     </div>
 }
 
+@if (_showArchiveModal)
+{
+    <div class="modalOverlay" @onclick="CloseArchiveModal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="archive-title" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3 id="archive-title">Архивирование ХК</h3>
+                <button type="button" class="linkBtn" @onclick="CloseArchiveModal">✕</button>
+            </div>
+            <div class="modalBody">
+                <p>ХК «@card.Code», версия @card.Version, будет переведена в статус «Архивная».</p>
+                <div class="field">
+                    <label>Заменяющая утверждённая ХК <span style="color:var(--bad)">*</span></label>
+                    <select class="field-select" @bind="_archiveReplacementCardId" style="width:100%">
+                        <option value="@Guid.Empty">— выберите —</option>
+                        @foreach (var v in _versions.Where(v => v.Id != card.Id && v.Status == HKCardStatus.Approved).OrderBy(v => v.Version))
+                        {
+                            <option value="@v.Id">@v.Version (@v.Status)</option>
+                        }
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Причина архивирования <span style="color:var(--bad)">*</span></label>
+                    <textarea @bind="_archiveReason" rows="3" style="width:100%;resize:vertical;padding:8px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:14px" placeholder="Укажите причину…"></textarea>
+                </div>
+                @if (!string.IsNullOrEmpty(_archiveError))
+                {
+                    <div style="color:var(--bad);font-size:13px;margin-top:6px">@_archiveError</div>
+                }
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="CloseArchiveModal">Отмена</button>
+                <button type="button" class="btn primary" @onclick="ConfirmArchiveAsync" disabled="@(string.IsNullOrWhiteSpace(_archiveReason) || _archiveReplacementCardId == Guid.Empty)">Архивировать</button>
+            </div>
+        </div>
+    </div>
+}
+
 @if (_previewOpen && IsNew && _pendingFile != null)
 {
     <div class="modalOverlay" @onclick="ClosePendingPreview">
@@ -787,11 +828,18 @@
     private bool canApprove;
     private bool canReturn;
     private bool canArchive;
+    private bool canCreateNewVersion;
     private string currentUserId = "";
     private string? errorMessage;
     private bool showReturnModal;
     private string returnComment = string.Empty;
     private string? returnCommentError;
+
+    private IReadOnlyList<HKCardVersionDto> _versions = new List<HKCardVersionDto>();
+    private bool _showArchiveModal;
+    private Guid _archiveReplacementCardId;
+    private string _archiveReason = string.Empty;
+    private string? _archiveError;
 
     private List<GsmMaterial> gsmMaterials = new();
     private Guid? _focusItemId;
@@ -894,6 +942,10 @@
         canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
         canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
         canArchive = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKArchive);
+        canCreateNewVersion = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
 
         complexes = await EquipmentService.GetComplexesAsync();
         models = await EquipmentService.GetModelsAsync();
@@ -1034,6 +1086,7 @@
             }
 
             card = existing;
+            _versions = await HKCardService.GetVersionsAsync(cardId, ct);
             selectedLevel = card.ObjectLevel;
             selectedComplexId = card.ComplexId ?? Guid.Empty;
             selectedModelId = card.EquipmentModelId ?? Guid.Empty;
@@ -1239,10 +1292,60 @@
         }
     }
 
-    private async Task ArchiveCard()
+    private void OpenArchiveModal()
     {
-        var (archived, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Archived, "Переведена в архив");
-        if (archived) card.Status = HKCardStatus.Archived;
+        _archiveReplacementCardId = _versions
+            .Where(v => v.Id != card.Id && v.Status == HKCardStatus.Approved)
+            .Select(v => (Guid?)v.Id)
+            .FirstOrDefault() ?? Guid.Empty;
+        _archiveReason = string.Empty;
+        _archiveError = null;
+        _showArchiveModal = true;
+    }
+
+    private void CloseArchiveModal()
+    {
+        _showArchiveModal = false;
+        _archiveReplacementCardId = Guid.Empty;
+        _archiveReason = string.Empty;
+        _archiveError = null;
+    }
+
+    private async Task ConfirmArchiveAsync()
+    {
+        var reason = _archiveReason?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            _archiveError = "Укажите причину архивирования.";
+            return;
+        }
+        if (_archiveReplacementCardId == Guid.Empty)
+        {
+            _archiveError = "Выберите заменяющую утверждённую ХК.";
+            return;
+        }
+
+        var (archived, error) = await HKCardService.ArchiveAsync(card.Id, _archiveReplacementCardId, reason);
+        if (!archived)
+        {
+            _archiveError = error ?? "Не удалось заархивировать ХК.";
+            return;
+        }
+
+        CloseArchiveModal();
+        await ReloadForRouteAsync();
+    }
+
+    private async Task CreateNewVersion()
+    {
+        errorMessage = null;
+        var (success, newCardId, error) = await HKCardService.CreateNewVersionAsync(card.Id);
+        if (!success || !newCardId.HasValue)
+        {
+            errorMessage = error ?? "Не удалось создать новую версию ХК.";
+            return;
+        }
+        Nav.NavigateTo($"/хк/{newCardId.Value}");
     }
 
     private async Task SaveCard()

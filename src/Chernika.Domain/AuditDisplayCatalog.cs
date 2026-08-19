@@ -48,6 +48,7 @@ public static class AuditDisplayCatalog
         ["Workflow.NoAssignee"] = new("Нет исполнителя в филиале", AuditSeverity.Warning),
         ["HK.ExpirationWarningCreated"] = new("Предупреждение об истечении срока ХК", AuditSeverity.Warning),
         ["HK.ExpiredArchived"] = new("ХК автоматически архивирована по истечении срока", AuditSeverity.Warning),
+        ["HKCard.NewVersionCreated"] = new("Создана новая версия ХК", AuditSeverity.Success),
     };
 
     private static readonly Dictionary<string, string> EntityTypes = new()

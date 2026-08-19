@@ -137,6 +137,7 @@
                                         <td>
                                             <div class="rowActions">
                                                 <button class="linkBtn" @onclick="() => GoToEdit(card.Id)" @onclick:stopPropagation="true">Открыть</button>
+                                                @if (CanCreateNewVersion(card)) { <button class="linkBtn" @onclick="() => CreateNewVersion(card.Id)" @onclick:stopPropagation="true">Новая версия</button> }
                                                 @if (CanDeleteCard(card)) { <button class="linkBtn" @onclick="() => DeleteCard(card.Id)" @onclick:stopPropagation="true">Удалить</button> }
                                             </div>
                                         </td>
@@ -250,6 +251,7 @@
     private bool canApprove;
     private bool canVerify;
     private bool canReturn;
+    private bool canCreateNewVersion;
     private string userBranchId = "";
     private string currentUserId = "";
     private readonly HashSet<HKCardStatus> _deletableStatuses = new();
@@ -280,6 +282,10 @@
         canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
         canVerify = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
         canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
+        canCreateNewVersion = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate)
+            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
         canSystemConfig = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
 
         var checks = new (HKCardStatus Status, string PermissionCode)[]
@@ -370,6 +376,23 @@
         if (!_deletableStatuses.Contains(card.Status)) return false;
         if (canSystemConfig) return true;
         return card.BranchId.ToString() == userBranchId;
+    }
+
+    private bool CanCreateNewVersion(HKCardListItemDto card)
+    {
+        if (!canCreateNewVersion) return false;
+        if (card.Status is not (HKCardStatus.Approved or HKCardStatus.Archived)) return false;
+        if (canSystemConfig) return true;
+        return card.BranchId.ToString() == userBranchId;
+    }
+
+    private async Task CreateNewVersion(Guid id)
+    {
+        var (success, newCardId, error) = await HKCardService.CreateNewVersionAsync(id);
+        if (success && newCardId.HasValue)
+        {
+            Nav.NavigateTo($"/хк/{newCardId.Value}");
+        }
     }
 
     private void OpenDeleteDialog(HKCardListItemDto card)

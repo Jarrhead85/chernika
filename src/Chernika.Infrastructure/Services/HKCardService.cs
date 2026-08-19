@@ -280,6 +280,46 @@ public class HKCardService
             .Include(x => x.StatusLog.OrderByDescending(s => s.ChangedAt))
             .FirstOrDefaultAsync(x => x.Id == id, ct);
     }
+    public async Task<IReadOnlyList<HKCardVersionDto>> GetVersionsAsync(Guid id, CancellationToken ct = default)
+    {
+        var card = await _db.HKCards
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id && x.Status != HKCardStatus.Deleted, ct);
+
+        if (card is null)
+            return Array.Empty<HKCardVersionDto>();
+
+        var accessibleBranchId = await GetAccessibleBranchIdAsync(card.BranchId, ct);
+
+        var query = _db.HKCards
+            .AsNoTracking()
+            .Where(x =>
+                x.Status != HKCardStatus.Deleted &&
+                x.Code == card.Code &&
+                x.ObjectLevel == card.ObjectLevel &&
+                x.ComplexId == card.ComplexId &&
+                x.EquipmentModelId == card.EquipmentModelId &&
+                x.AggregateId == card.AggregateId &&
+                x.NodeId == card.NodeId);
+
+        if (accessibleBranchId.HasValue)
+            query = query.Where(x => x.BranchId == accessibleBranchId.Value);
+
+        return await query
+            .OrderByDescending(x => x.CreatedAt)
+            .ThenByDescending(x => x.Version)
+            .Select(x => new HKCardVersionDto
+            {
+                Id = x.Id,
+                Version = x.Version,
+                Status = x.Status,
+                ApprovedDate = x.ApprovedDate,
+                CreatedAt = x.CreatedAt,
+                IsCurrent = x.Id == id,
+                SupersedesHKCardId = x.SupersedesHKCardId
+            })
+            .ToListAsync(ct);
+    }
 
     public async Task<HKCardComponent> AddComponentAsync(Guid parentCardId, Guid childCardId, CancellationToken ct = default)
     {
@@ -1003,7 +1043,17 @@ public class HKCardService
             {
                 await ApplyWorkflowTasksAsync(card, newStatus, actorId, comment, ct);
                 if (newStatus == HKCardStatus.Approved)
-                    await ArchivePreviousApprovedVersionsAsync(card, actorId, ct);
+                {
+                    if (card.SupersedesHKCardId.HasValue)
+                    {
+                        if (!await ArchiveSupersededCardAsync(card, actorId, ct))
+                            return (false, "Не удалось заархивировать заменяемую ХК. Проверьте статус и связь версий.");
+                    }
+                    else
+                    {
+                        await ArchivePreviousApprovedVersionsAsync(card, actorId, ct);
+                    }
+                }
                 await _db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
             }
@@ -1092,6 +1142,309 @@ public class HKCardService
             return (false, "Нельзя удалить ХК другого филиала.");
 
         return await ChangeStatusAsync(id, HKCardStatus.Deleted, reason, ct);
+    }
+
+    public async Task<(bool Success, Guid? NewCardId, string? Error)> CreateNewVersionAsync(Guid sourceCardId, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var actor = await _userManager.FindByIdAsync(actorId.ToString());
+        if (actor == null)
+            return (false, null, "Пользователь не найден.");
+
+        var source = await _db.HKCards
+            .AsSplitQuery()
+            .Include(x => x.Items).ThenInclude(i => i.Materials)
+            .Include(x => x.ParentComponents)
+            .Include(x => x.MilitaryBranches)
+            .FirstOrDefaultAsync(x => x.Id == sourceCardId, ct);
+
+        if (source == null || source.Status == HKCardStatus.Deleted)
+            return (false, null, "Исходная ХК не найдена или удалена.");
+
+        if (source.Status is not (HKCardStatus.Approved or HKCardStatus.Archived))
+            return (false, null, "Новую версию можно создать только из утверждённой или архивной ХК.");
+
+        var isSystemAdmin = await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig);
+        if (!isSystemAdmin && actor.BranchId != source.BranchId)
+            return (false, null, "Нельзя создать версию для ХК другого филиала.");
+
+        var createPerm = source.ObjectLevel switch
+        {
+            Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeCreate,
+            Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateCreate,
+            Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentCreate,
+            Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexCreate,
+            _ => null
+        };
+        if (createPerm == null || !await _permissions.HasPermissionAsync(actorId.ToString(), createPerm))
+            return (false, null, "Недостаточно прав для создания новой версии ХК.");
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var newCard = new HKCard
+        {
+            Id = Guid.NewGuid(),
+            Status = HKCardStatus.Draft,
+            SupersedesHKCardId = source.Id,
+            ObjectLevel = source.ObjectLevel,
+            ComplexId = source.ComplexId,
+            EquipmentModelId = source.EquipmentModelId,
+            AggregateId = source.AggregateId,
+            NodeId = source.NodeId,
+            BranchId = source.BranchId,
+            AuthorId = actorId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Code = source.Code,
+            Version = await GenerateUniqueVersionAsync(source.Code, ct),
+            Purpose = source.Purpose,
+            NormativeBasis = source.NormativeBasis,
+            Notes = source.Notes,
+            RequestOrganization = source.RequestOrganization,
+            RequestSenderFullName = source.RequestSenderFullName,
+            RequestReceivedDate = source.RequestReceivedDate,
+            RequestDetails = source.RequestDetails,
+            IncomingLetterNumber = source.IncomingLetterNumber,
+            OutgoingLetterNumber = source.OutgoingLetterNumber,
+            EffectiveDate = source.EffectiveDate,
+            ExpirationDate = source.ExpirationDate,
+        };
+
+        await EnsureNoActiveDuplicateAsync(newCard, ct);
+
+        foreach (var sourceItem in source.Items.OrderBy(i => i.SortOrder))
+        {
+            var newItem = new HKCardItem
+            {
+                Id = Guid.NewGuid(),
+                HKCardId = newCard.Id,
+                AssemblyUnitId = sourceItem.AssemblyUnitId,
+                Quantity = sourceItem.Quantity,
+                Volume = sourceItem.Volume,
+                UnitOfMeasure = sourceItem.UnitOfMeasure,
+                Periodicity = sourceItem.Periodicity,
+                Notes = sourceItem.Notes,
+                SortOrder = sourceItem.SortOrder,
+                Materials = sourceItem.Materials.Select(m => new HKCardItemMaterial
+                {
+                    Id = Guid.NewGuid(),
+                    GsmMaterialId = m.GsmMaterialId,
+                    Category = m.Category
+                }).ToList()
+            };
+            newCard.Items.Add(newItem);
+        }
+
+        foreach (var sourceComponent in source.ParentComponents.OrderBy(c => c.SortOrder))
+        {
+            newCard.ParentComponents.Add(new HKCardComponent
+            {
+                Id = Guid.NewGuid(),
+                ParentHKCardId = newCard.Id,
+                ChildHKCardId = sourceComponent.ChildHKCardId,
+                SortOrder = sourceComponent.SortOrder,
+                AddedAt = sourceComponent.AddedAt,
+                AddedByUserId = sourceComponent.AddedByUserId,
+                ChildCode = sourceComponent.ChildCode,
+                ChildVersion = sourceComponent.ChildVersion,
+                ChildApprovedAt = sourceComponent.ChildApprovedAt
+            });
+        }
+
+        foreach (var sourceMb in source.MilitaryBranches)
+        {
+            newCard.MilitaryBranches.Add(new HKCardMilitaryBranch
+            {
+                HKCardId = newCard.Id,
+                MilitaryBranchId = sourceMb.MilitaryBranchId
+            });
+        }
+
+        _db.HKCards.Add(newCard);
+
+        _db.HKCardStatusLogs.Add(new HKCardStatusLog
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = newCard.Id,
+            FromStatus = HKCardStatus.Draft,
+            ToStatus = HKCardStatus.Draft,
+            ChangedByUserId = actorId,
+            Comment = $"Создана новая версия на основе {source.Code} {source.Version}",
+            ChangedAt = now
+        });
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "HKCard",
+            newCard.Id.ToString(),
+            "HKCard.NewVersionCreated",
+            actorId,
+            EntityDisplayName: $"{newCard.Code} v{newCard.Version}",
+            Details: $"Создана новая версия ХК на основе {source.Code} {source.Version} (Id {source.Id}). Новая карта: {newCard.Code} {newCard.Version} (Id {newCard.Id})."), ct);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex)
+            when (ex.InnerException is PostgresException pg && pg.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            throw new InvalidOperationException("Не удалось создать новую версию: нарушено ограничение уникальности.");
+        }
+
+        return (true, newCard.Id, null);
+    }
+
+    public async Task<(bool Success, string? Error)> ArchiveAsync(Guid id, Guid replacementCardId, string reason, CancellationToken ct = default)
+    {
+        reason = reason?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(reason))
+            return (false, "Укажите причину архивирования.");
+
+        if (id == replacementCardId)
+            return (false, "Заменяющая ХК не может совпадать с архивируемой.");
+
+        var actorId = _currentUser.GetRequiredUserId();
+        var actor = await _userManager.FindByIdAsync(actorId.ToString());
+        if (actor == null)
+            return (false, "Пользователь не найден.");
+
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKArchive))
+            return (false, "Недостаточно прав для ручного архивирования ХК.");
+
+        var card = await _db.HKCards.FindAsync(id, ct);
+        if (card == null || card.Status == HKCardStatus.Deleted)
+            return (false, "ХК не найдена или удалена.");
+
+        if (card.Status != HKCardStatus.Approved)
+            return (false, "Ручное архивирование доступно только для утверждённой ХК.");
+
+        var isSystemAdmin = await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig);
+        if (!isSystemAdmin && actor.BranchId != card.BranchId)
+            return (false, "Нельзя архивировать ХК другого филиала.");
+
+        var replacement = await _db.HKCards.FindAsync(replacementCardId, ct);
+        if (replacement == null || replacement.Status == HKCardStatus.Deleted)
+            return (false, "Заменяющая ХК не найдена или удалена.");
+
+        if (replacement.Status != HKCardStatus.Approved)
+            return (false, "Заменяющая ХК должна быть утверждена.");
+
+        if (replacement.BranchId != card.BranchId)
+            return (false, "Заменяющая ХК должна принадлежать тому же филиалу.");
+
+        if (replacement.ObjectLevel != card.ObjectLevel ||
+            replacement.ComplexId != card.ComplexId ||
+            replacement.EquipmentModelId != card.EquipmentModelId ||
+            replacement.AggregateId != card.AggregateId ||
+            replacement.NodeId != card.NodeId)
+        {
+            return (false, "Заменяющая ХК должна относиться к тому же нормативному объекту.");
+        }
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        if (replacement.EffectiveDate.HasValue && replacement.EffectiveDate.Value > now)
+            return (false, "Заменяющая ХК ещё не вступила в силу.");
+        if (replacement.ExpirationDate.HasValue && replacement.ExpirationDate.Value < now)
+            return (false, "Срок действия заменяющей ХК истёк.");
+
+        ArchiveCardInternal(card, replacement, actorId, reason, now);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return (false, "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
+
+        return (true, null);
+    }
+
+    private async Task<string> GenerateUniqueVersionAsync(string code, CancellationToken ct)
+    {
+        var baseVersion = "v" + _time.GetUtcNow().UtcDateTime.ToString("MMyy");
+        var existing = await _db.HKCards
+            .IgnoreQueryFilters()
+            .Where(c => c.Code == code && c.Version.StartsWith(baseVersion))
+            .Select(c => c.Version)
+            .ToListAsync(ct);
+
+        if (existing.Count == 0)
+            return baseVersion;
+
+        var maxSuffix = existing
+            .Select(v =>
+            {
+                var suffix = v.Length > baseVersion.Length + 1 ? v[(baseVersion.Length + 1)..] : string.Empty;
+                return int.TryParse(suffix, out var n) ? n : 0;
+            })
+            .DefaultIfEmpty(0)
+            .Max();
+
+        return maxSuffix == 0 ? $"{baseVersion}.2" : $"{baseVersion}.{maxSuffix + 1}";
+    }
+
+    private void ArchiveCardInternal(HKCard card, HKCard replacement, Guid actorUserId, string reason, DateTime now)
+    {
+        var oldStatus = card.Status;
+        card.Status = HKCardStatus.Archived;
+        card.UpdatedAt = now;
+
+        _db.HKCardStatusLogs.Add(new HKCardStatusLog
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = card.Id,
+            FromStatus = oldStatus,
+            ToStatus = HKCardStatus.Archived,
+            ChangedByUserId = actorUserId,
+            Comment = reason,
+            ChangedAt = now
+        });
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            EntityType = "HKCard",
+            EntityId = card.Id.ToString(),
+            Action = $"Status:{HKCardStatus.Archived}",
+            UserId = actorUserId,
+            CreatedAt = now,
+            Details = $"{reason} Заменяющая карта: {replacement.Code} {replacement.Version}."
+        });
+    }
+
+    private async Task<bool> ArchiveSupersededCardAsync(HKCard newCard, Guid actorUserId, CancellationToken ct)
+    {
+        if (!newCard.SupersedesHKCardId.HasValue)
+            return true;
+
+        var superseded = await _db.HKCards
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Id == newCard.SupersedesHKCardId.Value, ct);
+
+        if (superseded == null || superseded.Status == HKCardStatus.Deleted)
+            return false;
+
+        if (superseded.ObjectLevel != newCard.ObjectLevel ||
+            superseded.ComplexId != newCard.ComplexId ||
+            superseded.EquipmentModelId != newCard.EquipmentModelId ||
+            superseded.AggregateId != newCard.AggregateId ||
+            superseded.NodeId != newCard.NodeId ||
+            superseded.BranchId != newCard.BranchId)
+        {
+            return false;
+        }
+
+        if (superseded.Status == HKCardStatus.Archived)
+            return true;
+
+        if (superseded.Status != HKCardStatus.Approved)
+            return false;
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var reason = $"Заменена утверждённой ХК {newCard.Code}, версия {newCard.Version}";
+        ArchiveCardInternal(superseded, newCard, actorUserId, reason, now);
+        return true;
     }
 
     private async Task ApplyWorkflowTasksAsync(HKCard card, HKCardStatus to, Guid actorUserId, string? comment, CancellationToken ct)
