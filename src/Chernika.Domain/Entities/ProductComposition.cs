@@ -25,5 +25,9 @@ public class ProductComposition
     /// <summary>True only for the current active approved composition. Not set from UI.</summary>
     public bool IsActive { get; set; }
 
+    public Guid? SupersedesProductCompositionId { get; set; }
+    public ProductComposition? SupersedesProductComposition { get; set; }
+    public ICollection<ProductComposition> SupersededByCompositions { get; set; } = new List<ProductComposition>();
+
     public ICollection<ProductCompositionPart> Parts { get; set; } = new List<ProductCompositionPart>();
 }

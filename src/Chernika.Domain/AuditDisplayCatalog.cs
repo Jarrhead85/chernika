@@ -49,6 +49,9 @@ public static class AuditDisplayCatalog
         ["HK.ExpirationWarningCreated"] = new("Предупреждение об истечении срока ХК", AuditSeverity.Warning),
         ["HK.ExpiredArchived"] = new("ХК автоматически архивирована по истечении срока", AuditSeverity.Warning),
         ["HKCard.NewVersionCreated"] = new("Создана новая версия ХК", AuditSeverity.Success),
+        ["ComplexComposition.NewVersionCreated"] = new("Создана новая версия состава комплекса", AuditSeverity.Success),
+        ["ProductComposition.NewVersionCreated"] = new("Создана новая версия состава изделия", AuditSeverity.Success),
+        ["AggregateComposition.NewVersionCreated"] = new("Создана новая версия состава агрегата", AuditSeverity.Success),
     };
 
     private static readonly Dictionary<string, string> EntityTypes = new()

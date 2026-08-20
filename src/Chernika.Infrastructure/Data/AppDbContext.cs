@@ -163,6 +163,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Comment).HasMaxLength(2000);
             e.HasOne(x => x.EquipmentModel).WithMany(x => x.ProductCompositions).HasForeignKey(x => x.EquipmentModelId);
+            e.HasOne(x => x.SupersedesProductComposition).WithMany(x => x.SupersededByCompositions)
+                .HasForeignKey(x => x.SupersedesProductCompositionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.SupersedesProductCompositionId)
+                .HasDatabaseName("IX_ProductCompositions_SupersedesProductCompositionId");
             e.HasIndex(x => new { x.EquipmentModelId, x.Status });
             e.HasIndex(x => new { x.Status, x.EffectiveDate });
             e.HasIndex(x => new { x.EquipmentModelId, x.IsActive });
@@ -181,10 +186,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<ProductCompositionAggregate>(e =>
         {
             e.HasKey(x => x.Id);
+            e.HasOne(x => x.ProductComposition).WithMany().HasForeignKey(x => x.ProductCompositionId)
+                .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Part).WithMany(x => x.Aggregates).HasForeignKey(x => x.PartId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Aggregate).WithMany(x => x.ProductCompositionAggregates).HasForeignKey(x => x.AggregateId);
-            e.HasIndex(x => new { x.PartId, x.AggregateId }).IsUnique();
+            e.HasIndex(x => new { x.ProductCompositionId, x.AggregateId }).IsUnique();
         });
 
         modelBuilder.Entity<AggregateComposition>(e =>
@@ -194,6 +201,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Comment).HasMaxLength(2000);
             e.HasOne(x => x.Aggregate).WithMany(x => x.AggregateCompositions).HasForeignKey(x => x.AggregateId);
+            e.HasOne(x => x.SupersedesAggregateComposition).WithMany(x => x.SupersededByCompositions)
+                .HasForeignKey(x => x.SupersedesAggregateCompositionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.SupersedesAggregateCompositionId)
+                .HasDatabaseName("IX_AggregateCompositions_SupersedesAggregateCompositionId");
             e.HasIndex(x => new { x.AggregateId, x.Status });
             e.HasIndex(x => new { x.Status, x.EffectiveDate });
             e.HasIndex(x => new { x.AggregateId, x.IsActive });
@@ -215,6 +227,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Comment).HasMaxLength(2000);
             e.HasOne(x => x.Complex).WithMany(x => x.ComplexCompositions).HasForeignKey(x => x.ComplexId);
+            e.HasOne(x => x.SupersedesComplexComposition).WithMany(x => x.SupersededByCompositions)
+                .HasForeignKey(x => x.SupersedesComplexCompositionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.SupersedesComplexCompositionId)
+                .HasDatabaseName("IX_ComplexCompositions_SupersedesComplexCompositionId");
             e.HasIndex(x => new { x.ComplexId, x.Status });
             e.HasIndex(x => new { x.Status, x.EffectiveDate });
             e.HasIndex(x => new { x.ComplexId, x.IsActive });

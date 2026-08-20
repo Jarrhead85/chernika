@@ -1,0 +1,355 @@
+@page "/составы"
+@attribute [Authorize(Policy = "ViewComposition")]
+@using Chernika.Domain
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@inject EquipmentService EquipService
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Составы техники</h2>
+            <div class="hint">Комплексы • Изделия • Агрегаты</div>
+        </div>
+        <div class="panelBody">
+            <div class="btnRow" style="margin-bottom:2px">
+                <button class="btn @(tab == 0 ? "primary" : "ghost")" @onclick="() => SetTab(0)">Комплексы</button>
+                <button class="btn @(tab == 1 ? "primary" : "ghost")" @onclick="() => SetTab(1)">Изделия</button>
+                <button class="btn @(tab == 2 ? "primary" : "ghost")" @onclick="() => SetTab(2)">Агрегаты</button>
+            </div>
+            <div class="form">
+                <div class="field" style="max-width:300px"><label>Поиск</label><input @bind="search" placeholder="Код или наименование..." class="field-input" /></div>
+                <div class="field"><label>Статус</label>
+                    <select @bind="statusFilter" class="field-select">
+                        <option value="">Все</option>
+                        <option value="Draft">Черновик</option>
+                        <option value="OnReview">На проверке</option>
+                        <option value="Approved">Утверждён</option>
+                        <option value="Archived">Архивный</option>
+                    </select>
+                </div>
+            </div>
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <div class="note warn">@error</div>
+            }
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>@TabTitle</h2>
+            <div class="hint">@FilteredObjects.Count записей</div>
+        </div>
+        <div class="panelBody">
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!FilteredObjects.Any())
+            {
+                <div class="empty-state">Нет записей по заданным условиям.</div>
+            }
+            else
+            {
+                <div class="tableWrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Код</th>
+                            <th>Наименование</th>
+                            <th>Текущая версия</th>
+                            <th>Статус</th>
+                            <th>Действует с</th>
+                            <th>Обновлено</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in FilteredObjects)
+                        {
+                            var current = CurrentFor(item);
+                            var canCreateVersion = current != null
+                                && (current.Status == ProductCompositionStatus.Approved || current.Status == ProductCompositionStatus.Archived)
+                                && CanCreateVersion(tab);
+                            <tr>
+                                <td class="mono">@item.Code</td>
+                                <td>@item.Name</td>
+                                <td class="mono">@(current?.Version ?? "—")</td>
+                                <td>
+                                    @if (current != null)
+                                    {
+                                        <span class="tag @StatusTag(current.Status)">@StatusLabel(current.Status)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="tag">Нет состава</span>
+                                    }
+                                </td>
+                                <td class="mono">@(current?.EffectiveDate?.ToString("dd.MM.yyyy") ?? "—")</td>
+                                <td class="mono">@(current?.UpdatedAt.ToString("dd.MM.yyyy HH:mm") ?? "—")</td>
+                                <td>
+                                    <div class="rowActions">
+                                        @if (current != null)
+                                        {
+                                            <a class="linkBtn" href="@VersionUrl(item, current.Id)">Открыть</a>
+                                        }
+                                        @if (canCreateVersion)
+                                        {
+                                            <button class="linkBtn" @onclick="() => CreateVersion(item, current!)">↗ Версия</button>
+                                        }
+                                        @if (CanCreate(tab))
+                                        {
+                                            <button class="linkBtn" @onclick="() => CreateComposition(item)">Создать состав</button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private int tab;
+    private string statusFilter = "";
+    private string search = "";
+    private bool loading = true;
+    private bool canCreateComplex;
+    private bool canCreateModel;
+    private bool canCreateAggregate;
+    private bool canCreateVersionComplex;
+    private bool canCreateVersionModel;
+    private bool canCreateVersionAggregate;
+    private string? error;
+    private CancellationTokenSource? _loadCts;
+
+    private List<Complex> complexes = new();
+    private List<ComplexComposition> complexCompositions = new();
+    private List<EquipmentModel> models = new();
+    private List<ProductComposition> productCompositions = new();
+    private List<Aggregate> aggregates = new();
+    private List<AggregateComposition> aggregateCompositions = new();
+
+    private string TabTitle => tab switch
+    {
+        0 => "Составы комплексов",
+        1 => "Составы изделий",
+        _ => "Составы агрегатов"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canCreateComplex = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreate);
+        canCreateModel = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreate);
+        canCreateAggregate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreate);
+        canCreateVersionComplex = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion);
+        canCreateVersionModel = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion);
+        canCreateVersionAggregate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion);
+        _loadCts = new CancellationTokenSource();
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            complexes = await EquipService.GetComplexesAsync();
+            complexCompositions = await EquipService.GetAllComplexCompositionsLightAsync(ct);
+            models = await EquipService.GetModelsAsync();
+            productCompositions = await EquipService.GetAllProductCompositionsLightAsync(ct);
+            aggregates = await EquipService.GetAggregatesAsync();
+            aggregateCompositions = await EquipService.GetAllAggregateCompositionsLightAsync(ct);
+            loading = false;
+        }
+    }
+
+    private void SetTab(int t)
+    {
+        tab = t;
+        error = null;
+    }
+
+    private bool CanCreate(int t) => t switch
+    {
+        0 => canCreateComplex,
+        1 => canCreateModel,
+        _ => canCreateAggregate
+    };
+
+    private bool CanCreateVersion(int t) => t switch
+    {
+        0 => canCreateVersionComplex,
+        1 => canCreateVersionModel,
+        _ => canCreateVersionAggregate
+    };
+
+    private sealed record ObjectRow(Guid Id, string Code, string Name);
+
+    private List<ObjectRow> FilteredObjects
+    {
+        get
+        {
+            IEnumerable<ObjectRow> source = tab switch
+            {
+                0 => complexes.OrderBy(c => c.Code).Select(c => new ObjectRow(c.Id, c.Code, c.Name)),
+                1 => models.OrderBy(m => m.Index).Select(m => new ObjectRow(m.Id, $"{m.Index}", string.IsNullOrWhiteSpace($"{m.Name}") ? "" : m.Name)),
+                _ => aggregates.OrderBy(a => a.Code).Select(a => new ObjectRow(a.Id, a.Code, a.Name))
+            };
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim();
+                source = source.Where(r => (r.Code?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (r.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            if (!string.IsNullOrEmpty(statusFilter))
+            {
+                source = source.Where(r => CurrentFor(r)?.Status.ToString() == statusFilter);
+            }
+
+            return source.ToList();
+        }
+    }
+
+    private ProductCompositionStatus? CurrentStatus(ObjectRow item) => CurrentFor(item)?.Status;
+
+    private CompositionVersionSummary? CurrentFor(ObjectRow item) => tab switch
+    {
+        0 => complexCompositions.Where(x => x.ComplexId == item.Id)
+            .OrderByDescending(x => x.IsActive).ThenByDescending(x => x.CreatedAt)
+            .Select(ToComplexSummary).FirstOrDefault(),
+        1 => productCompositions.Where(x => x.EquipmentModelId == item.Id)
+            .OrderByDescending(x => x.IsActive).ThenByDescending(x => x.CreatedAt)
+            .Select(ToProductSummary).FirstOrDefault(),
+        _ => aggregateCompositions.Where(x => x.AggregateId == item.Id)
+            .OrderByDescending(x => x.IsActive).ThenByDescending(x => x.CreatedAt)
+            .Select(ToAggregateSummary).FirstOrDefault()
+    };
+
+    private static CompositionVersionSummary ToComplexSummary(ComplexComposition c) =>
+        new(c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.UpdatedAt, c.EffectiveDate, c.ExpirationDate, c.ApprovedAt, c.Comment, c.SupersedesComplexCompositionId);
+
+    private static CompositionVersionSummary ToProductSummary(ProductComposition p) =>
+        new(p.Id, p.EquipmentModelId, p.Version, p.Status, p.CreatedAt, p.UpdatedAt, p.EffectiveDate, p.ExpirationDate, p.ApprovedAt, p.Comment, p.SupersedesProductCompositionId);
+
+    private static CompositionVersionSummary ToAggregateSummary(AggregateComposition a) =>
+        new(a.Id, a.AggregateId, a.Version, a.Status, a.CreatedAt, a.UpdatedAt, a.EffectiveDate, a.ExpirationDate, a.ApprovedAt, a.Comment, a.SupersedesAggregateCompositionId);
+
+    private string VersionUrl(ObjectRow item, Guid compositionId) => tab switch
+    {
+        0 => $"/составы/комплексы/{item.Id}/версии/{compositionId}",
+        1 => $"/составы/изделия/{item.Id}/версии/{compositionId}",
+        _ => $"/составы/агрегаты/{item.Id}/версии/{compositionId}"
+    };
+
+    private async Task CreateVersion(ObjectRow item, CompositionVersionSummary current)
+    {
+        error = null;
+        try
+        {
+            switch (tab)
+            {
+                case 0:
+                    var complexResult = await EquipService.CreateComplexCompositionVersionAsync(current.Id);
+                    if (complexResult.Success && complexResult.CompositionId.HasValue)
+                        Nav.NavigateTo($"/составы/комплексы/{item.Id}/версии/{complexResult.CompositionId}", forceLoad: true);
+                    else
+                        error = complexResult.Error ?? "Не удалось создать версию.";
+                    break;
+                case 1:
+                    var modelResult = await EquipService.CreateProductCompositionVersionAsync(current.Id);
+                    if (modelResult.Success && modelResult.CompositionId.HasValue)
+                        Nav.NavigateTo($"/составы/изделия/{item.Id}/версии/{modelResult.CompositionId}", forceLoad: true);
+                    else
+                        error = modelResult.Error ?? "Не удалось создать версию.";
+                    break;
+                default:
+                    var aggregateResult = await EquipService.CreateAggregateCompositionVersionAsync(current.Id);
+                    if (aggregateResult.Success && aggregateResult.CompositionId.HasValue)
+                        Nav.NavigateTo($"/составы/агрегаты/{item.Id}/версии/{aggregateResult.CompositionId}", forceLoad: true);
+                    else
+                        error = aggregateResult.Error ?? "Не удалось создать версию.";
+                    break;
+            }
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            error = $"Ошибка: {ex.Message}";
+        }
+    }
+
+    private async Task CreateComposition(ObjectRow item)
+    {
+        error = null;
+        try
+        {
+            switch (tab)
+            {
+                case 0:
+                    var cc = await EquipService.CreateComplexCompositionAsync(new CreateComplexCompositionRequest(item.Id, null));
+                    Nav.NavigateTo($"/составы/комплексы/{item.Id}/версии/{cc.Id}", forceLoad: true);
+                    break;
+                case 1:
+                    var pc = await EquipService.CreateCompositionDraftAsync(new CreateCompositionRequest(item.Id, null));
+                    Nav.NavigateTo($"/составы/изделия/{item.Id}/версии/{pc.Id}", forceLoad: true);
+                    break;
+                default:
+                    var ac = await EquipService.CreateAggregateCompositionAsync(new CreateAggregateCompositionRequest(item.Id, null));
+                    Nav.NavigateTo($"/составы/агрегаты/{item.Id}/версии/{ac.Id}", forceLoad: true);
+                    break;
+            }
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            error = $"Ошибка: {ex.Message}";
+        }
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
+
+    private static string StatusLabel(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "Черновик",
+        ProductCompositionStatus.OnReview => "На проверке",
+        ProductCompositionStatus.Approved => "Утверждён",
+        ProductCompositionStatus.Archived => "Архивный",
+        _ => status.ToString()
+    };
+
+    private static string StatusTag(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "warn",
+        ProductCompositionStatus.OnReview => "warn",
+        ProductCompositionStatus.Approved => "ok",
+        ProductCompositionStatus.Archived => "",
+        _ => ""
+    };
+}

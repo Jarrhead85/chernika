@@ -25,15 +25,9 @@
                 <span>Реестр ХК</span>
                 @*<span class="badge">Ctrl+1</span>*@
             </a>
-            <a class="@GetActive("состав-изделия")" href="состав-изделия">
-                <span>Состав изделия</span>
-                @*<span class="badge">Ctrl+2</span>*@
-            </a>
-            <a class="@GetActive("состав-агрегата")" href="состав-агрегата">
-                <span>Состав агрегата</span>
-            </a>
-            <a class="@GetActive("состав-комплекса")" href="состав-комплекса">
-                <span>Состав комплекса</span>
+            <a class="@GetCompositionsActive()" href="составы">
+                <span>Составы техники</span>
+                @*<span class="badge">Ctrl+3</span>*@
             </a>
             <a class="@GetActive("инд-карты")" href="инд-карты">
                 <span>Индивидуальная карта</span>
@@ -445,6 +439,18 @@
         return relative.Equals("справочники", StringComparison.OrdinalIgnoreCase)
             || relative.StartsWith("справочники/", StringComparison.OrdinalIgnoreCase)
             || relative.StartsWith("справочник-", StringComparison.OrdinalIgnoreCase)
+            ? "active"
+            : "";
+    }
+
+    private string GetCompositionsActive()
+    {
+        var relative = Nav.ToBaseRelativePath(Nav.Uri).TrimStart('/');
+        return relative.Equals("составы", StringComparison.OrdinalIgnoreCase)
+            || relative.StartsWith("составы/", StringComparison.OrdinalIgnoreCase)
+            || relative.Equals("состав-изделия", StringComparison.OrdinalIgnoreCase)
+            || relative.Equals("состав-агрегата", StringComparison.OrdinalIgnoreCase)
+            || relative.Equals("состав-комплекса", StringComparison.OrdinalIgnoreCase)
             ? "active"
             : "";
     }

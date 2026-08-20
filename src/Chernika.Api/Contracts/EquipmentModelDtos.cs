@@ -40,7 +40,8 @@ public record ProductCompositionPartDto(
 
 public record ProductCompositionAggregateDto(
     Guid Id,
-    Guid PartId,
+    Guid ProductCompositionId,
+    Guid? PartId,
     Guid AggregateId,
     int Quantity,
     AggregateRefDto Aggregate);
@@ -93,7 +94,7 @@ public static class EquipmentModelMapper
         p.Aggregates.Select(ToAggregateDto).ToList());
 
     public static ProductCompositionAggregateDto ToAggregateDto(ProductCompositionAggregate a) => new(
-        a.Id, a.PartId, a.AggregateId, a.Quantity,
+        a.Id, a.ProductCompositionId, a.PartId, a.AggregateId, a.Quantity,
         new AggregateRefDto(a.Aggregate.Id, a.Aggregate.Code, a.Aggregate.Name, a.Aggregate.Description));
 
     public static EquipmentModel FromCreate(CreateEquipmentModelRequest r) => new()

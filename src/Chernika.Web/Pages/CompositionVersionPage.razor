@@ -1,0 +1,440 @@
+@page "/составы/комплексы/{complexId:guid}/версии/{compositionId:guid}"
+@page "/составы/изделия/{equipmentModelId:guid}/версии/{compositionId:guid}"
+@page "/составы/агрегаты/{aggregateId:guid}/версии/{compositionId:guid}"
+@attribute [Authorize(Policy = "ViewComposition")]
+@using Chernika.Domain
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@inject EquipmentService EquipService
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
+@inject CircuitDbLock DbLock
+@using Chernika.Web.Services
+@implements IDisposable
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>@LevelTitle: @objectCode — версия <span class="mono">@(selected?.Version ?? "—")</span></h2>
+            <div class="hint">Только чтение</div>
+        </div>
+        <div class="panelBody">
+            <div class="btnRow">
+                @if (selected != null)
+                {
+                    <span class="tag @StatusTag(selected.Status)">@StatusLabel(selected.Status)</span>
+                }
+                @if (selected != null && string.IsNullOrEmpty(error))
+                {
+                    @if (selected.Status is ProductCompositionStatus.Approved or ProductCompositionStatus.Archived)
+                    {
+                        @if (canCreateVersion)
+                        {
+                            <button class="btn primary" @onclick="CreateVersion">↗ Создать версию</button>
+                        }
+                    }
+                    else if (selected.Status == ProductCompositionStatus.Draft)
+                    {
+                        <a class="btn" href="@EditorUrl">Редактировать</a>
+                    }
+                }
+                <a class="btn ghost" href="/составы">← К реестру составов</a>
+            </div>
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <div class="note warn" style="margin-top:10px">@error</div>
+            }
+        </div>
+    </section>
+
+    <div class="grid">
+        <div class="stack">
+            <section class="panel">
+                <div class="panelHeader">
+                    <h2>@LevelTitle: @objectCode</h2>
+                    <div class="hint">@objectName</div>
+                </div>
+                <div class="panelBody">
+                    @if (loading)
+                    {
+                        <div class="loading-state">Загрузка...</div>
+                    }
+                    else if (selected == null)
+                    {
+                        <div class="empty-state">Версия не найдена.</div>
+                    }
+                    else
+                    {
+                        @if (Level == 1)
+                        {
+                            @foreach (var part in selectedProductComposition!.Parts.OrderBy(p => p.SortOrder))
+                            {
+                                <div style="margin-bottom:10px">
+                                    <div class="hint" style="margin:6px 0;font-weight:700">@part.Name</div>
+                                    @if (!part.Aggregates.Any())
+                                    {
+                                        <div class="empty-state" style="padding:4px 0">Нет агрегатов</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="tableWrap">
+                                        <table>
+                                            <thead><tr><th>Код агрегата</th><th>Наименование</th><th>Количество</th></tr></thead>
+                                            <tbody>
+                                                @foreach (var a in part.Aggregates.OrderBy(x => x.Aggregate?.Code))
+                                                {
+                                                    <tr>
+                                                        <td class="mono">@a.Aggregate?.Code</td>
+                                                        <td>@a.Aggregate?.Name</td>
+                                                        <td>@a.Quantity</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            @if (!selectedProductComposition.Parts.Any())
+                            {
+                                <div class="empty-state">Нет составных частей.</div>
+                            }
+                        }
+                        else if (Level == 0)
+                        {
+                            @if (!selectedComplexComposition!.Items.Any())
+                            {
+                                <div class="empty-state">Нет моделей.</div>
+                            }
+                            else
+                            {
+                                <div class="tableWrap">
+                                <table>
+                                    <thead><tr><th>Индекс</th><th>Наименование</th><th>Количество</th><th>Примечание</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var item in selectedComplexComposition.Items.OrderBy(i => i.SortOrder))
+                                        {
+                                            <tr>
+                                                <td class="mono">@item.EquipmentModel?.Index</td>
+                                                <td>@item.EquipmentModel?.Name</td>
+                                                <td>@item.Quantity</td>
+                                                <td>@item.Notes</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                                </div>
+                            }
+                        }
+                        else if (Level == 2)
+                        {
+                            @if (!selectedAggregateComposition!.Nodes.Any())
+                            {
+                                <div class="empty-state">Нет узлов.</div>
+                            }
+                            else
+                            {
+                                <div class="tableWrap">
+                                <table>
+                                    <thead><tr><th>Код узла</th><th>Наименование</th><th>Количество</th><th>Примечание</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var node in selectedAggregateComposition.Nodes.OrderBy(n => n.SortOrder))
+                                        {
+                                            <tr>
+                                                <td class="mono">@node.Node?.Code</td>
+                                                <td>@node.Node?.Name</td>
+                                                <td>@node.Quantity</td>
+                                                <td>@node.Notes</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                                </div>
+                            }
+                        }
+                    }
+                </div>
+            </section>
+        </div>
+
+        <aside class="stack">
+            <section class="panel">
+                <div class="panelHeader"><h2>Версии состава</h2><div class="hint">@versions.Count</div></div>
+                <div class="panelBody">
+                    @if (!versions.Any())
+                    {
+                        <div class="empty-state">Версий нет</div>
+                    }
+                    else
+                    {
+                        <div class="listRows">
+                            @foreach (var v in versions)
+                            {
+                                var active = v.Id == compositionId;
+                                <div class="rowCard" style="@(active ? "border-color:var(--accent)" : "")">
+                                    <div class="top">
+                                        <a class="linkBtn" href="@VersionUrl(v.Id)">@v.Version</a>
+                                        <span class="tag @StatusTag(v.Status)">@StatusLabel(v.Status)</span>
+                                    </div>
+                                    @if (v.EffectiveDate.HasValue)
+                                    {
+                                        <div class="sub">Действует с @v.EffectiveDate!.Value.ToString("dd.MM.yyyy")</div>
+                                    }
+                                    <div class="sub">@v.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panelHeader"><h2>Информация</h2><div class="hint">Детали версии</div></div>
+                <div class="panelBody">
+                    @if (selected == null)
+                    {
+                        <div class="empty-state">—</div>
+                    }
+                    else
+                    {
+                        <div class="field"><label>Версия</label><div class="mono">@selected.Version</div></div>
+                        <div class="field"><label>Статус</label><span class="tag @StatusTag(selected.Status)">@StatusLabel(selected.Status)</span></div>
+                        <div class="field"><label>Создан</label><div class="mono">@selected.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        <div class="field"><label>Обновлён</label><div class="mono">@selected.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        @if (selected.ApprovedAt.HasValue)
+                        {
+                            <div class="field"><label>Утверждён</label><div class="mono">@selected.ApprovedAt.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        }
+                        @if (selected.EffectiveDate.HasValue)
+                        {
+                            <div class="field"><label>Действует с</label><div class="mono">@selected.EffectiveDate.Value.ToString("dd.MM.yyyy")</div></div>
+                        }
+                        @if (selected.ExpirationDate.HasValue)
+                        {
+                            <div class="field"><label>Действует до</label><div class="mono">@selected.ExpirationDate.Value.ToString("dd.MM.yyyy")</div></div>
+                        }
+                        @if (!string.IsNullOrEmpty(selected.Comment))
+                        {
+                            <div class="field"><label>Комментарий</label><div>@selected.Comment</div></div>
+                        }
+                        @if (selected.PredecessorId.HasValue && PredecessorVersion != null)
+                        {
+                            <div class="field"><label>На основе</label><div class="mono">@PredecessorVersion ↗</div></div>
+                        }
+                    }
+                </div>
+            </section>
+        </aside>
+    </div>
+</div>
+
+@code {
+    [Parameter] public Guid? complexId { get; set; }
+    [Parameter] public Guid? equipmentModelId { get; set; }
+    [Parameter] public Guid? aggregateId { get; set; }
+    [Parameter] public Guid compositionId { get; set; }
+
+    private bool loading = true;
+    private bool canCreateVersion;
+    private string? error;
+    private CancellationTokenSource? _loadCts;
+
+    private ProductComposition? selectedProductComposition;
+    private ComplexComposition? selectedComplexComposition;
+    private AggregateComposition? selectedAggregateComposition;
+    private CompositionVersionSummary? selected;
+    private Guid selectedObjectId;
+    private string? objectCode;
+    private string? objectName;
+    private readonly List<CompositionVersionSummary> versions = new();
+
+    private int Level =>
+        complexId.HasValue ? 0 :
+        equipmentModelId.HasValue ? 1 :
+        aggregateId.HasValue ? 2 : -1;
+
+    private string LevelTitle => Level switch
+    {
+        0 => "Комплекс",
+        1 => "Изделие",
+        _ => "Агрегат"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canCreateVersion = Level switch
+        {
+            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion),
+            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion),
+            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion)
+        };
+        _loadCts = new CancellationTokenSource();
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            loading = true;
+            try
+            {
+                switch (Level)
+                {
+                    case 0:
+                        var complexComp = await EquipService.GetComplexCompositionAsync(compositionId, ct);
+                        var allComplexVersions = await EquipService.GetComplexCompositionsAsync(complexId!.Value, ct);
+                        selectedComplexComposition = complexComp;
+                        selectedObjectId = complexComp?.ComplexId ?? complexId.Value;
+                        objectCode ??= complexComp?.Complex?.Code;
+                        objectName ??= complexComp?.Complex?.Name;
+                        versions.Clear();
+                        foreach (var v in allComplexVersions)
+                        {
+                            versions.Add(ToComplexSummary(v));
+                            objectCode ??= v.Complex?.Code;
+                            objectName ??= v.Complex?.Name;
+                        }
+                        break;
+                    case 1:
+                        var productComp = await EquipService.GetCompositionAsync(compositionId, ct);
+                        var allProductVersions = await EquipService.GetCompositionsAsync(equipmentModelId!.Value, ct);
+                        selectedProductComposition = productComp;
+                        selectedObjectId = productComp?.EquipmentModelId ?? equipmentModelId.Value;
+                        objectCode ??= productComp?.EquipmentModel?.Index;
+                        objectName ??= productComp?.EquipmentModel?.Name;
+                        versions.Clear();
+                        foreach (var v in allProductVersions)
+                        {
+                            versions.Add(ToProductSummary(v));
+                            objectCode ??= v.EquipmentModel?.Index;
+                            objectName ??= v.EquipmentModel?.Name;
+                        }
+                        break;
+                    default:
+                        var aggregComp = await EquipService.GetAggregateCompositionAsync(compositionId, ct);
+                        var allAggregVersions = await EquipService.GetAggregateCompositionsAsync(aggregateId!.Value, ct);
+                        selectedAggregateComposition = aggregComp;
+                        selectedObjectId = aggregComp?.AggregateId ?? aggregateId!.Value;
+                        objectCode ??= aggregComp?.Aggregate?.Code;
+                        objectName ??= aggregComp?.Aggregate?.Name;
+                        versions.Clear();
+                        foreach (var v in allAggregVersions)
+                        {
+                            versions.Add(ToAggregateSummary(v));
+                            objectCode ??= v.Aggregate?.Code;
+                            objectName ??= v.Aggregate?.Name;
+                        }
+                        break;
+                }
+                selected = versions.FirstOrDefault(v => v.Id == compositionId);
+            }
+            catch (Exception ex)
+            {
+                error = $"Ошибка загрузки: {ex.Message}";
+            }
+            loading = false;
+        }
+    }
+
+    private string? PredecessorVersion
+    {
+        get
+        {
+            if (selected?.PredecessorId is null || selected.PredecessorId == Guid.Empty)
+                return null;
+            return versions.FirstOrDefault(v => v.Id == selected.PredecessorId)?.Version;
+        }
+    }
+
+    private string VersionUrl(Guid id) => Level switch
+    {
+        0 => $"/составы/комплексы/{selectedObjectId}/версии/{id}",
+        1 => $"/составы/изделия/{selectedObjectId}/версии/{id}",
+        _ => $"/составы/агрегаты/{selectedObjectId}/версии/{id}"
+    };
+
+    private string EditorUrl => Level switch
+    {
+        0 => "/состав-комплекса",
+        1 => "/состав-изделия",
+        _ => "/состав-агрегата"
+    };
+
+    private static CompositionVersionSummary ToComplexSummary(ComplexComposition c) =>
+        new(c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.UpdatedAt, c.EffectiveDate, c.ExpirationDate, c.ApprovedAt, c.Comment, c.SupersedesComplexCompositionId);
+
+    private static CompositionVersionSummary ToProductSummary(ProductComposition p) =>
+        new(p.Id, p.EquipmentModelId, p.Version, p.Status, p.CreatedAt, p.UpdatedAt, p.EffectiveDate, p.ExpirationDate, p.ApprovedAt, p.Comment, p.SupersedesProductCompositionId);
+
+    private static CompositionVersionSummary ToAggregateSummary(AggregateComposition a) =>
+        new(a.Id, a.AggregateId, a.Version, a.Status, a.CreatedAt, a.UpdatedAt, a.EffectiveDate, a.ExpirationDate, a.ApprovedAt, a.Comment, a.SupersedesAggregateCompositionId);
+
+    private async Task CreateVersion()
+    {
+        error = null;
+        try
+        {
+            switch (Level)
+            {
+                case 0:
+                    var complexResult = await EquipService.CreateComplexCompositionVersionAsync(compositionId);
+                    if (complexResult.Success && complexResult.CompositionId.HasValue)
+                        Nav.NavigateTo($"/составы/комплексы/{selectedObjectId}/версии/{complexResult.CompositionId}", forceLoad: true);
+                    else
+                        error = complexResult.Error ?? "Не удалось создать версию.";
+                    break;
+                case 1:
+                    var modelResult = await EquipService.CreateProductCompositionVersionAsync(compositionId);
+                    if (modelResult.Success && modelResult.CompositionId.HasValue)
+                        Nav.NavigateTo($"/составы/изделия/{selectedObjectId}/версии/{modelResult.CompositionId}", forceLoad: true);
+                    else
+                        error = modelResult.Error ?? "Не удалось создать версию.";
+                    break;
+                default:
+                    var aggregateResult = await EquipService.CreateAggregateCompositionVersionAsync(compositionId);
+                    if (aggregateResult.Success && aggregateResult.CompositionId.HasValue)
+                        Nav.NavigateTo($"/составы/агрегаты/{selectedObjectId}/версии/{aggregateResult.CompositionId}", forceLoad: true);
+                    else
+                        error = aggregateResult.Error ?? "Не удалось создать версию.";
+                    break;
+            }
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            error = $"Ошибка: {ex.Message}";
+        }
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
+
+    private static string StatusLabel(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "Черновик",
+        ProductCompositionStatus.OnReview => "На проверке",
+        ProductCompositionStatus.Approved => "Утверждён",
+        ProductCompositionStatus.Archived => "Архивный",
+        _ => status.ToString()
+    };
+
+    private static string StatusTag(ProductCompositionStatus status) => status switch
+    {
+        ProductCompositionStatus.Draft => "warn",
+        ProductCompositionStatus.OnReview => "warn",
+        ProductCompositionStatus.Approved => "ok",
+        ProductCompositionStatus.Archived => "",
+        _ => ""
+    };
+}

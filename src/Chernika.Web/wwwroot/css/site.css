@@ -298,6 +298,8 @@ tbody tr:hover td{background:rgba(79,140,255,.06)}
 .mono{font-family:var(--mono);color:var(--muted);font-size:12px}
 [data-theme="light"] .mono{color:#70829e}
 .rowActions{display:flex;gap:8px;flex-wrap:wrap}
+.tableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+@media (max-width:900px){.tableWrap table{min-width:760px}}
 .linkBtn{
   border:1px solid rgba(32,50,86,.85);background:rgba(11,18,32,.55);color:var(--text);
   padding:6px 10px;border-radius:10px;cursor:pointer;font-size:12px;transition:.18s ease;

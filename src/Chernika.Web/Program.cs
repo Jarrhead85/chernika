@@ -73,6 +73,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("ViewNotifications", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.NotificationView)));
     options.AddPolicy("ManageReference", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("ViewReferences", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceView)));
+    options.AddPolicy("ViewComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionView)));
     options.AddPolicy("ManageComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionEdit)));
     options.AddPolicy("ManageIndividualCards", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
     options.AddPolicy("ManageTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskManage)));

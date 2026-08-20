@@ -30,8 +30,30 @@ public static class PermissionCodes
 
     public const string ReferenceView = "Reference.View";
     public const string ReferenceEdit = "Reference.Edit";
+
     public const string CompositionView = "Composition.View";
     public const string CompositionEdit = "Composition.Edit";
+
+    public const string CompositionComplexCreate = "Composition.Complex.Create";
+    public const string CompositionComplexEditDraft = "Composition.Complex.EditDraft";
+    public const string CompositionComplexSubmit = "Composition.Complex.Submit";
+    public const string CompositionComplexReturnForRevision = "Composition.Complex.ReturnForRevision";
+    public const string CompositionComplexApprove = "Composition.Complex.Approve";
+    public const string CompositionComplexCreateVersion = "Composition.Complex.CreateVersion";
+
+    public const string CompositionEquipmentModelCreate = "Composition.EquipmentModel.Create";
+    public const string CompositionEquipmentModelEditDraft = "Composition.EquipmentModel.EditDraft";
+    public const string CompositionEquipmentModelSubmit = "Composition.EquipmentModel.Submit";
+    public const string CompositionEquipmentModelReturnForRevision = "Composition.EquipmentModel.ReturnForRevision";
+    public const string CompositionEquipmentModelApprove = "Composition.EquipmentModel.Approve";
+    public const string CompositionEquipmentModelCreateVersion = "Composition.EquipmentModel.CreateVersion";
+
+    public const string CompositionAggregateCreate = "Composition.Aggregate.Create";
+    public const string CompositionAggregateEditDraft = "Composition.Aggregate.EditDraft";
+    public const string CompositionAggregateSubmit = "Composition.Aggregate.Submit";
+    public const string CompositionAggregateReturnForRevision = "Composition.Aggregate.ReturnForRevision";
+    public const string CompositionAggregateApprove = "Composition.Aggregate.Approve";
+    public const string CompositionAggregateCreateVersion = "Composition.Aggregate.CreateVersion";
 
     public const string IndividualCardView = "IndividualCard.View";
     public const string IndividualCardGenerate = "IndividualCard.Generate";
@@ -60,6 +82,9 @@ public static class PermissionCodes
         HKReview, HKApprove, HKArchive, HKDeleteDraft, HKDeleteOnReview, HKDeleteRevisionRequired,
         HKAttachmentView, HKAttachmentEdit,
         ReferenceView, ReferenceEdit, CompositionView, CompositionEdit,
+        CompositionComplexCreate, CompositionComplexEditDraft, CompositionComplexSubmit, CompositionComplexReturnForRevision, CompositionComplexApprove, CompositionComplexCreateVersion,
+        CompositionEquipmentModelCreate, CompositionEquipmentModelEditDraft, CompositionEquipmentModelSubmit, CompositionEquipmentModelReturnForRevision, CompositionEquipmentModelApprove, CompositionEquipmentModelCreateVersion,
+        CompositionAggregateCreate, CompositionAggregateEditDraft, CompositionAggregateSubmit, CompositionAggregateReturnForRevision, CompositionAggregateApprove, CompositionAggregateCreateVersion,
         IndividualCardView, IndividualCardGenerate, ReportExport,
         TaskView, TaskAssign, TaskComplete, TaskCancel,
         NotificationView, NotificationMarkRead,

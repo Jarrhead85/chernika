@@ -549,7 +549,7 @@
         if (oldAggregate == null) return;
 
         await EquipService.RemoveAggregateAsync(replacingAggregateId.Value);
-        await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(oldAggregate.PartId, replaceWithAggregateId, oldAggregate.Quantity));
+        await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(oldAggregate.PartId ?? Guid.Empty, replaceWithAggregateId, oldAggregate.Quantity));
         await LoadCompositions();
         SelectComposition(selectedComposition.Id);
         replacingAggregateId = null;

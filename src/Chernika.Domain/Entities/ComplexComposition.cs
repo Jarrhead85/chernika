@@ -22,5 +22,9 @@ public class ComplexComposition
 
     public bool IsActive { get; set; }
 
+    public Guid? SupersedesComplexCompositionId { get; set; }
+    public ComplexComposition? SupersedesComplexComposition { get; set; }
+    public ICollection<ComplexComposition> SupersededByCompositions { get; set; } = new List<ComplexComposition>();
+
     public ICollection<ComplexCompositionItem> Items { get; set; } = new List<ComplexCompositionItem>();
 }

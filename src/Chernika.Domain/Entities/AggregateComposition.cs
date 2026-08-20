@@ -22,5 +22,9 @@ public class AggregateComposition
 
     public bool IsActive { get; set; }
 
+    public Guid? SupersedesAggregateCompositionId { get; set; }
+    public AggregateComposition? SupersedesAggregateComposition { get; set; }
+    public ICollection<AggregateComposition> SupersededByCompositions { get; set; } = new List<AggregateComposition>();
+
     public ICollection<AggregateCompositionNode> Nodes { get; set; } = new List<AggregateCompositionNode>();
 }

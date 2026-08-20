@@ -48,6 +48,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("EditHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeEditDraft, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKComplexEditDraft)));
     options.AddPolicy("DeleteHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteOnReview, PermissionCodes.HKDeleteRevisionRequired)));
     options.AddPolicy("ArchiveHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKArchive)));
+    options.AddPolicy("ViewComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionView)));
     options.AddPolicy("ManageComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionEdit)));
     options.AddPolicy("SendToApprove", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeSubmit, PermissionCodes.HKAggregateSubmit, PermissionCodes.HKEquipmentSubmit, PermissionCodes.HKComplexSubmit)));
     options.AddPolicy("CreateIndividualCard", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));

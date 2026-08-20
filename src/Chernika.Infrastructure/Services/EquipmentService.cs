@@ -467,11 +467,31 @@ public class EquipmentService
         return true;
     }
 
-    private async Task EnsureCanEditCompositionAsync(CancellationToken ct = default)
+    private async Task EnsureCanEditCompositionAsync(CancellationToken ct = default) =>
+        await EnsureCanEditCompositionAsync(PermissionCodes.CompositionEdit, ct);
+
+    private async Task EnsureCanEditCompositionAsync(string permissionCode, CancellationToken ct = default)
     {
         var userId = _currentUser.GetRequiredUserId();
-        if (!await _permissions.HasPermissionAsync(userId.ToString(), PermissionCodes.CompositionEdit))
-            throw new UnauthorizedAccessException("Недостаточно прав для редактирования конструктивного состава.");
+        if (!await _permissions.HasPermissionAsync(userId.ToString(), permissionCode))
+            throw new UnauthorizedAccessException("Недостаточно прав для работы с конструктивным составом.");
+    }
+
+    private static string BuildUniqueVersion(string baseVersion, IReadOnlyCollection<string> existing)
+    {
+        if (existing.Count == 0)
+            return baseVersion;
+
+        var maxSuffix = existing
+            .Select(v =>
+            {
+                var suffix = v.Length > baseVersion.Length + 1 ? v[(baseVersion.Length + 1)..] : string.Empty;
+                return int.TryParse(suffix, out var n) ? n : 0;
+            })
+            .DefaultIfEmpty(0)
+            .Max();
+
+        return maxSuffix == 0 ? $"{baseVersion}.2" : $"{baseVersion}.{maxSuffix + 1}";
     }
 
     // ── Product Composition ──────────────────────────────────────────────
@@ -523,7 +543,7 @@ public class EquipmentService
 
     public async Task<ProductComposition> CreateCompositionDraftAsync(CreateCompositionRequest request, CancellationToken ct = default)
     {
-        await EnsureCanEditCompositionAsync(ct);
+        await EnsureCanEditCompositionAsync(PermissionCodes.CompositionEquipmentModelCreate, ct);
         if (request.EquipmentModelId == Guid.Empty)
             throw new ArgumentException("EquipmentModelId is required.");
 
@@ -545,6 +565,79 @@ public class EquipmentService
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(new AuditWriteRequest("ProductComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId()));
         return comp;
+    }
+
+    public async Task<(bool Success, Guid? CompositionId, string? Error)> CreateProductCompositionVersionAsync(Guid sourceCompositionId, CancellationToken ct = default)
+    {
+        var userId = _currentUser.GetRequiredUserId();
+        if (!await _permissions.HasPermissionAsync(userId.ToString(), PermissionCodes.CompositionEquipmentModelCreateVersion))
+            throw new UnauthorizedAccessException("Недостаточно прав для создания новой версии состава изделия.");
+
+        var source = await _db.ProductCompositions
+            .Include(c => c.Parts.OrderBy(p => p.SortOrder))
+                .ThenInclude(p => p.Aggregates.OrderBy(a => a.SortOrder))
+            .FirstOrDefaultAsync(c => c.Id == sourceCompositionId, ct);
+        if (source == null)
+            return (false, null, "Состав изделия не найден.");
+        if (source.Status is not (ProductCompositionStatus.Approved or ProductCompositionStatus.Archived))
+            return (false, null, "Новую версию можно создать только из утверждённого или архивного состава.");
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var baseVersion = "v" + now.ToString("MMyy");
+        var existingVersions = await _db.ProductCompositions
+            .Where(c => c.EquipmentModelId == source.EquipmentModelId && c.Version.StartsWith(baseVersion))
+            .Select(c => c.Version)
+            .ToListAsync(ct);
+        var version = BuildUniqueVersion(baseVersion, existingVersions);
+
+        var comp = new ProductComposition
+        {
+            Id = Guid.NewGuid(),
+            EquipmentModelId = source.EquipmentModelId,
+            Status = ProductCompositionStatus.Draft,
+            Version = version,
+            CreatedAt = now,
+            UpdatedAt = now,
+            AuthorId = userId.ToString(),
+            Comment = $"Новая версия на основе {source.Version}",
+            IsActive = false,
+            SupersedesProductCompositionId = source.Id,
+            Parts = source.Parts.Select(p => new ProductCompositionPart
+            {
+                Id = Guid.NewGuid(),
+                ProductCompositionId = Guid.Empty,
+                Name = p.Name,
+                Description = p.Description,
+                SortOrder = p.SortOrder,
+                Aggregates = p.Aggregates.Select(a => new ProductCompositionAggregate
+                {
+                    Id = Guid.NewGuid(),
+                    ProductCompositionId = Guid.Empty,
+                    PartId = null,
+                    AggregateId = a.AggregateId,
+                    Quantity = a.Quantity,
+                    SortOrder = a.SortOrder,
+                    Notes = a.Notes
+                }).ToList()
+            }).ToList()
+        };
+
+        foreach (var part in comp.Parts)
+        {
+            part.ProductCompositionId = comp.Id;
+            foreach (var agg in part.Aggregates)
+            {
+                agg.ProductCompositionId = comp.Id;
+                agg.PartId = part.Id;
+            }
+        }
+
+        _db.ProductCompositions.Add(comp);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync(new AuditWriteRequest("ProductComposition", comp.Id.ToString(), "ProductComposition.NewVersionCreated", userId,
+            EntityDisplayName: $"{comp.Version}",
+            Details: $"Создана новая версия состава изделия на основе {source.Version} (Id {source.Id}). Новая версия: {comp.Version} (Id {comp.Id})."), ct);
+        return (true, comp.Id, null);
     }
 
     public async Task<bool> UpdateCompositionDraftAsync(UpdateCompositionDraftRequest request, CancellationToken ct = default)
@@ -767,6 +860,7 @@ public class EquipmentService
         var pca = new ProductCompositionAggregate
         {
             Id = Guid.NewGuid(),
+            ProductCompositionId = part.ProductCompositionId,
             PartId = request.PartId,
             AggregateId = request.AggregateId,
             Quantity = request.Quantity
@@ -788,10 +882,10 @@ public class EquipmentService
             throw new ArgumentException("Количество должно быть больше 0.");
 
         var pca = await _db.ProductCompositionAggregates
-            .Include(a => a.Part).ThenInclude(p => p.ProductComposition)
+            .Include(a => a.ProductComposition)
             .FirstOrDefaultAsync(a => a.Id == request.Id, ct);
         if (pca == null) return false;
-        if (pca.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
+        if (pca.ProductComposition.Status != ProductCompositionStatus.Draft)
             throw new InvalidOperationException("Редактирование разрешено только в статусе «Черновик».");
 
         pca.Quantity = request.Quantity;
@@ -804,10 +898,10 @@ public class EquipmentService
     {
         await EnsureCanEditCompositionAsync(ct);
         var pca = await _db.ProductCompositionAggregates
-            .Include(a => a.Part).ThenInclude(p => p.ProductComposition)
+            .Include(a => a.ProductComposition)
             .FirstOrDefaultAsync(a => a.Id == id, ct);
         if (pca == null) return false;
-        if (pca.Part.ProductComposition.Status != ProductCompositionStatus.Draft)
+        if (pca.ProductComposition.Status != ProductCompositionStatus.Draft)
             throw new InvalidOperationException("Удаление агрегатов разрешено только в статусе «Черновик».");
 
         _db.ProductCompositionAggregates.Remove(pca);
@@ -819,8 +913,8 @@ public class EquipmentService
     public async Task<bool> IsCompositionActiveByAggregateAsync(Guid id, CancellationToken ct = default)
     {
         return await _db.ProductCompositionAggregates
-            .Include(a => a.Part).ThenInclude(p => p.ProductComposition)
-            .AnyAsync(a => a.Id == id && a.Part.ProductComposition.IsActive, ct);
+            .Include(a => a.ProductComposition)
+            .AnyAsync(a => a.Id == id && a.ProductComposition.IsActive, ct);
     }
 
     public Task<List<Branch>> GetBranchesAsync() =>
@@ -1099,7 +1193,7 @@ public class EquipmentService
         var a = await _db.Aggregates.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (a == null || a.IsDeleted) return (false, null);
         var inActiveComposition = await _db.ProductCompositionAggregates
-            .AnyAsync(pca => pca.AggregateId == id && pca.Part.ProductComposition.IsActive, ct);
+            .AnyAsync(pca => pca.AggregateId == id && pca.ProductComposition.IsActive, ct);
         if (inActiveComposition) return (false, "Нельзя удалить: агрегат используется в активном составе изделия.");
         var inApprovedHK = await _db.AggregateCompositionNodes
             .AnyAsync(acn => acn.AggregateComposition.AggregateId == id
@@ -1142,9 +1236,27 @@ public class EquipmentService
             .Include(c => c.Nodes.OrderBy(n => n.SortOrder)).ThenInclude(n => n.Node)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
+    public Task<List<ProductComposition>> GetAllProductCompositionsLightAsync(CancellationToken ct = default) =>
+        _db.ProductCompositions
+            .Include(c => c.EquipmentModel)
+            .OrderBy(c => c.CreatedAt)
+            .ToListAsync(ct);
+
+    public Task<List<ComplexComposition>> GetAllComplexCompositionsLightAsync(CancellationToken ct = default) =>
+        _db.ComplexCompositions
+            .AsNoTracking()
+            .OrderBy(c => c.CreatedAt)
+            .ToListAsync(ct);
+
+    public Task<List<AggregateComposition>> GetAllAggregateCompositionsLightAsync(CancellationToken ct = default) =>
+        _db.AggregateCompositions
+            .AsNoTracking()
+            .OrderBy(c => c.CreatedAt)
+            .ToListAsync(ct);
+
     public async Task<AggregateComposition> CreateAggregateCompositionAsync(CreateAggregateCompositionRequest request, CancellationToken ct = default)
     {
-        await EnsureCanEditCompositionAsync(ct);
+        await EnsureCanEditCompositionAsync(PermissionCodes.CompositionAggregateCreate, ct);
         if (request.AggregateId == Guid.Empty)
             throw new ArgumentException("AggregateId is required.");
         var aggregate = await _db.Aggregates.FindAsync(new object[] { request.AggregateId }, ct);
@@ -1167,6 +1279,62 @@ public class EquipmentService
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId()));
         return comp;
+    }
+
+    public async Task<(bool Success, Guid? CompositionId, string? Error)> CreateAggregateCompositionVersionAsync(Guid sourceCompositionId, CancellationToken ct = default)
+    {
+        var userId = _currentUser.GetRequiredUserId();
+        if (!await _permissions.HasPermissionAsync(userId.ToString(), PermissionCodes.CompositionAggregateCreateVersion))
+            throw new UnauthorizedAccessException("Недостаточно прав для создания новой версии состава агрегата.");
+
+        var source = await _db.AggregateCompositions
+            .Include(c => c.Nodes.OrderBy(n => n.SortOrder))
+            .FirstOrDefaultAsync(c => c.Id == sourceCompositionId, ct);
+        if (source == null)
+            return (false, null, "Состав агрегата не найден.");
+        if (source.Status is not (ProductCompositionStatus.Approved or ProductCompositionStatus.Archived))
+            return (false, null, "Новую версию можно создать только из утверждённого или архивного состава.");
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var baseVersion = "v" + now.ToString("MMyy");
+        var existingVersions = await _db.AggregateCompositions
+            .Where(c => c.AggregateId == source.AggregateId && c.Version.StartsWith(baseVersion))
+            .Select(c => c.Version)
+            .ToListAsync(ct);
+        var version = BuildUniqueVersion(baseVersion, existingVersions);
+
+        var comp = new AggregateComposition
+        {
+            Id = Guid.NewGuid(),
+            AggregateId = source.AggregateId,
+            Status = ProductCompositionStatus.Draft,
+            Version = version,
+            CreatedAt = now,
+            UpdatedAt = now,
+            AuthorId = userId.ToString(),
+            Comment = $"Новая версия на основе {source.Version}",
+            IsActive = false,
+            SupersedesAggregateCompositionId = source.Id,
+            Nodes = source.Nodes.Select(n => new AggregateCompositionNode
+            {
+                Id = Guid.NewGuid(),
+                AggregateCompositionId = Guid.Empty,
+                NodeId = n.NodeId,
+                Quantity = n.Quantity,
+                SortOrder = n.SortOrder,
+                Notes = n.Notes
+            }).ToList()
+        };
+
+        foreach (var node in comp.Nodes)
+            node.AggregateCompositionId = comp.Id;
+
+        _db.AggregateCompositions.Add(comp);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", comp.Id.ToString(), "AggregateComposition.NewVersionCreated", userId,
+            EntityDisplayName: comp.Version,
+            Details: $"Создана новая версия состава агрегата на основе {source.Version} (Id {source.Id}). Новая версия: {comp.Version} (Id {comp.Id})."), ct);
+        return (true, comp.Id, null);
     }
 
     public async Task<bool> UpdateAggregateCompositionDraftAsync(UpdateAggregateCompositionDraftRequest request, CancellationToken ct = default)
@@ -1486,7 +1654,7 @@ public class EquipmentService
 
     public async Task<ComplexComposition> CreateComplexCompositionAsync(CreateComplexCompositionRequest request, CancellationToken ct = default)
     {
-        await EnsureCanEditCompositionAsync(ct);
+        await EnsureCanEditCompositionAsync(PermissionCodes.CompositionComplexCreate, ct);
         if (request.ComplexId == Guid.Empty)
             throw new ArgumentException("ComplexId is required.");
         var complex = await _db.Complexes.FindAsync(new object[] { request.ComplexId }, ct);
@@ -1509,6 +1677,62 @@ public class EquipmentService
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", comp.Id.ToString(), "CreateDraft", _currentUser.GetRequiredUserId()));
         return comp;
+    }
+
+    public async Task<(bool Success, Guid? CompositionId, string? Error)> CreateComplexCompositionVersionAsync(Guid sourceCompositionId, CancellationToken ct = default)
+    {
+        var userId = _currentUser.GetRequiredUserId();
+        if (!await _permissions.HasPermissionAsync(userId.ToString(), PermissionCodes.CompositionComplexCreateVersion))
+            throw new UnauthorizedAccessException("Недостаточно прав для создания новой версии состава комплекса.");
+
+        var source = await _db.ComplexCompositions
+            .Include(c => c.Items.OrderBy(i => i.SortOrder))
+            .FirstOrDefaultAsync(c => c.Id == sourceCompositionId, ct);
+        if (source == null)
+            return (false, null, "Состав комплекса не найден.");
+        if (source.Status is not (ProductCompositionStatus.Approved or ProductCompositionStatus.Archived))
+            return (false, null, "Новую версию можно создать только из утверждённого или архивного состава.");
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var baseVersion = "v" + now.ToString("MMyy");
+        var existingVersions = await _db.ComplexCompositions
+            .Where(c => c.ComplexId == source.ComplexId && c.Version.StartsWith(baseVersion))
+            .Select(c => c.Version)
+            .ToListAsync(ct);
+        var version = BuildUniqueVersion(baseVersion, existingVersions);
+
+        var comp = new ComplexComposition
+        {
+            Id = Guid.NewGuid(),
+            ComplexId = source.ComplexId,
+            Status = ProductCompositionStatus.Draft,
+            Version = version,
+            CreatedAt = now,
+            UpdatedAt = now,
+            AuthorId = userId.ToString(),
+            Comment = $"Новая версия на основе {source.Version}",
+            IsActive = false,
+            SupersedesComplexCompositionId = source.Id,
+            Items = source.Items.Select(i => new ComplexCompositionItem
+            {
+                Id = Guid.NewGuid(),
+                ComplexCompositionId = Guid.Empty,
+                EquipmentModelId = i.EquipmentModelId,
+                Quantity = i.Quantity,
+                SortOrder = i.SortOrder,
+                Notes = i.Notes
+            }).ToList()
+        };
+
+        foreach (var item in comp.Items)
+            item.ComplexCompositionId = comp.Id;
+
+        _db.ComplexCompositions.Add(comp);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", comp.Id.ToString(), "ComplexComposition.NewVersionCreated", userId,
+            EntityDisplayName: comp.Version,
+            Details: $"Создана новая версия состава комплекса на основе {source.Version} (Id {source.Id}). Новая версия: {comp.Version} (Id {comp.Id})."), ct);
+        return (true, comp.Id, null);
     }
 
     public async Task<bool> UpdateComplexCompositionDraftAsync(UpdateComplexCompositionDraftRequest request, CancellationToken ct = default)

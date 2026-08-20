@@ -91,4 +91,42 @@ public class PermissionMatrixTests
         Assert.False(await s.Permissions.HasPermissionAsync(_fixture.OperatorA.Id, PermissionCodes.TaskAssign));
         Assert.False(await s.Permissions.HasPermissionAsync(_fixture.OperatorA.Id, PermissionCodes.TaskCancel));
     }
+
+    [Fact]
+    public async Task SeededRoleTemplates_ContainGranularCompositionPermissions()
+    {
+        await using var s = _fixture.CreateScope();
+
+        var templates = await s.Db.RolePermissionTemplates
+            .AsNoTracking()
+            .ToListAsync();
+
+        var permsByRole = templates
+            .GroupBy(t => t.RoleName)
+            .ToDictionary(g => g.Key, g => g.Select(t => t.PermissionCode).ToHashSet(StringComparer.Ordinal));
+
+        var granular = new[]
+        {
+            PermissionCodes.CompositionComplexCreate, PermissionCodes.CompositionComplexEditDraft, PermissionCodes.CompositionComplexSubmit,
+            PermissionCodes.CompositionComplexReturnForRevision, PermissionCodes.CompositionComplexApprove, PermissionCodes.CompositionComplexCreateVersion,
+            PermissionCodes.CompositionEquipmentModelCreate, PermissionCodes.CompositionEquipmentModelEditDraft, PermissionCodes.CompositionEquipmentModelSubmit,
+            PermissionCodes.CompositionEquipmentModelReturnForRevision, PermissionCodes.CompositionEquipmentModelApprove, PermissionCodes.CompositionEquipmentModelCreateVersion,
+            PermissionCodes.CompositionAggregateCreate, PermissionCodes.CompositionAggregateEditDraft, PermissionCodes.CompositionAggregateSubmit,
+            PermissionCodes.CompositionAggregateReturnForRevision, PermissionCodes.CompositionAggregateApprove, PermissionCodes.CompositionAggregateCreateVersion,
+        };
+
+        // NormAdmin: full access at every level
+        Assert.All(granular, code => Assert.Contains(code, permsByRole["NormAdmin"]));
+
+        // Operator / Head / Guest: read-only section, no granular codes
+        foreach (var role in new[] { "Operator", "HeadOfDepartment", "Guest" })
+        {
+            Assert.Contains(PermissionCodes.CompositionView, permsByRole[role]);
+            Assert.All(granular, code => Assert.DoesNotContain(code, permsByRole[role]));
+            Assert.DoesNotContain(PermissionCodes.CompositionEdit, permsByRole[role]);
+        }
+
+        // SystemAdmin receives every code
+        Assert.True(PermissionCodes.All.IsSubsetOf(permsByRole["SystemAdmin"]));
+    }
 }
