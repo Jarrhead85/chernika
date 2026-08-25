@@ -36,6 +36,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<IndividualCardItem> IndividualCardItems => Set<IndividualCardItem>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
+    public DbSet<WorkTaskGroup> WorkTaskGroups => Set<WorkTaskGroup>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<RolePermissionTemplate> RolePermissionTemplates => Set<RolePermissionTemplate>();
     public DbSet<UserPermissionOverride> UserPermissionOverrides => Set<UserPermissionOverride>();
@@ -171,6 +172,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => new { x.EquipmentModelId, x.Status });
             e.HasIndex(x => new { x.Status, x.EffectiveDate });
             e.HasIndex(x => new { x.EquipmentModelId, x.IsActive });
+            e.HasIndex(x => x.BranchId).HasDatabaseName("IX_ProductCompositions_BranchId");
         });
 
         modelBuilder.Entity<ProductCompositionPart>(e =>
@@ -209,6 +211,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => new { x.AggregateId, x.Status });
             e.HasIndex(x => new { x.Status, x.EffectiveDate });
             e.HasIndex(x => new { x.AggregateId, x.IsActive });
+            e.HasIndex(x => x.BranchId).HasDatabaseName("IX_AggregateCompositions_BranchId");
         });
 
         modelBuilder.Entity<AggregateCompositionNode>(e =>
@@ -235,6 +238,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => new { x.ComplexId, x.Status });
             e.HasIndex(x => new { x.Status, x.EffectiveDate });
             e.HasIndex(x => new { x.ComplexId, x.IsActive });
+            e.HasIndex(x => x.BranchId).HasDatabaseName("IX_ComplexCompositions_BranchId");
         });
 
         modelBuilder.Entity<ComplexCompositionItem>(e =>
@@ -406,6 +410,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.AssignedToUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.WorkTaskGroup).WithMany().HasForeignKey(x => x.WorkTaskGroupId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(x => x.WorkTaskGroupId).HasDatabaseName("IX_WorkTasks_WorkTaskGroupId");
             e.HasIndex(x => new { x.AssignedToUserId, x.Status, x.IsDeleted })
                 .HasDatabaseName("IX_WorkTasks_AssignedToUserId_Status_IsDeleted");
             e.HasIndex(x => new { x.AssignedRole, x.Status, x.IsDeleted })
@@ -423,6 +430,20 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.ToTable(t => t.HasCheckConstraint(
                 "CK_WorkTasks_CompletedAt",
                 "\"CompletedAtUtc\" IS NULL OR \"Status\" IN (3, 4)"));
+        });
+
+        modelBuilder.Entity<WorkTaskGroup>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TaskType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.EntityType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(512).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(4000);
+            e.Property(x => x.CompletedByUserId).HasMaxLength(450);
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.CompletedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.EntityType, x.EntityId, x.BranchId })
+                .HasDatabaseName("IX_WorkTaskGroups_EntityType_EntityId_BranchId");
         });
 
         modelBuilder.Entity<Notification>(e =>

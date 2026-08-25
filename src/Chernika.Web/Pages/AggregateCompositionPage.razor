@@ -31,7 +31,7 @@
                 <div class="field"><label>Комментарий</label><input @bind="comment" /></div>
                 <div class="formActions">
                     <button class="btn" @onclick="LoadCompositions">Обновить список</button>
-                    @if (canEdit) { <button class="btn primary" @onclick="CreateComposition">Создать черновик</button> }
+                    @if (canCreate) { <button class="btn primary" @onclick="CreateComposition">Создать черновик</button> }
                 </div>
             </div>
         </div>
@@ -98,7 +98,7 @@
                         <div class="hint">Агрегат: @aggregates.FirstOrDefault(a => a.Id == selectedComposition.AggregateId)?.Name</div>
                     </div>
                     <div class="panelBody">
-                        @if (selectedComposition.Status == ProductCompositionStatus.Draft)
+                        @if (selectedComposition.Status == ProductCompositionStatus.Draft && canEditDraft)
                         {
                             <div class="form" style="margin-bottom:12px">
                                 <div class="field full-width"><label>Комментарий</label><input @bind="editComment" /></div>
@@ -106,25 +106,6 @@
                                 <div class="field"><label>Дата окончания</label><input type="date" @bind="editExpirationDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
                                 <div class="formActions">
                                     <button class="btn primary" @onclick="SaveCompositionDraft">Сохранить</button>
-                                    <button class="btn" @onclick="SubmitForReview">Отправить на проверку</button>
-                                </div>
-                            </div>
-                        }
-                        else if (selectedComposition.Status == ProductCompositionStatus.OnReview && canEdit)
-                        {
-                            <div class="form" style="margin-bottom:12px">
-                                <div class="field full-width"><label>Комментарий</label><input @bind="reviewComment" /></div>
-                                <div class="formActions">
-                                    <button class="btn primary" @onclick="ApproveComposition">Утвердить</button>
-                                    <button class="btn" @onclick="ReturnToDraft">Вернуть в черновик</button>
-                                </div>
-                            </div>
-                        }
-                        else if (selectedComposition.Status == ProductCompositionStatus.Approved && canEdit)
-                        {
-                            <div class="form" style="margin-bottom:12px">
-                                <div class="formActions">
-                                    <button class="btn" @onclick="ArchiveComposition">Архивировать</button>
                                 </div>
                             </div>
                         }
@@ -236,7 +217,8 @@
     private List<AggregateComposition> compositions = new();
     private AggregateComposition? selectedComposition;
     private bool loading = true;
-    private bool canEdit;
+    private bool canCreate;
+    private bool canEditDraft;
     private CancellationTokenSource? _loadCts;
 
     private Guid selectedAggregateId;
@@ -260,7 +242,8 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEdit);
+        canCreate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreate);
+        canEditDraft = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateEditDraft);
         _loadCts = new CancellationTokenSource();
         await LoadData();
     }
@@ -308,7 +291,7 @@
 
     async Task SaveCompositionDraft()
     {
-        if (selectedComposition == null || !canEdit) return;
+        if (selectedComposition == null || !canEditDraft) return;
         await EquipService.UpdateAggregateCompositionDraftAsync(
             new UpdateAggregateCompositionDraftRequest(selectedComposition.Id,
                 string.IsNullOrWhiteSpace(editComment) ? null : editComment,
@@ -320,7 +303,7 @@
 
     async Task SubmitForReview()
     {
-        if (selectedComposition == null || !canEdit) return;
+        if (selectedComposition == null || !canEditDraft) return;
         await EquipService.SubmitAggregateCompositionForReviewAsync(selectedComposition.Id);
         await LoadCompositions();
         SelectComposition(selectedComposition.Id);
@@ -328,7 +311,7 @@
 
     async Task ApproveComposition()
     {
-        if (selectedComposition == null || !canEdit) return;
+        if (selectedComposition == null || !canEditDraft) return;
         await EquipService.ApproveAggregateCompositionAsync(selectedComposition.Id,
             string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
         await LoadCompositions();
@@ -337,7 +320,7 @@
 
     async Task ReturnToDraft()
     {
-        if (selectedComposition == null || !canEdit) return;
+        if (selectedComposition == null || !canEditDraft) return;
         await EquipService.ReturnAggregateCompositionToDraftAsync(selectedComposition.Id,
             string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
         await LoadCompositions();
@@ -346,7 +329,7 @@
 
     async Task ArchiveComposition()
     {
-        if (selectedComposition == null || !canEdit) return;
+        if (selectedComposition == null || !canEditDraft) return;
         await EquipService.ArchiveAggregateCompositionAsync(selectedComposition.Id);
         await LoadCompositions();
         SelectComposition(selectedComposition.Id);
@@ -376,7 +359,7 @@
 
     async Task SaveNodeQuantity(Guid id)
     {
-        if (!canEdit) return;
+        if (!canEditDraft) return;
         await EquipService.UpdateAggregateCompositionNodeAsync(
             new UpdateAggregateCompositionNodeRequest(id, editNodeQty, 0, null));
         await LoadCompositions();
@@ -426,5 +409,5 @@
     };
 
     bool CanEditComposition(ProductCompositionStatus status) =>
-        canEdit && status == ProductCompositionStatus.Draft;
+        canEditDraft && status == ProductCompositionStatus.Draft;
 }

@@ -10,6 +10,7 @@ public class ComplexComposition
 
     public string Version { get; set; } = null!;
     public ProductCompositionStatus Status { get; set; }
+    public Guid? BranchId { get; set; }
     public DateTime? EffectiveDate { get; set; }
     public DateTime? ExpirationDate { get; set; }
 

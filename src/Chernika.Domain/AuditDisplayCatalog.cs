@@ -52,6 +52,34 @@ public static class AuditDisplayCatalog
         ["ComplexComposition.NewVersionCreated"] = new("Создана новая версия состава комплекса", AuditSeverity.Success),
         ["ProductComposition.NewVersionCreated"] = new("Создана новая версия состава изделия", AuditSeverity.Success),
         ["AggregateComposition.NewVersionCreated"] = new("Создана новая версия состава агрегата", AuditSeverity.Success),
+
+        ["ComplexComposition.ItemAdded"] = new("Добавлена строка в состав комплекса", AuditSeverity.Success),
+        ["ComplexComposition.ItemUpdated"] = new("Изменена строка состава комплекса", AuditSeverity.Neutral),
+        ["ComplexComposition.ItemRemoved"] = new("Удалена строка состава комплекса", AuditSeverity.Danger),
+        ["ProductComposition.PartAdded"] = new("Добавлена часть состава изделия", AuditSeverity.Success),
+        ["ProductComposition.PartRenamed"] = new("Переименована часть состава изделия", AuditSeverity.Neutral),
+        ["ProductComposition.PartRemoved"] = new("Удалена часть состава изделия", AuditSeverity.Danger),
+        ["ProductComposition.AggregateAdded"] = new("Добавлен агрегат в состав изделия", AuditSeverity.Success),
+        ["ProductComposition.AggregateUpdated"] = new("Изменён агрегат состава изделия", AuditSeverity.Neutral),
+        ["ProductComposition.AggregateRemoved"] = new("Удалён агрегат состава изделия", AuditSeverity.Danger),
+        ["AggregateComposition.NodeAdded"] = new("Добавлен узел в состав агрегата", AuditSeverity.Success),
+        ["AggregateComposition.NodeUpdated"] = new("Изменён узел состава агрегата", AuditSeverity.Neutral),
+        ["AggregateComposition.NodeRemoved"] = new("Удалён узел состава агрегата", AuditSeverity.Danger),
+
+        ["ComplexComposition.Submitted"] = new("Состав комплекса отправлен на проверку", AuditSeverity.Neutral),
+        ["ComplexComposition.ReturnedToDraft"] = new("Состав комплекса возвращён в черновик", AuditSeverity.Warning),
+        ["ComplexComposition.Approved"] = new("Состав комплекса утверждён", AuditSeverity.Success),
+        ["ComplexComposition.Archived"] = new("Состав комплекса архивирован", AuditSeverity.Neutral),
+        ["ProductComposition.Submitted"] = new("Состав изделия отправлен на проверку", AuditSeverity.Neutral),
+        ["ProductComposition.ReturnedToDraft"] = new("Состав изделия возвращён в черновик", AuditSeverity.Warning),
+        ["ProductComposition.Approved"] = new("Состав изделия утверждён", AuditSeverity.Success),
+        ["ProductComposition.Archived"] = new("Состав изделия архивирован", AuditSeverity.Neutral),
+        ["AggregateComposition.Submitted"] = new("Состав агрегата отправлен на проверку", AuditSeverity.Neutral),
+        ["AggregateComposition.ReturnedToDraft"] = new("Состав агрегата возвращён в черновик", AuditSeverity.Warning),
+        ["AggregateComposition.Approved"] = new("Состав агрегата утверждён", AuditSeverity.Success),
+        ["AggregateComposition.Archived"] = new("Состав агрегата архивирован", AuditSeverity.Neutral),
+
+        ["WorkTaskGroup.Completed"] = new("Групповая задача выполнена", AuditSeverity.Success),
     };
 
     private static readonly Dictionary<string, string> EntityTypes = new()

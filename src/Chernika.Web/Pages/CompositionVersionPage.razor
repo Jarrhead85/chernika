@@ -3,6 +3,8 @@
 @page "/составы/агрегаты/{aggregateId:guid}/версии/{compositionId:guid}"
 @attribute [Authorize(Policy = "ViewComposition")]
 @using Chernika.Domain
+@using Chernika.Domain.Entities
+@using AuditLogEntity = Chernika.Domain.Entities.AuditLog
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Models
 @inject EquipmentService EquipService
@@ -17,7 +19,7 @@
     <section class="panel">
         <div class="panelHeader">
             <h2>@LevelTitle: @objectCode — версия <span class="mono">@(selected?.Version ?? "—")</span></h2>
-            <div class="hint">Только чтение</div>
+            <div class="hint">@(selected?.EffectiveDate.HasValue == true ? $"Действует с {selected.EffectiveDate.Value:dd.MM.yyyy}" : "Период действия не задан")</div>
         </div>
         <div class="panelBody">
             <div class="btnRow">
@@ -27,20 +29,53 @@
                 }
                 @if (selected != null && string.IsNullOrEmpty(error))
                 {
-                    @if (selected.Status is ProductCompositionStatus.Approved or ProductCompositionStatus.Archived)
+                    @if (selected.Status == ProductCompositionStatus.Draft)
                     {
+                        @if (canEditDraft)
+                        {
+                            <a class="btn" href="@EditorUrl">Редактировать</a>
+                        }
+                        @if (canSubmit)
+                        {
+                            <button class="btn primary" @onclick="SubmitForReview">Отправить на проверку</button>
+                        }
+                    }
+                    else if (selected.Status == ProductCompositionStatus.OnReview)
+                    {
+                        @if (canApprove)
+                        {
+                            <button class="btn primary" @onclick="Approve">Утвердить</button>
+                        }
+                        @if (canReturn)
+                        {
+                            <button class="btn" @onclick="ReturnToDraft">Вернуть в черновик</button>
+                        }
+                    }
+                    else if (selected.Status == ProductCompositionStatus.Approved)
+                    {
+                        @if (canApprove)
+                        {
+                            <button class="btn" @onclick="Archive">Архивировать</button>
+                        }
                         @if (canCreateVersion)
                         {
                             <button class="btn primary" @onclick="CreateVersion">↗ Создать версию</button>
                         }
                     }
-                    else if (selected.Status == ProductCompositionStatus.Draft)
+                    else if (selected.Status == ProductCompositionStatus.Archived && canCreateVersion)
                     {
-                        <a class="btn" href="@EditorUrl">Редактировать</a>
+                        <button class="btn primary" @onclick="CreateVersion">↗ Создать версию</button>
                     }
                 }
                 <a class="btn ghost" href="/составы">← К реестру составов</a>
             </div>
+            @if (selected?.Status == ProductCompositionStatus.OnReview)
+            {
+                <div class="field" style="margin-top:10px;max-width:400px">
+                    <label>Комментарий к решению</label>
+                    <input @bind="actionComment" class="field-input" placeholder="Необязательно" />
+                </div>
+            }
             @if (!string.IsNullOrEmpty(error))
             {
                 <div class="note warn" style="margin-top:10px">@error</div>
@@ -225,6 +260,90 @@
                     }
                 </div>
             </section>
+
+            <section class="panel">
+                <div class="panelHeader"><h2>Нормативная готовность</h2><div class="hint">@readinessRows.Count</div></div>
+                <div class="panelBody">
+                    @if (!readinessRows.Any())
+                    {
+                        <div class="empty-state">Данных о готовности нет</div>
+                    }
+                    else
+                    {
+                        <div class="listRows">
+                            @foreach (var r in readinessRows)
+                            {
+                                <div class="rowCard">
+                                    <div class="top">
+                                        <span class="mono">@(r.ChildCode)</span>
+                                        <span class="tag @ReadinessTag(r.Status)">@ReadinessLabel(r.Status)</span>
+                                    </div>
+                                    <div class="sub">@r.ChildName</div>
+                                    <div class="sub">@ReadinessMessage(r)</div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panelHeader"><h2>Связанные задачи</h2><div class="hint">@linkedTasks.Count</div></div>
+                <div class="panelBody">
+                    @if (!linkedTasks.Any())
+                    {
+                        <div class="empty-state">Задач нет</div>
+                    }
+                    else
+                    {
+                        <div class="listRows">
+                            @foreach (var t in linkedTasks)
+                            {
+                                <div class="rowCard">
+                                    <div class="top">
+                                        <a class="linkBtn" href="/задачи/@t.Id">@WorkTaskTypeLabel(t.Type)</a>
+                                        <span class="tag @TaskStatusTag(t.Status)">@TaskStatusLabel(t.Status)</span>
+                                    </div>
+                                    <div class="sub">@t.Title</div>
+                                    <div class="sub">@t.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm") @(t.WorkTaskGroupId.HasValue ? "(групп.)" : "")</div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panelHeader"><h2>История согласования</h2><div class="hint">@history.Count</div></div>
+                <div class="panelBody">
+                    @if (!history.Any())
+                    {
+                        <div class="empty-state">Записей нет</div>
+                    }
+                    else
+                    {
+                        <div class="listRows">
+                            @foreach (var h in history)
+                            {
+                                <div class="rowCard">
+                                    <div class="top">
+                                        <span>@AuditDisplayCatalog.GetAction(h.Action).Title</span>
+                                        <span class="sub">@h.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(h.ActorFullName))
+                                    {
+                                        <div class="sub">@h.ActorFullName</div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(h.Details))
+                                    {
+                                        <div class="sub">@h.Details</div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
         </aside>
     </div>
 </div>
@@ -237,7 +356,12 @@
 
     private bool loading = true;
     private bool canCreateVersion;
+    private bool canEditDraft;
+    private bool canSubmit;
+    private bool canReturn;
+    private bool canApprove;
     private string? error;
+    private string actionComment = "";
     private CancellationTokenSource? _loadCts;
 
     private ProductComposition? selectedProductComposition;
@@ -248,6 +372,9 @@
     private string? objectCode;
     private string? objectName;
     private readonly List<CompositionVersionSummary> versions = new();
+    private List<ReadinessRow> readinessRows = new();
+    private List<WorkTask> linkedTasks = new();
+    private List<AuditLogEntity> history = new();
 
     private int Level =>
         complexId.HasValue ? 0 :
@@ -270,6 +397,30 @@
             0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion),
             1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion),
             _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion)
+        };
+        canEditDraft = Level switch
+        {
+            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexEditDraft),
+            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelEditDraft),
+            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateEditDraft)
+        };
+        canSubmit = Level switch
+        {
+            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexSubmit),
+            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelSubmit),
+            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateSubmit)
+        };
+        canReturn = Level switch
+        {
+            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexReturnForRevision),
+            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelReturnForRevision),
+            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateReturnForRevision)
+        };
+        canApprove = Level switch
+        {
+            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexApprove),
+            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelApprove),
+            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateApprove)
         };
         _loadCts = new CancellationTokenSource();
         await LoadData();
@@ -332,6 +483,12 @@
                         break;
                 }
                 selected = versions.FirstOrDefault(v => v.Id == compositionId);
+                if (selected != null)
+                {
+                    readinessRows = (await EquipService.EvaluateReadinessAsync(Level, compositionId, ct)).ToList();
+                    linkedTasks = (await EquipService.GetCompositionTasksAsync(Level, compositionId, ct)).ToList();
+                    history = (await EquipService.GetCompositionHistoryAsync(Level, compositionId, ct)).ToList();
+                }
             }
             catch (Exception ex)
             {
@@ -414,6 +571,98 @@
         }
     }
 
+    private async Task SubmitForReview()
+    {
+        error = null;
+        try
+        {
+            var ct = _loadCts?.Token ?? default;
+            var result = Level switch
+            {
+                0 => await EquipService.SubmitComplexCompositionForReviewAsync(compositionId, ct),
+                1 => await EquipService.SubmitForReviewAsync(compositionId, ct),
+                _ => await EquipService.SubmitAggregateCompositionForReviewAsync(compositionId, ct)
+            };
+            if (result)
+                await LoadData();
+            else
+                error = "Не удалось отправить на проверку.";
+        }
+        catch (Exception ex)
+        {
+            error = $"Ошибка: {ex.Message}";
+        }
+    }
+
+    private async Task ReturnToDraft()
+    {
+        error = null;
+        try
+        {
+            var ct = _loadCts?.Token ?? default;
+            var result = Level switch
+            {
+                0 => await EquipService.ReturnComplexCompositionToDraftAsync(compositionId, actionComment, ct),
+                1 => await EquipService.ReturnToDraftAsync(compositionId, actionComment, ct),
+                _ => await EquipService.ReturnAggregateCompositionToDraftAsync(compositionId, actionComment, ct)
+            };
+            if (result)
+                await LoadData();
+            else
+                error = "Не удалось вернуть в черновик.";
+        }
+        catch (Exception ex)
+        {
+            error = $"Ошибка: {ex.Message}";
+        }
+    }
+
+    private async Task Approve()
+    {
+        error = null;
+        try
+        {
+            var ct = _loadCts?.Token ?? default;
+            var result = Level switch
+            {
+                0 => await EquipService.ApproveComplexCompositionAsync(compositionId, actionComment, ct),
+                1 => await EquipService.ApproveCompositionAsync(compositionId, actionComment, ct),
+                _ => await EquipService.ApproveAggregateCompositionAsync(compositionId, actionComment, ct)
+            };
+            if (result)
+                await LoadData();
+            else
+                error = "Не удалось утвердить состав.";
+        }
+        catch (Exception ex)
+        {
+            error = $"Ошибка: {ex.Message}";
+        }
+    }
+
+    private async Task Archive()
+    {
+        error = null;
+        try
+        {
+            var ct = _loadCts?.Token ?? default;
+            var result = Level switch
+            {
+                0 => await EquipService.ArchiveComplexCompositionAsync(compositionId, ct),
+                1 => await EquipService.ArchiveCompositionAsync(compositionId, ct),
+                _ => await EquipService.ArchiveAggregateCompositionAsync(compositionId, ct)
+            };
+            if (result)
+                await LoadData();
+            else
+                error = "Не удалось архивировать состав.";
+        }
+        catch (Exception ex)
+        {
+            error = $"Ошибка: {ex.Message}";
+        }
+    }
+
     public void Dispose()
     {
         _loadCts?.Cancel();
@@ -435,6 +684,63 @@
         ProductCompositionStatus.OnReview => "warn",
         ProductCompositionStatus.Approved => "ok",
         ProductCompositionStatus.Archived => "",
+        _ => ""
+    };
+
+    private static string ReadinessLabel(string status) => status switch
+    {
+        ReadinessRow.Ready => "Готово",
+        ReadinessRow.Missing => "Отсутствует",
+        ReadinessRow.Expired => "Просрочена",
+        ReadinessRow.FutureEffective => "Будущая",
+        ReadinessRow.ArchivedOrClosed => "Архив/закрыта",
+        _ => status
+    };
+
+    private static string ReadinessTag(string status) => status switch
+    {
+        ReadinessRow.Ready => "ok",
+        ReadinessRow.Missing => "warn",
+        ReadinessRow.Expired => "warn",
+        ReadinessRow.FutureEffective => "",
+        ReadinessRow.ArchivedOrClosed => "",
+        _ => ""
+    };
+
+    private static string ReadinessMessage(ReadinessRow r) => r.Status switch
+    {
+        ReadinessRow.Ready => $"НК {r.HkVersion}",
+        ReadinessRow.Missing => "Отсутствует действующая НК",
+        ReadinessRow.Expired => $"НК {r.HkVersion} просрочена",
+        ReadinessRow.FutureEffective => "Действует с будущей даты",
+        ReadinessRow.ArchivedOrClosed => "НК заархивирована или закрыта",
+        _ => ""
+    };
+
+    private static string WorkTaskTypeLabel(WorkTaskType type) => type switch
+    {
+        WorkTaskType.CompositionReview => "Согласование состава",
+        WorkTaskType.CompositionReadiness => "Готовность состава",
+        _ => type.ToString()
+    };
+
+    private static string TaskStatusLabel(WorkTaskStatus status) => status switch
+    {
+        WorkTaskStatus.Open => "Открыта",
+        WorkTaskStatus.InProgress => "В работе",
+        WorkTaskStatus.Completed => "Выполнена",
+        WorkTaskStatus.Cancelled => "Отменена",
+        WorkTaskStatus.Overdue => "Просрочена",
+        _ => status.ToString()
+    };
+
+    private static string TaskStatusTag(WorkTaskStatus status) => status switch
+    {
+        WorkTaskStatus.Open => "warn",
+        WorkTaskStatus.InProgress => "warn",
+        WorkTaskStatus.Completed => "ok",
+        WorkTaskStatus.Cancelled => "",
+        WorkTaskStatus.Overdue => "warn",
         _ => ""
     };
 }

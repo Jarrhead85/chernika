@@ -10,6 +10,7 @@ public class ProductComposition
 
     public ProductCompositionStatus Status { get; set; }
     public string Version { get; set; } = null!;
+    public Guid? BranchId { get; set; }
 
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

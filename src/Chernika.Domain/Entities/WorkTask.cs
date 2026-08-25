@@ -19,6 +19,9 @@ public class WorkTask
 
     public Guid? BranchId { get; set; }
 
+    public Guid? WorkTaskGroupId { get; set; }
+    public WorkTaskGroup? WorkTaskGroup { get; set; }
+
     public string? EntityType { get; set; }
     public Guid? EntityId { get; set; }
     public string? EntityCodeSnapshot { get; set; }
