@@ -165,7 +165,8 @@ public class CompositionA2IntegrationTests
         Assert.DoesNotContain(tasks, t => t.AssignedToUserId == _fixture.NormAdminB.Id);
 
         var notifications = await s.Db.Notifications.AsNoTracking()
-            .Where(n => n.DeduplicationKey != null && n.DeduplicationKey.StartsWith($"composition-review:{group.Id}:"))
+            .Where(n => n.Type == NotificationType.CompositionReviewRequested
+                && n.EntityType == "ProductComposition" && n.EntityId == compositionId)
             .ToListAsync();
         Assert.Equal(2, notifications.Count);
     }

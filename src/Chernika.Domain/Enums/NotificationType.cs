@@ -11,5 +11,9 @@ public enum NotificationType
     HKExpiring = 7,
     HKExpired = 8,
     ReferenceProposalPending = 9,
-    System = 10
+    System = 10,
+    CompositionReviewRequested = 11,
+    CompositionReturnedToDraft = 12,
+    CompositionApproved = 13,
+    CompositionReadinessIssue = 14
 }

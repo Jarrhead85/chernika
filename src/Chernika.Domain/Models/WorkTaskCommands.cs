@@ -52,3 +52,37 @@ public sealed record CompleteWorkTaskCommand(
 public sealed record CancelWorkTaskCommand(
     Guid TaskId,
     string? Reason = null);
+
+public sealed record CreateCompositionReviewGroupCommand(
+    string EntityType,
+    Guid EntityId,
+    Guid BranchId,
+    string Code,
+    string Version,
+    string Title,
+    string? Description = null);
+
+public sealed record CreateCompositionReadinessGroupCommand(
+    string EntityType,
+    Guid EntityId,
+    Guid BranchId,
+    string Code,
+    string Name,
+    string ProblemKey,
+    string StatusLabel,
+    string? Description = null);
+
+public sealed record CreateCompositionAuthorTaskCommand(
+    string EntityType,
+    Guid EntityId,
+    Guid? BranchId,
+    string AuthorId,
+    string Code,
+    string Version,
+    string Title,
+    string? Description = null);
+
+public sealed record CompleteWorkTaskGroupCommand(
+    Guid TaskId,
+    string ActorUserId,
+    string? Comment = null);

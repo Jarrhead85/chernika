@@ -384,6 +384,7 @@ public class TaskService
                 EntityId = t.EntityId,
                 EntityCodeSnapshot = t.EntityCodeSnapshot,
                 EntityTitleSnapshot = t.EntityTitleSnapshot,
+                WorkTaskGroupId = t.WorkTaskGroupId,
                 CreatedAtUtc = t.CreatedAtUtc,
                 DueDateUtc = t.DueDateUtc,
                 CompletedAtUtc = t.CompletedAtUtc,
@@ -430,6 +431,330 @@ public class TaskService
             .ToListAsync(ct);
 
         return groups.ToDictionary(g => g.Status, g => g.Count);
+    }
+
+    public async Task<WorkTaskGroupResult> CreateCompositionReviewGroupAsync(
+        CreateCompositionReviewGroupCommand command,
+        IReadOnlyCollection<string> normAdminUserIds,
+        CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var taskTypeName = nameof(WorkTaskType.CompositionReview);
+
+        var existingGroup = await _db.WorkTaskGroups
+            .Include(g => g.WorkTasks)
+            .FirstOrDefaultAsync(g =>
+                g.TaskType == taskTypeName
+                && g.EntityType == command.EntityType
+                && g.EntityId == command.EntityId
+                && g.BranchId == command.BranchId
+                && g.CompletedAt == null, ct);
+
+        if (existingGroup != null)
+            return new WorkTaskGroupResult(existingGroup.Id,
+                existingGroup.WorkTasks.Select(t => t.Id).ToList(), CreatedNew: false);
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var group = new WorkTaskGroup
+        {
+            Id = Guid.NewGuid(),
+            TaskType = taskTypeName,
+            EntityType = command.EntityType,
+            EntityId = command.EntityId,
+            BranchId = command.BranchId,
+            Title = command.Title,
+            Description = command.Description,
+            CreatedAt = now
+        };
+        _db.WorkTaskGroups.Add(group);
+
+        var taskIds = new List<Guid>();
+        foreach (var userId in normAdminUserIds)
+        {
+            var task = new WorkTask
+            {
+                Id = Guid.NewGuid(),
+                Title = command.Title,
+                Description = command.Description,
+                Type = WorkTaskType.CompositionReview,
+                Status = WorkTaskStatus.Open,
+                Priority = WorkTaskPriority.Normal,
+                CreatedByUserId = actorId.ToString(),
+                AssignedToUserId = userId,
+                BranchId = command.BranchId,
+                EntityType = command.EntityType,
+                EntityId = command.EntityId,
+                EntityCodeSnapshot = command.Code,
+                EntityTitleSnapshot = command.Version,
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now,
+                WorkTaskGroupId = group.Id
+            };
+            _db.WorkTasks.Add(task);
+            taskIds.Add(task.Id);
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest("WorkTaskGroup", group.Id.ToString(), "WorkTaskGroup.Created",
+                actorId, EntityDisplayName: group.Title), ct);
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return new WorkTaskGroupResult(group.Id, taskIds, CreatedNew: true);
+    }
+
+    public async Task<WorkTask> CreateCompositionReviewFallbackTaskAsync(
+        CreateCompositionReviewGroupCommand command,
+        CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var now = _time.GetUtcNow().UtcDateTime;
+
+        var existing = await _db.WorkTasks.FirstOrDefaultAsync(t =>
+            !t.IsDeleted
+            && t.Type == WorkTaskType.CompositionReview
+            && t.AssignedRole == nameof(UserRole.SystemAdmin)
+            && t.EntityType == command.EntityType
+            && t.EntityId == command.EntityId
+            && (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress || t.Status == WorkTaskStatus.Overdue), ct);
+
+        if (existing != null)
+            return existing;
+
+        var task = new WorkTask
+        {
+            Id = Guid.NewGuid(),
+            Title = command.Title,
+            Description = command.Description,
+            Type = WorkTaskType.CompositionReview,
+            Status = WorkTaskStatus.Open,
+            Priority = WorkTaskPriority.High,
+            CreatedByUserId = actorId.ToString(),
+            AssignedRole = nameof(UserRole.SystemAdmin),
+            BranchId = command.BranchId,
+            EntityType = command.EntityType,
+            EntityId = command.EntityId,
+            EntityCodeSnapshot = command.Code,
+            EntityTitleSnapshot = command.Version,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+
+        _db.WorkTasks.Add(task);
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest("WorkTask", task.Id.ToString(), "Task.Created",
+                actorId, EntityDisplayName: task.Title), ct);
+        await _db.SaveChangesAsync(ct);
+
+        return task;
+    }
+
+    public async Task<WorkTaskGroupResult> CreateCompositionReadinessGroupAsync(
+        CreateCompositionReadinessGroupCommand command,
+        IReadOnlyCollection<string> normAdminUserIds,
+        CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var taskTypeName = nameof(WorkTaskType.CompositionReadiness);
+
+        var existingGroup = await _db.WorkTaskGroups
+            .Include(g => g.WorkTasks)
+            .FirstOrDefaultAsync(g =>
+                g.TaskType == taskTypeName
+                && g.EntityType == command.EntityType
+                && g.EntityId == command.EntityId
+                && g.BranchId == command.BranchId
+                && g.Description == command.ProblemKey
+                && g.CompletedAt == null, ct);
+
+        if (existingGroup != null)
+            return new WorkTaskGroupResult(existingGroup.Id,
+                existingGroup.WorkTasks.Select(t => t.Id).ToList(), CreatedNew: false);
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var title = $"Актуализировать ХК: {command.Code} — {command.StatusLabel}";
+        var group = new WorkTaskGroup
+        {
+            Id = Guid.NewGuid(),
+            TaskType = taskTypeName,
+            EntityType = command.EntityType,
+            EntityId = command.EntityId,
+            BranchId = command.BranchId,
+            Title = title,
+            Description = command.ProblemKey,
+            CreatedAt = now
+        };
+        _db.WorkTaskGroups.Add(group);
+
+        var taskIds = new List<Guid>();
+        var taskDescription = command.Description ?? $"Нормативная готовность состава: {command.StatusLabel}.";
+        foreach (var userId in normAdminUserIds)
+        {
+            var task = new WorkTask
+            {
+                Id = Guid.NewGuid(),
+                Title = title,
+                Description = taskDescription,
+                Type = WorkTaskType.CompositionReadiness,
+                Status = WorkTaskStatus.Open,
+                Priority = WorkTaskPriority.Normal,
+                CreatedByUserId = actorId.ToString(),
+                AssignedToUserId = userId,
+                BranchId = command.BranchId,
+                EntityType = command.EntityType,
+                EntityId = command.EntityId,
+                EntityCodeSnapshot = command.Code,
+                EntityTitleSnapshot = command.Name,
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now,
+                WorkTaskGroupId = group.Id
+            };
+            _db.WorkTasks.Add(task);
+            taskIds.Add(task.Id);
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest("WorkTaskGroup", group.Id.ToString(), "WorkTaskGroup.Created",
+                actorId, EntityDisplayName: group.Title), ct);
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return new WorkTaskGroupResult(group.Id, taskIds, CreatedNew: true);
+    }
+
+    public async Task<WorkTask> CreateCompositionAuthorTaskAsync(
+        CreateCompositionAuthorTaskCommand command,
+        CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        var existing = await _db.WorkTasks
+            .FirstOrDefaultAsync(t =>
+                !t.IsDeleted
+                && t.Type == WorkTaskType.CompositionReview
+                && t.EntityType == command.EntityType
+                && t.EntityId == command.EntityId
+                && t.AssignedToUserId == command.AuthorId
+                && (t.Status == WorkTaskStatus.Open
+                    || t.Status == WorkTaskStatus.InProgress
+                    || t.Status == WorkTaskStatus.Overdue), ct);
+
+        if (existing != null)
+        {
+            existing.Title = command.Title;
+            existing.Description = command.Description;
+            existing.UpdatedAtUtc = _time.GetUtcNow().UtcDateTime;
+            await _db.SaveChangesAsync(ct);
+            return existing;
+        }
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var task = new WorkTask
+        {
+            Id = Guid.NewGuid(),
+            Title = command.Title,
+            Description = command.Description,
+            Type = WorkTaskType.CompositionReview,
+            Status = WorkTaskStatus.Open,
+            Priority = WorkTaskPriority.Normal,
+            CreatedByUserId = actorId.ToString(),
+            AssignedToUserId = command.AuthorId,
+            BranchId = command.BranchId,
+            EntityType = command.EntityType,
+            EntityId = command.EntityId,
+            EntityCodeSnapshot = command.Code,
+            EntityTitleSnapshot = command.Version,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+
+        _db.WorkTasks.Add(task);
+        await _audit.CreateLogAsync(
+            new AuditWriteRequest("WorkTask", task.Id.ToString(), "Task.Created",
+                actorId, EntityDisplayName: task.Title), ct);
+        await _db.SaveChangesAsync(ct);
+
+        return task;
+    }
+
+    public async Task<GroupCompletionResult> CompleteGroupAsync(
+        Guid taskId,
+        string actorUserId,
+        string? comment = null,
+        CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.TaskComplete, ct);
+
+        var actorId = actorUserId;
+        var task = await _db.WorkTasks
+            .Include(t => t.WorkTaskGroup)
+            .ThenInclude(g => g.WorkTasks)
+            .FirstOrDefaultAsync(t => t.Id == taskId && !t.IsDeleted, ct);
+
+        if (task?.WorkTaskGroup == null)
+            throw new InvalidOperationException("Задача не является групповой.");
+
+        var group = task.WorkTaskGroup;
+        if (group.CompletedAt.HasValue)
+        {
+            var names = await GetUserNamesAsync(new[] { group.CompletedByUserId }, ct);
+            var completerName = names.GetValueOrDefault(group.CompletedByUserId) ?? group.CompletedByUserId ?? "другой пользователь";
+            return new GroupCompletionResult(true, group.CompletedByUserId, completerName, AlreadyCompleted: true,
+                $"Задача уже выполнена пользователем {completerName}.");
+        }
+
+        var actorIsSystemAdmin = await _permissions.HasPermissionAsync(actorId, PermissionCodes.SystemConfig);
+        var isGroupMember = group.WorkTasks.Any(t =>
+            t.AssignedToUserId == actorId
+            && (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress || t.Status == WorkTaskStatus.Overdue));
+
+        if (!isGroupMember && !actorIsSystemAdmin)
+            throw new UnauthorizedAccessException("Завершить групповую задачу может только назначенный исполнитель.");
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        group.CompletedAt = now;
+        group.CompletedByUserId = actorId;
+
+        foreach (var t in group.WorkTasks.Where(t =>
+            t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress || t.Status == WorkTaskStatus.Overdue))
+        {
+            t.Status = WorkTaskStatus.Completed;
+            t.CompletedAtUtc = now;
+            t.CompletedByUserId = actorId;
+            t.CompletionComment = comment;
+            t.UpdatedAtUtc = now;
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await _audit.CreateLogAsync(
+                new AuditWriteRequest("WorkTaskGroup", group.Id.ToString(), "WorkTaskGroup.Completed",
+                    Guid.Parse(actorId), EntityDisplayName: group.Title, Details: comment),
+                ct);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(ct);
+            var existing = await _db.WorkTaskGroups.AsNoTracking()
+                .FirstOrDefaultAsync(g => g.Id == group.Id, ct);
+            if (existing?.CompletedAt != null)
+            {
+                var completerName = (await GetUserNamesAsync(new[] { existing.CompletedByUserId }, ct))
+                    .GetValueOrDefault(existing.CompletedByUserId) ?? existing.CompletedByUserId ?? "другой пользователь";
+                return new GroupCompletionResult(true, existing.CompletedByUserId, completerName, AlreadyCompleted: true,
+                    $"Задача уже выполнена пользователем {completerName}.");
+            }
+            throw;
+        }
+
+        var actorName = (await GetUserNamesAsync(new[] { actorId }, ct)).GetValueOrDefault(actorId) ?? actorId;
+        return new GroupCompletionResult(true, actorId, actorName, AlreadyCompleted: false,
+            $"Задача выполнена пользователем {actorName}.");
     }
 
     public async Task ProcessOverdueTasksAsync(CancellationToken ct = default)
@@ -651,6 +976,7 @@ public class TaskService
             EntityId = task.EntityId,
             EntityCodeSnapshot = task.EntityCodeSnapshot,
             EntityTitleSnapshot = task.EntityTitleSnapshot,
+            WorkTaskGroupId = task.WorkTaskGroupId,
             CreatedAtUtc = task.CreatedAtUtc,
             DueDateUtc = task.DueDateUtc,
             StartedAtUtc = task.StartedAtUtc,

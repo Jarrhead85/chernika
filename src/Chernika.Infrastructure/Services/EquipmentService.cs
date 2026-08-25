@@ -540,262 +540,123 @@ public class EquipmentService
         return actor?.BranchId;
     }
 
-    private async Task<List<ApplicationUser>> GetActiveNormAdminsInBranchAsync(Guid branchId, CancellationToken ct)
+    private async Task<List<string>> GetActiveNormAdminIdsAsync(Guid branchId, CancellationToken ct)
     {
         var roleId = await _db.Roles.Where(r => r.Name == nameof(UserRole.NormAdmin)).Select(r => r.Id).FirstOrDefaultAsync(ct);
-        if (roleId == null) return new List<ApplicationUser>();
+        if (roleId == null) return new List<string>();
         return await _db.Users
             .Where(u => !u.IsDeleted && u.IsActive && u.BranchId == branchId
                 && _db.UserRoles.Any(ur => ur.UserId == u.Id && ur.RoleId == roleId))
+            .Select(u => u.Id)
             .ToListAsync(ct);
     }
 
-    private async Task CreateCompositionReviewTasksAsync(int level, Guid compositionId, Guid? branchId, string code, string version, CancellationToken ct)
+    private async Task<List<string>> GetActiveSystemAdminIdsAsync(CancellationToken ct)
+    {
+        var roleId = await _db.Roles.Where(r => r.Name == nameof(UserRole.SystemAdmin)).Select(r => r.Id).FirstOrDefaultAsync(ct);
+        if (roleId == null) return new List<string>();
+        return await _db.Users
+            .Where(u => !u.IsDeleted && u.IsActive
+                && _db.UserRoles.Any(ur => ur.UserId == u.Id && ur.RoleId == roleId))
+            .Select(u => u.Id)
+            .ToListAsync(ct);
+    }
+
+    private async Task CreateCompositionReviewWorkflowAsync(int level, Guid compositionId, Guid? branchId, string code, string version, CancellationToken ct)
     {
         if (!branchId.HasValue) return;
         var entity = LevelEntity(level);
         var title = $"Согласование состава: {code} v{version}";
         var description = "Требуется согласование конструктивного состава.";
-        var now = _time.GetUtcNow().UtcDateTime;
 
-        var normAdmins = await GetActiveNormAdminsInBranchAsync(branchId.Value, ct);
-        if (normAdmins.Count == 0)
+        var normAdminIds = await GetActiveNormAdminIdsAsync(branchId.Value, ct);
+        var command = new CreateCompositionReviewGroupCommand(
+            entity, compositionId, branchId.Value, code, version, title, description);
+
+        if (normAdminIds.Count == 0)
         {
-            await CreateFallbackTaskAsync(entity, compositionId, branchId.Value, title, description, ct);
+            await _tasks.CreateCompositionReviewFallbackTaskAsync(command, ct);
+            var sysAdminIds = await GetActiveSystemAdminIdsAsync(ct);
+            await _notifications.NotifyCompositionReviewFallbackAsync(sysAdminIds, entity, compositionId, branchId.Value, code, version, ct);
             await _audit.LogAsync(new AuditWriteRequest(entity, compositionId.ToString(), "ReferenceProposal.NoNormAdmin",
                 _currentUser.GetRequiredUserId(), Details: "Нет активного NormAdmin в филиале для согласования состава."), ct);
             return;
         }
 
-        var group = new WorkTaskGroup
-        {
-            Id = Guid.NewGuid(),
-            TaskType = nameof(WorkTaskType.CompositionReview),
-            EntityType = entity,
-            EntityId = compositionId,
-            BranchId = branchId.Value,
-            Title = title,
-            Description = description,
-            CreatedAt = now
-        };
-        _db.WorkTaskGroups.Add(group);
-
-        foreach (var admin in normAdmins)
-        {
-            _db.WorkTasks.Add(new WorkTask
-            {
-                Id = Guid.NewGuid(),
-                Title = title,
-                Description = description,
-                Type = WorkTaskType.CompositionReview,
-                Status = WorkTaskStatus.Open,
-                Priority = WorkTaskPriority.Normal,
-                AssignedToUserId = admin.Id,
-                BranchId = branchId.Value,
-                EntityType = entity,
-                EntityId = compositionId,
-                EntityCodeSnapshot = code,
-                EntityTitleSnapshot = version,
-                CreatedAtUtc = now,
-                UpdatedAtUtc = now,
-                WorkTaskGroupId = group.Id
-            });
-        }
-
-        await _db.SaveChangesAsync(ct);
-
-        foreach (var admin in normAdmins)
-        {
-            await _notifications.CreateForUsersAsync(new[] { admin.Id }, new CreateNotificationCommand(
-                Type: NotificationType.TaskAssigned,
-                Title: $"Назначена задача: {title}",
-                Message: description,
-                EntityType: entity,
-                EntityId: compositionId,
-                BranchId: branchId.Value,
-                DeduplicationKey: $"composition-review:{group.Id}:{admin.Id}"), ct);
-        }
+        await _tasks.CreateCompositionReviewGroupAsync(command, normAdminIds, ct);
+        await _notifications.NotifyCompositionReviewRequestedAsync(normAdminIds, entity, compositionId, branchId.Value, code, version, ct);
     }
 
-    private async Task CreateFallbackTaskAsync(string entity, Guid entityId, Guid branchId, string title, string description, CancellationToken ct)
-    {
-        var roleId = await _db.Roles.Where(r => r.Name == nameof(UserRole.SystemAdmin)).Select(r => r.Id).FirstOrDefaultAsync(ct);
-        var sysAdmins = roleId == null ? new List<ApplicationUser>() : await _db.Users
-            .Where(u => !u.IsDeleted && u.IsActive && _db.UserRoles.Any(ur => ur.UserId == u.Id && ur.RoleId == roleId))
-            .ToListAsync(ct);
-
-        _db.WorkTasks.Add(new WorkTask
-        {
-            Id = Guid.NewGuid(),
-            Title = title,
-            Description = description,
-            Type = WorkTaskType.CompositionReview,
-            Status = WorkTaskStatus.Open,
-            Priority = WorkTaskPriority.High,
-            AssignedRole = nameof(UserRole.SystemAdmin),
-            BranchId = branchId,
-            EntityType = entity,
-            EntityId = entityId,
-            CreatedAtUtc = _time.GetUtcNow().UtcDateTime,
-            UpdatedAtUtc = _time.GetUtcNow().UtcDateTime
-        });
-        await _db.SaveChangesAsync(ct);
-
-        foreach (var sa in sysAdmins)
-        {
-            await _notifications.CreateForUsersAsync(new[] { sa.Id }, new CreateNotificationCommand(
-                Type: NotificationType.TaskAssigned,
-                Title: $"Назначена задача: {title}",
-                Message: description,
-                EntityType: entity,
-                EntityId: entityId,
-                BranchId: branchId,
-                DeduplicationKey: $"composition-review-fallback:{entity}:{entityId}:{sa.Id}"), ct);
-        }
-    }
-
-    private async Task CloseCompositionReviewGroupAsync(int level, Guid compositionId, Guid? branchId, Guid actorUserId, CancellationToken ct)
+    private async Task CloseCompositionReviewWorkflowAsync(int level, Guid compositionId, Guid? branchId, string actorUserId, CancellationToken ct)
     {
         var entity = LevelEntity(level);
-        var group = await _db.WorkTaskGroups
-            .FirstOrDefaultAsync(g => g.EntityType == entity && g.EntityId == compositionId
-                && g.TaskType == nameof(WorkTaskType.CompositionReview) && g.CompletedAt == null, ct);
-        if (group == null) return;
+        var actorTask = await _db.WorkTasks
+            .FirstOrDefaultAsync(t => t.EntityType == entity && t.EntityId == compositionId
+                && t.Type == WorkTaskType.CompositionReview
+                && t.AssignedToUserId == actorUserId
+                && (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress || t.Status == WorkTaskStatus.Overdue)
+                && t.WorkTaskGroupId != null, ct);
 
-        var now = _time.GetUtcNow().UtcDateTime;
-        group.CompletedAt = now;
-        group.CompletedByUserId = actorUserId.ToString();
+        var anyTask = actorTask ?? await _db.WorkTasks
+            .FirstOrDefaultAsync(t => t.EntityType == entity && t.EntityId == compositionId
+                && t.Type == WorkTaskType.CompositionReview
+                && (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress || t.Status == WorkTaskStatus.Overdue)
+                && t.WorkTaskGroupId != null, ct);
 
-        var tasks = await _db.WorkTasks
-            .Where(t => t.WorkTaskGroupId == group.Id
-                && t.Status != WorkTaskStatus.Completed && t.Status != WorkTaskStatus.Cancelled)
-            .ToListAsync(ct);
-        foreach (var t in tasks)
-        {
-            t.Status = WorkTaskStatus.Completed;
-            t.CompletedAtUtc = now;
-            t.CompletedByUserId = actorUserId.ToString();
-            t.UpdatedAtUtc = now;
-        }
+        if (anyTask == null || anyTask.WorkTaskGroupId == null) return;
 
-        await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("WorkTaskGroup", group.Id.ToString(), "WorkTaskGroup.Completed",
-            actorUserId, EntityDisplayName: group.Title), ct);
+        await _tasks.CompleteGroupAsync(anyTask.Id, actorUserId, null, ct);
     }
 
-    private async Task CreateCompositionAuthorTaskAsync(int level, Guid compositionId, Guid? branchId, string? authorId, string title, string? comment, string code, string version, CancellationToken ct)
+    private async Task CreateCompositionAuthorWorkflowAsync(int level, Guid compositionId, Guid? branchId, string? authorId, string? comment, string code, string version, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(authorId)) return;
         var entity = LevelEntity(level);
-        var now = _time.GetUtcNow().UtcDateTime;
-        _db.WorkTasks.Add(new WorkTask
-        {
-            Id = Guid.NewGuid(),
-            Title = title,
-            Description = comment,
-            Type = WorkTaskType.CompositionReview,
-            Status = WorkTaskStatus.Open,
-            Priority = WorkTaskPriority.Normal,
-            AssignedToUserId = authorId,
-            BranchId = branchId,
-            EntityType = entity,
-            EntityId = compositionId,
-            EntityCodeSnapshot = code,
-            EntityTitleSnapshot = version,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = now
-        });
-        await _db.SaveChangesAsync(ct);
-        await _notifications.CreateForUsersAsync(new[] { authorId }, new CreateNotificationCommand(
-            Type: NotificationType.TaskAssigned,
-            Title: $"Назначена задача: {title}",
-            Message: comment,
-            EntityType: entity,
-            EntityId: compositionId,
-            BranchId: branchId,
-            DeduplicationKey: $"composition-author-task:{compositionId}"), ct);
+        var title = "Доработать состав";
+
+        await _tasks.CreateCompositionAuthorTaskAsync(new CreateCompositionAuthorTaskCommand(
+            entity, compositionId, branchId, authorId, code, version, title, comment), ct);
+        await _notifications.NotifyCompositionReturnedToDraftAsync(authorId, entity, compositionId, branchId, code, version, ct);
     }
 
-    private async Task NotifyCompositionApprovedAsync(int level, Guid compositionId, Guid? branchId, string? authorId, string code, string version, CancellationToken ct)
+    private async Task NotifyCompositionApprovedWorkflowAsync(int level, Guid compositionId, Guid? branchId, string? authorId, string code, string version, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(authorId)) return;
         var entity = LevelEntity(level);
-        await _notifications.CreateForUsersAsync(new[] { authorId }, new CreateNotificationCommand(
-            Type: NotificationType.TaskCompleted,
-            Title: $"Состав утверждён: {code} v{version}",
-            Message: "Конструктивный состав успешно утверждён.",
-            EntityType: entity,
-            EntityId: compositionId,
-            BranchId: branchId,
-            DeduplicationKey: $"composition-approved:{compositionId}"), ct);
+        await _notifications.NotifyCompositionApprovedAsync(authorId, entity, compositionId, branchId, code, version, ct);
     }
 
-    private async Task CreateReadinessTasksAsync(int level, Guid compositionId, Guid? branchId, CancellationToken ct)
+    private async Task CreateCompositionReadinessWorkflowAsync(int level, Guid compositionId, Guid? branchId, CancellationToken ct)
     {
         if (!branchId.HasValue) return;
         var rows = await EvaluateReadinessAsync(level, compositionId, ct);
-        var now = _time.GetUtcNow().UtcDateTime;
-        var normAdmins = await GetActiveNormAdminsInBranchAsync(branchId.Value, ct);
+        var normAdminIds = await GetActiveNormAdminIdsAsync(branchId.Value, ct);
+        var childType = LevelChildEntity(level);
 
         foreach (var row in rows.Where(r => r.IsProblem))
         {
-            var childType = LevelChildEntity(level);
-            var dedup = $"composition-readiness:{childType}:{row.ChildId}:{row.Status}";
-            var existing = await _db.WorkTaskGroups.AnyAsync(g =>
-                g.EntityType == childType && g.EntityId == row.ChildId
-                && g.TaskType == nameof(WorkTaskType.CompositionReadiness)
-                && g.BranchId == branchId.Value && g.CompletedAt == null
-                && g.Description == dedup, ct);
-            if (existing) continue;
+            var problemKey = $"composition-readiness:{childType}:{row.ChildId}:{row.Status}";
+            var command = new CreateCompositionReadinessGroupCommand(
+                childType, row.ChildId, branchId.Value, row.ChildCode, row.ChildName, problemKey,
+                ReadinessStatusLabel(row.Status));
 
-            var title = $"Актуализировать ХК: {row.ChildCode} — {ReadinessStatusLabel(row.Status)}";
-            var group = new WorkTaskGroup
-            {
-                Id = Guid.NewGuid(),
-                TaskType = nameof(WorkTaskType.CompositionReadiness),
-                EntityType = childType,
-                EntityId = row.ChildId,
-                BranchId = branchId.Value,
-                Title = title,
-                Description = dedup,
-                CreatedAt = now
-            };
-            _db.WorkTaskGroups.Add(group);
+            var result = await _tasks.CreateCompositionReadinessGroupAsync(command, normAdminIds, ct);
 
-            foreach (var admin in normAdmins)
+            if (result.CreatedNew && row.HkCardId.HasValue)
             {
-                _db.WorkTasks.Add(new WorkTask
+                var hk = await _db.HKCards.AsNoTracking()
+                    .FirstOrDefaultAsync(h => h.Id == row.HkCardId.Value, ct);
+                var hkAuthorId = hk?.AuthorId?.ToString();
+                if (!string.IsNullOrEmpty(hkAuthorId))
                 {
-                    Id = Guid.NewGuid(),
-                    Title = title,
-                    Description = $"Нормативная готовность состава: {ReadinessStatusLabel(row.Status)}.",
-                    Type = WorkTaskType.CompositionReadiness,
-                    Status = WorkTaskStatus.Open,
-                    Priority = WorkTaskPriority.Normal,
-                    AssignedToUserId = admin.Id,
-                    BranchId = branchId.Value,
-                    EntityType = childType,
-                    EntityId = row.ChildId,
-                    EntityCodeSnapshot = row.ChildCode,
-                    EntityTitleSnapshot = row.ChildName,
-                    CreatedAtUtc = now,
-                    UpdatedAtUtc = now,
-                    WorkTaskGroupId = group.Id
-                });
-            }
-
-            await _db.SaveChangesAsync(ct);
-
-            foreach (var admin in normAdmins)
-            {
-                await _notifications.CreateForUsersAsync(new[] { admin.Id }, new CreateNotificationCommand(
-                    Type: NotificationType.TaskAssigned,
-                    Title: $"Назначена задача: {title}",
-                    Message: $"Нормативная готовность состава: {ReadinessStatusLabel(row.Status)}.",
-                    EntityType: childType,
-                    EntityId: row.ChildId,
-                    BranchId: branchId.Value,
-                    DeduplicationKey: $"composition-readiness-task:{group.Id}:{admin.Id}"), ct);
+                    var hkAuthor = await _userManager.FindByIdAsync(hkAuthorId);
+                    if (hkAuthor != null && !hkAuthor.IsDeleted && hkAuthor.IsActive)
+                    {
+                        await _notifications.NotifyCompositionReadinessAsync(
+                            hkAuthorId, childType, row.ChildId, branchId.Value, row.ChildCode,
+                            ReadinessStatusLabel(row.Status), ct);
+                    }
+                }
             }
         }
     }
@@ -901,8 +762,9 @@ public class EquipmentService
             return new ReadinessRow(childId, code, name, ReadinessRow.FutureEffective, null, null);
         }
 
-        if (hks.Any(h => h.Status == HKCardStatus.Archived))
-            return new ReadinessRow(childId, code, name, ReadinessRow.ArchivedOrClosed, null, null);
+        var archived = hks.FirstOrDefault(h => h.Status == HKCardStatus.Archived);
+        if (archived != null)
+            return new ReadinessRow(childId, code, name, ReadinessRow.ArchivedOrClosed, archived.Id, archived.Version);
 
         return new ReadinessRow(childId, code, name, ReadinessRow.Missing, null, null);
     }
@@ -1119,7 +981,7 @@ public class EquipmentService
         if (!comp.Parts.Any() || !comp.Parts.SelectMany(p => p.Aggregates).Any())
             throw new InvalidOperationException("Нельзя отправить на согласование пустой состав.");
         await ChangeCompositionStatusInternalAsync(id, ProductCompositionStatus.OnReview, null, ct);
-        await CreateCompositionReviewTasksAsync(1, comp.Id, comp.BranchId,
+        await CreateCompositionReviewWorkflowAsync(1, comp.Id, comp.BranchId,
             comp.EquipmentModel?.Index ?? comp.EquipmentModelId.ToString(), comp.Version, ct);
         return true;
     }
@@ -1132,8 +994,8 @@ public class EquipmentService
         if (comp.Status != ProductCompositionStatus.OnReview)
             throw new InvalidOperationException("Возврат в черновик возможен только из статуса «На проверке».");
         await ChangeCompositionStatusInternalAsync(id, ProductCompositionStatus.Draft, comment, ct);
-        await CloseCompositionReviewGroupAsync(1, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId(), ct);
-        await CreateCompositionAuthorTaskAsync(1, comp.Id, comp.BranchId, comp.AuthorId, "Доработать состав",
+        await CloseCompositionReviewWorkflowAsync(1, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId().ToString(), ct);
+        await CreateCompositionAuthorWorkflowAsync(1, comp.Id, comp.BranchId, comp.AuthorId,
             comment, comp.EquipmentModel?.Index ?? comp.EquipmentModelId.ToString(), comp.Version, ct);
         return true;
     }
@@ -1186,10 +1048,10 @@ public class EquipmentService
 
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(new AuditWriteRequest("ProductComposition", id.ToString(), "ProductComposition.Approved", _currentUser.GetRequiredUserId()));
-        await CloseCompositionReviewGroupAsync(1, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId(), ct);
-        await NotifyCompositionApprovedAsync(1, comp.Id, comp.BranchId, comp.AuthorId,
+        await CloseCompositionReviewWorkflowAsync(1, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId().ToString(), ct);
+        await NotifyCompositionApprovedWorkflowAsync(1, comp.Id, comp.BranchId, comp.AuthorId,
             comp.EquipmentModel?.Index ?? comp.EquipmentModelId.ToString(), comp.Version, ct);
-        await CreateReadinessTasksAsync(1, comp.Id, comp.BranchId, ct);
+        await CreateCompositionReadinessWorkflowAsync(1, comp.Id, comp.BranchId, ct);
         return true;
     }
 
@@ -1854,7 +1716,7 @@ public class EquipmentService
             throw new InvalidOperationException("Нельзя отправить на согласование пустой состав.");
         await ChangeCompositionStatusInternalAsync<AggregateComposition>(_db.AggregateCompositions, id,
             ProductCompositionStatus.OnReview, null, ct);
-        await CreateCompositionReviewTasksAsync(2, comp.Id, comp.BranchId, comp.Aggregate?.Code ?? comp.AggregateId.ToString(), comp.Version, ct);
+        await CreateCompositionReviewWorkflowAsync(2, comp.Id, comp.BranchId, comp.Aggregate?.Code ?? comp.AggregateId.ToString(), comp.Version, ct);
         return true;
     }
 
@@ -1867,8 +1729,8 @@ public class EquipmentService
             throw new InvalidOperationException("Возврат в черновик возможен только из статуса «На проверке».");
         await ChangeCompositionStatusInternalAsync<AggregateComposition>(_db.AggregateCompositions, id,
             ProductCompositionStatus.Draft, comment, ct);
-        await CloseCompositionReviewGroupAsync(2, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId(), ct);
-        await CreateCompositionAuthorTaskAsync(2, comp.Id, comp.BranchId, comp.AuthorId, "Доработать состав",
+        await CloseCompositionReviewWorkflowAsync(2, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId().ToString(), ct);
+        await CreateCompositionAuthorWorkflowAsync(2, comp.Id, comp.BranchId, comp.AuthorId,
             comment, comp.Aggregate?.Code ?? comp.AggregateId.ToString(), comp.Version, ct);
         return true;
     }
@@ -1919,10 +1781,10 @@ public class EquipmentService
         comp.Comment = comment ?? comp.Comment;
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(new AuditWriteRequest("AggregateComposition", id.ToString(), "AggregateComposition.Approved", _currentUser.GetRequiredUserId()));
-        await CloseCompositionReviewGroupAsync(2, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId(), ct);
-        await NotifyCompositionApprovedAsync(2, comp.Id, comp.BranchId, comp.AuthorId,
+        await CloseCompositionReviewWorkflowAsync(2, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId().ToString(), ct);
+        await NotifyCompositionApprovedWorkflowAsync(2, comp.Id, comp.BranchId, comp.AuthorId,
             comp.Aggregate?.Code ?? comp.AggregateId.ToString(), comp.Version, ct);
-        await CreateReadinessTasksAsync(2, comp.Id, comp.BranchId, ct);
+        await CreateCompositionReadinessWorkflowAsync(2, comp.Id, comp.BranchId, ct);
         return true;
     }
 
@@ -2289,7 +2151,7 @@ public class EquipmentService
             throw new InvalidOperationException("Нельзя отправить на согласование пустой состав.");
         await ChangeCompositionStatusInternalAsync<ComplexComposition>(_db.ComplexCompositions, id,
             ProductCompositionStatus.OnReview, null, ct);
-        await CreateCompositionReviewTasksAsync(0, comp.Id, comp.BranchId, comp.Complex?.Code ?? comp.ComplexId.ToString(), comp.Version, ct);
+        await CreateCompositionReviewWorkflowAsync(0, comp.Id, comp.BranchId, comp.Complex?.Code ?? comp.ComplexId.ToString(), comp.Version, ct);
         return true;
     }
 
@@ -2302,8 +2164,8 @@ public class EquipmentService
             throw new InvalidOperationException("Возврат в черновик возможен только из статуса «На проверке».");
         await ChangeCompositionStatusInternalAsync<ComplexComposition>(_db.ComplexCompositions, id,
             ProductCompositionStatus.Draft, comment, ct);
-        await CloseCompositionReviewGroupAsync(0, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId(), ct);
-        await CreateCompositionAuthorTaskAsync(0, comp.Id, comp.BranchId, comp.AuthorId, "Доработать состав",
+        await CloseCompositionReviewWorkflowAsync(0, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId().ToString(), ct);
+        await CreateCompositionAuthorWorkflowAsync(0, comp.Id, comp.BranchId, comp.AuthorId,
             comment, comp.Complex?.Code ?? comp.ComplexId.ToString(), comp.Version, ct);
         return true;
     }
@@ -2354,10 +2216,10 @@ public class EquipmentService
         comp.Comment = comment ?? comp.Comment;
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(new AuditWriteRequest("ComplexComposition", id.ToString(), "ComplexComposition.Approved", _currentUser.GetRequiredUserId()));
-        await CloseCompositionReviewGroupAsync(0, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId(), ct);
-        await NotifyCompositionApprovedAsync(0, comp.Id, comp.BranchId, comp.AuthorId,
+        await CloseCompositionReviewWorkflowAsync(0, comp.Id, comp.BranchId, _currentUser.GetRequiredUserId().ToString(), ct);
+        await NotifyCompositionApprovedWorkflowAsync(0, comp.Id, comp.BranchId, comp.AuthorId,
             comp.Complex?.Code ?? comp.ComplexId.ToString(), comp.Version, ct);
-        await CreateReadinessTasksAsync(0, comp.Id, comp.BranchId, ct);
+        await CreateCompositionReadinessWorkflowAsync(0, comp.Id, comp.BranchId, ct);
         return true;
     }
 

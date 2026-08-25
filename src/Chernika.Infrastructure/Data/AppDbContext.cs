@@ -440,8 +440,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Title).HasMaxLength(512).IsRequired();
             e.Property(x => x.Description).HasMaxLength(4000);
             e.Property(x => x.CompletedByUserId).HasMaxLength(450);
+            e.Property(x => x.RowVersion)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .IsRowVersion();
             e.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.CompletedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+            e.HasMany(x => x.WorkTasks).WithOne(x => x.WorkTaskGroup).HasForeignKey(x => x.WorkTaskGroupId)
+                .OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(x => new { x.EntityType, x.EntityId, x.BranchId })
                 .HasDatabaseName("IX_WorkTaskGroups_EntityType_EntityId_BranchId");
         });

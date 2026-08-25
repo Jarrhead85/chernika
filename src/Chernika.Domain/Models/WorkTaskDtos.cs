@@ -25,6 +25,8 @@ public sealed class WorkTaskDto
     public string? EntityCodeSnapshot { get; init; }
     public string? EntityTitleSnapshot { get; init; }
 
+    public Guid? WorkTaskGroupId { get; init; }
+
     public DateTime CreatedAtUtc { get; init; }
     public DateTime? DueDateUtc { get; init; }
     public DateTime? StartedAtUtc { get; init; }
@@ -57,6 +59,8 @@ public sealed class WorkTaskListItemDto
     public string? EntityCodeSnapshot { get; init; }
     public string? EntityTitleSnapshot { get; init; }
 
+    public Guid? WorkTaskGroupId { get; init; }
+
     public DateTime CreatedAtUtc { get; init; }
     public DateTime? DueDateUtc { get; init; }
     public DateTime? CompletedAtUtc { get; init; }
@@ -64,3 +68,15 @@ public sealed class WorkTaskListItemDto
     public string? CompletedByUserName { get; init; }
     public bool IsOverdue { get; init; }
 }
+
+public sealed record WorkTaskGroupResult(
+    Guid GroupId,
+    IReadOnlyList<Guid> TaskIds,
+    bool CreatedNew);
+
+public sealed record GroupCompletionResult(
+    bool Success,
+    string? CompletedByUserId,
+    string? CompletedByUserName,
+    bool AlreadyCompleted,
+    string Message);

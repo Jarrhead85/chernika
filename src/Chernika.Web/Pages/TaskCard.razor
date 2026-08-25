@@ -264,7 +264,16 @@
         }
         try
         {
-            await TaskService.CompleteAsync(new CompleteWorkTaskCommand(Id, completeComment.Trim()));
+            if (task?.WorkTaskGroupId.HasValue == true)
+            {
+                var result = await TaskService.CompleteGroupAsync(Id, currentUserId, completeComment.Trim());
+                errorMessage = result.AlreadyCompleted ? result.Message : null;
+            }
+            else
+            {
+                await TaskService.CompleteAsync(new CompleteWorkTaskCommand(Id, completeComment.Trim()));
+                errorMessage = null;
+            }
             showCompleteModal = false;
             await LoadAsync(Id, CancellationToken.None);
         }
@@ -339,6 +348,8 @@
         WorkTaskType.ParentHKRevision => "Р”РѕСЂР°Р±РѕС‚РєР° СЂРѕРґРёС‚РµР»СЊСЃРєРѕР№ РҐРљ",
         WorkTaskType.ReferenceProposalReview => "РџСЂРѕРІРµСЂРєР° РїСЂРµРґР»РѕР¶РµРЅРёСЏ",
         WorkTaskType.UserAdministration => "РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№",
+        WorkTaskType.CompositionReview => "РЎРѕРіР»Р°СЃРѕРІР°РЅРёРµ СЃРѕСЃС‚Р°РІР°",
+        WorkTaskType.CompositionReadiness => "Р“РѕС‚РѕРІРЅРѕСЃС‚СЊ СЃРѕСЃС‚Р°РІР°",
         _ => type.ToString()
     };
 }

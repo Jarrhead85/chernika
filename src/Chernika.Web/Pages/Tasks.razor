@@ -396,7 +396,16 @@
         }
         try
         {
-            await TaskService.CompleteAsync(new CompleteWorkTaskCommand(completeTarget.Id, completeComment.Trim()));
+            if (completeTarget.WorkTaskGroupId.HasValue)
+            {
+                var result = await TaskService.CompleteGroupAsync(completeTarget.Id, currentUserId, completeComment.Trim());
+                errorMessage = result.AlreadyCompleted ? result.Message : null;
+            }
+            else
+            {
+                await TaskService.CompleteAsync(new CompleteWorkTaskCommand(completeTarget.Id, completeComment.Trim()));
+                errorMessage = null;
+            }
             CloseComplete();
             await LoadAsync();
         }
@@ -489,6 +498,8 @@
         WorkTaskType.ParentHKRevision => "Доработка родительской ХК",
         WorkTaskType.ReferenceProposalReview => "Проверка предложения",
         WorkTaskType.UserAdministration => "Администрирование пользователей",
+        WorkTaskType.CompositionReview => "Согласование состава",
+        WorkTaskType.CompositionReadiness => "Готовность состава",
         _ => type.ToString()
     };
 }

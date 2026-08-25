@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace Chernika.Domain.Entities;
 
 /// <summary>
@@ -28,4 +30,9 @@ public class WorkTaskGroup
     public DateTime? CompletedAt { get; set; }
 
     public string? CompletedByUserId { get; set; }
+
+    [Timestamp]
+    public uint RowVersion { get; set; }
+
+    public ICollection<WorkTask> WorkTasks { get; set; } = new List<WorkTask>();
 }

@@ -1,5 +1,6 @@
 using Chernika.Domain;
 using Chernika.Domain.Entities;
+using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
 using Chernika.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -91,6 +92,119 @@ public class NotificationService
                 ct);
         }
     }
+
+    public Task NotifyCompositionReviewRequestedAsync(
+        IEnumerable<string> normAdminUserIds,
+        string entityType,
+        Guid entityId,
+        Guid branchId,
+        string code,
+        string version,
+        CancellationToken ct = default)
+    {
+        var title = $"Требуется согласование состава: {code} v{version}";
+        return CreateForUsersAsync(normAdminUserIds, new CreateNotificationCommand(
+            Type: NotificationType.CompositionReviewRequested,
+            Title: title,
+            Message: "Назначена задача согласования конструктивного состава.",
+            EntityType: entityType,
+            EntityId: entityId,
+            NavigationUrl: $"/составы/{EntityTypeSegment(entityType)}/{entityId}",
+            BranchId: branchId,
+            DeduplicationKey: $"composition-review-requested:{entityType}:{entityId}"), ct);
+    }
+
+    public Task NotifyCompositionReviewFallbackAsync(
+        IEnumerable<string> systemAdminUserIds,
+        string entityType,
+        Guid entityId,
+        Guid branchId,
+        string code,
+        string version,
+        CancellationToken ct = default)
+    {
+        var title = $"Нет NormAdmin: согласование состава {code} v{version}";
+        return CreateForUsersAsync(systemAdminUserIds, new CreateNotificationCommand(
+            Type: NotificationType.System,
+            Title: title,
+            Message: "В филиале отсутствуют активные NormAdmin. Назначена задача SystemAdmin.",
+            EntityType: entityType,
+            EntityId: entityId,
+            NavigationUrl: $"/составы/{EntityTypeSegment(entityType)}/{entityId}",
+            BranchId: branchId,
+            DeduplicationKey: $"composition-review-fallback:{entityType}:{entityId}"), ct);
+    }
+
+    public Task NotifyCompositionReturnedToDraftAsync(
+        string authorId,
+        string entityType,
+        Guid entityId,
+        Guid? branchId,
+        string code,
+        string version,
+        CancellationToken ct = default)
+    {
+        var title = $"Состав возвращён в черновик: {code} v{version}";
+        return CreateForUsersAsync(new[] { authorId }, new CreateNotificationCommand(
+            Type: NotificationType.CompositionReturnedToDraft,
+            Title: title,
+            Message: "Состав возвращён на доработку.",
+            EntityType: entityType,
+            EntityId: entityId,
+            NavigationUrl: $"/составы/{EntityTypeSegment(entityType)}/{entityId}",
+            BranchId: branchId,
+            DeduplicationKey: $"composition-returned:{entityType}:{entityId}"), ct);
+    }
+
+    public Task NotifyCompositionApprovedAsync(
+        string authorId,
+        string entityType,
+        Guid entityId,
+        Guid? branchId,
+        string code,
+        string version,
+        CancellationToken ct = default)
+    {
+        var title = $"Состав утверждён: {code} v{version}";
+        return CreateForUsersAsync(new[] { authorId }, new CreateNotificationCommand(
+            Type: NotificationType.CompositionApproved,
+            Title: title,
+            Message: "Конструктивный состав успешно утверждён.",
+            EntityType: entityType,
+            EntityId: entityId,
+            NavigationUrl: $"/составы/{EntityTypeSegment(entityType)}/{entityId}",
+            BranchId: branchId,
+            DeduplicationKey: $"composition-approved:{entityType}:{entityId}"), ct);
+    }
+
+    public Task NotifyCompositionReadinessAsync(
+        string hkAuthorId,
+        string childEntityType,
+        Guid childEntityId,
+        Guid branchId,
+        string code,
+        string statusLabel,
+        CancellationToken ct = default)
+    {
+        var title = $"Актуализировать ХК: {code} — {statusLabel}";
+        return CreateForUsersAsync(new[] { hkAuthorId }, new CreateNotificationCommand(
+            Type: NotificationType.CompositionReadinessIssue,
+            Title: title,
+            Message: $"Нормативная готовность состава: {statusLabel}.",
+            EntityType: childEntityType,
+            EntityId: childEntityId,
+            NavigationUrl: $"/реестр-хк/{childEntityId}",
+            BranchId: branchId,
+            DeduplicationKey: $"composition-readiness-notify:{childEntityType}:{childEntityId}:{statusLabel}"), ct);
+    }
+
+    private static string EntityTypeSegment(string entityType) => entityType switch
+    {
+        "ComplexComposition" => "комплексы",
+        "ProductComposition" => "изделия",
+        "AggregateComposition" => "агрегаты",
+        _ => entityType
+    };
 
     public async Task<PagedResult<NotificationDto>> GetMyNotificationsAsync(NotificationQuery query, CancellationToken ct = default)
     {
