@@ -232,7 +232,7 @@
                                             .Where(a => a.Aggregate != null && (string.IsNullOrWhiteSpace(nodeFilter)
                                                 || (a.Aggregate.Code?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)
                                                 || (a.Aggregate.Name?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)))
-                                            .OrderBy(a => a.Aggregate.Code)
+                                            .OrderBy(a => a.Aggregate!.Code)
                                             .ToList();
                                     }
                                     @if (!filteredAggregates.Any())
@@ -378,8 +378,8 @@
 @code {
     private List<EquipmentModel> models = new();
     private List<Aggregate> aggregates = new();
-    private List<ProductComposition> compositions = new();
-    private ProductComposition? selectedComposition;
+    private List<ProductCompositionReadModel> compositions = new();
+    private ProductCompositionReadModel? selectedComposition;
     private bool loading = true;
     private bool canCreate;
     private bool canEditDraft;
@@ -572,7 +572,7 @@
         SelectComposition(selectedComposition!.Id);
     }
 
-    void PromptReplaceAggregate(ProductCompositionAggregate pca)
+    void PromptReplaceAggregate(ProductCompositionAggregateReadModel pca)
     {
         replacingAggregateId = pca.Id;
         replaceWithAggregateId = Guid.Empty;
@@ -638,9 +638,9 @@
 
     // ── Coverage helpers (TBD: re-enable when Aggregate → Node → HK chain is available) ──
 
-    private bool HasApprovedHK(Aggregate? _) => false;
+    private bool HasApprovedHK(AggregateRef? _) => false;
 
-    private (string Tag, string Label) GetCoverageStatus(Aggregate? _) => ("bad", "Нет ХК");
+    private (string Tag, string Label) GetCoverageStatus(AggregateRef? _) => ("bad", "Нет ХК");
 
     // ── Status helpers ───────────────────────────────────────────────────
 

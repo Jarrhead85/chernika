@@ -136,11 +136,11 @@
     private CancellationTokenSource? _loadCts;
 
     private List<Complex> complexes = new();
-    private List<ComplexComposition> complexCompositions = new();
+    private List<ComplexCompositionReadModel> complexCompositions = new();
     private List<EquipmentModel> models = new();
-    private List<ProductComposition> productCompositions = new();
+    private List<ProductCompositionReadModel> productCompositions = new();
     private List<Aggregate> aggregates = new();
-    private List<AggregateComposition> aggregateCompositions = new();
+    private List<AggregateCompositionReadModel> aggregateCompositions = new();
 
     private string TabTitle => tab switch
     {
@@ -243,13 +243,13 @@
             .Select(ToAggregateSummary).FirstOrDefault()
     };
 
-    private static CompositionVersionSummary ToComplexSummary(ComplexComposition c) =>
+    private static CompositionVersionSummary ToComplexSummary(ComplexCompositionReadModel c) =>
         new(c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.UpdatedAt, c.EffectiveDate, c.ExpirationDate, c.ApprovedAt, c.Comment, c.SupersedesComplexCompositionId, c.AuthorName);
 
-    private static CompositionVersionSummary ToProductSummary(ProductComposition p) =>
+    private static CompositionVersionSummary ToProductSummary(ProductCompositionReadModel p) =>
         new(p.Id, p.EquipmentModelId, p.Version, p.Status, p.CreatedAt, p.UpdatedAt, p.EffectiveDate, p.ExpirationDate, p.ApprovedAt, p.Comment, p.SupersedesProductCompositionId, p.AuthorName);
 
-    private static CompositionVersionSummary ToAggregateSummary(AggregateComposition a) =>
+    private static CompositionVersionSummary ToAggregateSummary(AggregateCompositionReadModel a) =>
         new(a.Id, a.AggregateId, a.Version, a.Status, a.CreatedAt, a.UpdatedAt, a.EffectiveDate, a.ExpirationDate, a.ApprovedAt, a.Comment, a.SupersedesAggregateCompositionId, a.AuthorName);
 
     private string VersionUrl(ObjectRow item, Guid compositionId) => tab switch

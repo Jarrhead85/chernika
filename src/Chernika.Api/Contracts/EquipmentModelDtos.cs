@@ -1,4 +1,5 @@
 using Chernika.Domain.Entities;
+using Chernika.Domain.Models;
 
 namespace Chernika.Api.Contracts;
 
@@ -89,13 +90,25 @@ public static class EquipmentModelMapper
         c.Id, c.EquipmentModelId, c.Comment, c.CreatedAt, c.IsActive,
         c.Parts.OrderBy(p => p.SortOrder).Select(ToPartDto).ToList());
 
+    public static ProductCompositionDto ToCompDto(ProductCompositionReadModel c) => new(
+        c.Id, c.EquipmentModelId, c.Comment, c.CreatedAt, c.IsActive,
+        c.Parts.OrderBy(p => p.SortOrder).Select(ToPartDto).ToList());
+
     public static ProductCompositionPartDto ToPartDto(ProductCompositionPart p) => new(
+        p.Id, p.ProductCompositionId, p.Name, p.Description, p.SortOrder,
+        p.Aggregates.Select(ToAggregateDto).ToList());
+
+    public static ProductCompositionPartDto ToPartDto(ProductCompositionPartReadModel p) => new(
         p.Id, p.ProductCompositionId, p.Name, p.Description, p.SortOrder,
         p.Aggregates.Select(ToAggregateDto).ToList());
 
     public static ProductCompositionAggregateDto ToAggregateDto(ProductCompositionAggregate a) => new(
         a.Id, a.ProductCompositionId, a.PartId, a.AggregateId, a.Quantity,
         new AggregateRefDto(a.Aggregate.Id, a.Aggregate.Code, a.Aggregate.Name, a.Aggregate.Description));
+
+    public static ProductCompositionAggregateDto ToAggregateDto(ProductCompositionAggregateReadModel a) => new(
+        a.Id, a.ProductCompositionId, a.PartId, a.AggregateId, a.Quantity,
+        new AggregateRefDto(a.Aggregate?.Id ?? Guid.Empty, a.Aggregate?.Code ?? "", a.Aggregate?.Name ?? "", a.Aggregate?.Description));
 
     public static EquipmentModel FromCreate(CreateEquipmentModelRequest r) => new()
     {
@@ -123,10 +136,19 @@ public static class ProductCompositionMapper
     public static ProductCompositionDto ToDetail(ProductComposition c) =>
         EquipmentModelMapper.ToCompDto(c);
 
+    public static ProductCompositionDto ToDetail(ProductCompositionReadModel c) =>
+        EquipmentModelMapper.ToCompDto(c);
+
     public static ProductCompositionPartDto ToPartDto(ProductCompositionPart p) =>
         EquipmentModelMapper.ToPartDto(p);
 
+    public static ProductCompositionPartDto ToPartDto(ProductCompositionPartReadModel p) =>
+        EquipmentModelMapper.ToPartDto(p);
+
     public static ProductCompositionAggregateDto ToAggregateDto(ProductCompositionAggregate a) =>
+        EquipmentModelMapper.ToAggregateDto(a);
+
+    public static ProductCompositionAggregateDto ToAggregateDto(ProductCompositionAggregateReadModel a) =>
         EquipmentModelMapper.ToAggregateDto(a);
 
     public static ProductComposition FromCreate(CreateProductCompositionRequest r) => new()

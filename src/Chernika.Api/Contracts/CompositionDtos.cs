@@ -1,5 +1,6 @@
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
+using Chernika.Domain.Models;
 
 namespace Chernika.Api.Contracts;
 
@@ -31,9 +32,18 @@ public static class AggregateCompositionMapper
         c.Id, c.AggregateId, c.Version, c.Status, c.CreatedAt, c.IsActive, c.Comment,
         c.Nodes.OrderBy(n => n.SortOrder).Select(ToNodeDto).ToList());
 
+    public static AggregateCompositionDto ToDto(AggregateCompositionReadModel c) => new(
+        c.Id, c.AggregateId, c.Version, c.Status, c.CreatedAt, c.IsActive, c.Comment,
+        c.Nodes.OrderBy(n => n.SortOrder).Select(ToNodeDto).ToList());
+
     public static AggregateCompositionNodeDto ToNodeDto(AggregateCompositionNode n) => new(
         n.Id, n.AggregateCompositionId, n.NodeId,
         n.Node.Code, n.Node.Name,
+        n.Quantity, n.SortOrder, n.Notes);
+
+    public static AggregateCompositionNodeDto ToNodeDto(AggregateCompositionNodeReadModel n) => new(
+        n.Id, n.AggregateCompositionId, n.NodeId,
+        n.Node?.Code ?? "", n.Node?.Name ?? "",
         n.Quantity, n.SortOrder, n.Notes);
 }
 
@@ -65,8 +75,17 @@ public static class ComplexCompositionMapper
         c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.IsActive, c.Comment,
         c.Items.OrderBy(i => i.SortOrder).Select(ToItemDto).ToList());
 
+    public static ComplexCompositionDto ToDto(ComplexCompositionReadModel c) => new(
+        c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.IsActive, c.Comment,
+        c.Items.OrderBy(i => i.SortOrder).Select(ToItemDto).ToList());
+
     public static ComplexCompositionItemDto ToItemDto(ComplexCompositionItem i) => new(
         i.Id, i.ComplexCompositionId, i.EquipmentModelId,
         i.EquipmentModel.Index, i.EquipmentModel.Name,
+        i.Quantity, i.SortOrder, i.Notes);
+
+    public static ComplexCompositionItemDto ToItemDto(ComplexCompositionItemReadModel i) => new(
+        i.Id, i.ComplexCompositionId, i.EquipmentModelId,
+        i.EquipmentModel?.Index ?? "", i.EquipmentModel?.Name ?? "",
         i.Quantity, i.SortOrder, i.Notes);
 }

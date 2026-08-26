@@ -786,28 +786,19 @@ public class EquipmentService
         return maxSuffix == 0 ? $"{baseVersion}.2" : $"{baseVersion}.{maxSuffix + 1}";
     }
 
-    private async Task HydrateAuthorNamesAsync<T>(IEnumerable<T> items, Func<T, string?> getAuthorId, Action<T, string?> setAuthorName, CancellationToken ct)
+    private async Task<Dictionary<string, string>> GetAuthorNamesAsync(IEnumerable<string?> authorIds, CancellationToken ct)
     {
-        var authorIds = items.Select(getAuthorId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
-        if (authorIds.Count == 0) return;
+        var ids = authorIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<string, string>();
 
-        var names = await _db.Users.AsNoTracking()
-            .Where(u => authorIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => u.FullName ?? u.UserName, ct);
-
-        foreach (var item in items)
-        {
-            var id = getAuthorId(item);
-            if (!string.IsNullOrWhiteSpace(id) && names.TryGetValue(id, out var name))
-                setAuthorName(item, name);
-            else
-                setAuthorName(item, null);
-        }
+        return await _db.Users.AsNoTracking()
+            .Where(u => ids.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.FullName ?? u.UserName ?? u.Id, ct);
     }
 
     // ── Product Composition ──────────────────────────────────────────────
 
-    public async Task<List<ProductComposition>> GetCompositionsAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
+    public async Task<List<ProductCompositionReadModel>> GetCompositionsAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
     {
         var query = _db.ProductCompositions
             .Include(c => c.EquipmentModel)
@@ -818,11 +809,11 @@ public class EquipmentService
             query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
 
         var list = await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
-        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-        return list;
+        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
+        return list.Select(c => ToProductCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
     }
 
-    public async Task<ProductComposition?> GetCompositionAsync(Guid id, CancellationToken ct = default)
+    public async Task<ProductCompositionReadModel?> GetCompositionAsync(Guid id, CancellationToken ct = default)
     {
         var composition = await _db.ProductCompositions
             .Include(c => c.EquipmentModel)
@@ -831,13 +822,12 @@ public class EquipmentService
                     .ThenInclude(a => a.Aggregate)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-        if (composition != null)
-            await HydrateAuthorNamesAsync(new[] { composition }, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-
-        return composition;
+        if (composition == null) return null;
+        var names = await GetAuthorNamesAsync(new[] { composition.AuthorId }, ct);
+        return ToProductCompositionReadModel(composition, names.GetValueOrDefault(composition.AuthorId!));
     }
 
-    public async Task<List<ProductComposition>> GetCompositionsWithCoverageAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
+    public async Task<List<ProductCompositionReadModel>> GetCompositionsWithCoverageAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
     {
         var query = _db.ProductCompositions
             .Include(c => c.EquipmentModel)
@@ -848,9 +838,44 @@ public class EquipmentService
             query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
 
         var list = await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
-        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-        return list;
+        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
+        return list.Select(c => ToProductCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
     }
+
+    private static ProductCompositionReadModel ToProductCompositionReadModel(ProductComposition c, string? authorName) => new(
+        c.Id,
+        c.EquipmentModelId,
+        c.Version,
+        c.Status,
+        c.CreatedAt,
+        c.UpdatedAt,
+        c.EffectiveDate,
+        c.ExpirationDate,
+        c.ApprovedAt,
+        c.Comment,
+        c.IsActive,
+        c.SupersedesProductCompositionId,
+        authorName,
+        c.EquipmentModel == null ? null : new EquipmentModelRef(c.EquipmentModel.Id, c.EquipmentModel.Index, c.EquipmentModel.Name),
+        c.Parts.OrderBy(p => p.SortOrder).Select(ToProductCompositionPartReadModel).ToList());
+
+    private static ProductCompositionPartReadModel ToProductCompositionPartReadModel(ProductCompositionPart p) => new(
+        p.Id,
+        p.ProductCompositionId,
+        p.Name,
+        p.Description,
+        p.SortOrder,
+        p.Aggregates.Select(ToProductCompositionAggregateReadModel).ToList());
+
+    private static ProductCompositionAggregateReadModel ToProductCompositionAggregateReadModel(ProductCompositionAggregate a) => new(
+        a.Id,
+        a.ProductCompositionId,
+        a.PartId,
+        a.AggregateId,
+        a.Quantity,
+        a.SortOrder,
+        a.Notes,
+        a.Aggregate == null ? null : new AggregateRef(a.Aggregate.Id, a.Aggregate.Code, a.Aggregate.Name, a.Aggregate.Description));
 
     public async Task<ProductCompositionPart?> GetCompositionPartAsync(Guid partId, CancellationToken ct = default) =>
         await _db.ProductCompositionParts
@@ -1584,58 +1609,87 @@ public class EquipmentService
 
     // ── AggregateComposition ───────────────────────────────────
 
-    public async Task<List<AggregateComposition>> GetAggregateCompositionsAsync(Guid aggregateId, CancellationToken ct = default)
+    public async Task<List<AggregateCompositionReadModel>> GetAggregateCompositionsAsync(Guid aggregateId, CancellationToken ct = default)
     {
         var list = await _db.AggregateCompositions
+            .Include(c => c.Aggregate)
             .Include(c => c.Nodes.OrderBy(n => n.SortOrder)).ThenInclude(n => n.Node)
             .Where(c => c.AggregateId == aggregateId)
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync(ct);
-        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-        return list;
+        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
+        return list.Select(c => ToAggregateCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
     }
 
-    public async Task<AggregateComposition?> GetAggregateCompositionAsync(Guid id, CancellationToken ct = default)
+    public async Task<AggregateCompositionReadModel?> GetAggregateCompositionAsync(Guid id, CancellationToken ct = default)
     {
         var composition = await _db.AggregateCompositions
+            .Include(c => c.Aggregate)
             .Include(c => c.Nodes.OrderBy(n => n.SortOrder)).ThenInclude(n => n.Node)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-        if (composition != null)
-            await HydrateAuthorNamesAsync(new[] { composition }, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-
-        return composition;
+        if (composition == null) return null;
+        var names = await GetAuthorNamesAsync(new[] { composition.AuthorId }, ct);
+        return ToAggregateCompositionReadModel(composition, names.GetValueOrDefault(composition.AuthorId!));
     }
 
-    public async Task<List<ProductComposition>> GetAllProductCompositionsLightAsync(CancellationToken ct = default)
+    public async Task<List<ProductCompositionReadModel>> GetAllProductCompositionsLightAsync(CancellationToken ct = default)
     {
         var list = await _db.ProductCompositions
             .Include(c => c.EquipmentModel)
             .OrderBy(c => c.CreatedAt)
             .ToListAsync(ct);
-        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-        return list;
+        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
+        return list.Select(c => ToProductCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
     }
 
-    public async Task<List<ComplexComposition>> GetAllComplexCompositionsLightAsync(CancellationToken ct = default)
+    public async Task<List<ComplexCompositionReadModel>> GetAllComplexCompositionsLightAsync(CancellationToken ct = default)
     {
         var list = await _db.ComplexCompositions
             .AsNoTracking()
+            .Include(c => c.Complex)
             .OrderBy(c => c.CreatedAt)
             .ToListAsync(ct);
-        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-        return list;
+        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
+        return list.Select(c => ToComplexCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
     }
 
-    public async Task<List<AggregateComposition>> GetAllAggregateCompositionsLightAsync(CancellationToken ct = default)
+    public async Task<List<AggregateCompositionReadModel>> GetAllAggregateCompositionsLightAsync(CancellationToken ct = default)
     {
         var list = await _db.AggregateCompositions
             .AsNoTracking()
+            .Include(c => c.Aggregate)
             .OrderBy(c => c.CreatedAt)
             .ToListAsync(ct);
-        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-        return list;
+        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
+        return list.Select(c => ToAggregateCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
     }
+
+    private static AggregateCompositionReadModel ToAggregateCompositionReadModel(AggregateComposition c, string? authorName) => new(
+        c.Id,
+        c.AggregateId,
+        c.Version,
+        c.Status,
+        c.CreatedAt,
+        c.UpdatedAt,
+        c.EffectiveDate,
+        c.ExpirationDate,
+        c.ApprovedAt,
+        c.Comment,
+        c.IsActive,
+        c.SupersedesAggregateCompositionId,
+        authorName,
+        c.Aggregate == null ? null : new AggregateRef(c.Aggregate.Id, c.Aggregate.Code, c.Aggregate.Name, c.Aggregate.Description),
+        c.Nodes.OrderBy(n => n.SortOrder).Select(ToAggregateCompositionNodeReadModel).ToList());
+
+    private static AggregateCompositionNodeReadModel ToAggregateCompositionNodeReadModel(AggregateCompositionNode n) => new(
+        n.Id,
+        n.AggregateCompositionId,
+        n.NodeId,
+        n.Quantity,
+        n.SortOrder,
+        n.Notes,
+        n.Node == null ? null : new NodeRef(n.Node.Id, n.Node.Code, n.Node.Name));
 
     public async Task<AggregateComposition> CreateAggregateCompositionAsync(CreateAggregateCompositionRequest request, CancellationToken ct = default)
     {
@@ -2060,28 +2114,55 @@ public class EquipmentService
 
     // ── ComplexComposition ──────────────────────────────────────
 
-    public async Task<List<ComplexComposition>> GetComplexCompositionsAsync(Guid complexId, CancellationToken ct = default)
+    public async Task<List<ComplexCompositionReadModel>> GetComplexCompositionsAsync(Guid complexId, CancellationToken ct = default)
     {
         var list = await _db.ComplexCompositions
+            .Include(c => c.Complex)
             .Include(c => c.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.EquipmentModel)
             .Where(c => c.ComplexId == complexId)
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync(ct);
-        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-        return list;
+        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
+        return list.Select(c => ToComplexCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
     }
 
-    public async Task<ComplexComposition?> GetComplexCompositionAsync(Guid id, CancellationToken ct = default)
+    public async Task<ComplexCompositionReadModel?> GetComplexCompositionAsync(Guid id, CancellationToken ct = default)
     {
         var composition = await _db.ComplexCompositions
+            .Include(c => c.Complex)
             .Include(c => c.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.EquipmentModel)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-        if (composition != null)
-            await HydrateAuthorNamesAsync(new[] { composition }, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
-
-        return composition;
+        if (composition == null) return null;
+        var names = await GetAuthorNamesAsync(new[] { composition.AuthorId }, ct);
+        return ToComplexCompositionReadModel(composition, names.GetValueOrDefault(composition.AuthorId!));
     }
+
+    private static ComplexCompositionReadModel ToComplexCompositionReadModel(ComplexComposition c, string? authorName) => new(
+        c.Id,
+        c.ComplexId,
+        c.Version,
+        c.Status,
+        c.CreatedAt,
+        c.UpdatedAt,
+        c.EffectiveDate,
+        c.ExpirationDate,
+        c.ApprovedAt,
+        c.Comment,
+        c.IsActive,
+        c.SupersedesComplexCompositionId,
+        authorName,
+        c.Complex == null ? null : new ComplexRef(c.Complex.Id, c.Complex.Code, c.Complex.Name),
+        c.Items.OrderBy(i => i.SortOrder).Select(ToComplexCompositionItemReadModel).ToList());
+
+    private static ComplexCompositionItemReadModel ToComplexCompositionItemReadModel(ComplexCompositionItem i) => new(
+        i.Id,
+        i.ComplexCompositionId,
+        i.EquipmentModelId,
+        i.Quantity,
+        i.SortOrder,
+        i.Notes,
+        i.EquipmentModel == null ? null : new EquipmentModelRef(i.EquipmentModel.Id, i.EquipmentModel.Index, i.EquipmentModel.Name));
 
     public async Task<ComplexComposition> CreateComplexCompositionAsync(CreateComplexCompositionRequest request, CancellationToken ct = default)
     {
