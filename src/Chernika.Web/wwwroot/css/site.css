@@ -1089,11 +1089,10 @@ input:-webkit-autofill:focus {
 .registryTasksPanel .panelBody{
   display:flex;
   flex-direction:column;
-  height:100%;
   gap:10px;
 }
 .registryTasksPanel .tasksAllLink{
-  margin-top:auto;
+  margin-top:2px;
   align-self:flex-start;
 }
 
