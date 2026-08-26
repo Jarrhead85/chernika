@@ -15,37 +15,6 @@
 @inject CircuitDbLock DbLock
 @inject IJSRuntime JS
 
-@if (_openActionMenuCardId.HasValue)
-{
-    <div class="actionMenuBackdrop" @onclick="CloseActionMenu"></div>
-    <div class="registryActionOverlay" role="menu" tabindex="-1" style="@ActionMenuStyle" @ref="_actionMenuOverlayRef" @onkeydown="HandleMenuKeyDown" @onclick:stopPropagation="true">
-        @{
-            var menuCard = _result.Items.FirstOrDefault(c => c.Id == _openActionMenuCardId.Value);
-        }
-        @if (menuCard != null)
-        {
-            var groups = GetActionGroups(menuCard);
-            @foreach (var group in groups)
-            {
-                @if (!string.IsNullOrEmpty(group.Title))
-                {
-                    <div class="actionMenuTitle">@group.Title</div>
-                }
-                @foreach (var action in group.Actions)
-                {
-                    <button type="button"
-                            class="actionMenuItem"
-                            role="menuitem"
-                            @onclick:stopPropagation="true"
-                            @onclick="() => ExecuteAction(menuCard, action.Key)">
-                        @action.Label
-                    </button>
-                }
-            }
-        }
-    </div>
-}
-
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
@@ -60,7 +29,7 @@
         </div>
     </section>
 
-    <div class="registryTopGrid">
+    <div class="registryPageGrid">
         <section class="panel registryKpiPanel">
             <div class="panelBody">
                 <div class="heroGrid">
@@ -107,213 +76,216 @@
                             <WorkTaskRow Task="task" />
                         }
                     </div>
-                    <div><a class="btn ghost" href="/задачи">Все задачи →</a></div>
                 }
+                <a class="btn ghost tasksAllLink" href="/задачи">Все задачи →</a>
             </div>
         </section>
-    </div>
 
-    <div class="registryWorkspace">
-        <main class="registryMain">
-            <section class="panel">
-                <div class="panelHeader"><h2>Поиск и фильтры</h2><div class="hint">Серверная фильтрация</div></div>
-                <div class="panelBody">
-                    <div class="registryFiltersForm">
-                        <div class="registryFilterPrimaryRow @(_canSystemConfig ? "" : "noBranch")">
-                            <div class="field">
-                                <label>Поиск</label>
-                                <input @bind="_query.SearchText" placeholder="Код, версия, объект, организация, письмо…" />
-                            </div>
-                            <div class="field">
-                                <label>Статус</label>
-                                <select @bind="_query.Status" class="field-select">
-                                    <option value="">Все</option>
-                                    @foreach (var s in _statusOptions)
-                                    {
-                                        <option value="@s.Value">@s.Label</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="field">
-                                <label>Уровень ХК</label>
-                                <select @bind="_query.ObjectLevel" class="field-select">
-                                    <option value="">Все</option>
-                                    @foreach (var l in _levelOptions)
-                                    {
-                                        <option value="@l.Value">@l.Label</option>
-                                    }
-                                </select>
-                            </div>
-                            @if (_canSystemConfig)
-                            {
-                                <div class="field">
-                                    <label>Филиал</label>
-                                    <select class="field-select" @bind="_branchFilterId">
-                                        <option value="">Все</option>
-                                        @foreach (var b in _branches)
-                                        {
-                                            <option value="@b.Id">@b.Name</option>
-                                        }
-                                    </select>
-                                </div>
-                            }
+        <section class="panel registryFiltersPanel">
+            <div class="panelHeader"><h2>Поиск и фильтры</h2><div class="hint">Серверная фильтрация</div></div>
+            <div class="panelBody">
+                <div class="registryFiltersForm">
+                    <div class="registryFilterPrimaryRow @(_canSystemConfig ? "" : "noBranch")">
+                        <div class="field">
+                            <label>Поиск</label>
+                            <input @bind="_query.SearchText" placeholder="Код, версия, объект, организация, письмо…" />
                         </div>
-
-                        <div class="registryFilterOptionsRow">
-                            <div class="field registryFilterChecks">
-                                <label class="toggle">
-                                    <input type="checkbox" @bind="_query.OnlyMine" /> Только мои
-                                </label>
-                                <label class="toggle">
-                                    <input type="checkbox" @bind="_query.RequiresMyAction" /> Требуют моих действий
-                                </label>
-                            </div>
-                            <div class="field">
-                                <label>Сортировка</label>
-                                <select @bind="_query.SortBy" class="field-select">
-                                    <option value="created">По созданию</option>
-                                    <option value="code">По коду</option>
-                                    <option value="status">По статусу</option>
-                                    <option value="level">По уровню</option>
-                                </select>
-                            </div>
-                            <div class="field">
-                                <label>Направление</label>
-                                <select @bind="_sortDescStr" class="field-select">
-                                    <option value="true">По убыванию</option>
-                                    <option value="false">По возрастанию</option>
-                                </select>
-                            </div>
+                        <div class="field">
+                            <label>Статус</label>
+                            <select @bind="_query.Status" class="field-select">
+                                <option value="">Все</option>
+                                @foreach (var s in _statusOptions)
+                                {
+                                    <option value="@s.Value">@s.Label</option>
+                                }
+                            </select>
                         </div>
-
-                        <div class="registryFilterActions">
-                            <button class="btn" @onclick="ToggleAdvanced">@(_showAdvanced ? "Скрыть" : "Дополнительно")</button>
-                            <button class="btn primary" @onclick="ApplyFilters">Применить</button>
-                            <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                        <div class="field">
+                            <label>Уровень ХК</label>
+                            <select @bind="_query.ObjectLevel" class="field-select">
+                                <option value="">Все</option>
+                                @foreach (var l in _levelOptions)
+                                {
+                                    <option value="@l.Value">@l.Label</option>
+                                }
+                            </select>
                         </div>
-
-                        @if (_showAdvanced)
+                        @if (_canSystemConfig)
                         {
-                            <div class="registryFilterAdvanced">
-                                <div class="field"><label>Дата создания с</label><input type="date" @bind="_query.CreatedFrom" class="field-input" /></div>
-                                <div class="field"><label>Дата создания по</label><input type="date" @bind="_query.CreatedTo" class="field-input" /></div>
-                                <div class="field"><label>Дата утверждения с</label><input type="date" @bind="_query.ApprovedFrom" class="field-input" /></div>
-                                <div class="field"><label>Дата утверждения по</label><input type="date" @bind="_query.ApprovedTo" class="field-input" /></div>
-                                <div class="field">
-                                    <label>Срок действия</label>
-                                    <select @bind="_query.ExpirationFilter" class="field-select">
-                                        @foreach (var e in _expirationOptions)
-                                        {
-                                            <option value="@e.Value">@e.Label</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div class="field">
-                                    <label>PDF-скан</label>
-                                    <select @bind="_hasPdfStr" class="field-select">
-                                        <option value="">Все</option>
-                                        <option value="true">Есть PDF</option>
-                                        <option value="false">Нет PDF</option>
-                                    </select>
-                                </div>
-                                <div class="field registryFilterAuthor">
-                                    <label>Автор</label>
-                                    <select @bind="_query.AuthorId" class="field-select">
-                                        <option value="">Все</option>
-                                        @foreach (var a in _authors)
-                                        {
-                                            <option value="@a.Id">@a.FullName</option>
-                                        }
-                                    </select>
-                                </div>
+                            <div class="field">
+                                <label>Филиал</label>
+                                <select class="field-select" @bind="_branchFilterId">
+                                    <option value="">Все</option>
+                                    @foreach (var b in _branches)
+                                    {
+                                        <option value="@b.Id">@b.Name</option>
+                                    }
+                                </select>
                             </div>
                         }
                     </div>
-                </div>
-            </section>
 
-            <section class="panel">
-                <div class="panelHeader">
-                    <h2>Список ХК</h2>
-                    <div class="hint">@_result.TotalCount записей</div>
-                </div>
-                <div class="panelBody">
-                    @if (_loading)
+                    <div class="registryFilterOptionsRow">
+                        <div class="field">
+                            <label>Сортировка</label>
+                            <select @bind="_query.SortBy" class="field-select">
+                                <option value="created">По созданию</option>
+                                <option value="code">По коду</option>
+                                <option value="status">По статусу</option>
+                                <option value="level">По уровню</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Направление</label>
+                            <select @bind="_sortDescStr" class="field-select">
+                                <option value="true">По убыванию</option>
+                                <option value="false">По возрастанию</option>
+                            </select>
+                        </div>
+                        <div class="registryQuickFilters" aria-label="Быстрые фильтры">
+                            <button type="button"
+                                    class="filterToggle @(_query.OnlyMine ? "active" : null)"
+                                    aria-pressed="@_query.OnlyMine"
+                                    @onclick="ToggleOnlyMine">
+                                <span class="filterToggleMark">@(_query.OnlyMine ? "✓" : "")</span>
+                                Только мои
+                            </button>
+                            <button type="button"
+                                    class="filterToggle @(_query.RequiresMyAction ? "active" : null)"
+                                    aria-pressed="@_query.RequiresMyAction"
+                                    @onclick="ToggleRequiresMyAction">
+                                <span class="filterToggleMark">@(_query.RequiresMyAction ? "✓" : "")</span>
+                                Требуют моих действий
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="registryFilterActions">
+                        <button class="btn" @onclick="ToggleAdvanced">@(_showAdvanced ? "Скрыть" : "Дополнительно")</button>
+                        <button class="btn primary" @onclick="ApplyFilters">Применить</button>
+                        <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                    </div>
+
+                    @if (_showAdvanced)
                     {
-                        <div class="loading-state">Загрузка…</div>
-                    }
-                    else if (!_result.Items.Any())
-                    {
-                        <div class="registryEmptyState">Нет ХК, соответствующих фильтру</div>
-                    }
-                    else
-                    {
-                        <div class="registryTableWrap">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Код / Версия</th>
-                                        <th>Объект</th>
-                                        <th>Уровень</th>
-                                        <th>Статус</th>
-                                        <th>Филиал</th>
-                                        <th>Действия</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var card in _result.Items)
+                        <div class="registryFilterAdvanced">
+                            <div class="field"><label>Дата создания с</label><input type="date" @bind="_query.CreatedFrom" class="field-input" /></div>
+                            <div class="field"><label>Дата создания по</label><input type="date" @bind="_query.CreatedTo" class="field-input" /></div>
+                            <div class="field"><label>Дата утверждения с</label><input type="date" @bind="_query.ApprovedFrom" class="field-input" /></div>
+                            <div class="field"><label>Дата утверждения по</label><input type="date" @bind="_query.ApprovedTo" class="field-input" /></div>
+                            <div class="field">
+                                <label>Срок действия</label>
+                                <select @bind="_query.ExpirationFilter" class="field-select">
+                                    @foreach (var e in _expirationOptions)
                                     {
-                                        var actionGroups = GetActionGroups(card);
-                                        var hasActions = actionGroups.Any(g => g.Actions.Count > 0);
-                                        <tr class="clickableRow @(_selectedCard?.Id == card.Id ? "row-active" : "")"
-                                            @onclick="() => SelectCard(card.Id)"
-                                            @ondblclick="() => GoToEdit(card.Id)">
-                                            <td class="mono">@card.Code<br/><span class="muted">@card.Version</span></td>
-                                            <td>@card.ObjectName<br/><span class="mono muted">@card.ObjectCode</span></td>
-                                            <td>@LevelName(card.ObjectLevel)</td>
-                                            <td><StatusBadge Status="@card.Status" /></td>
-                                            <td>@card.BranchName</td>
-                                            <td>
-                                                <div class="rowActions">
-                                                    <button type="button" class="btn ghost btn-sm" @onclick:stopPropagation="true" @onclick="() => GoToEdit(card.Id)">Открыть</button>
-                                                    @if (hasActions)
-                                                    {
-                                                        <button type="button"
-                                                                id="hk-actions-@card.Id"
-                                                                class="btn ghost iconBtn"
-                                                                aria-label="Дополнительные действия"
-                                                                aria-haspopup="menu"
-                                                                aria-expanded="@(_openActionMenuCardId == card.Id)"
-                                                                @onclick:stopPropagation="true"
-                                                                @onclick="() => ToggleActionMenuAsync(card.Id)">
-                                                            ⋯
-                                                        </button>
-                                                    }
-                                                </div>
-                                            </td>
-                                        </tr>
+                                        <option value="@e.Value">@e.Label</option>
                                     }
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="footer">
-                            <div>
-                                @if (_result.Page > 1)
-                                {
-                                    <button class="linkBtn" @onclick="() => GoToPage(_result.Page - 1)">← Назад</button>
-                                }
-                                <span class="mono">стр. @_result.Page из @Math.Max(1, (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)</span>
-                                @if (_result.Page < (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)
-                                {
-                                    <button class="linkBtn" @onclick="() => GoToPage(_result.Page + 1)">Вперёд →</button>
-                                }
+                                </select>
                             </div>
-                            <div class="mono">Показано @_result.Items.Count из @_result.TotalCount</div>
+                            <div class="field">
+                                <label>PDF-скан</label>
+                                <select @bind="_hasPdfStr" class="field-select">
+                                    <option value="">Все</option>
+                                    <option value="true">Есть PDF</option>
+                                    <option value="false">Нет PDF</option>
+                                </select>
+                            </div>
+                            <div class="field registryFilterAuthor">
+                                <label>Автор</label>
+                                <select @bind="_query.AuthorId" class="field-select">
+                                    <option value="">Все</option>
+                                    @foreach (var a in _authors)
+                                    {
+                                        <option value="@a.Id">@a.FullName</option>
+                                    }
+                                </select>
+                            </div>
                         </div>
                     }
                 </div>
-            </section>
-        </main>
+            </div>
+        </section>
+
+        <section class="panel registryListPanel">
+            <div class="panelHeader">
+                <h2>Список ХК</h2>
+                <div class="hint">@_result.TotalCount записей</div>
+            </div>
+            <div class="panelBody">
+                @if (_loading)
+                {
+                    <div class="loading-state">Загрузка…</div>
+                }
+                else if (!_result.Items.Any())
+                {
+                    <div class="registryEmptyState">Нет ХК, соответствующих фильтру</div>
+                }
+                else
+                {
+                    <div class="registryTableWrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Код / Версия</th>
+                                    <th>Объект</th>
+                                    <th>Уровень</th>
+                                    <th>Статус</th>
+                                    <th>Филиал</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var card in _result.Items)
+                                {
+                                    var actionGroups = GetActionGroups(card);
+                                    var hasActions = actionGroups.Any(g => g.Actions.Count > 0);
+                                    <tr class="clickableRow @(_selectedCard?.Id == card.Id ? "row-active" : "")"
+                                        @onclick="() => SelectCard(card.Id)"
+                                        @ondblclick="() => GoToEdit(card.Id)">
+                                        <td class="mono">@card.Code<br/><span class="muted">@card.Version</span></td>
+                                        <td>@card.ObjectName<br/><span class="mono muted">@card.ObjectCode</span></td>
+                                        <td>@LevelName(card.ObjectLevel)</td>
+                                        <td><StatusBadge Status="@card.Status" /></td>
+                                        <td>@card.BranchName</td>
+                                        <td>
+                                            <div class="rowActions">
+                                                <button type="button" class="btn ghost btn-sm" @onclick:stopPropagation="true" @onclick="() => GoToEdit(card.Id)">Открыть</button>
+                                                @if (hasActions)
+                                                {
+                                                    <button type="button"
+                                                            class="btn ghost iconBtn"
+                                                            aria-label="Дополнительные действия"
+                                                            aria-haspopup="menu"
+                                                            aria-expanded="@(_openActionMenuCardId == card.Id)"
+                                                            @onclick:stopPropagation="true"
+                                                            @onclick="@(e => ToggleActionMenuAsync(card.Id, e))">
+                                                        ⋯
+                                                    </button>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="footer">
+                        <div>
+                            @if (_result.Page > 1)
+                            {
+                                <button class="linkBtn" @onclick="() => GoToPage(_result.Page - 1)">← Назад</button>
+                            }
+                            <span class="mono">стр. @_result.Page из @Math.Max(1, (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)</span>
+                            @if (_result.Page < (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)
+                            {
+                                <button class="linkBtn" @onclick="() => GoToPage(_result.Page + 1)">Вперёд →</button>
+                            }
+                        </div>
+                        <div class="mono">Показано @_result.Items.Count из @_result.TotalCount</div>
+                    </div>
+                }
+            </div>
+        </section>
 
         <aside class="registryDetailPanel">
             <section class="panel">
@@ -392,6 +364,44 @@
         </aside>
     </div>
 </div>
+
+@if (_openActionMenuCardId is Guid cardId)
+{
+    var card = _result.Items.FirstOrDefault(item => item.Id == cardId);
+    if (card is not null)
+    {
+        var actionGroups = GetActionGroups(card);
+        if (actionGroups.Any(group => group.Actions.Count > 0))
+        {
+            <div class="actionMenuBackdrop" @onclick="CloseActionMenu"></div>
+
+            <div class="registryActionOverlay @(_actionMenuOpenUpward ? "opensUpward" : null)"
+                 role="menu"
+                 tabindex="-1"
+                 style="@ActionMenuStyle"
+                 @ref="_actionMenuOverlayRef"
+                 @onkeydown="HandleMenuKeyDown">
+                @foreach (var group in actionGroups)
+                {
+                    @if (!string.IsNullOrEmpty(group.Title))
+                    {
+                        <div class="actionMenuTitle">@group.Title</div>
+                    }
+
+                    @foreach (var action in group.Actions)
+                    {
+                        <button type="button"
+                                class="actionMenuItem"
+                                role="menuitem"
+                                @onclick="() => ExecuteAction(card, action.Key)">
+                            @action.Label
+                        </button>
+                    }
+                }
+            </div>
+        }
+    }
+}
 
 @if (_showDeleteDialog && _deleteCard != null)
 {
@@ -486,9 +496,15 @@
     private Guid? _openActionMenuCardId;
     private double _actionMenuLeft;
     private double _actionMenuTop;
+    private bool _actionMenuOpenUpward;
+    private bool _focusActionMenuAfterRender;
     private ElementReference _actionMenuOverlayRef;
     private CancellationTokenSource? _loadCts;
     private string? _errorMessage;
+
+    private const double ActionMenuWidth = 220;
+    private const double ActionMenuEstimatedHeight = 220;
+    private const double ViewportPadding = 8;
     private readonly HashSet<string> _grantedPermissions = new(StringComparer.Ordinal);
 
     private bool _showDeleteDialog;
@@ -584,6 +600,22 @@
         await LoadDataAsync();
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusActionMenuAfterRender && _openActionMenuCardId.HasValue)
+        {
+            _focusActionMenuAfterRender = false;
+            try
+            {
+                await _actionMenuOverlayRef.FocusAsync();
+            }
+            catch
+            {
+                // ignore if ref not yet rendered
+            }
+        }
+    }
+
     private async Task LoadPermissionMatrixAsync()
     {
         if (string.IsNullOrEmpty(_currentUserId))
@@ -627,6 +659,7 @@
     private async Task LoadDataAsync()
     {
         if (_loadCts is null) return;
+        CloseActionMenu();
         var ct = _loadCts.Token;
         _loading = true;
         _errorMessage = null;
@@ -656,11 +689,6 @@
                 if (_selectedCard != null)
                 {
                     _selectedCard = _result.Items.FirstOrDefault(c => c.Id == _selectedCard.Id);
-                }
-
-                if (_openActionMenuCardId.HasValue && !_result.Items.Any(c => c.Id == _openActionMenuCardId.Value))
-                {
-                    CloseActionMenu();
                 }
             }
         }
@@ -716,6 +744,8 @@
     }
 
     private void ToggleAdvanced() => _showAdvanced = !_showAdvanced;
+    private void ToggleOnlyMine() => _query.OnlyMine = !_query.OnlyMine;
+    private void ToggleRequiresMyAction() => _query.RequiresMyAction = !_query.RequiresMyAction;
 
     private void GoToCreate() => Nav.NavigateTo("/хк/создать");
     private void GoToEdit(Guid id) => Nav.NavigateTo($"/хк/{id}");
@@ -723,7 +753,7 @@
 
     private async Task SelectCard(Guid id)
     {
-        _openActionMenuCardId = null;
+        CloseActionMenu();
         _selectedCard = _result.Items.FirstOrDefault(c => c.Id == id);
         if (_selectedCard == null)
         {
@@ -753,83 +783,46 @@
         }
     }
 
-    private async Task ToggleActionMenuAsync(Guid cardId)
+    private async Task ToggleActionMenuAsync(Guid cardId, MouseEventArgs e)
     {
         if (_openActionMenuCardId == cardId)
         {
             CloseActionMenu();
             return;
         }
+
+        ViewportSize viewport;
+        try
+        {
+            viewport = await JS.InvokeAsync<ViewportSize>("chernika.getViewportSize");
+        }
+        catch
+        {
+            viewport = new ViewportSize { Width = 1024, Height = 768 };
+        }
+
+        var opensLeft = e.ClientX + ActionMenuWidth + ViewportPadding > viewport.Width;
+        _actionMenuOpenUpward = e.ClientY + ActionMenuEstimatedHeight + ViewportPadding > viewport.Height;
+
+        _actionMenuLeft = opensLeft
+            ? Math.Max(ViewportPadding, e.ClientX - ActionMenuWidth)
+            : Math.Min(e.ClientX, viewport.Width - ActionMenuWidth - ViewportPadding);
+
+        _actionMenuTop = _actionMenuOpenUpward
+            ? Math.Max(ViewportPadding, e.ClientY - 6)
+            : Math.Min(e.ClientY + 6, viewport.Height - ViewportPadding);
+
         _openActionMenuCardId = cardId;
-        await Task.Delay(1);
-        await PositionActionMenuAsync();
-        await Task.Delay(1);
-        try
-        {
-            await _actionMenuOverlayRef.FocusAsync();
-        }
-        catch
-        {
-            // ignore if ref not yet rendered
-        }
+        _focusActionMenuAfterRender = true;
     }
 
-    private async Task PositionActionMenuAsync()
-    {
-        if (!_openActionMenuCardId.HasValue) return;
-
-        const double menuWidth = 220;
-        const double menuHeight = 180;
-        const double spacing = 4;
-
-        BoundingRect? rect = null;
-        try
-        {
-            rect = await JS.InvokeAsync<BoundingRect?>("chernika.getElementRect", $"hk-actions-{_openActionMenuCardId.Value}");
-        }
-        catch
-        {
-            // ignore JS interop errors
-        }
-
-        if (rect == null)
-        {
-            _actionMenuLeft = 16;
-            _actionMenuTop = 16;
-            return;
-        }
-
-        var fitsBelow = rect.Bottom + spacing + menuHeight <= rect.ViewportHeight;
-
-        if (fitsBelow)
-        {
-            _actionMenuTop = rect.Bottom + spacing;
-        }
-        else
-        {
-            _actionMenuTop = rect.Top - spacing - menuHeight;
-            if (_actionMenuTop < 0) _actionMenuTop = spacing;
-        }
-
-        if (rect.Left + menuWidth > rect.ViewportWidth)
-        {
-            _actionMenuLeft = Math.Max(spacing, rect.ViewportWidth - menuWidth - spacing);
-        }
-        else
-        {
-            _actionMenuLeft = rect.Left;
-        }
-
-        await InvokeAsync(StateHasChanged);
-    }
-
-    private string ActionMenuStyle => $"position:fixed;left:{_actionMenuLeft}px;top:{_actionMenuTop}px;";
+    private string ActionMenuStyle => $"position:fixed;left:{_actionMenuLeft:F0}px;top:{_actionMenuTop:F0}px;";
 
     private void CloseActionMenu()
     {
         _openActionMenuCardId = null;
-        _actionMenuLeft = 0;
-        _actionMenuTop = 0;
+        _actionMenuOpenUpward = false;
+        _focusActionMenuAfterRender = false;
     }
 
     private void HandleMenuKeyDown(KeyboardEventArgs e)
@@ -873,7 +866,7 @@
 
     private async Task ExecuteAction(HKCardRegistryListItemDto card, string key)
     {
-        _openActionMenuCardId = null;
+        CloseActionMenu();
         switch (key)
         {
             case "edit": GoToEdit(card.Id); break;
@@ -1059,13 +1052,9 @@
     private sealed record ActionItem(string Key, string Label);
     private sealed record ActionGroup(string Title, List<ActionItem> Actions);
 
-    private sealed class BoundingRect
+    private sealed class ViewportSize
     {
-        public double Left { get; set; }
-        public double Top { get; set; }
-        public double Right { get; set; }
-        public double Bottom { get; set; }
-        public double ViewportWidth { get; set; }
-        public double ViewportHeight { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
     }
 }

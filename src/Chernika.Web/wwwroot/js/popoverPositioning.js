@@ -104,17 +104,7 @@ window.popoverPositioning = {
 
 window.chernika = window.chernika || {};
 
-window.chernika.getElementRect = (id) => {
-  const element = document.getElementById(id);
-  if (!element) return null;
-
-  const rect = element.getBoundingClientRect();
-  return {
-    left: rect.left,
-    right: rect.right,
-    top: rect.top,
-    bottom: rect.bottom,
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight
-  };
-};
+window.chernika.getViewportSize = () => ({
+  width: window.innerWidth,
+  height: window.innerHeight
+});

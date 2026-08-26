@@ -1042,16 +1042,39 @@ input:-webkit-autofill:focus {
    B1 corrections: registry layout, action menu, task preview
    ═══════════════════════════════════════ */
 
-.registryTopGrid,
-.registryWorkspace{
+.registryPageGrid{
   display:grid;
   grid-template-columns:minmax(0,1fr) minmax(440px,480px);
+  grid-template-areas:
+    "kpi tasks"
+    "filters tasks"
+    "list detail";
   gap:14px;
   align-items:start;
 }
+
+.registryKpiPanel{grid-area:kpi}
+.registryTasksPanel{
+  grid-area:tasks;
+  align-self:stretch;
+}
+.registryFiltersPanel{grid-area:filters}
+.registryListPanel{grid-area:list}
+.registryDetailPanel{
+  grid-area:detail;
+  min-width:0;
+}
+
 @media (max-width:1120px){
-  .registryTopGrid,
-  .registryWorkspace{grid-template-columns:1fr}
+  .registryPageGrid{
+    grid-template-columns:1fr;
+    grid-template-areas:
+      "kpi"
+      "tasks"
+      "filters"
+      "list"
+      "detail";
+  }
 }
 
 .registryKpiPanel .heroGrid{
@@ -1066,7 +1089,12 @@ input:-webkit-autofill:focus {
 .registryTasksPanel .panelBody{
   display:flex;
   flex-direction:column;
+  height:100%;
   gap:10px;
+}
+.registryTasksPanel .tasksAllLink{
+  margin-top:auto;
+  align-self:flex-start;
 }
 
 .taskPreviewList{
@@ -1142,16 +1170,6 @@ input:-webkit-autofill:focus {
   text-decoration:underline;
 }
 
-.registryMain{
-  display:grid;
-  gap:14px;
-  min-width:0;
-}
-
-.registryDetailPanel{
-  min-width:0;
-}
-
 .registryFiltersForm{
   display:grid;
   gap:10px;
@@ -1169,21 +1187,51 @@ input:-webkit-autofill:focus {
 
 .registryFilterOptionsRow{
   display:grid;
-  grid-template-columns:minmax(260px,1fr) minmax(150px,.55fr) minmax(150px,.55fr);
+  grid-template-columns:minmax(150px,.65fr) minmax(150px,.65fr) minmax(0,1.7fr);
   gap:10px;
   align-items:end;
 }
 
-.registryFilterChecks{
+.registryQuickFilters{
   display:flex;
   min-height:40px;
   align-items:center;
-  gap:16px;
+  justify-content:flex-end;
+  gap:8px;
   flex-wrap:wrap;
 }
 
-.registryFilterChecks .toggle{
-  margin:0;
+.filterToggle{
+  display:inline-flex;
+  align-items:center;
+  min-height:34px;
+  padding:0 10px;
+  gap:6px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:var(--panel2);
+  color:var(--muted);
+  cursor:pointer;
+  font:inherit;
+  font-size:12px;
+  white-space:nowrap;
+}
+.filterToggle:hover{
+  transform:translateY(-1px);
+  border-color:var(--accent);
+  color:var(--text);
+}
+.filterToggle.active{
+  border-color:var(--accent);
+  background:rgba(79,140,255,.12);
+  color:var(--text);
+}
+.filterToggleMark{
+  display:inline-flex;
+  width:14px;
+  justify-content:center;
+  color:var(--accent);
+  font-weight:800;
 }
 
 .registryFilterActions{
@@ -1208,8 +1256,7 @@ input:-webkit-autofill:focus {
   grid-column:span 2;
 }
 
-.registryTopGrid .muted,
-.registryWorkspace .muted{
+.registryPageGrid .muted{
   color:var(--muted);
 }
 
@@ -1265,7 +1312,7 @@ input:-webkit-autofill:focus {
   box-shadow:var(--shadow);
 }
 .registryActionOverlay.opensUpward{
-  transform:translateY(calc(-100% - 6px));
+  transform:translateY(-100%);
 }
 
 .actionMenuTitle{
@@ -1340,6 +1387,9 @@ input:-webkit-autofill:focus {
   .registryFilterAuthor{
     grid-column:auto;
   }
+  .registryQuickFilters{
+    justify-content:flex-start;
+  }
 }
 @media (max-width:560px){
   .registryFilterPrimaryRow,
@@ -1348,6 +1398,7 @@ input:-webkit-autofill:focus {
   .registryFilterAdvanced{
     grid-template-columns:1fr;
   }
+  .registryQuickFilters,
   .registryFilterActions{
     justify-content:flex-start;
   }
