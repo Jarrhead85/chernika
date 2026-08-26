@@ -18,6 +18,32 @@
 @if (_openActionMenuCardId.HasValue)
 {
     <div class="actionMenuBackdrop" @onclick="CloseActionMenu"></div>
+    <div class="registryActionOverlay" role="menu" tabindex="-1" style="@ActionMenuStyle" @ref="_actionMenuOverlayRef" @onkeydown="HandleMenuKeyDown" @onclick:stopPropagation="true">
+        @{
+            var menuCard = _result.Items.FirstOrDefault(c => c.Id == _openActionMenuCardId.Value);
+        }
+        @if (menuCard != null)
+        {
+            var groups = GetActionGroups(menuCard);
+            @foreach (var group in groups)
+            {
+                @if (!string.IsNullOrEmpty(group.Title))
+                {
+                    <div class="actionMenuTitle">@group.Title</div>
+                }
+                @foreach (var action in group.Actions)
+                {
+                    <button type="button"
+                            class="actionMenuItem"
+                            role="menuitem"
+                            @onclick:stopPropagation="true"
+                            @onclick="() => ExecuteAction(menuCard, action.Key)">
+                        @action.Label
+                    </button>
+                }
+            }
+        }
+    </div>
 }
 
 <div class="stack">
@@ -93,8 +119,8 @@
                 <div class="panelHeader"><h2>Поиск и фильтры</h2><div class="hint">Серверная фильтрация</div></div>
                 <div class="panelBody">
                     <div class="registryFiltersForm">
-                        <div class="registryFilterRow">
-                            <div class="field registryFilterSearch">
+                        <div class="registryFilterPrimaryRow @(_canSystemConfig ? "" : "noBranch")">
+                            <div class="field">
                                 <label>Поиск</label>
                                 <input @bind="_query.SearchText" placeholder="Код, версия, объект, организация, письмо…" />
                             </div>
@@ -133,7 +159,7 @@
                             }
                         </div>
 
-                        <div class="registryFilterRow">
+                        <div class="registryFilterOptionsRow">
                             <div class="field registryFilterChecks">
                                 <label class="toggle">
                                     <input type="checkbox" @bind="_query.OnlyMine" /> Только мои
@@ -158,22 +184,21 @@
                                     <option value="false">По возрастанию</option>
                                 </select>
                             </div>
-                            <div class="registryFilterActions">
-                                <button class="btn" @onclick="ToggleAdvanced">@(_showAdvanced ? "Скрыть" : "Дополнительно")</button>
-                                <button class="btn primary" @onclick="ApplyFilters">Применить</button>
-                                <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
-                            </div>
+                        </div>
+
+                        <div class="registryFilterActions">
+                            <button class="btn" @onclick="ToggleAdvanced">@(_showAdvanced ? "Скрыть" : "Дополнительно")</button>
+                            <button class="btn primary" @onclick="ApplyFilters">Применить</button>
+                            <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
                         </div>
 
                         @if (_showAdvanced)
                         {
-                            <div class="registryFilterRow">
+                            <div class="registryFilterAdvanced">
                                 <div class="field"><label>Дата создания с</label><input type="date" @bind="_query.CreatedFrom" class="field-input" /></div>
                                 <div class="field"><label>Дата создания по</label><input type="date" @bind="_query.CreatedTo" class="field-input" /></div>
                                 <div class="field"><label>Дата утверждения с</label><input type="date" @bind="_query.ApprovedFrom" class="field-input" /></div>
                                 <div class="field"><label>Дата утверждения по</label><input type="date" @bind="_query.ApprovedTo" class="field-input" /></div>
-                            </div>
-                            <div class="registryFilterRow">
                                 <div class="field">
                                     <label>Срок действия</label>
                                     <select @bind="_query.ExpirationFilter" class="field-select">
@@ -191,7 +216,7 @@
                                         <option value="false">Нет PDF</option>
                                     </select>
                                 </div>
-                                <div class="field">
+                                <div class="field registryFilterAuthor">
                                     <label>Автор</label>
                                     <select @bind="_query.AuthorId" class="field-select">
                                         <option value="">Все</option>
@@ -253,44 +278,16 @@
                                                     <button type="button" class="btn ghost btn-sm" @onclick:stopPropagation="true" @onclick="() => GoToEdit(card.Id)">Открыть</button>
                                                     @if (hasActions)
                                                     {
-                                                        <div class="actionMenu">
-                                                            <button type="button"
-                                                                    class="btn ghost iconBtn"
-                                                                    aria-label="Дополнительные действия"
-                                                                    aria-haspopup="menu"
-                                                                    aria-expanded="@(_openActionMenuCardId == card.Id)"
-                                                                    @onclick:stopPropagation="true"
-                                                                    @onclick="() => ToggleActionMenu(card.Id)">
-                                                                ⋯
-                                                            </button>
-                                                            @if (_openActionMenuCardId == card.Id)
-                                                            {
-                                                                <div class="actionMenuPopup"
-                                                                     role="menu"
-                                                                     tabindex="-1"
-                                                                     @ref="_actionMenuPopupRef"
-                                                                     @onkeydown="HandleMenuKeyDown"
-                                                                     @onclick:stopPropagation="true">
-                                                                    @foreach (var group in actionGroups)
-                                                                    {
-                                                                        @if (!string.IsNullOrEmpty(group.Title))
-                                                                        {
-                                                                            <div class="actionMenuTitle">@group.Title</div>
-                                                                        }
-                                                                        @foreach (var action in group.Actions)
-                                                                        {
-                                                                            <button type="button"
-                                                                                    class="actionMenuItem"
-                                                                                    role="menuitem"
-                                                                                    @onclick:stopPropagation="true"
-                                                                                    @onclick="() => ExecuteAction(card, action.Key)">
-                                                                                @action.Label
-                                                                            </button>
-                                                                        }
-                                                                    }
-                                                                </div>
-                                                            }
-                                                        </div>
+                                                        <button type="button"
+                                                                id="hk-actions-@card.Id"
+                                                                class="btn ghost iconBtn"
+                                                                aria-label="Дополнительные действия"
+                                                                aria-haspopup="menu"
+                                                                aria-expanded="@(_openActionMenuCardId == card.Id)"
+                                                                @onclick:stopPropagation="true"
+                                                                @onclick="() => ToggleActionMenuAsync(card.Id)">
+                                                            ⋯
+                                                        </button>
                                                     }
                                                 </div>
                                             </td>
@@ -487,7 +484,9 @@
     private bool _canArchive;
     private readonly HashSet<HKCardStatus> _deletableStatuses = new();
     private Guid? _openActionMenuCardId;
-    private ElementReference _actionMenuPopupRef;
+    private double _actionMenuLeft;
+    private double _actionMenuTop;
+    private ElementReference _actionMenuOverlayRef;
     private CancellationTokenSource? _loadCts;
     private string? _errorMessage;
     private readonly HashSet<string> _grantedPermissions = new(StringComparer.Ordinal);
@@ -658,6 +657,11 @@
                 {
                     _selectedCard = _result.Items.FirstOrDefault(c => c.Id == _selectedCard.Id);
                 }
+
+                if (_openActionMenuCardId.HasValue && !_result.Items.Any(c => c.Id == _openActionMenuCardId.Value))
+                {
+                    CloseActionMenu();
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -749,18 +753,20 @@
         }
     }
 
-    private async Task ToggleActionMenu(Guid cardId)
+    private async Task ToggleActionMenuAsync(Guid cardId)
     {
         if (_openActionMenuCardId == cardId)
         {
-            _openActionMenuCardId = null;
+            CloseActionMenu();
             return;
         }
         _openActionMenuCardId = cardId;
         await Task.Delay(1);
+        await PositionActionMenuAsync();
+        await Task.Delay(1);
         try
         {
-            await _actionMenuPopupRef.FocusAsync();
+            await _actionMenuOverlayRef.FocusAsync();
         }
         catch
         {
@@ -768,13 +774,69 @@
         }
     }
 
-    private void CloseActionMenu() => _openActionMenuCardId = null;
+    private async Task PositionActionMenuAsync()
+    {
+        if (!_openActionMenuCardId.HasValue) return;
+
+        const double menuWidth = 220;
+        const double menuHeight = 180;
+        const double spacing = 4;
+
+        BoundingRect? rect = null;
+        try
+        {
+            rect = await JS.InvokeAsync<BoundingRect?>("chernika.getElementRect", $"hk-actions-{_openActionMenuCardId.Value}");
+        }
+        catch
+        {
+            // ignore JS interop errors
+        }
+
+        if (rect == null)
+        {
+            _actionMenuLeft = 16;
+            _actionMenuTop = 16;
+            return;
+        }
+
+        var fitsBelow = rect.Bottom + spacing + menuHeight <= rect.ViewportHeight;
+
+        if (fitsBelow)
+        {
+            _actionMenuTop = rect.Bottom + spacing;
+        }
+        else
+        {
+            _actionMenuTop = rect.Top - spacing - menuHeight;
+            if (_actionMenuTop < 0) _actionMenuTop = spacing;
+        }
+
+        if (rect.Left + menuWidth > rect.ViewportWidth)
+        {
+            _actionMenuLeft = Math.Max(spacing, rect.ViewportWidth - menuWidth - spacing);
+        }
+        else
+        {
+            _actionMenuLeft = rect.Left;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string ActionMenuStyle => $"position:fixed;left:{_actionMenuLeft}px;top:{_actionMenuTop}px;";
+
+    private void CloseActionMenu()
+    {
+        _openActionMenuCardId = null;
+        _actionMenuLeft = 0;
+        _actionMenuTop = 0;
+    }
 
     private void HandleMenuKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
         {
-            _openActionMenuCardId = null;
+            CloseActionMenu();
         }
     }
 
@@ -996,4 +1058,14 @@
     private sealed record ExpirationOption(HKCardExpirationFilter Value, string Label);
     private sealed record ActionItem(string Key, string Label);
     private sealed record ActionGroup(string Title, List<ActionItem> Actions);
+
+    private sealed class BoundingRect
+    {
+        public double Left { get; set; }
+        public double Top { get; set; }
+        public double Right { get; set; }
+        public double Bottom { get; set; }
+        public double ViewportWidth { get; set; }
+        public double ViewportHeight { get; set; }
+    }
 }

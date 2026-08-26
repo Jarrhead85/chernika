@@ -196,6 +196,9 @@ public class HKCardRegistryIntegrationTests
         Assert.DoesNotContain(branches, b => b.IsDeleted);
         Assert.Contains(branches, b => b.Id == _fixture.BranchA);
         Assert.Contains(branches, b => b.Id == _fixture.BranchB);
+        Assert.Equal(
+            new[] { _fixture.BranchA, _fixture.BranchB },
+            branches.OrderBy(b => b.Name).Select(b => b.Id).ToArray());
     }
 
     [Fact]
