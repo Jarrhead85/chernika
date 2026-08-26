@@ -7,28 +7,41 @@
 @using AuditLogEntity = Chernika.Domain.Entities.AuditLog
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Models
+@using Chernika.Web.Components
+@using Chernika.Web.Services
+@using Microsoft.AspNetCore.Identity
 @inject EquipmentService EquipService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject CircuitDbLock DbLock
-@using Chernika.Web.Services
+@inject UserManager<ApplicationUser> UserManager
 @implements IDisposable
 
-<div class="stack">
-    <section class="panel">
-        <div class="panelHeader">
-            <h2>@LevelTitle: @objectCode — версия <span class="mono">@(selected?.Version ?? "—")</span></h2>
-            <div class="hint">@(selected?.EffectiveDate.HasValue == true ? $"Действует с {selected.EffectiveDate.Value:dd.MM.yyyy}" : "Период действия не задан")</div>
-        </div>
-        <div class="panelBody">
-            <div class="btnRow">
-                @if (selected != null)
-                {
-                    <span class="tag @StatusTag(selected.Status)">@StatusLabel(selected.Status)</span>
-                }
-                @if (selected != null && string.IsNullOrEmpty(error))
-                {
+<div class="stack compositionPage">
+    @if (selected != null)
+    {
+        <nav class="compositionBreadcrumbs" aria-label="Навигация">
+            <a href="/составы">Составы</a>
+            <span>/</span>
+            <a href="@ListEditorUrl">@LevelPlural</a>
+            <span>/</span>
+            <a href="@ListEditorUrl">@objectCode</a>
+            <span>/</span>
+            <span>@selected.Version</span>
+        </nav>
+
+        <section class="panel compositionHeaderPanel">
+            <div class="panelHeader compositionHeader">
+                <div>
+                    <div class="compositionType">Состав @LevelTitle.ToLower()</div>
+                    <h2>@objectCode · @objectName</h2>
+                    <div class="compositionVersionLine">
+                        <span class="mono">Версия @selected.Version</span>
+                        <CompositionStatusBadge Status="@selected.Status" />
+                    </div>
+                </div>
+                <div class="compositionHeaderActions">
                     @if (selected.Status == ProductCompositionStatus.Draft)
                     {
                         @if (canEditDraft)
@@ -37,7 +50,7 @@
                         }
                         @if (canSubmit)
                         {
-                            <button class="btn primary" @onclick="SubmitForReview">Отправить на проверку</button>
+                            <button class="btn primary" @onclick="SubmitForReview">Отправить на согласование</button>
                         }
                     }
                     else if (selected.Status == ProductCompositionStatus.OnReview)
@@ -48,7 +61,7 @@
                         }
                         @if (canReturn)
                         {
-                            <button class="btn" @onclick="ReturnToDraft">Вернуть в черновик</button>
+                            <button class="btn" @onclick="ReturnToDraft">Вернуть на доработку</button>
                         }
                     }
                     else if (selected.Status == ProductCompositionStatus.Approved)
@@ -59,36 +72,44 @@
                         }
                         @if (canCreateVersion)
                         {
-                            <button class="btn primary" @onclick="CreateVersion">↗ Создать версию</button>
+                            <button class="btn primary" @onclick="CreateVersion">Создать новую версию</button>
                         }
                     }
                     else if (selected.Status == ProductCompositionStatus.Archived && canCreateVersion)
                     {
-                        <button class="btn primary" @onclick="CreateVersion">↗ Создать версию</button>
+                        <button class="btn primary" @onclick="CreateVersion">Создать новую версию</button>
                     }
-                }
-                <a class="btn ghost" href="/составы">← К реестру составов</a>
-            </div>
-            @if (selected?.Status == ProductCompositionStatus.OnReview)
-            {
-                <div class="field" style="margin-top:10px;max-width:400px">
-                    <label>Комментарий к решению</label>
-                    <input @bind="actionComment" class="field-input" placeholder="Необязательно" />
+                    <a class="btn ghost" href="/составы">← К реестру</a>
                 </div>
-            }
-            @if (!string.IsNullOrEmpty(error))
-            {
-                <div class="note warn" style="margin-top:10px">@error</div>
-            }
-        </div>
-    </section>
+            </div>
+            <div class="panelBody">
+                @if (selected.Status != ProductCompositionStatus.Draft)
+                {
+                    <div class="compositionReadOnlyBanner @ReadOnlyBannerClass">
+                        @ReadOnlyBannerText
+                    </div>
+                }
+                @if (selected.Status == ProductCompositionStatus.OnReview)
+                {
+                    <div class="field" style="margin-top:10px;max-width:400px">
+                        <label>Комментарий к решению</label>
+                        <input @bind="actionComment" class="field-input" placeholder="Необязательно" />
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(error))
+                {
+                    <div class="note warn" style="margin-top:10px">@error</div>
+                }
+            </div>
+        </section>
+    }
 
     <div class="grid">
-        <div class="stack">
+        <div class="stack compositionMain">
             <section class="panel">
                 <div class="panelHeader">
-                    <h2>@LevelTitle: @objectCode</h2>
-                    <div class="hint">@objectName</div>
+                    <h2>@CompositionTableTitle</h2>
+                    <div class="hint">@CompositionSummary</div>
                 </div>
                 <div class="panelBody">
                     @if (loading)
@@ -97,144 +118,120 @@
                     }
                     else if (selected == null)
                     {
-                        <div class="empty-state">Версия не найдена.</div>
+                        <div class="compositionEmpty">Версия не найдена.</div>
                     }
-                    else
+                    else if (Level == 1)
                     {
-                        @if (Level == 1)
+                        @if (!selectedProductComposition!.Parts.Any())
                         {
-                            @foreach (var part in selectedProductComposition!.Parts.OrderBy(p => p.SortOrder))
+                            <div class="compositionEmpty">Нет составных частей.</div>
+                        }
+                        else
+                        {
+                            @foreach (var part in selectedProductComposition.Parts.OrderBy(p => p.SortOrder))
                             {
-                                <div style="margin-bottom:10px">
-                                    <div class="hint" style="margin:6px 0;font-weight:700">@part.Name</div>
+                                <div class="compositionPartPanel">
+                                    <div class="compositionPartHeader">
+                                        <span>@part.Name</span>
+                                        <span class="hint">@part.Aggregates.Count агрегатов</span>
+                                    </div>
                                     @if (!part.Aggregates.Any())
                                     {
-                                        <div class="empty-state" style="padding:4px 0">Нет агрегатов</div>
+                                        <div class="compositionEmpty" style="padding:8px 0">В этой части нет агрегатов.</div>
                                     }
                                     else
                                     {
                                         <div class="tableWrap">
-                                        <table>
-                                            <thead><tr><th>Код агрегата</th><th>Наименование</th><th>Количество</th></tr></thead>
-                                            <tbody>
-                                                @foreach (var a in part.Aggregates.OrderBy(x => x.Aggregate?.Code))
-                                                {
-                                                    <tr>
-                                                        <td class="mono">@a.Aggregate?.Code</td>
-                                                        <td>@a.Aggregate?.Name</td>
-                                                        <td>@a.Quantity</td>
-                                                    </tr>
-                                                }
-                                            </tbody>
-                                        </table>
+                                            <table>
+                                                <thead>
+                                                    <tr><th>Код агрегата</th><th>Наименование</th><th class="numeric">Количество</th></tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var a in part.Aggregates.OrderBy(x => x.Aggregate?.Code))
+                                                    {
+                                                        <tr>
+                                                            <td class="mono">@a.Aggregate?.Code</td>
+                                                            <td>@a.Aggregate?.Name</td>
+                                                            <td class="numeric">@a.Quantity</td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
                                         </div>
                                     }
                                 </div>
                             }
-                            @if (!selectedProductComposition.Parts.Any())
-                            {
-                                <div class="empty-state">Нет составных частей.</div>
-                            }
                         }
-                        else if (Level == 0)
+                    }
+                    else if (Level == 0)
+                    {
+                        @if (!selectedComplexComposition!.Items.Any())
                         {
-                            @if (!selectedComplexComposition!.Items.Any())
-                            {
-                                <div class="empty-state">Нет моделей.</div>
-                            }
-                            else
-                            {
-                                <div class="tableWrap">
+                            <div class="compositionEmpty">Нет моделей в составе комплекса.</div>
+                        }
+                        else
+                        {
+                            <div class="tableWrap">
                                 <table>
-                                    <thead><tr><th>Индекс</th><th>Наименование</th><th>Количество</th><th>Примечание</th></tr></thead>
+                                    <thead>
+                                        <tr><th>Код изделия</th><th>Наименование</th><th class="numeric">Количество</th><th>Примечание</th></tr>
+                                    </thead>
                                     <tbody>
                                         @foreach (var item in selectedComplexComposition.Items.OrderBy(i => i.SortOrder))
                                         {
                                             <tr>
                                                 <td class="mono">@item.EquipmentModel?.Index</td>
                                                 <td>@item.EquipmentModel?.Name</td>
-                                                <td>@item.Quantity</td>
+                                                <td class="numeric">@item.Quantity</td>
                                                 <td>@item.Notes</td>
                                             </tr>
                                         }
                                     </tbody>
                                 </table>
-                                </div>
-                            }
+                            </div>
                         }
-                        else if (Level == 2)
+                    }
+                    else if (Level == 2)
+                    {
+                        @if (!selectedAggregateComposition!.Nodes.Any())
                         {
-                            @if (!selectedAggregateComposition!.Nodes.Any())
-                            {
-                                <div class="empty-state">Нет узлов.</div>
-                            }
-                            else
-                            {
-                                <div class="tableWrap">
+                            <div class="compositionEmpty">Нет узлов в составе агрегата.</div>
+                        }
+                        else
+                        {
+                            <div class="tableWrap">
                                 <table>
-                                    <thead><tr><th>Код узла</th><th>Наименование</th><th>Количество</th><th>Примечание</th></tr></thead>
+                                    <thead>
+                                        <tr><th>Код узла</th><th>Наименование</th><th class="numeric">Количество</th><th>Примечание</th></tr>
+                                    </thead>
                                     <tbody>
                                         @foreach (var node in selectedAggregateComposition.Nodes.OrderBy(n => n.SortOrder))
                                         {
                                             <tr>
                                                 <td class="mono">@node.Node?.Code</td>
                                                 <td>@node.Node?.Name</td>
-                                                <td>@node.Quantity</td>
+                                                <td class="numeric">@node.Quantity</td>
                                                 <td>@node.Notes</td>
                                             </tr>
                                         }
                                     </tbody>
                                 </table>
-                                </div>
-                            }
+                            </div>
                         }
                     }
                 </div>
             </section>
         </div>
 
-        <aside class="stack">
-            <section class="panel">
-                <div class="panelHeader"><h2>Версии состава</h2><div class="hint">@versions.Count</div></div>
-                <div class="panelBody">
-                    @if (!versions.Any())
-                    {
-                        <div class="empty-state">Версий нет</div>
-                    }
-                    else
-                    {
-                        <div class="listRows">
-                            @foreach (var v in versions)
-                            {
-                                var active = v.Id == compositionId;
-                                <div class="rowCard" style="@(active ? "border-color:var(--accent)" : "")">
-                                    <div class="top">
-                                        <a class="linkBtn" href="@VersionUrl(v.Id)">@v.Version</a>
-                                        <span class="tag @StatusTag(v.Status)">@StatusLabel(v.Status)</span>
-                                    </div>
-                                    @if (v.EffectiveDate.HasValue)
-                                    {
-                                        <div class="sub">Действует с @v.EffectiveDate!.Value.ToString("dd.MM.yyyy")</div>
-                                    }
-                                    <div class="sub">@v.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div>
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-            </section>
-
-            <section class="panel">
-                <div class="panelHeader"><h2>Информация</h2><div class="hint">Детали версии</div></div>
-                <div class="panelBody">
-                    @if (selected == null)
-                    {
-                        <div class="empty-state">—</div>
-                    }
-                    else
-                    {
+        <aside class="stack compositionSidebar">
+            @if (selected != null)
+            {
+                <section class="panel">
+                    <div class="panelHeader"><h2>Сводка версии</h2></div>
+                    <div class="panelBody">
+                        <div class="field"><label>Статус</label><CompositionStatusBadge Status="@selected.Status" /></div>
                         <div class="field"><label>Версия</label><div class="mono">@selected.Version</div></div>
-                        <div class="field"><label>Статус</label><span class="tag @StatusTag(selected.Status)">@StatusLabel(selected.Status)</span></div>
+                        <div class="field"><label>Автор</label><div>@(authorName ?? "—")</div></div>
                         <div class="field"><label>Создан</label><div class="mono">@selected.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
                         <div class="field"><label>Обновлён</label><div class="mono">@selected.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
                         @if (selected.ApprovedAt.HasValue)
@@ -255,95 +252,132 @@
                         }
                         @if (selected.PredecessorId.HasValue && PredecessorVersion != null)
                         {
-                            <div class="field"><label>На основе</label><div class="mono">@PredecessorVersion ↗</div></div>
+                            <div class="field"><label>Предшественник</label><a class="linkBtn" href="@VersionUrl(selected.PredecessorId.Value)">@PredecessorVersion ↗</a></div>
                         }
-                    }
-                </div>
-            </section>
+                    </div>
+                </section>
 
-            <section class="panel">
-                <div class="panelHeader"><h2>Нормативная готовность</h2><div class="hint">@readinessRows.Count</div></div>
-                <div class="panelBody">
-                    @if (!readinessRows.Any())
-                    {
-                        <div class="empty-state">Данных о готовности нет</div>
-                    }
-                    else
-                    {
-                        <div class="listRows">
-                            @foreach (var r in readinessRows)
-                            {
-                                <div class="rowCard">
-                                    <div class="top">
-                                        <span class="mono">@(r.ChildCode)</span>
-                                        <span class="tag @ReadinessTag(r.Status)">@ReadinessLabel(r.Status)</span>
+                <section class="panel compositionVersionNavigator">
+                    <div class="panelHeader"><h2>Версии состава</h2><div class="hint">@versions.Count</div></div>
+                    <div class="panelBody">
+                        @if (!versions.Any())
+                        {
+                            <div class="compositionEmpty">Версий нет</div>
+                        }
+                        else
+                        {
+                            <div class="listRows">
+                                @foreach (var v in versions.OrderByDescending(v => v.CreatedAt))
+                                {
+                                    var active = v.Id == compositionId;
+                                    <div class="rowCard @(active ? "current" : null)">
+                                        <div class="top">
+                                            @if (active)
+                                            {
+                                                <span class="mono">@v.Version</span>
+                                            }
+                                            else
+                                            {
+                                                <a class="linkBtn" href="@VersionUrl(v.Id)">@v.Version</a>
+                                            }
+                                            <CompositionStatusBadge Status="@v.Status" />
+                                        </div>
+                                        @if (v.EffectiveDate.HasValue)
+                                        {
+                                            <div class="sub">Действует с @v.EffectiveDate!.Value.ToString("dd.MM.yyyy")</div>
+                                        }
+                                        <div class="sub">@v.UpdatedAt.ToString("dd.MM.yyyy HH:mm") @(active ? "· Текущая" : "")</div>
                                     </div>
-                                    <div class="sub">@r.ChildName</div>
-                                    <div class="sub">@ReadinessMessage(r)</div>
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-            </section>
+                                }
+                            </div>
+                        }
+                    </div>
+                </section>
 
-            <section class="panel">
-                <div class="panelHeader"><h2>Связанные задачи</h2><div class="hint">@linkedTasks.Count</div></div>
-                <div class="panelBody">
-                    @if (!linkedTasks.Any())
-                    {
-                        <div class="empty-state">Задач нет</div>
-                    }
-                    else
-                    {
-                        <div class="listRows">
-                            @foreach (var t in linkedTasks)
-                            {
-                                <div class="rowCard">
-                                    <div class="top">
-                                        <a class="linkBtn" href="/задачи/@t.Id">@WorkTaskTypeLabel(t.Type)</a>
-                                        <span class="tag @TaskStatusTag(t.Status)">@TaskStatusLabel(t.Status)</span>
+                <section class="panel">
+                    <div class="panelHeader"><h2>Нормативная готовность</h2><div class="hint">@readinessRows.Count</div></div>
+                    <div class="panelBody">
+                        @if (!readinessRows.Any())
+                        {
+                            <div class="compositionEmpty">Данных о готовности нет</div>
+                        }
+                        else
+                        {
+                            <div class="listRows">
+                                @foreach (var r in readinessRows)
+                                {
+                                    <div class="rowCard">
+                                        <div class="top">
+                                            <span class="mono">@r.ChildCode</span>
+                                            <span class="tag @ReadinessTag(r.Status)">@ReadinessLabel(r.Status)</span>
+                                        </div>
+                                        <div class="sub">@r.ChildName</div>
+                                        <div class="sub">@ReadinessMessage(r)</div>
                                     </div>
-                                    <div class="sub">@t.Title</div>
-                                    <div class="sub">@t.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm") @(t.WorkTaskGroupId.HasValue ? "(групп.)" : "")</div>
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-            </section>
+                                }
+                            </div>
+                        }
+                    </div>
+                </section>
 
-            <section class="panel">
-                <div class="panelHeader"><h2>История согласования</h2><div class="hint">@history.Count</div></div>
-                <div class="panelBody">
-                    @if (!history.Any())
-                    {
-                        <div class="empty-state">Записей нет</div>
-                    }
-                    else
-                    {
-                        <div class="listRows">
-                            @foreach (var h in history)
-                            {
-                                <div class="rowCard">
-                                    <div class="top">
-                                        <span>@AuditDisplayCatalog.GetAction(h.Action).Title</span>
-                                        <span class="sub">@h.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span>
+                <section class="panel">
+                    <div class="panelHeader"><h2>Связанные задачи</h2><div class="hint">@linkedTasks.Count</div></div>
+                    <div class="panelBody">
+                        @if (!linkedTasks.Any())
+                        {
+                            <div class="compositionEmpty">Задач нет</div>
+                        }
+                        else
+                        {
+                            <div class="listRows">
+                                @foreach (var t in linkedTasks)
+                                {
+                                    <div class="rowCard">
+                                        <div class="top">
+                                            <a class="linkBtn" href="/задачи/@t.Id">@WorkTaskTypeLabel(t.Type)</a>
+                                            <span class="tag @TaskStatusTag(t.Status)">@TaskStatusLabel(t.Status)</span>
+                                        </div>
+                                        <div class="sub">@t.Title</div>
+                                        <div class="sub">@t.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm") @(t.WorkTaskGroupId.HasValue ? "(групп.)" : "")</div>
                                     </div>
-                                    @if (!string.IsNullOrEmpty(h.ActorFullName))
-                                    {
-                                        <div class="sub">@h.ActorFullName</div>
-                                    }
-                                    @if (!string.IsNullOrEmpty(h.Details))
-                                    {
-                                        <div class="sub">@h.Details</div>
-                                    }
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-            </section>
+                                }
+                            </div>
+                        }
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panelHeader"><h2>История согласования</h2><div class="hint">@history.Count</div></div>
+                    <div class="panelBody">
+                        @if (!history.Any())
+                        {
+                            <div class="compositionEmpty">Записей нет</div>
+                        }
+                        else
+                        {
+                            <div class="listRows">
+                                @foreach (var h in history)
+                                {
+                                    <div class="rowCard">
+                                        <div class="top">
+                                            <span>@AuditDisplayCatalog.GetAction(h.Action).Title</span>
+                                            <span class="sub">@h.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span>
+                                        </div>
+                                        @if (!string.IsNullOrEmpty(h.ActorFullName))
+                                        {
+                                            <div class="sub">@h.ActorFullName</div>
+                                        }
+                                        @if (!string.IsNullOrEmpty(h.Details))
+                                        {
+                                            <div class="sub">@h.Details</div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </section>
+            }
         </aside>
     </div>
 </div>
@@ -362,6 +396,7 @@
     private bool canApprove;
     private string? error;
     private string actionComment = "";
+    private string? authorName;
     private CancellationTokenSource? _loadCts;
 
     private ProductComposition? selectedProductComposition;
@@ -386,6 +421,62 @@
         0 => "Комплекс",
         1 => "Изделие",
         _ => "Агрегат"
+    };
+
+    private string LevelPlural => Level switch
+    {
+        0 => "Комплексы",
+        1 => "Изделия",
+        _ => "Агрегаты"
+    };
+
+    private string ListEditorUrl => Level switch
+    {
+        0 => "/состав-комплекса",
+        1 => "/состав-изделия",
+        _ => "/состав-агрегата"
+    };
+
+    private string CompositionTableTitle => Level switch
+    {
+        0 => "Изделия в составе комплекса",
+        1 => "Агрегаты в составе изделия",
+        _ => "Узлы в составе агрегата"
+    };
+
+    private string CompositionSummary
+    {
+        get
+        {
+            if (Level == 0)
+            {
+                var count = selectedComplexComposition?.Items.Count ?? 0;
+                return $"{count} {(count == 1 ? "изделие" : count is >= 2 and <= 4 ? "изделия" : "изделий")}";
+            }
+            if (Level == 1)
+            {
+                var parts = selectedProductComposition?.Parts.Count ?? 0;
+                var aggregates = selectedProductComposition?.Parts.Sum(p => p.Aggregates.Count) ?? 0;
+                return $"{parts} {(parts == 1 ? "часть" : parts is >= 2 and <= 4 ? "части" : "частей")} · {aggregates} {(aggregates == 1 ? "агрегат" : aggregates is >= 2 and <= 4 ? "агрегата" : "агрегатов")}";
+            }
+            var nodes = selectedAggregateComposition?.Nodes.Count ?? 0;
+            return $"{nodes} {(nodes == 1 ? "узел" : nodes is >= 2 and <= 4 ? "узла" : "узлов")}";
+        }
+    }
+
+    private string ReadOnlyBannerClass => selected?.Status switch
+    {
+        ProductCompositionStatus.OnReview => "compositionReadOnlyBanner--warn",
+        ProductCompositionStatus.Archived => "compositionReadOnlyBanner--info",
+        _ => "compositionReadOnlyBanner--info"
+    };
+
+    private string ReadOnlyBannerText => selected?.Status switch
+    {
+        ProductCompositionStatus.OnReview => "На согласовании — состав заблокирован до решения согласующего.",
+        ProductCompositionStatus.Approved => "Утверждён — для изменения создайте новую версию.",
+        ProductCompositionStatus.Archived => "В архиве — историческая версия доступна только для просмотра.",
+        _ => ""
     };
 
     protected override async Task OnInitializedAsync()
@@ -485,6 +576,7 @@
                 selected = versions.FirstOrDefault(v => v.Id == compositionId);
                 if (selected != null)
                 {
+                    await ResolveAuthorAsync();
                     readinessRows = (await EquipService.EvaluateReadinessAsync(Level, compositionId, ct)).ToList();
                     linkedTasks = (await EquipService.GetCompositionTasksAsync(Level, compositionId, ct)).ToList();
                     history = (await EquipService.GetCompositionHistoryAsync(Level, compositionId, ct)).ToList();
@@ -496,6 +588,19 @@
             }
             loading = false;
         }
+    }
+
+    private async Task ResolveAuthorAsync()
+    {
+        var authorId = Level switch
+        {
+            0 => selectedComplexComposition?.AuthorId,
+            1 => selectedProductComposition?.AuthorId,
+            _ => selectedAggregateComposition?.AuthorId
+        };
+        if (string.IsNullOrWhiteSpace(authorId)) return;
+        var user = await UserManager.FindByIdAsync(authorId);
+        authorName = user?.FullName ?? authorId;
     }
 
     private string? PredecessorVersion
@@ -668,24 +773,6 @@
         _loadCts?.Cancel();
         _loadCts?.Dispose();
     }
-
-    private static string StatusLabel(ProductCompositionStatus status) => status switch
-    {
-        ProductCompositionStatus.Draft => "Черновик",
-        ProductCompositionStatus.OnReview => "На проверке",
-        ProductCompositionStatus.Approved => "Утверждён",
-        ProductCompositionStatus.Archived => "Архивный",
-        _ => status.ToString()
-    };
-
-    private static string StatusTag(ProductCompositionStatus status) => status switch
-    {
-        ProductCompositionStatus.Draft => "warn",
-        ProductCompositionStatus.OnReview => "warn",
-        ProductCompositionStatus.Approved => "ok",
-        ProductCompositionStatus.Archived => "",
-        _ => ""
-    };
 
     private static string ReadinessLabel(string status) => status switch
     {

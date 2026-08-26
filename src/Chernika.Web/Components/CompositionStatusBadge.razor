@@ -1,0 +1,25 @@
+@using Chernika.Domain.Enums
+
+<span class="auditAction @CssClass">@Label</span>
+
+@code {
+    [Parameter] public ProductCompositionStatus Status { get; set; }
+
+    private string CssClass => Status switch
+    {
+        ProductCompositionStatus.Approved => "auditAction--success",
+        ProductCompositionStatus.OnReview => "auditAction--warning",
+        ProductCompositionStatus.Draft => "auditAction--neutral",
+        ProductCompositionStatus.Archived => "auditAction--neutral",
+        _ => "auditAction--neutral"
+    };
+
+    private string Label => Status switch
+    {
+        ProductCompositionStatus.Draft => "Черновик",
+        ProductCompositionStatus.OnReview => "На согласовании",
+        ProductCompositionStatus.Approved => "Утверждён",
+        ProductCompositionStatus.Archived => "В архиве",
+        _ => Status.ToString()
+    };
+}

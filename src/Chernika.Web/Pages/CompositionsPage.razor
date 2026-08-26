@@ -3,12 +3,13 @@
 @using Chernika.Domain
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Models
+@using Chernika.Web.Components
+@using Chernika.Web.Services
 @inject EquipmentService EquipService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject CircuitDbLock DbLock
-@using Chernika.Web.Services
 @implements IDisposable
 
 <div class="stack">
@@ -85,7 +86,7 @@
                                 <td>
                                     @if (current != null)
                                     {
-                                        <span class="tag @StatusTag(current.Status)">@StatusLabel(current.Status)</span>
+                                        <CompositionStatusBadge Status="@current.Status" />
                                     }
                                     else
                                     {
