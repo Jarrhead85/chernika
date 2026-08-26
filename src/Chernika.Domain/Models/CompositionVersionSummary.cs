@@ -14,4 +14,12 @@ public record CompositionVersionSummary(
     DateTime? ApprovedAt,
     string? Comment,
     Guid? PredecessorId,
-    string? AuthorName = null);
+    string? AuthorName = null,
+    string? ObjectCode = null,
+    string? ObjectName = null,
+    bool IsActive = false,
+    int? PartCount = null,
+    int? AggregateCount = null,
+    int? CoveredCount = null,
+    int? NodeCount = null,
+    int? ItemCount = null);

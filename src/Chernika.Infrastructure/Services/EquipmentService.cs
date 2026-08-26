@@ -786,7 +786,7 @@ public class EquipmentService
         return maxSuffix == 0 ? $"{baseVersion}.2" : $"{baseVersion}.{maxSuffix + 1}";
     }
 
-    private async Task<Dictionary<string, string>> GetAuthorNamesAsync(IEnumerable<string?> authorIds, CancellationToken ct)
+    private async Task<IReadOnlyDictionary<string, string>> GetAuthorNamesAsync(IEnumerable<string?> authorIds, CancellationToken ct)
     {
         var ids = authorIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
         if (ids.Count == 0) return new Dictionary<string, string>();
@@ -796,50 +796,70 @@ public class EquipmentService
             .ToDictionaryAsync(u => u.Id, u => u.FullName ?? u.UserName ?? u.Id, ct);
     }
 
+    private static string? ResolveAuthorName(IReadOnlyDictionary<string, string> names, string? authorId)
+    {
+        return !string.IsNullOrWhiteSpace(authorId) && names.TryGetValue(authorId, out var authorName)
+            ? authorName
+            : null;
+    }
+
     // ── Product Composition ──────────────────────────────────────────────
 
-    public async Task<List<ProductCompositionReadModel>> GetCompositionsAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
+    public async Task<IReadOnlyList<CompositionVersionSummary>> GetProductCompositionSummariesAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
     {
-        var query = _db.ProductCompositions
-            .Include(c => c.EquipmentModel)
-            .Include(c => c.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
-            .AsQueryable();
+        var query = _db.ProductCompositions.AsNoTracking().AsQueryable();
 
         if (equipmentModelId.HasValue)
             query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
 
-        var list = await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
-        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
-        return list.Select(c => ToProductCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
+        var list = await query
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.EquipmentModelId,
+                c.Version,
+                c.Status,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.EffectiveDate,
+                c.ExpirationDate,
+                c.ApprovedAt,
+                c.Comment,
+                c.IsActive,
+                c.SupersedesProductCompositionId,
+                c.AuthorId,
+                ObjectCode = c.EquipmentModel != null ? c.EquipmentModel.Index : null,
+                ObjectName = c.EquipmentModel != null ? c.EquipmentModel.Name : null,
+                PartCount = c.Parts.Count,
+                AggregateCount = c.Parts.SelectMany(p => p.Aggregates).Count()
+            })
+            .ToListAsync(ct);
+
+        var names = await GetAuthorNamesAsync(list.Select(x => x.AuthorId), ct);
+
+        return list.Select(x => new CompositionVersionSummary(
+            x.Id, x.EquipmentModelId, x.Version, x.Status, x.CreatedAt, x.UpdatedAt,
+            x.EffectiveDate, x.ExpirationDate, x.ApprovedAt, x.Comment,
+            x.SupersedesProductCompositionId,
+            ResolveAuthorName(names, x.AuthorId),
+            x.ObjectCode, x.ObjectName, x.IsActive,
+            x.PartCount, x.AggregateCount, 0, null, null)).ToList();
     }
 
-    public async Task<ProductCompositionReadModel?> GetCompositionAsync(Guid id, CancellationToken ct = default)
+    public async Task<ProductCompositionReadModel?> GetProductCompositionDetailAsync(Guid id, CancellationToken ct = default)
     {
         var composition = await _db.ProductCompositions
+            .AsNoTracking()
             .Include(c => c.EquipmentModel)
             .Include(c => c.Parts.OrderBy(p => p.SortOrder))
-                .ThenInclude(p => p.Aggregates.OrderBy(a => a.Aggregate.Code))
+                .ThenInclude(p => p.Aggregates.OrderBy(a => a.SortOrder))
                     .ThenInclude(a => a.Aggregate)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
         if (composition == null) return null;
         var names = await GetAuthorNamesAsync(new[] { composition.AuthorId }, ct);
-        return ToProductCompositionReadModel(composition, names.GetValueOrDefault(composition.AuthorId!));
-    }
-
-    public async Task<List<ProductCompositionReadModel>> GetCompositionsWithCoverageAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
-    {
-        var query = _db.ProductCompositions
-            .Include(c => c.EquipmentModel)
-            .Include(c => c.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
-            .AsQueryable();
-
-        if (equipmentModelId.HasValue)
-            query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
-
-        var list = await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
-        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
-        return list.Select(c => ToProductCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
+        return ToProductCompositionReadModel(composition, ResolveAuthorName(names, composition.AuthorId));
     }
 
     private static ProductCompositionReadModel ToProductCompositionReadModel(ProductComposition c, string? authorName) => new(
@@ -1609,60 +1629,163 @@ public class EquipmentService
 
     // ── AggregateComposition ───────────────────────────────────
 
-    public async Task<List<AggregateCompositionReadModel>> GetAggregateCompositionsAsync(Guid aggregateId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<CompositionVersionSummary>> GetAggregateCompositionSummariesAsync(Guid aggregateId, CancellationToken ct = default)
     {
-        var list = await _db.AggregateCompositions
-            .Include(c => c.Aggregate)
-            .Include(c => c.Nodes.OrderBy(n => n.SortOrder)).ThenInclude(n => n.Node)
+        var list = await _db.AggregateCompositions.AsNoTracking()
             .Where(c => c.AggregateId == aggregateId)
             .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.AggregateId,
+                c.Version,
+                c.Status,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.EffectiveDate,
+                c.ExpirationDate,
+                c.ApprovedAt,
+                c.Comment,
+                c.IsActive,
+                c.SupersedesAggregateCompositionId,
+                c.AuthorId,
+                ObjectCode = c.Aggregate != null ? c.Aggregate.Code : null,
+                ObjectName = c.Aggregate != null ? c.Aggregate.Name : null,
+                NodeCount = c.Nodes.Count
+            })
             .ToListAsync(ct);
-        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
-        return list.Select(c => ToAggregateCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
+
+        var names = await GetAuthorNamesAsync(list.Select(x => x.AuthorId), ct);
+
+        return list.Select(x => new CompositionVersionSummary(
+            x.Id, x.AggregateId, x.Version, x.Status, x.CreatedAt, x.UpdatedAt,
+            x.EffectiveDate, x.ExpirationDate, x.ApprovedAt, x.Comment,
+            x.SupersedesAggregateCompositionId,
+            ResolveAuthorName(names, x.AuthorId),
+            x.ObjectCode, x.ObjectName, x.IsActive,
+            null, null, null, x.NodeCount, null)).ToList();
     }
 
-    public async Task<AggregateCompositionReadModel?> GetAggregateCompositionAsync(Guid id, CancellationToken ct = default)
+    public async Task<AggregateCompositionReadModel?> GetAggregateCompositionDetailAsync(Guid id, CancellationToken ct = default)
     {
         var composition = await _db.AggregateCompositions
+            .AsNoTracking()
             .Include(c => c.Aggregate)
             .Include(c => c.Nodes.OrderBy(n => n.SortOrder)).ThenInclude(n => n.Node)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
         if (composition == null) return null;
         var names = await GetAuthorNamesAsync(new[] { composition.AuthorId }, ct);
-        return ToAggregateCompositionReadModel(composition, names.GetValueOrDefault(composition.AuthorId!));
+        return ToAggregateCompositionReadModel(composition, ResolveAuthorName(names, composition.AuthorId));
     }
 
-    public async Task<List<ProductCompositionReadModel>> GetAllProductCompositionsLightAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<CompositionVersionSummary>> GetAllProductCompositionSummariesAsync(CancellationToken ct = default)
     {
-        var list = await _db.ProductCompositions
-            .Include(c => c.EquipmentModel)
+        var list = await _db.ProductCompositions.AsNoTracking()
             .OrderBy(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.EquipmentModelId,
+                c.Version,
+                c.Status,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.EffectiveDate,
+                c.ExpirationDate,
+                c.ApprovedAt,
+                c.Comment,
+                c.IsActive,
+                c.SupersedesProductCompositionId,
+                c.AuthorId,
+                ObjectCode = c.EquipmentModel != null ? c.EquipmentModel.Index : null,
+                ObjectName = c.EquipmentModel != null ? c.EquipmentModel.Name : null,
+                PartCount = c.Parts.Count,
+                AggregateCount = c.Parts.SelectMany(p => p.Aggregates).Count()
+            })
             .ToListAsync(ct);
-        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
-        return list.Select(c => ToProductCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
+
+        var names = await GetAuthorNamesAsync(list.Select(x => x.AuthorId), ct);
+
+        return list.Select(x => new CompositionVersionSummary(
+            x.Id, x.EquipmentModelId, x.Version, x.Status, x.CreatedAt, x.UpdatedAt,
+            x.EffectiveDate, x.ExpirationDate, x.ApprovedAt, x.Comment,
+            x.SupersedesProductCompositionId,
+            ResolveAuthorName(names, x.AuthorId),
+            x.ObjectCode, x.ObjectName, x.IsActive,
+            x.PartCount, x.AggregateCount, 0, null, null)).ToList();
     }
 
-    public async Task<List<ComplexCompositionReadModel>> GetAllComplexCompositionsLightAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<CompositionVersionSummary>> GetAllComplexCompositionSummariesAsync(CancellationToken ct = default)
     {
-        var list = await _db.ComplexCompositions
-            .AsNoTracking()
-            .Include(c => c.Complex)
+        var list = await _db.ComplexCompositions.AsNoTracking()
             .OrderBy(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.ComplexId,
+                c.Version,
+                c.Status,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.EffectiveDate,
+                c.ExpirationDate,
+                c.ApprovedAt,
+                c.Comment,
+                c.IsActive,
+                c.SupersedesComplexCompositionId,
+                c.AuthorId,
+                ObjectCode = c.Complex != null ? c.Complex.Code : null,
+                ObjectName = c.Complex != null ? c.Complex.Name : null,
+                ItemCount = c.Items.Count
+            })
             .ToListAsync(ct);
-        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
-        return list.Select(c => ToComplexCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
+
+        var names = await GetAuthorNamesAsync(list.Select(x => x.AuthorId), ct);
+
+        return list.Select(x => new CompositionVersionSummary(
+            x.Id, x.ComplexId, x.Version, x.Status, x.CreatedAt, x.UpdatedAt,
+            x.EffectiveDate, x.ExpirationDate, x.ApprovedAt, x.Comment,
+            x.SupersedesComplexCompositionId,
+            ResolveAuthorName(names, x.AuthorId),
+            x.ObjectCode, x.ObjectName, x.IsActive,
+            null, null, null, null, x.ItemCount)).ToList();
     }
 
-    public async Task<List<AggregateCompositionReadModel>> GetAllAggregateCompositionsLightAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<CompositionVersionSummary>> GetAllAggregateCompositionSummariesAsync(CancellationToken ct = default)
     {
-        var list = await _db.AggregateCompositions
-            .AsNoTracking()
-            .Include(c => c.Aggregate)
+        var list = await _db.AggregateCompositions.AsNoTracking()
             .OrderBy(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.AggregateId,
+                c.Version,
+                c.Status,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.EffectiveDate,
+                c.ExpirationDate,
+                c.ApprovedAt,
+                c.Comment,
+                c.IsActive,
+                c.SupersedesAggregateCompositionId,
+                c.AuthorId,
+                ObjectCode = c.Aggregate != null ? c.Aggregate.Code : null,
+                ObjectName = c.Aggregate != null ? c.Aggregate.Name : null,
+                NodeCount = c.Nodes.Count
+            })
             .ToListAsync(ct);
-        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
-        return list.Select(c => ToAggregateCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
+
+        var names = await GetAuthorNamesAsync(list.Select(x => x.AuthorId), ct);
+
+        return list.Select(x => new CompositionVersionSummary(
+            x.Id, x.AggregateId, x.Version, x.Status, x.CreatedAt, x.UpdatedAt,
+            x.EffectiveDate, x.ExpirationDate, x.ApprovedAt, x.Comment,
+            x.SupersedesAggregateCompositionId,
+            ResolveAuthorName(names, x.AuthorId),
+            x.ObjectCode, x.ObjectName, x.IsActive,
+            null, null, null, x.NodeCount, null)).ToList();
     }
 
     private static AggregateCompositionReadModel ToAggregateCompositionReadModel(AggregateComposition c, string? authorName) => new(
@@ -2114,28 +2237,54 @@ public class EquipmentService
 
     // ── ComplexComposition ──────────────────────────────────────
 
-    public async Task<List<ComplexCompositionReadModel>> GetComplexCompositionsAsync(Guid complexId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<CompositionVersionSummary>> GetComplexCompositionSummariesAsync(Guid complexId, CancellationToken ct = default)
     {
-        var list = await _db.ComplexCompositions
-            .Include(c => c.Complex)
-            .Include(c => c.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.EquipmentModel)
+        var list = await _db.ComplexCompositions.AsNoTracking()
             .Where(c => c.ComplexId == complexId)
             .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.ComplexId,
+                c.Version,
+                c.Status,
+                c.CreatedAt,
+                c.UpdatedAt,
+                c.EffectiveDate,
+                c.ExpirationDate,
+                c.ApprovedAt,
+                c.Comment,
+                c.IsActive,
+                c.SupersedesComplexCompositionId,
+                c.AuthorId,
+                ObjectCode = c.Complex != null ? c.Complex.Code : null,
+                ObjectName = c.Complex != null ? c.Complex.Name : null,
+                ItemCount = c.Items.Count
+            })
             .ToListAsync(ct);
-        var names = await GetAuthorNamesAsync(list.Select(c => c.AuthorId), ct);
-        return list.Select(c => ToComplexCompositionReadModel(c, names.GetValueOrDefault(c.AuthorId!))).ToList();
+
+        var names = await GetAuthorNamesAsync(list.Select(x => x.AuthorId), ct);
+
+        return list.Select(x => new CompositionVersionSummary(
+            x.Id, x.ComplexId, x.Version, x.Status, x.CreatedAt, x.UpdatedAt,
+            x.EffectiveDate, x.ExpirationDate, x.ApprovedAt, x.Comment,
+            x.SupersedesComplexCompositionId,
+            ResolveAuthorName(names, x.AuthorId),
+            x.ObjectCode, x.ObjectName, x.IsActive,
+            null, null, null, null, x.ItemCount)).ToList();
     }
 
-    public async Task<ComplexCompositionReadModel?> GetComplexCompositionAsync(Guid id, CancellationToken ct = default)
+    public async Task<ComplexCompositionReadModel?> GetComplexCompositionDetailAsync(Guid id, CancellationToken ct = default)
     {
         var composition = await _db.ComplexCompositions
+            .AsNoTracking()
             .Include(c => c.Complex)
             .Include(c => c.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.EquipmentModel)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
         if (composition == null) return null;
         var names = await GetAuthorNamesAsync(new[] { composition.AuthorId }, ct);
-        return ToComplexCompositionReadModel(composition, names.GetValueOrDefault(composition.AuthorId!));
+        return ToComplexCompositionReadModel(composition, ResolveAuthorName(names, composition.AuthorId));
     }
 
     private static ComplexCompositionReadModel ToComplexCompositionReadModel(ComplexComposition c, string? authorName) => new(

@@ -69,14 +69,14 @@
                             <tbody>
                                 @foreach (var comp in compositions)
                                 {
-                                    <tr class="compositionRow--clickable" @onclick="() => SelectComposition(comp.Id)">
+                                    <tr class="compositionRow--clickable" @onclick="() => SelectCompositionAsync(comp.Id)">
                                         <td class="mono">@comp.Version</td>
                                         <td><CompositionStatusBadge Status="@comp.Status" /></td>
                                         <td class="mono">@comp.CreatedAt.ToString("dd.MM.yyyy")</td>
-                                        <td>@comp.Items.Count</td>
+                                        <td>@(comp.ItemCount ?? 0)</td>
                                         <td>
                                             <div class="rowActions">
-                                                <button class="linkBtn" @onclick="() => SelectComposition(comp.Id)">Открыть</button>
+                                                <button class="linkBtn" @onclick="() => SelectCompositionAsync(comp.Id)">Открыть</button>
                                                 @if (CanEditComposition(comp.Status))
                                                 {
                                                     <button class="linkBtn" @onclick="() => DeleteComposition(comp.Id)">Удалить</button>
@@ -277,7 +277,7 @@
 @code {
     private List<Complex> complexes = new();
     private List<EquipmentModel> models = new();
-    private List<ComplexCompositionReadModel> compositions = new();
+    private List<CompositionVersionSummary> compositions = new();
     private ComplexCompositionReadModel? selectedComposition;
     private bool loading = true;
     private bool canCreate;
@@ -337,7 +337,7 @@
     {
         var ct = _loadCts?.Token ?? default;
         compositions = selectedComplexId != Guid.Empty
-            ? await EquipService.GetComplexCompositionsAsync(selectedComplexId, ct)
+            ? (await EquipService.GetComplexCompositionSummariesAsync(selectedComplexId, ct)).ToList()
             : new();
         loading = false;
     }
@@ -348,12 +348,17 @@
         var comp = await EquipService.CreateComplexCompositionAsync(
             new CreateComplexCompositionRequest(selectedComplexId, string.IsNullOrWhiteSpace(comment) ? null : comment));
         await LoadCompositions();
-        SelectComposition(comp.Id);
+        await SelectCompositionAsync(comp.Id);
     }
 
-    void SelectComposition(Guid id)
+    async Task SelectCompositionAsync(Guid id)
     {
-        selectedComposition = compositions.FirstOrDefault(c => c.Id == id);
+        var ct = _loadCts?.Token ?? default;
+        await using (await DbLock.WaitAsync(ct))
+        {
+            selectedComposition = await EquipService.GetComplexCompositionDetailAsync(id, ct);
+        }
+
         if (selectedComposition != null)
         {
             editComment = selectedComposition.Comment ?? "";
@@ -371,7 +376,7 @@
                 editEffectiveDate?.ToUniversalTime(),
                 editExpirationDate?.ToUniversalTime()));
         await LoadCompositions();
-        SelectComposition(selectedComposition.Id);
+        await SelectCompositionAsync(selectedComposition.Id);
     }
 
     async Task SubmitForReview()
@@ -379,7 +384,7 @@
         if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.Draft || !canSubmit) return;
         await EquipService.SubmitComplexCompositionForReviewAsync(selectedComposition.Id);
         await LoadCompositions();
-        SelectComposition(selectedComposition.Id);
+        await SelectCompositionAsync(selectedComposition.Id);
     }
 
     async Task ApproveComposition()
@@ -388,7 +393,7 @@
         await EquipService.ApproveComplexCompositionAsync(selectedComposition.Id,
             string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
         await LoadCompositions();
-        SelectComposition(selectedComposition.Id);
+        await SelectCompositionAsync(selectedComposition.Id);
     }
 
     async Task ReturnToDraft()
@@ -397,7 +402,7 @@
         await EquipService.ReturnComplexCompositionToDraftAsync(selectedComposition.Id,
             string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
         await LoadCompositions();
-        SelectComposition(selectedComposition.Id);
+        await SelectCompositionAsync(selectedComposition.Id);
     }
 
     async Task ArchiveComposition()
@@ -405,7 +410,7 @@
         if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.Approved || !canApprove) return;
         await EquipService.ArchiveComplexCompositionAsync(selectedComposition.Id);
         await LoadCompositions();
-        SelectComposition(selectedComposition.Id);
+        await SelectCompositionAsync(selectedComposition.Id);
     }
 
     async Task AddItem()
@@ -414,7 +419,7 @@
         await EquipService.AddComplexCompositionItemAsync(
             new AddComplexCompositionItemRequest(selectedComposition!.Id, newModelId, newModelQty));
         await LoadCompositions();
-        SelectComposition(selectedComposition.Id);
+        await SelectCompositionAsync(selectedComposition.Id);
         newModelId = Guid.Empty;
         newModelQty = 1;
     }
@@ -436,7 +441,7 @@
         await EquipService.UpdateComplexCompositionItemAsync(
             new UpdateComplexCompositionItemRequest(id, editItemQty, 0, null));
         await LoadCompositions();
-        SelectComposition(selectedComposition!.Id);
+        await SelectCompositionAsync(selectedComposition!.Id);
         editingItemId = null;
     }
 
@@ -445,7 +450,7 @@
         if (!CanEditSelectedDraft) return;
         await EquipService.RemoveComplexCompositionItemAsync(id);
         await LoadCompositions();
-        SelectComposition(selectedComposition!.Id);
+        await SelectCompositionAsync(selectedComposition!.Id);
     }
 
     async Task DeleteComposition(Guid id)

@@ -525,49 +525,34 @@
                 switch (Level)
                 {
                     case 0:
-                        var complexComp = await EquipService.GetComplexCompositionAsync(compositionId, ct);
-                        var allComplexVersions = await EquipService.GetComplexCompositionsAsync(complexId!.Value, ct);
+                        var complexComp = await EquipService.GetComplexCompositionDetailAsync(compositionId, ct);
+                        var allComplexVersions = await EquipService.GetComplexCompositionSummariesAsync(complexId!.Value, ct);
                         selectedComplexComposition = complexComp;
                         selectedObjectId = complexComp?.ComplexId ?? complexId.Value;
-                        objectCode ??= complexComp?.Complex?.Code;
-                        objectName ??= complexComp?.Complex?.Name;
+                        objectCode = complexComp?.Complex?.Code;
+                        objectName = complexComp?.Complex?.Name;
                         versions.Clear();
-                        foreach (var v in allComplexVersions)
-                        {
-                            versions.Add(ToComplexSummary(v));
-                            objectCode ??= v.Complex?.Code;
-                            objectName ??= v.Complex?.Name;
-                        }
+                        versions.AddRange(allComplexVersions);
                         break;
                     case 1:
-                        var productComp = await EquipService.GetCompositionAsync(compositionId, ct);
-                        var allProductVersions = await EquipService.GetCompositionsAsync(equipmentModelId!.Value, ct);
+                        var productComp = await EquipService.GetProductCompositionDetailAsync(compositionId, ct);
+                        var allProductVersions = await EquipService.GetProductCompositionSummariesAsync(equipmentModelId!.Value, ct);
                         selectedProductComposition = productComp;
                         selectedObjectId = productComp?.EquipmentModelId ?? equipmentModelId.Value;
-                        objectCode ??= productComp?.EquipmentModel?.Index;
-                        objectName ??= productComp?.EquipmentModel?.Name;
+                        objectCode = productComp?.EquipmentModel?.Index;
+                        objectName = productComp?.EquipmentModel?.Name;
                         versions.Clear();
-                        foreach (var v in allProductVersions)
-                        {
-                            versions.Add(ToProductSummary(v));
-                            objectCode ??= v.EquipmentModel?.Index;
-                            objectName ??= v.EquipmentModel?.Name;
-                        }
+                        versions.AddRange(allProductVersions);
                         break;
                     default:
-                        var aggregComp = await EquipService.GetAggregateCompositionAsync(compositionId, ct);
-                        var allAggregVersions = await EquipService.GetAggregateCompositionsAsync(aggregateId!.Value, ct);
+                        var aggregComp = await EquipService.GetAggregateCompositionDetailAsync(compositionId, ct);
+                        var allAggregVersions = await EquipService.GetAggregateCompositionSummariesAsync(aggregateId!.Value, ct);
                         selectedAggregateComposition = aggregComp;
                         selectedObjectId = aggregComp?.AggregateId ?? aggregateId!.Value;
-                        objectCode ??= aggregComp?.Aggregate?.Code;
-                        objectName ??= aggregComp?.Aggregate?.Name;
+                        objectCode = aggregComp?.Aggregate?.Code;
+                        objectName = aggregComp?.Aggregate?.Name;
                         versions.Clear();
-                        foreach (var v in allAggregVersions)
-                        {
-                            versions.Add(ToAggregateSummary(v));
-                            objectCode ??= v.Aggregate?.Code;
-                            objectName ??= v.Aggregate?.Name;
-                        }
+                        versions.AddRange(allAggregVersions);
                         break;
                 }
                 selected = versions.FirstOrDefault(v => v.Id == compositionId);

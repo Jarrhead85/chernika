@@ -19,16 +19,16 @@ public class AggregateCompositionsController : ControllerBase
     public AggregateCompositionsController(EquipmentService equip) => _equip = equip;
 
     [HttpGet("by-aggregate/{aggregateId}")]
-    public async Task<ActionResult<List<AggregateCompositionDto>>> GetByAggregate(Guid aggregateId)
+    public async Task<ActionResult<List<CompositionVersionSummary>>> GetByAggregate(Guid aggregateId)
     {
-        var comps = await _equip.GetAggregateCompositionsAsync(aggregateId);
-        return Ok(comps.Select(AggregateCompositionMapper.ToDto).ToList());
+        var comps = await _equip.GetAggregateCompositionSummariesAsync(aggregateId);
+        return Ok(comps);
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<AggregateCompositionDto>> GetById(Guid id)
     {
-        var comp = await _equip.GetAggregateCompositionAsync(id);
+        var comp = await _equip.GetAggregateCompositionDetailAsync(id);
         if (comp == null) return NotFound();
         return Ok(AggregateCompositionMapper.ToDto(comp));
     }

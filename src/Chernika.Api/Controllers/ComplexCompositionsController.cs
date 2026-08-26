@@ -19,16 +19,16 @@ public class ComplexCompositionsController : ControllerBase
     public ComplexCompositionsController(EquipmentService equip) => _equip = equip;
 
     [HttpGet("by-complex/{complexId}")]
-    public async Task<ActionResult<List<ComplexCompositionDto>>> GetByComplex(Guid complexId)
+    public async Task<ActionResult<List<CompositionVersionSummary>>> GetByComplex(Guid complexId)
     {
-        var comps = await _equip.GetComplexCompositionsAsync(complexId);
-        return Ok(comps.Select(ComplexCompositionMapper.ToDto).ToList());
+        var comps = await _equip.GetComplexCompositionSummariesAsync(complexId);
+        return Ok(comps);
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<ComplexCompositionDto>> GetById(Guid id)
     {
-        var comp = await _equip.GetComplexCompositionAsync(id);
+        var comp = await _equip.GetComplexCompositionDetailAsync(id);
         if (comp == null) return NotFound();
         return Ok(ComplexCompositionMapper.ToDto(comp));
     }

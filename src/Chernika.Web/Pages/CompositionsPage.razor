@@ -136,11 +136,11 @@
     private CancellationTokenSource? _loadCts;
 
     private List<Complex> complexes = new();
-    private List<ComplexCompositionReadModel> complexCompositions = new();
+    private List<CompositionVersionSummary> complexCompositions = new();
     private List<EquipmentModel> models = new();
-    private List<ProductCompositionReadModel> productCompositions = new();
+    private List<CompositionVersionSummary> productCompositions = new();
     private List<Aggregate> aggregates = new();
-    private List<AggregateCompositionReadModel> aggregateCompositions = new();
+    private List<CompositionVersionSummary> aggregateCompositions = new();
 
     private string TabTitle => tab switch
     {
@@ -170,11 +170,11 @@
         {
             loading = true;
             complexes = await EquipService.GetComplexesAsync();
-            complexCompositions = await EquipService.GetAllComplexCompositionsLightAsync(ct);
+            complexCompositions = (await EquipService.GetAllComplexCompositionSummariesAsync(ct)).ToList();
             models = await EquipService.GetModelsAsync();
-            productCompositions = await EquipService.GetAllProductCompositionsLightAsync(ct);
+            productCompositions = (await EquipService.GetAllProductCompositionSummariesAsync(ct)).ToList();
             aggregates = await EquipService.GetAggregatesAsync();
-            aggregateCompositions = await EquipService.GetAllAggregateCompositionsLightAsync(ct);
+            aggregateCompositions = (await EquipService.GetAllAggregateCompositionSummariesAsync(ct)).ToList();
             loading = false;
         }
     }
@@ -232,25 +232,16 @@
 
     private CompositionVersionSummary? CurrentFor(ObjectRow item) => tab switch
     {
-        0 => complexCompositions.Where(x => x.ComplexId == item.Id)
+        0 => complexCompositions.Where(x => x.ObjectId == item.Id)
             .OrderByDescending(x => x.IsActive).ThenByDescending(x => x.CreatedAt)
-            .Select(ToComplexSummary).FirstOrDefault(),
-        1 => productCompositions.Where(x => x.EquipmentModelId == item.Id)
+            .FirstOrDefault(),
+        1 => productCompositions.Where(x => x.ObjectId == item.Id)
             .OrderByDescending(x => x.IsActive).ThenByDescending(x => x.CreatedAt)
-            .Select(ToProductSummary).FirstOrDefault(),
-        _ => aggregateCompositions.Where(x => x.AggregateId == item.Id)
+            .FirstOrDefault(),
+        _ => aggregateCompositions.Where(x => x.ObjectId == item.Id)
             .OrderByDescending(x => x.IsActive).ThenByDescending(x => x.CreatedAt)
-            .Select(ToAggregateSummary).FirstOrDefault()
+            .FirstOrDefault()
     };
-
-    private static CompositionVersionSummary ToComplexSummary(ComplexCompositionReadModel c) =>
-        new(c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.UpdatedAt, c.EffectiveDate, c.ExpirationDate, c.ApprovedAt, c.Comment, c.SupersedesComplexCompositionId, c.AuthorName);
-
-    private static CompositionVersionSummary ToProductSummary(ProductCompositionReadModel p) =>
-        new(p.Id, p.EquipmentModelId, p.Version, p.Status, p.CreatedAt, p.UpdatedAt, p.EffectiveDate, p.ExpirationDate, p.ApprovedAt, p.Comment, p.SupersedesProductCompositionId, p.AuthorName);
-
-    private static CompositionVersionSummary ToAggregateSummary(AggregateCompositionReadModel a) =>
-        new(a.Id, a.AggregateId, a.Version, a.Status, a.CreatedAt, a.UpdatedAt, a.EffectiveDate, a.ExpirationDate, a.ApprovedAt, a.Comment, a.SupersedesAggregateCompositionId, a.AuthorName);
 
     private string VersionUrl(ObjectRow item, Guid compositionId) => tab switch
     {

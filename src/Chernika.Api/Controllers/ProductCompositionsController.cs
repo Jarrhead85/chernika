@@ -20,16 +20,16 @@ public class ProductCompositionsController : ControllerBase
         _equipService = equipService;
 
     [HttpGet]
-    public async Task<ActionResult<List<ProductCompositionDto>>> GetAll()
+    public async Task<ActionResult<List<CompositionVersionSummary>>> GetAll()
     {
-        var comps = await _equipService.GetCompositionsAsync();
-        return Ok(comps.Select(ProductCompositionMapper.ToDetail).ToList());
+        var comps = await _equipService.GetProductCompositionSummariesAsync();
+        return Ok(comps);
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<ProductCompositionDto>> GetById(Guid id)
     {
-        var comp = await _equipService.GetCompositionAsync(id);
+        var comp = await _equipService.GetProductCompositionDetailAsync(id);
         if (comp == null) return NotFound();
         return Ok(ProductCompositionMapper.ToDetail(comp));
     }
