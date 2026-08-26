@@ -1,0 +1,76 @@
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+
+<article class="taskPreviewRow">
+    <div class="taskPreviewTop">
+        <a class="taskPreviewTitle" href="/задачи/@Task.Id" @onclick:stopPropagation="true">
+            @Task.Title
+        </a>
+        <span class="tag @StatusTagClass">@StatusLabel</span>
+    </div>
+    <div class="taskPreviewMeta">
+        @TaskTypeLabel(Task.Type) · @(Task.DueDateUtc?.ToString("dd.MM.yyyy") ?? "без срока")
+    </div>
+    @if (!string.IsNullOrWhiteSpace(EntityUrl))
+    {
+        <a class="taskPreviewEntity mono" href="@EntityUrl" @onclick:stopPropagation="true">
+            @EntityLabel
+        </a>
+    }
+</article>
+
+@code {
+    [Parameter, EditorRequired]
+    public WorkTaskListItemDto Task { get; set; } = null!;
+
+    private string StatusLabel => Task.Status switch
+    {
+        WorkTaskStatus.Open => "Открыта",
+        WorkTaskStatus.InProgress => "В работе",
+        WorkTaskStatus.Completed => "Выполнена",
+        WorkTaskStatus.Cancelled => "Отменена",
+        WorkTaskStatus.Overdue => "Просрочена",
+        _ => Task.Status.ToString()
+    };
+
+    private string StatusTagClass => Task.Status switch
+    {
+        WorkTaskStatus.Open => "warn",
+        WorkTaskStatus.InProgress => "",
+        WorkTaskStatus.Completed => "ok",
+        WorkTaskStatus.Cancelled => "",
+        WorkTaskStatus.Overdue => "bad",
+        _ => ""
+    };
+
+    private string EntityUrl => Task.EntityType switch
+    {
+        "HKCard" when Task.EntityId.HasValue => $"/хк/{Task.EntityId.Value}",
+        "ProductComposition" when Task.EntityId.HasValue => $"/составы/изделия/{Task.EntityId.Value}/версии/{Task.EntityId.Value}",
+        "ComplexComposition" when Task.EntityId.HasValue => $"/составы/комплексы/{Task.EntityId.Value}/версии/{Task.EntityId.Value}",
+        "AggregateComposition" when Task.EntityId.HasValue => $"/составы/агрегаты/{Task.EntityId.Value}/версии/{Task.EntityId.Value}",
+        _ => ""
+    };
+
+    private string EntityLabel => Task.EntityType switch
+    {
+        "HKCard" => $"ХК {Task.EntityCodeSnapshot}",
+        "ProductComposition" => $"Состав изделия {Task.EntityCodeSnapshot}",
+        "ComplexComposition" => $"Состав комплекса {Task.EntityCodeSnapshot}",
+        "AggregateComposition" => $"Состав агрегата {Task.EntityCodeSnapshot}",
+        _ => Task.EntityType ?? ""
+    };
+
+    private static string TaskTypeLabel(WorkTaskType type) => type switch
+    {
+        WorkTaskType.HKReview => "Проверка ХК",
+        WorkTaskType.HKRevision => "Доработка ХК",
+        WorkTaskType.HKExpirationReview => "Срок действия ХК",
+        WorkTaskType.ParentHKRevision => "Доработка родительской ХК",
+        WorkTaskType.CompositionReview => "Согласование состава",
+        WorkTaskType.CompositionReadiness => "Готовность состава",
+        WorkTaskType.ReferenceProposalReview => "Проверка предложения",
+        WorkTaskType.UserAdministration => "Администрирование пользователей",
+        _ => type.ToString()
+    };
+}

@@ -49,7 +49,7 @@
         </div>
         <div class="panelBody">
             <div class="form">
-                <div class="field" style="grid-column:span 2"><label>Поиск</label>
+                <div class="field"><label>Поиск</label>
                     <input @bind="text" placeholder="Название или описание задачи…" />
                 </div>
                 <div class="field"><label>Срок</label>
@@ -88,7 +88,7 @@
                     <button class="btn" @onclick="ResetFilters">Сбросить</button>
                 </div>
             </div>
-            <div class="chips" style="margin-top:12px">
+            <div class="chips">
                 <button class="pill @(activeTab == null ? "pillOn" : "")" @onclick="() => SetTab(null)">Все активные @(countOpen + countInProgress + countOverdue)</button>
                 <button class="pill @(activeTab == WorkTaskStatus.Open ? "pillOn" : "")" @onclick="() => SetTab(WorkTaskStatus.Open)">Открыта @countOpen</button>
                 <button class="pill @(activeTab == WorkTaskStatus.InProgress ? "pillOn" : "")" @onclick="() => SetTab(WorkTaskStatus.InProgress)">В работе @countInProgress</button>
@@ -132,8 +132,8 @@
                             {
                                 <tr>
                                     <td>
-                                        <a href="/задачи/@task.Id" class="linkBtn">@task.Title</a>
-                                        <br /><span class="mono" style="font-size:12px">@TypeLabel(task.Type)</span>
+                                        <a href="/задачи/@task.Id" class="taskTitle">@task.Title</a>
+                                        <br /><span class="mono">@TypeLabel(task.Type)</span>
                                     </td>
                                     <td><span class="tag @StatusTagClass(task.Status)">@StatusLabel(task.Status)</span></td>
                                     <td><span class="tag @PriorityTagClass(task.Priority)">@PriorityLabel(task.Priority)</span></td>
@@ -156,7 +156,7 @@
                                             }
                                             @if (task.EntityType == "HKCard" && task.EntityId.HasValue)
                                             {
-                                                <button class="linkBtn" @onclick="() => GoToHk(task.EntityId.Value)">ХК</button>
+                                                <a class="taskEntity" href="/хк/@task.EntityId.Value">@task.EntityCodeSnapshot</a>
                                             }
                                         </div>
                                     </td>

@@ -174,6 +174,47 @@ public class HKCardRegistryIntegrationTests
         Assert.Equal(cardA, result.Items[0].Id);
     }
 
+    [Fact]
+    public async Task GetAllBranchesAsync_WithoutSystemConfig_Throws()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => s.HK.GetAllBranchesAsync());
+    }
+
+    [Fact]
+    public async Task GetAllBranchesAsync_SystemAdmin_ReturnsNonDeletedBranchesSorted()
+    {
+        await using var s = _fixture.CreateScope();
+        var deletedBranch = new Branch { Id = Guid.NewGuid(), Name = "AAA Deleted", Code = "D", IsDeleted = true };
+        s.Db.Branches.Add(deletedBranch);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        var branches = await s.HK.GetAllBranchesAsync();
+
+        Assert.DoesNotContain(branches, b => b.IsDeleted);
+        Assert.Contains(branches, b => b.Id == _fixture.BranchA);
+        Assert.Contains(branches, b => b.Id == _fixture.BranchB);
+    }
+
+    [Fact]
+    public async Task ChangeStatus_ReturnAction_UsesRevisionRequired()
+    {
+        await using var s = _fixture.CreateScope();
+        var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
+        var (returned, _) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.RevisionRequired, "Вернуть на доработку");
+        Assert.True(returned);
+
+        var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
+        Assert.Equal(HKCardStatus.RevisionRequired, card.Status);
+    }
+
     private async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)
     {
         s.User.CurrentUserId = Guid.Parse(actorId);

@@ -545,6 +545,8 @@ public class HKCardService
 
     public async Task<List<Branch>> GetAllBranchesAsync(CancellationToken ct = default)
     {
+        await _permissions.DemandPermissionAsync(PermissionCodes.SystemConfig, ct);
+
         return await _db.Branches.AsNoTracking()
             .Where(b => !b.IsDeleted)
             .OrderBy(b => b.Name)
