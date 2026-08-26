@@ -13,4 +13,5 @@ public record CompositionVersionSummary(
     DateTime? ExpirationDate,
     DateTime? ApprovedAt,
     string? Comment,
-    Guid? PredecessorId);
+    Guid? PredecessorId,
+    string? AuthorName = null);

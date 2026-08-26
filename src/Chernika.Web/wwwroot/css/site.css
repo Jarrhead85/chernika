@@ -1553,6 +1553,30 @@ input:-webkit-autofill:focus {
   font-size:13px;
 }
 
+.compositionRow--clickable{cursor:pointer;}
+.compositionReviewComment{margin-top:10px;max-width:400px;}
+.compositionFormRow{margin-bottom:12px;}
+.compositionFormAction{display:flex;align-items:flex-end;}
+.compositionFilterForm{margin-bottom:8px;}
+.compositionFilterInput{max-width:300px;}
+.compositionEmptyCompact{padding:4px 0;}
+.compositionErrorNote{margin-top:10px;}
+.compositionQtyInput{width:70px;}
+.compositionSidebarActions{margin-top:10px;}
+.compositionPartMeta{display:flex;align-items:center;gap:10px;}
+.compositionPartDelete{color:var(--bad);}
+.compositionPartDelete:hover{color:var(--bad);text-decoration:underline;}
+
+.btn.danger{
+  background:var(--bad);
+  color:#fff;
+  border:1px solid var(--bad);
+}
+.btn.danger:hover{
+  background:color-mix(in srgb, var(--bad) 85%, #000);
+  border-color:color-mix(in srgb, var(--bad) 85%, #000);
+}
+
 @media (max-width:1120px){
   .compositionHeader{
     flex-direction:column;

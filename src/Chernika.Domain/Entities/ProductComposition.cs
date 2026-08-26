@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using Chernika.Domain.Enums;
 
 namespace Chernika.Domain.Entities;
@@ -19,6 +20,8 @@ public class ProductComposition
     public DateTime? ApprovedAt { get; set; }
 
     public string? AuthorId { get; set; }
+    [NotMapped]
+    public string? AuthorName { get; set; }
     public string? ApprovedByUserId { get; set; }
 
     public string? Comment { get; set; }

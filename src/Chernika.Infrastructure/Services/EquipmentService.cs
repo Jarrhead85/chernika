@@ -786,6 +786,25 @@ public class EquipmentService
         return maxSuffix == 0 ? $"{baseVersion}.2" : $"{baseVersion}.{maxSuffix + 1}";
     }
 
+    private async Task HydrateAuthorNamesAsync<T>(IEnumerable<T> items, Func<T, string?> getAuthorId, Action<T, string?> setAuthorName, CancellationToken ct)
+    {
+        var authorIds = items.Select(getAuthorId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        if (authorIds.Count == 0) return;
+
+        var names = await _db.Users.AsNoTracking()
+            .Where(u => authorIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.FullName ?? u.UserName, ct);
+
+        foreach (var item in items)
+        {
+            var id = getAuthorId(item);
+            if (!string.IsNullOrWhiteSpace(id) && names.TryGetValue(id, out var name))
+                setAuthorName(item, name);
+            else
+                setAuthorName(item, null);
+        }
+    }
+
     // ── Product Composition ──────────────────────────────────────────────
 
     public async Task<List<ProductComposition>> GetCompositionsAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
@@ -798,16 +817,25 @@ public class EquipmentService
         if (equipmentModelId.HasValue)
             query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
 
-        return await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+        var list = await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+        return list;
     }
 
-    public async Task<ProductComposition?> GetCompositionAsync(Guid id, CancellationToken ct = default) =>
-        await _db.ProductCompositions
+    public async Task<ProductComposition?> GetCompositionAsync(Guid id, CancellationToken ct = default)
+    {
+        var composition = await _db.ProductCompositions
             .Include(c => c.EquipmentModel)
             .Include(c => c.Parts.OrderBy(p => p.SortOrder))
                 .ThenInclude(p => p.Aggregates.OrderBy(a => a.Aggregate.Code))
                     .ThenInclude(a => a.Aggregate)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
+
+        if (composition != null)
+            await HydrateAuthorNamesAsync(new[] { composition }, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+
+        return composition;
+    }
 
     public async Task<List<ProductComposition>> GetCompositionsWithCoverageAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
     {
@@ -819,7 +847,9 @@ public class EquipmentService
         if (equipmentModelId.HasValue)
             query = query.Where(c => c.EquipmentModelId == equipmentModelId.Value);
 
-        return await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+        var list = await query.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+        return list;
     }
 
     public async Task<ProductCompositionPart?> GetCompositionPartAsync(Guid partId, CancellationToken ct = default) =>
@@ -1554,35 +1584,58 @@ public class EquipmentService
 
     // ── AggregateComposition ───────────────────────────────────
 
-    public Task<List<AggregateComposition>> GetAggregateCompositionsAsync(Guid aggregateId, CancellationToken ct = default) =>
-        _db.AggregateCompositions
+    public async Task<List<AggregateComposition>> GetAggregateCompositionsAsync(Guid aggregateId, CancellationToken ct = default)
+    {
+        var list = await _db.AggregateCompositions
             .Include(c => c.Nodes.OrderBy(n => n.SortOrder)).ThenInclude(n => n.Node)
             .Where(c => c.AggregateId == aggregateId)
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync(ct);
+        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+        return list;
+    }
 
-    public Task<AggregateComposition?> GetAggregateCompositionAsync(Guid id, CancellationToken ct = default) =>
-        _db.AggregateCompositions
+    public async Task<AggregateComposition?> GetAggregateCompositionAsync(Guid id, CancellationToken ct = default)
+    {
+        var composition = await _db.AggregateCompositions
             .Include(c => c.Nodes.OrderBy(n => n.SortOrder)).ThenInclude(n => n.Node)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-    public Task<List<ProductComposition>> GetAllProductCompositionsLightAsync(CancellationToken ct = default) =>
-        _db.ProductCompositions
+        if (composition != null)
+            await HydrateAuthorNamesAsync(new[] { composition }, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+
+        return composition;
+    }
+
+    public async Task<List<ProductComposition>> GetAllProductCompositionsLightAsync(CancellationToken ct = default)
+    {
+        var list = await _db.ProductCompositions
             .Include(c => c.EquipmentModel)
             .OrderBy(c => c.CreatedAt)
             .ToListAsync(ct);
+        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+        return list;
+    }
 
-    public Task<List<ComplexComposition>> GetAllComplexCompositionsLightAsync(CancellationToken ct = default) =>
-        _db.ComplexCompositions
+    public async Task<List<ComplexComposition>> GetAllComplexCompositionsLightAsync(CancellationToken ct = default)
+    {
+        var list = await _db.ComplexCompositions
             .AsNoTracking()
             .OrderBy(c => c.CreatedAt)
             .ToListAsync(ct);
+        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+        return list;
+    }
 
-    public Task<List<AggregateComposition>> GetAllAggregateCompositionsLightAsync(CancellationToken ct = default) =>
-        _db.AggregateCompositions
+    public async Task<List<AggregateComposition>> GetAllAggregateCompositionsLightAsync(CancellationToken ct = default)
+    {
+        var list = await _db.AggregateCompositions
             .AsNoTracking()
             .OrderBy(c => c.CreatedAt)
             .ToListAsync(ct);
+        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+        return list;
+    }
 
     public async Task<AggregateComposition> CreateAggregateCompositionAsync(CreateAggregateCompositionRequest request, CancellationToken ct = default)
     {
@@ -2007,17 +2060,28 @@ public class EquipmentService
 
     // ── ComplexComposition ──────────────────────────────────────
 
-    public Task<List<ComplexComposition>> GetComplexCompositionsAsync(Guid complexId, CancellationToken ct = default) =>
-        _db.ComplexCompositions
+    public async Task<List<ComplexComposition>> GetComplexCompositionsAsync(Guid complexId, CancellationToken ct = default)
+    {
+        var list = await _db.ComplexCompositions
             .Include(c => c.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.EquipmentModel)
             .Where(c => c.ComplexId == complexId)
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync(ct);
+        await HydrateAuthorNamesAsync(list, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+        return list;
+    }
 
-    public Task<ComplexComposition?> GetComplexCompositionAsync(Guid id, CancellationToken ct = default) =>
-        _db.ComplexCompositions
+    public async Task<ComplexComposition?> GetComplexCompositionAsync(Guid id, CancellationToken ct = default)
+    {
+        var composition = await _db.ComplexCompositions
             .Include(c => c.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.EquipmentModel)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
+
+        if (composition != null)
+            await HydrateAuthorNamesAsync(new[] { composition }, c => c.AuthorId, (c, name) => c.AuthorName = name, ct);
+
+        return composition;
+    }
 
     public async Task<ComplexComposition> CreateComplexCompositionAsync(CreateComplexCompositionRequest request, CancellationToken ct = default)
     {

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using Chernika.Domain.Enums;
 
 namespace Chernika.Domain.Entities;
@@ -15,6 +16,8 @@ public class ComplexComposition
     public DateTime? ExpirationDate { get; set; }
 
     public string? AuthorId { get; set; }
+    [NotMapped]
+    public string? AuthorName { get; set; }
     public string? ApprovedByUserId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

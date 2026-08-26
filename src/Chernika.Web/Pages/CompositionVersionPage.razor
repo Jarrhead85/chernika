@@ -9,13 +9,11 @@
 @using Chernika.Domain.Models
 @using Chernika.Web.Components
 @using Chernika.Web.Services
-@using Microsoft.AspNetCore.Identity
 @inject EquipmentService EquipService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject CircuitDbLock DbLock
-@inject UserManager<ApplicationUser> UserManager
 @implements IDisposable
 
 <div class="stack compositionPage">
@@ -91,14 +89,14 @@
                 }
                 @if (selected.Status == ProductCompositionStatus.OnReview)
                 {
-                    <div class="field" style="margin-top:10px;max-width:400px">
-                        <label>Комментарий к решению</label>
-                        <input @bind="actionComment" class="field-input" placeholder="Необязательно" />
-                    </div>
+                            <div class="field compositionReviewComment">
+                                <label>Комментарий к решению</label>
+                                <input @bind="actionComment" class="field-input" placeholder="Необязательно" />
+                            </div>
                 }
                 @if (!string.IsNullOrEmpty(error))
                 {
-                    <div class="note warn" style="margin-top:10px">@error</div>
+                    <div class="note warn compositionErrorNote">@error</div>
                 }
             </div>
         </section>
@@ -137,7 +135,7 @@
                                     </div>
                                     @if (!part.Aggregates.Any())
                                     {
-                                        <div class="compositionEmpty" style="padding:8px 0">В этой части нет агрегатов.</div>
+                                        <div class="compositionEmpty compositionEmptyCompact">В этой части нет агрегатов.</div>
                                     }
                                     else
                                     {
@@ -231,7 +229,7 @@
                     <div class="panelBody">
                         <div class="field"><label>Статус</label><CompositionStatusBadge Status="@selected.Status" /></div>
                         <div class="field"><label>Версия</label><div class="mono">@selected.Version</div></div>
-                        <div class="field"><label>Автор</label><div>@(authorName ?? "—")</div></div>
+                        <div class="field"><label>Автор</label><div>@(selected.AuthorName ?? "—")</div></div>
                         <div class="field"><label>Создан</label><div class="mono">@selected.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
                         <div class="field"><label>Обновлён</label><div class="mono">@selected.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
                         @if (selected.ApprovedAt.HasValue)
@@ -396,7 +394,6 @@
     private bool canApprove;
     private string? error;
     private string actionComment = "";
-    private string? authorName;
     private CancellationTokenSource? _loadCts;
 
     private ProductComposition? selectedProductComposition;
@@ -576,7 +573,6 @@
                 selected = versions.FirstOrDefault(v => v.Id == compositionId);
                 if (selected != null)
                 {
-                    await ResolveAuthorAsync();
                     readinessRows = (await EquipService.EvaluateReadinessAsync(Level, compositionId, ct)).ToList();
                     linkedTasks = (await EquipService.GetCompositionTasksAsync(Level, compositionId, ct)).ToList();
                     history = (await EquipService.GetCompositionHistoryAsync(Level, compositionId, ct)).ToList();
@@ -588,19 +584,6 @@
             }
             loading = false;
         }
-    }
-
-    private async Task ResolveAuthorAsync()
-    {
-        var authorId = Level switch
-        {
-            0 => selectedComplexComposition?.AuthorId,
-            1 => selectedProductComposition?.AuthorId,
-            _ => selectedAggregateComposition?.AuthorId
-        };
-        if (string.IsNullOrWhiteSpace(authorId)) return;
-        var user = await UserManager.FindByIdAsync(authorId);
-        authorName = user?.FullName ?? authorId;
     }
 
     private string? PredecessorVersion
@@ -628,16 +611,21 @@
     };
 
     private static CompositionVersionSummary ToComplexSummary(ComplexComposition c) =>
-        new(c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.UpdatedAt, c.EffectiveDate, c.ExpirationDate, c.ApprovedAt, c.Comment, c.SupersedesComplexCompositionId);
+        new(c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.UpdatedAt, c.EffectiveDate, c.ExpirationDate, c.ApprovedAt, c.Comment, c.SupersedesComplexCompositionId, c.AuthorName);
 
     private static CompositionVersionSummary ToProductSummary(ProductComposition p) =>
-        new(p.Id, p.EquipmentModelId, p.Version, p.Status, p.CreatedAt, p.UpdatedAt, p.EffectiveDate, p.ExpirationDate, p.ApprovedAt, p.Comment, p.SupersedesProductCompositionId);
+        new(p.Id, p.EquipmentModelId, p.Version, p.Status, p.CreatedAt, p.UpdatedAt, p.EffectiveDate, p.ExpirationDate, p.ApprovedAt, p.Comment, p.SupersedesProductCompositionId, p.AuthorName);
 
     private static CompositionVersionSummary ToAggregateSummary(AggregateComposition a) =>
-        new(a.Id, a.AggregateId, a.Version, a.Status, a.CreatedAt, a.UpdatedAt, a.EffectiveDate, a.ExpirationDate, a.ApprovedAt, a.Comment, a.SupersedesAggregateCompositionId);
+        new(a.Id, a.AggregateId, a.Version, a.Status, a.CreatedAt, a.UpdatedAt, a.EffectiveDate, a.ExpirationDate, a.ApprovedAt, a.Comment, a.SupersedesAggregateCompositionId, a.AuthorName);
 
     private async Task CreateVersion()
     {
+        if (selected == null || !canCreateVersion || selected.Status is not (ProductCompositionStatus.Approved or ProductCompositionStatus.Archived))
+        {
+            error = "Недостаточно прав или статус не позволяет создать версию.";
+            return;
+        }
         error = null;
         try
         {
@@ -678,6 +666,11 @@
 
     private async Task SubmitForReview()
     {
+        if (selected == null || selected.Status != ProductCompositionStatus.Draft || !canSubmit)
+        {
+            error = "Недостаточно прав или статус не позволяет отправить на согласование.";
+            return;
+        }
         error = null;
         try
         {
@@ -701,6 +694,11 @@
 
     private async Task ReturnToDraft()
     {
+        if (selected == null || selected.Status != ProductCompositionStatus.OnReview || !canReturn)
+        {
+            error = "Недостаточно прав или статус не позволяет вернуть на доработку.";
+            return;
+        }
         error = null;
         try
         {
@@ -724,6 +722,11 @@
 
     private async Task Approve()
     {
+        if (selected == null || selected.Status != ProductCompositionStatus.OnReview || !canApprove)
+        {
+            error = "Недостаточно прав или статус не позволяет утвердить.";
+            return;
+        }
         error = null;
         try
         {
@@ -747,6 +750,11 @@
 
     private async Task Archive()
     {
+        if (selected == null || selected.Status != ProductCompositionStatus.Approved || !canApprove)
+        {
+            error = "Недостаточно прав или статус не позволяет архивировать.";
+            return;
+        }
         error = null;
         try
         {

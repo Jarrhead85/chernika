@@ -4,13 +4,11 @@
 @using Chernika.Domain.Models
 @using Chernika.Web.Components
 @using Chernika.Web.Services
-@using Microsoft.AspNetCore.Identity
 @inject EquipmentService EquipService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject CircuitDbLock DbLock
-@inject UserManager<ApplicationUser> UserManager
 @implements IDisposable
 
 <div class="stack">
@@ -74,7 +72,7 @@
                                 {
                                     var allNodes = comp.Parts.SelectMany(p => p.Aggregates).ToList();
                                     var covered = allNodes.Count(a => HasApprovedHK(a.Aggregate));
-                                    <tr @onclick="() => SelectComposition(comp.Id)" style="cursor:pointer">
+                                    <tr class="compositionRow--clickable" @onclick="() => SelectComposition(comp.Id)">
                                         <td class="mono">@comp.Version</td>
                                         <td><CompositionStatusBadge Status="@comp.Status" /></td>
                                         <td class="mono">@comp.CreatedAt.ToString("dd.MM.yyyy")</td>
@@ -156,15 +154,15 @@
                         }
                         @if (selectedComposition.Status == ProductCompositionStatus.OnReview)
                         {
-                            <div class="field" style="margin-top:10px;max-width:400px">
+                            <div class="field compositionReviewComment">
                                 <label>Комментарий к решению</label>
                                 <input @bind="reviewComment" class="field-input" placeholder="Необязательно" />
                             </div>
                         }
 
-                        @if (selectedComposition.Status == ProductCompositionStatus.Draft && canEditDraft)
+                        @if (CanEditSelectedDraft)
                         {
-                            <div class="form" style="margin-bottom:12px">
+                            <div class="form compositionFormRow">
                                 <div class="field full-width"><label>Комментарий</label><input @bind="editComment" /></div>
                                 <div class="field"><label>Дата начала действия</label><input type="date" @bind="editEffectiveDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
                                 <div class="field"><label>Дата окончания</label><input type="date" @bind="editExpirationDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
@@ -173,7 +171,7 @@
                                 </div>
                             </div>
 
-                            <div class="form" style="margin-bottom:12px">
+                            <div class="form compositionFormRow">
                                 <div class="field"><label>Составная часть</label>
                                     <select @bind="selectedPartId" class="field-select">
                                         <option value="">— Выберите часть —</option>
@@ -185,12 +183,12 @@
                                 </div>
                                 <div class="field"><label>Новая часть</label><input @bind="newPartName" placeholder="Напр. Силовая установка" /></div>
                                 <div class="field"><label>Порядок</label><input type="number" @bind="newPartSortOrder" class="field-input" /></div>
-                                <div class="field" style="display:flex;align-items:flex-end">
+                                <div class="field compositionFormAction">
                                     <button class="btn" @onclick="AddPart">+ Добавить часть</button>
                                 </div>
                             </div>
 
-                            <div class="form" style="margin-bottom:12px">
+                            <div class="form compositionFormRow">
                                 <div class="field"><label>Агрегат</label>
                                     <select @bind="newAggregateId" class="field-select">
                                         <option value="">— Выберите агрегат —</option>
@@ -201,7 +199,7 @@
                                     </select>
                                 </div>
                                 <div class="field"><label>Количество</label><input type="number" @bind="newAggregateQty" min="1" class="field-input" /></div>
-                                <div class="field" style="display:flex;align-items:flex-end">
+                                <div class="field compositionFormAction">
                                     <button class="btn primary" @onclick="AddAggregate" disabled="@(selectedPartId == Guid.Empty)">+ Добавить агрегат</button>
                                 </div>
                             </div>
@@ -213,15 +211,21 @@
                         }
                         else
                         {
-                            <div class="form" style="margin-bottom:8px">
-                                <div class="field" style="max-width:300px"><label>Фильтр агрегатов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
+                            <div class="form compositionFilterForm">
+                                <div class="field compositionFilterInput"><label>Фильтр агрегатов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
                             </div>
                             @foreach (var part in selectedComposition.Parts.OrderBy(p => p.SortOrder))
                             {
                                 <div class="compositionPartPanel">
                                     <div class="compositionPartHeader">
                                         <span>@part.Name</span>
-                                        <span class="hint">@part.Aggregates.Count агрегатов</span>
+                                        <div class="compositionPartMeta">
+                                            <span class="hint">@part.Aggregates.Count агрегатов</span>
+                                            @if (CanEditSelectedDraft)
+                                            {
+                                                <button class="linkBtn compositionPartDelete" @onclick="() => PromptDeletePart(part.Id)">Удалить часть</button>
+                                            }
+                                        </div>
                                     </div>
                                     @{
                                         var filteredAggregates = part.Aggregates
@@ -233,14 +237,14 @@
                                     }
                                     @if (!filteredAggregates.Any())
                                     {
-                                        <div class="empty-state" style="padding:4px 0">В этой части нет агрегатов.</div>
+                                        <div class="empty-state compositionEmptyCompact">В этой части нет агрегатов.</div>
                                     }
                                     else
                                     {
                                         <div class="tableWrap">
                                             <table>
                                                 <thead>
-                                                    <tr><th>Код агрегата</th><th>Наименование</th><th class="numeric">Количество</th><th>Действия</th></tr>
+                                                    <tr><th>Код агрегата</th><th>Наименование</th><th class="numeric">Количество</th>@if (ShowRowActions) { <th>Действия</th> }</tr>
                                                 </thead>
                                                 <tbody>
                                                     @foreach (var pca in filteredAggregates)
@@ -249,9 +253,9 @@
                                                             <td class="mono">@pca.Aggregate?.Code</td>
                                                             <td>@pca.Aggregate?.Name</td>
                                                             <td class="numeric">
-                                                                @if (editingAggregateId == pca.Id && selectedComposition.Status == ProductCompositionStatus.Draft)
+                                                                @if (editingAggregateId == pca.Id && CanEditSelectedDraft)
                                                                 {
-                                                                    <input type="number" @bind="editAggregateQty" class="field-input" style="width:70px" min="1" />
+                                                                    <input type="number" @bind="editAggregateQty" class="field-input compositionQtyInput" min="1" />
                                                                     <button class="linkBtn" @onclick="() => SaveAggregateQuantity(pca.Id)">✓</button>
                                                                     <button class="linkBtn" @onclick="() => CancelEditAggregate()">✕</button>
                                                                 }
@@ -260,16 +264,16 @@
                                                                     <span>@pca.Quantity</span>
                                                                 }
                                                             </td>
-                                                            <td>
-                                                                <div class="rowActions">
-                                                                    @if (selectedComposition.Status == ProductCompositionStatus.Draft && canEditDraft)
-                                                                    {
+                                                            @if (ShowRowActions)
+                                                            {
+                                                                <td>
+                                                                    <div class="rowActions">
                                                                         <button class="linkBtn" @onclick="() => StartEditAggregateQty(pca.Id, pca.Quantity)">Изменить кол-во</button>
                                                                         <button class="linkBtn" @onclick="() => PromptReplaceAggregate(pca)">Заменить</button>
                                                                         <button class="linkBtn" @onclick="() => RemoveAggregate(pca.Id)">Удалить</button>
-                                                                    }
-                                                                </div>
-                                                            </td>
+                                                                    </div>
+                                                                </td>
+                                                            }
                                                         </tr>
                                                     }
                                                 </tbody>
@@ -296,7 +300,7 @@
                     {
                         <div class="field"><label>Статус</label><CompositionStatusBadge Status="@selectedComposition.Status" /></div>
                         <div class="field"><label>Версия</label><div class="mono">@selectedComposition.Version</div></div>
-                        <div class="field"><label>Автор</label><div>@(authorName ?? "—")</div></div>
+                        <div class="field"><label>Автор</label><div>@(selectedComposition.AuthorName ?? "—")</div></div>
                         <div class="field"><label>Создан</label><div class="mono">@selectedComposition.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
                         <div class="field"><label>Обновлён</label><div class="mono">@selectedComposition.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
                         @if (selectedComposition.ApprovedAt.HasValue)
@@ -315,7 +319,7 @@
                         {
                             <div class="field"><label>Комментарий</label><div>@selectedComposition.Comment</div></div>
                         }
-                        <div style="margin-top:10px">
+                        <div class="compositionSidebarActions">
                             <a class="btn ghost" href="/журнал-аудита?entity=ProductComposition&id=@(selectedComposition.Id)">Журнал аудита →</a>
                         </div>
                     }
@@ -348,6 +352,25 @@
                 <button type="button" class="btn ghost" @onclick="CancelReplaceAggregate">Отмена</button>
                 <button type="button" class="btn primary" disabled="@(replaceWithAggregateId == Guid.Empty)" @onclick="ConfirmReplaceAggregate">Заменить</button>
             </div>
+    </div>
+</div>
+}
+
+@if (deletingPartId.HasValue)
+{
+    <div class="modalOverlay" @onclick="CancelDeletePart">
+        <div class="modal" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3>Удаление составной части</h3>
+                <button type="button" class="linkBtn" @onclick="CancelDeletePart">✕</button>
+            </div>
+            <div class="modalBody">
+                <p>Вы уверены, что хотите удалить составную часть и все входящие в неё агрегаты?</p>
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="CancelDeletePart">Отмена</button>
+                <button type="button" class="btn danger" @onclick="ConfirmDeletePart">Удалить</button>
+            </div>
         </div>
     </div>
 }
@@ -364,7 +387,8 @@
     private bool canApprove;
     private bool canReturn;
     private bool canCreateVersion;
-    private string? authorName;
+    private bool CanEditSelectedDraft => selectedComposition?.Status == ProductCompositionStatus.Draft && canEditDraft;
+    private bool ShowRowActions => CanEditSelectedDraft;
     private CancellationTokenSource? _loadCts;
 
     private Guid selectedModelId;
@@ -387,6 +411,7 @@
     private string nodeFilter = "";
     private Guid? replacingAggregateId;
     private Guid replaceWithAggregateId = Guid.Empty;
+    private Guid? deletingPartId;
 
     [Inject] private TimeProvider TimeProvider { get; set; } = null!;
     private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
@@ -430,10 +455,10 @@
         var comp = await EquipService.CreateCompositionDraftAsync(
             new CreateCompositionRequest(selectedModelId, string.IsNullOrWhiteSpace(comment) ? null : comment));
         await LoadCompositions();
-        await SelectComposition(comp.Id);
+        SelectComposition(comp.Id);
     }
 
-    async Task SelectComposition(Guid id)
+    void SelectComposition(Guid id)
     {
         selectedComposition = compositions.FirstOrDefault(c => c.Id == id);
         if (selectedComposition != null)
@@ -443,92 +468,78 @@
             editExpirationDate = selectedComposition.ExpirationDate;
             selectedPartId = selectedComposition.Parts.OrderBy(p => p.SortOrder).FirstOrDefault()?.Id ?? Guid.Empty;
             editingAggregateId = null;
-            authorName = await ResolveAuthorNameAsync(selectedComposition.AuthorId);
         }
-        else
-        {
-            authorName = null;
-        }
-    }
-
-    private async Task<string?> ResolveAuthorNameAsync(string? authorId)
-    {
-        if (string.IsNullOrWhiteSpace(authorId)) return null;
-        var user = await UserManager.FindByIdAsync(authorId);
-        return user?.FullName ?? authorId;
     }
 
     async Task SaveCompositionDraft()
     {
-        if (selectedComposition == null || !canEditDraft) return;
+        if (!CanEditSelectedDraft) return;
 
         await EquipService.UpdateCompositionDraftAsync(
-            new UpdateCompositionDraftRequest(selectedComposition.Id,
+            new UpdateCompositionDraftRequest(selectedComposition!.Id,
                 string.IsNullOrWhiteSpace(editComment) ? null : editComment,
                 editEffectiveDate?.ToUniversalTime(),
                 editExpirationDate?.ToUniversalTime()));
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition.Id);
     }
 
     async Task SubmitForReview()
     {
-        if (selectedComposition == null || !canEditDraft) return;
+        if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.Draft || !canSubmit) return;
         await EquipService.SubmitForReviewAsync(selectedComposition.Id);
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition.Id);
     }
 
     async Task ApproveComposition()
     {
-        if (selectedComposition == null || !canEditDraft) return;
+        if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.OnReview || !canApprove) return;
         await EquipService.ApproveCompositionAsync(selectedComposition.Id,
             string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition.Id);
     }
 
     async Task ReturnToDraft()
     {
-        if (selectedComposition == null || !canEditDraft) return;
+        if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.OnReview || !canReturn) return;
         await EquipService.ReturnToDraftAsync(selectedComposition.Id,
             string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition.Id);
     }
 
     async Task ArchiveComposition()
     {
-        if (selectedComposition == null || !canEditDraft) return;
+        if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.Approved || !canApprove) return;
         await EquipService.ArchiveCompositionAsync(selectedComposition.Id);
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition.Id);
     }
 
     async Task AddPart()
     {
-        if (selectedComposition == null || !canEditDraft) return;
-        if (string.IsNullOrWhiteSpace(newPartName)) return;
-        await EquipService.AddPartAsync(new AddPartRequest(selectedComposition.Id, newPartName.Trim(), null, newPartSortOrder));
+        if (!CanEditSelectedDraft || string.IsNullOrWhiteSpace(newPartName)) return;
+        await EquipService.AddPartAsync(new AddPartRequest(selectedComposition!.Id, newPartName.Trim(), null, newPartSortOrder));
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition.Id);
     }
 
     async Task RemovePart(Guid partId)
     {
-        if (selectedComposition == null || !canEditDraft) return;
+        if (!CanEditSelectedDraft) return;
         await EquipService.RemovePartAsync(partId);
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition!.Id);
     }
 
     async Task AddAggregate()
     {
-        if (selectedComposition == null || newAggregateId == Guid.Empty) return;
-        if (selectedPartId == Guid.Empty) return;
+        if (!CanEditSelectedDraft || newAggregateId == Guid.Empty || selectedPartId == Guid.Empty) return;
         await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(selectedPartId, newAggregateId, newAggregateQty));
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition!.Id);
         newAggregateId = Guid.Empty;
         newAggregateQty = 1;
     }
@@ -546,21 +557,19 @@
 
     async Task SaveAggregateQuantity(Guid id)
     {
-        if (!canEditDraft) return;
+        if (!CanEditSelectedDraft) return;
         await EquipService.UpdateAggregateQuantityAsync(new UpdateProductCompositionAggregateRequest(id, editAggregateQty, 0, null));
         await LoadCompositions();
-        await SelectComposition(selectedComposition!.Id);
+        SelectComposition(selectedComposition!.Id);
         editingAggregateId = null;
     }
 
     async Task RemoveAggregate(Guid id)
     {
+        if (!CanEditSelectedDraft) return;
         await EquipService.RemoveAggregateAsync(id);
-        if (selectedComposition != null)
-        {
-            await LoadCompositions();
-            await SelectComposition(selectedComposition.Id);
-        }
+        await LoadCompositions();
+        SelectComposition(selectedComposition!.Id);
     }
 
     void PromptReplaceAggregate(ProductCompositionAggregate pca)
@@ -575,10 +584,27 @@
         replaceWithAggregateId = Guid.Empty;
     }
 
+    void PromptDeletePart(Guid partId)
+    {
+        deletingPartId = partId;
+    }
+
+    void CancelDeletePart()
+    {
+        deletingPartId = null;
+    }
+
+    async Task ConfirmDeletePart()
+    {
+        if (!deletingPartId.HasValue) return;
+        await RemovePart(deletingPartId.Value);
+        deletingPartId = null;
+    }
+
     async Task ConfirmReplaceAggregate()
     {
-        if (!replacingAggregateId.HasValue || replaceWithAggregateId == Guid.Empty || selectedComposition == null) return;
-        var oldAggregate = selectedComposition.Parts
+        if (!CanEditSelectedDraft || !replacingAggregateId.HasValue || replaceWithAggregateId == Guid.Empty) return;
+        var oldAggregate = selectedComposition!.Parts
             .SelectMany(p => p.Aggregates)
             .FirstOrDefault(a => a.Id == replacingAggregateId.Value);
         if (oldAggregate == null) return;
@@ -586,13 +612,15 @@
         await EquipService.RemoveAggregateAsync(replacingAggregateId.Value);
         await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(oldAggregate.PartId ?? Guid.Empty, replaceWithAggregateId, oldAggregate.Quantity));
         await LoadCompositions();
-        await SelectComposition(selectedComposition.Id);
+        SelectComposition(selectedComposition.Id);
         replacingAggregateId = null;
         replaceWithAggregateId = Guid.Empty;
     }
 
     async Task DeleteComposition(Guid id)
     {
+        var comp = compositions.FirstOrDefault(c => c.Id == id);
+        if (comp == null || comp.Status != ProductCompositionStatus.Draft || !canEditDraft) return;
         await EquipService.DeleteCompositionDraftAsync(id);
         compositions.RemoveAll(c => c.Id == id);
         if (selectedComposition?.Id == id) { selectedComposition = null; selectedPartId = Guid.Empty; editingAggregateId = null; }
