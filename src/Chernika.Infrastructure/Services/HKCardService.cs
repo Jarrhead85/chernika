@@ -266,6 +266,228 @@ public class HKCardService
             .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
     }
 
+    public async Task<PagedResult<HKCardRegistryListItemDto>> GetRegistryPageAsync(
+        HKCardRegistryQuery query, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId().ToString();
+        var safeBranchId = await GetAccessibleBranchIdAsync(query.BranchId, ct);
+
+        var baseQuery = _db.HKCards.AsNoTracking().AsQueryable();
+        if (safeBranchId.HasValue)
+            baseQuery = baseQuery.Where(x => x.BranchId == safeBranchId.Value);
+
+        if (query.Status.HasValue)
+            baseQuery = baseQuery.Where(x => x.Status == query.Status.Value);
+        if (query.ObjectLevel.HasValue)
+            baseQuery = baseQuery.Where(x => x.ObjectLevel == query.ObjectLevel.Value);
+        if (query.OnlyMine)
+            baseQuery = baseQuery.Where(x => x.AuthorId.ToString() == actorId);
+        if (!string.IsNullOrWhiteSpace(query.AuthorId))
+            baseQuery = baseQuery.Where(x => x.AuthorId.ToString() == query.AuthorId);
+        if (query.CreatedFrom.HasValue)
+            baseQuery = baseQuery.Where(x => x.CreatedAt >= query.CreatedFrom.Value);
+        if (query.CreatedTo.HasValue)
+            baseQuery = baseQuery.Where(x => x.CreatedAt < query.CreatedTo.Value.AddDays(1));
+        if (query.ApprovedFrom.HasValue)
+            baseQuery = baseQuery.Where(x => x.ApprovedDate >= query.ApprovedFrom.Value);
+        if (query.ApprovedTo.HasValue)
+            baseQuery = baseQuery.Where(x => x.ApprovedDate < query.ApprovedTo.Value.AddDays(1));
+
+        var today = _time.GetUtcNow().UtcDateTime.Date;
+        baseQuery = query.ExpirationFilter switch
+        {
+            HKCardExpirationFilter.Expiring90Days => baseQuery.Where(x => x.ExpirationDate >= today && x.ExpirationDate <= today.AddDays(90)),
+            HKCardExpirationFilter.Expiring30Days => baseQuery.Where(x => x.ExpirationDate >= today && x.ExpirationDate <= today.AddDays(30)),
+            HKCardExpirationFilter.Expired => baseQuery.Where(x => x.ExpirationDate < today),
+            _ => baseQuery
+        };
+
+        if (query.HasPdf.HasValue)
+        {
+            var pdfIds = await _db.HKCardAttachments.AsNoTracking()
+                .Where(a => a.ContentType == "application/pdf")
+                .Select(a => a.HKCardId)
+                .Distinct()
+                .ToListAsync(ct);
+            baseQuery = query.HasPdf.Value
+                ? baseQuery.Where(x => pdfIds.Contains(x.Id))
+                : baseQuery.Where(x => !pdfIds.Contains(x.Id));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        {
+            var term = $"%{query.SearchText.Trim()}%";
+            baseQuery = baseQuery.Where(x =>
+                EF.Functions.ILike(x.Code, term)
+                || EF.Functions.ILike(x.Version, term)
+                || EF.Functions.ILike(x.RequestOrganization ?? "", term)
+                || EF.Functions.ILike(x.IncomingLetterNumber ?? "", term)
+                || EF.Functions.ILike(x.OutgoingLetterNumber ?? "", term)
+                || (x.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (EF.Functions.ILike(x.Node!.Name, term) || EF.Functions.ILike(x.Node!.Code, term)))
+                || (x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate && (EF.Functions.ILike(x.Aggregate!.Name, term) || EF.Functions.ILike(x.Aggregate!.Code, term)))
+                || (x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel && (EF.Functions.ILike(x.EquipmentModel!.Name, term) || EF.Functions.ILike(x.EquipmentModel!.Index, term)))
+                || (x.ObjectLevel == Domain.Enums.HKObjectLevel.Complex && (EF.Functions.ILike(x.Complex!.Name, term) || EF.Functions.ILike(x.Complex!.Code, term))));
+        }
+
+        if (query.RequiresMyAction)
+        {
+            var actionableIds = await GetActionableCardIdsAsync(actorId, query.BranchId, ct);
+            if (actionableIds.Count == 0)
+                return new PagedResult<HKCardRegistryListItemDto> { Items = new List<HKCardRegistryListItemDto>(), TotalCount = 0, Page = query.Page, PageSize = query.PageSize };
+            baseQuery = baseQuery.Where(x => actionableIds.Contains(x.Id));
+        }
+
+        var ordered = (query.SortBy?.ToLowerInvariant() switch
+        {
+            "code" => query.SortDescending ? baseQuery.OrderByDescending(x => x.Code) : baseQuery.OrderBy(x => x.Code),
+            "status" => query.SortDescending ? baseQuery.OrderByDescending(x => x.Status) : baseQuery.OrderBy(x => x.Status),
+            "level" => query.SortDescending ? baseQuery.OrderByDescending(x => x.ObjectLevel) : baseQuery.OrderBy(x => x.ObjectLevel),
+            _ => query.SortDescending ? baseQuery.OrderByDescending(x => x.CreatedAt) : baseQuery.OrderBy(x => x.CreatedAt),
+        })!;
+
+        var total = await ordered.CountAsync(ct);
+        var page = Math.Max(1, query.Page);
+        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(x => new HKCardRegistryListItemDto
+            {
+                Id = x.Id,
+                Code = x.Code,
+                Version = x.Version,
+                Status = x.Status,
+                ObjectLevel = x.ObjectLevel,
+                BranchId = x.BranchId,
+                BranchName = x.Branch.Name,
+                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
+                    : x.Complex!.Code,
+                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
+                    : x.Complex!.Name,
+                CreatedAt = x.CreatedAt,
+                ApprovedDate = x.ApprovedDate,
+                EffectiveDate = x.EffectiveDate,
+                ExpirationDate = x.ExpirationDate,
+                AuthorId = x.AuthorId.ToString(),
+                RequestOrganization = x.RequestOrganization,
+                IncomingLetterNumber = x.IncomingLetterNumber,
+                OutgoingLetterNumber = x.OutgoingLetterNumber,
+                HasPdf = _db.HKCardAttachments.Any(a => a.HKCardId == x.Id && a.ContentType == "application/pdf")
+            })
+            .ToListAsync(ct);
+
+        var authorIds = items.Select(x => x.AuthorId).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
+        if (authorIds.Any())
+        {
+            var names = await _db.Users.AsNoTracking()
+                .Where(u => authorIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.FullName })
+                .ToDictionaryAsync(u => u.Id, u => u.FullName, ct);
+            foreach (var item in items)
+                if (item.AuthorId != null && names.TryGetValue(item.AuthorId, out var name))
+                    item.AuthorName = name;
+        }
+
+        return new PagedResult<HKCardRegistryListItemDto>
+        {
+            Items = items,
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
+    public async Task<HKCardKpiDto> GetRegistryKpiAsync(Guid? branchId = null, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId().ToString();
+        var safeBranchId = await GetAccessibleBranchIdAsync(branchId, ct);
+
+        var query = _db.HKCards.AsNoTracking().AsQueryable();
+        if (safeBranchId.HasValue)
+            query = query.Where(x => x.BranchId == safeBranchId.Value);
+
+        var statusGroups = await query
+            .GroupBy(x => x.Status)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        var statusCounts = statusGroups.ToDictionary(x => x.Key, x => x.Count);
+        var total = statusCounts.Values.Sum();
+
+        var actionableIds = await GetActionableCardIdsAsync(actorId, branchId, ct);
+
+        return new HKCardKpiDto
+        {
+            Total = total,
+            Draft = statusCounts.GetValueOrDefault(HKCardStatus.Draft),
+            OnReview = statusCounts.GetValueOrDefault(HKCardStatus.OnReview),
+            RevisionRequired = statusCounts.GetValueOrDefault(HKCardStatus.RevisionRequired),
+            Approved = statusCounts.GetValueOrDefault(HKCardStatus.Approved),
+            RequiresMyAction = actionableIds.Count
+        };
+    }
+
+    private async Task<HashSet<Guid>> GetActionableCardIdsAsync(string actorId, Guid? branchId, CancellationToken ct)
+    {
+        var safeBranchId = await GetAccessibleBranchIdAsync(branchId, ct);
+        var result = new HashSet<Guid>();
+
+        var taskIds = await _db.WorkTasks.AsNoTracking()
+            .Where(t => !t.IsDeleted
+                && t.AssignedToUserId == actorId
+                && (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress || t.Status == WorkTaskStatus.Overdue)
+                && t.EntityType == "HKCard"
+                && t.EntityId.HasValue)
+            .Select(t => t.EntityId!.Value)
+            .ToListAsync(ct);
+        foreach (var id in taskIds)
+            result.Add(id);
+
+        var baseQuery = _db.HKCards.AsNoTracking().AsQueryable();
+        if (safeBranchId.HasValue)
+            baseQuery = baseQuery.Where(x => x.BranchId == safeBranchId.Value);
+
+        var editDraftLevels = new List<Domain.Enums.HKObjectLevel>();
+        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKNodeEditDraft))
+            editDraftLevels.Add(Domain.Enums.HKObjectLevel.Node);
+        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKAggregateEditDraft))
+            editDraftLevels.Add(Domain.Enums.HKObjectLevel.Aggregate);
+        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKEquipmentEditDraft))
+            editDraftLevels.Add(Domain.Enums.HKObjectLevel.EquipmentModel);
+        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKComplexEditDraft))
+            editDraftLevels.Add(Domain.Enums.HKObjectLevel.Complex);
+
+        if (editDraftLevels.Any())
+        {
+            var editableIds = await baseQuery
+                .Where(x => (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.RevisionRequired)
+                    && x.AuthorId.ToString() == actorId
+                    && editDraftLevels.Contains(x.ObjectLevel))
+                .Select(x => x.Id)
+                .ToListAsync(ct);
+            foreach (var id in editableIds) result.Add(id);
+        }
+
+        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKReview))
+        {
+            var reviewIds = await baseQuery.Where(x => x.Status == HKCardStatus.OnReview).Select(x => x.Id).ToListAsync(ct);
+            foreach (var id in reviewIds) result.Add(id);
+        }
+
+        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKArchive))
+        {
+            var archiveIds = await baseQuery.Where(x => x.Status == HKCardStatus.Approved).Select(x => x.Id).ToListAsync(ct);
+            foreach (var id in archiveIds) result.Add(id);
+        }
+
+        return result;
+    }
+
     public async Task<HKCard?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await _db.HKCards
@@ -317,6 +539,44 @@ public class HKCardService
                 CreatedAt = x.CreatedAt,
                 IsCurrent = x.Id == id,
                 SupersedesHKCardId = x.SupersedesHKCardId
+            })
+            .ToListAsync(ct);
+    }
+
+    public async Task<List<Branch>> GetAllBranchesAsync(CancellationToken ct = default)
+    {
+        return await _db.Branches.AsNoTracking()
+            .Where(b => !b.IsDeleted)
+            .OrderBy(b => b.Name)
+            .ToListAsync(ct);
+    }
+
+    public async Task<List<HKCardRegistryAuthorDto>> GetAuthorsAsync(CancellationToken ct = default)
+    {
+        var safeBranchId = await GetAccessibleBranchIdAsync(null, ct);
+
+        var query = _db.HKCards.AsNoTracking()
+            .Where(c => c.AuthorId != null && c.AuthorId != Guid.Empty);
+
+        if (safeBranchId.HasValue)
+            query = query.Where(c => c.BranchId == safeBranchId.Value);
+
+        var authorIds = await query
+            .Select(c => c.AuthorId!.Value.ToString())
+            .Distinct()
+            .ToListAsync(ct);
+
+        if (authorIds.Count == 0)
+            return new List<HKCardRegistryAuthorDto>();
+
+        return await _db.Users.AsNoTracking()
+            .Where(u => authorIds.Contains(u.Id))
+            .OrderBy(u => u.FullName)
+            .ThenBy(u => u.UserName)
+            .Select(u => new HKCardRegistryAuthorDto
+            {
+                Id = u.Id,
+                FullName = u.FullName ?? u.UserName ?? u.Id
             })
             .ToListAsync(ct);
     }

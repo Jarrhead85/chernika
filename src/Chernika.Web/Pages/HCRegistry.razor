@@ -5,7 +5,9 @@
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Models
 @using Chernika.Web.Services
+@using Chernika.Web.Components
 @inject HKCardService HKCardService
+@inject TaskService TaskService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject UserManager<ApplicationUser> UserManager
@@ -15,197 +17,332 @@
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
-            <h2>Оперативная сводка по формам</h2>
-            <div class="hint">Обновлено: @DateTime.UtcNow.ToString("dd.MM.yyyy HH:mm") UTC</div>
+            <div>
+                <h2>Реестр ХК</h2>
+                <div class="muted">Нормативные документы по технике и ГСМ</div>
+            </div>
+            @if (_canCreateAnyHk)
+            {
+                <button class="btn primary" @onclick="GoToCreate">+ Создать ХК</button>
+            }
         </div>
+    </section>
+
+    <section class="panel">
         <div class="panelBody">
-            <div class="hero">
-                <div class="heroBox">
-                    <div class="eyebrow">Нормативный контур • Веб-интерфейс</div>
-                    <h3>Химмотологические карты</h3>
-                    <p>Ведение нормативных ХК по изделиям: разрешённые марки ГСМ, базовые объёмы и версии карточек</p>
+            <div class="heroGrid">
+                <div class="heroStat" @onclick="() => SetStatusFilter(null)" style="cursor:pointer">
+                    <div class="label">Всего ХК</div>
+                    <div class="value">@_kpi.Total</div>
                 </div>
-                <div class="heroGrid">
-                    <div class="heroStat">
-                        <div class="label">ХК в банке <span class="tag ok">актуальные</span></div>
-                        <div class="value">@totalCount</div>
-                        <div class="trend">@statusCounts.GetValueOrDefault(HKCardStatus.Approved) утверждённых</div>
-                    </div>
-                    <div class="heroStat">
-                        <div class="label">Изделия состава <span class="tag warn">в работе</span></div>
-                        <div class="value">@statusCounts.GetValueOrDefault(HKCardStatus.OnReview)</div>
-                        <div class="trend">@statusCounts.GetValueOrDefault(HKCardStatus.RevisionRequired) требуют доработки</div>
-                    </div>
-                    <div class="heroStat">
-                        <div class="label">Инд. карты <span class="tag ok">расчет</span></div>
-                        <div class="value">—</div>
-                        <div class="trend">Модуль в разработке</div>
-                    </div>
-                    <div class="heroStat">
-                        <div class="label">Замечания <span class="tag bad">контроль</span></div>
-                        <div class="value">@statusCounts.GetValueOrDefault(HKCardStatus.RevisionRequired)</div>
-                        <div class="trend">Требуют внимания</div>
-                    </div>
+                <div class="heroStat" @onclick="() => SetStatusFilter(HKCardStatus.Draft)" style="cursor:pointer">
+                    <div class="label">Черновики</div>
+                    <div class="value">@_kpi.Draft</div>
+                </div>
+                <div class="heroStat" @onclick="() => SetStatusFilter(HKCardStatus.OnReview)" style="cursor:pointer">
+                    <div class="label">На согласовании</div>
+                    <div class="value">@_kpi.OnReview</div>
+                </div>
+                <div class="heroStat" @onclick="() => SetStatusFilter(HKCardStatus.RevisionRequired)" style="cursor:pointer">
+                    <div class="label">На доработке</div>
+                    <div class="value">@_kpi.RevisionRequired</div>
+                </div>
+                <div class="heroStat" @onclick="() => SetStatusFilter(HKCardStatus.Approved)" style="cursor:pointer">
+                    <div class="label">Утверждённые</div>
+                    <div class="value">@_kpi.Approved</div>
+                </div>
+                <div class="heroStat" @onclick="() => SetRequiresMyAction(true)" style="cursor:pointer">
+                    <div class="label">Требуют моих действий</div>
+                    <div class="value">@_kpi.RequiresMyAction</div>
                 </div>
             </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader"><h2>Мои задачи</h2><div class="hint">@_myTasks.Count открытых</div></div>
+        <div class="panelBody">
+            @if (!_myTasks.Any())
+            {
+                <div class="empty-state">Нет открытых задач</div>
+            }
+            else
+            {
+                <div class="listRows">
+                    @foreach (var task in _myTasks)
+                    {
+                        <div class="rowCard">
+                            <div class="top">
+                                <a class="linkBtn" href="/задачи/@task.Id">@task.Title</a>
+                                <span class="tag @TaskStatusTag(task.Status)">@TaskStatusLabel(task.Status)</span>
+                            </div>
+                            <div class="sub">@TaskTypeLabel(task.Type) · @(task.DueDateUtc?.ToString("dd.MM.yyyy") ?? "без срока")</div>
+                            @if (!string.IsNullOrEmpty(task.EntityType) && task.EntityId.HasValue)
+                            {
+                                <div class="sub"><a class="linkBtn" href="@TaskEntityUrl(task)" @onclick:stopPropagation="true">@TaskEntityLabel(task)</a></div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div style="margin-top:12px"><a class="btn ghost" href="/задачи">Все задачи →</a></div>
+            }
         </div>
     </section>
 
     <div class="grid">
         <div class="stack">
             <section class="panel">
-                <div class="panelHeader">
-                    <h2>Реестр ХК</h2>
-                    <div class="hint">Поиск / фильтрация / версии</div>
-                </div>
+                <div class="panelHeader"><h2>Поиск и фильтры</h2><div class="hint">Серверная фильтрация</div></div>
                 <div class="panelBody">
                     <div class="form">
-                        <div class="field"><label>Номер ХК</label><input @bind="filterCode" placeholder="HK-2026-001301" /></div>
+                        <div class="field" style="grid-column:span 2"><label>Поиск</label><input @bind="_query.SearchText" placeholder="Код, версия, объект, организация, письмо…" /></div>
                         <div class="field"><label>Статус</label>
-                            <select @bind="filterStatus" class="field-select">
+                            <select @bind="_query.Status" class="field-select">
                                 <option value="">Все</option>
-                                <option value="Draft">Черновик</option>
-                                <option value="OnReview">На проверке</option>
-                                <option value="RevisionRequired">На доработке</option>
-                                <option value="Approved">Утверждена</option>
-                                <option value="Archived">Архивная</option>
+                                @foreach (var s in _statusOptions)
+                                {
+                                    <option value="@s.Value">@s.Label</option>
+                                }
                             </select>
                         </div>
-                        <div class="field"><label>Версия</label><input @bind="filterVersion" placeholder="v0426" /></div>
-                        <div class="field"><label>Уровень</label>
-                            <select @bind="filterLevel" class="field-select">
+                        <div class="field"><label>Уровень ХК</label>
+                            <select @bind="_query.ObjectLevel" class="field-select">
                                 <option value="">Все</option>
-                                <option value="Complex">Комплекс</option>
-                                <option value="EquipmentModel">Изделие</option>
-                                <option value="Aggregate">Агрегат</option>
-                                <option value="Node">Узел</option>
+                                @foreach (var l in _levelOptions)
+                                {
+                                    <option value="@l.Value">@l.Label</option>
+                                }
                             </select>
                         </div>
-                        <div class="field"><label>Изделие</label><input @bind="filterNode" placeholder="UZ-044 / двигатель" /></div>
-                        <div class="formActions">
-                            <button class="btn" @onclick="ApplyFilters">Применить фильтры</button>
-                            @if (canCreate) { <button class="btn primary" @onclick="GoToCreate">Создать ХК</button> }
-                        </div>
-                    </div>
-                    <div class="chips">
-                        <span class="pill">Все версии</span>
-                        <span class="pill">Только действующие</span>
-                        @if (!string.IsNullOrEmpty(filterStatus))
+                        @if (_canSystemConfig)
                         {
-                            <span class="pill">Статус: @filterStatus</span>
+                            <div class="field"><label>Филиал</label>
+                                <select class="field-select" @bind="_branchFilterId">
+                                    <option value="">Все</option>
+                                    @foreach (var b in _branches)
+                                    {
+                                        <option value="@b.Id">@b.Name</option>
+                                    }
+                                </select>
+                            </div>
                         }
+                        <div class="field"><label>Сортировка</label>
+                            <select @bind="_query.SortBy" class="field-select">
+                                <option value="created">По созданию</option>
+                                <option value="code">По коду</option>
+                                <option value="status">По статусу</option>
+                                <option value="level">По уровню</option>
+                            </select>
+                        </div>
+                        <div class="field"><label>Направление</label>
+                            <select @bind="_sortDescStr" class="field-select">
+                                <option value="true">По убыванию</option>
+                                <option value="false">По возрастанию</option>
+                            </select>
+                        </div>
+                        <div class="field" style="display:flex;align-items:end;gap:12px;grid-column:span 2">
+                            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                                <input type="checkbox" @bind="_query.OnlyMine" /> Только мои
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                                <input type="checkbox" @bind="_query.RequiresMyAction" /> Требуют моих действий
+                            </label>
+                        </div>
+                        <div class="formActions" style="grid-column:span 2">
+                            <button class="btn" @onclick="ToggleAdvanced">@(_showAdvanced ? "Скрыть дополнительно" : "Дополнительно")</button>
+                            <button class="btn primary" @onclick="ApplyFilters">Применить</button>
+                            <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                        </div>
                     </div>
+
+                    @if (_showAdvanced)
+                    {
+                        <div class="form" style="margin-top:12px;border-top:1px dashed var(--line);padding-top:12px">
+                            <div class="field"><label>Дата создания с</label><input type="date" @bind="_query.CreatedFrom" class="field-input" /></div>
+                            <div class="field"><label>Дата создания по</label><input type="date" @bind="_query.CreatedTo" class="field-input" /></div>
+                            <div class="field"><label>Дата утверждения с</label><input type="date" @bind="_query.ApprovedFrom" class="field-input" /></div>
+                            <div class="field"><label>Дата утверждения по</label><input type="date" @bind="_query.ApprovedTo" class="field-input" /></div>
+                            <div class="field"><label>Срок действия</label>
+                                <select @bind="_query.ExpirationFilter" class="field-select">
+                                    @foreach (var e in _expirationOptions)
+                                    {
+                                        <option value="@e.Value">@e.Label</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="field"><label>PDF-скан</label>
+                                <select @bind="_hasPdfStr" class="field-select">
+                                    <option value="">Все</option>
+                                    <option value="true">Есть PDF</option>
+                                    <option value="false">Нет PDF</option>
+                                </select>
+                            </div>
+                            <div class="field" style="grid-column:span 2"><label>Автор</label>
+                                <select @bind="_query.AuthorId" class="field-select">
+                                    <option value="">Все</option>
+                                    @foreach (var a in _authors)
+                                    {
+                                        <option value="@a.Id">@a.FullName</option>
+                                    }
+                                </select>
+                            </div>
+                        </div>
+                    }
                 </div>
             </section>
 
             <section class="panel">
                 <div class="panelHeader">
                     <h2>Список ХК</h2>
-                    <div class="hint">@filteredCards.Count записей</div>
+                    <div class="hint">@_result.TotalCount записей</div>
                 </div>
                 <div class="panelBody">
-                    @if (loading)
+                    @if (_loading)
                     {
-                        <div class="loading-state">Загрузка...</div>
+                        <div class="loading-state">Загрузка…</div>
                     }
-                    else if (!filteredCards.Any())
+                    else if (!_result.Items.Any())
                     {
                         <div class="empty-state">Нет ХК, соответствующих фильтру</div>
                     }
                     else
                     {
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>№ ХК</th>
-                                    <th>Изделие</th>
-                                    <th>Статус</th>
-                                    <th>Версия</th>
-                                    <th>Филиал</th>
-                                    <th>Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var card in filteredCards)
-                                {
-                                    <tr @onclick="() => SelectCard(card.Id)" @ondblclick="() => GoToEdit(card.Id)" style="cursor:pointer">
-                                        <td class="mono">@card.Code</td>
-                                        <td>@card.ObjectName<br /><span class="mono">@card.ObjectCode</span></td>
-                                        <td><StatusBadge Status="@card.Status" /></td>
-                                        <td class="mono">@card.Version</td>
-                                        <td>@card.BranchName</td>
-                                        <td>
-                                            <div class="rowActions">
-                                                <button class="linkBtn" @onclick="() => GoToEdit(card.Id)" @onclick:stopPropagation="true">Открыть</button>
-                                                @if (CanCreateNewVersion(card)) { <button class="linkBtn" @onclick="() => CreateNewVersion(card.Id)" @onclick:stopPropagation="true">Новая версия</button> }
-                                                @if (CanArchiveCard(card)) { <button class="linkBtn" @onclick="() => OpenArchiveModal(card.Id)" @onclick:stopPropagation="true">В архив</button> }
-                                                @if (CanDeleteCard(card)) { <button class="linkBtn" @onclick="() => DeleteCard(card.Id)" @onclick:stopPropagation="true">Удалить</button> }
-                                            </div>
-                                        </td>
+                        <div style="overflow-x:auto">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Код / Версия</th>
+                                        <th>Объект</th>
+                                        <th>Уровень</th>
+                                        <th>Статус</th>
+                                        <th>Филиал</th>
+                                        <th>Действия</th>
                                     </tr>
-                                }
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    @foreach (var card in _result.Items)
+                                    {
+                                        <tr @onclick="() => SelectCard(card.Id)" @ondblclick="() => GoToEdit(card.Id)" style="cursor:pointer" class="@(_selectedCard?.Id == card.Id ? "row-active" : "")">
+                                            <td class="mono">@card.Code<br/><span class="muted">@card.Version</span></td>
+                                            <td>@card.ObjectName<br/><span class="mono muted">@card.ObjectCode</span></td>
+                                            <td>@LevelName(card.ObjectLevel)</td>
+                                            <td><StatusBadge Status="@card.Status" /></td>
+                                            <td>@card.BranchName</td>
+                                            <td>
+                                                <div class="rowActions">
+                                                    <button class="linkBtn" @onclick:stopPropagation="true" @onclick="() => GoToEdit(card.Id)">Открыть</button>
+                                                    <button class="linkBtn" @onclick:stopPropagation="true" @onclick="() => ToggleActionMenu(card.Id)">⋯</button>
+                                                </div>
+                                                @if (_openActionMenuCardId == card.Id)
+                                                {
+                                                    <div class="dropdown" style="position:absolute;z-index:10;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);min-width:200px;margin-top:4px">
+                                                        @foreach (var group in GetActionGroups(card))
+                                                        {
+                                                            @if (!string.IsNullOrEmpty(group.Title))
+                                                            {
+                                                                <div class="dropdown-header" style="padding:6px 12px;font-size:12px;color:var(--muted);text-transform:uppercase">@group.Title</div>
+                                                            }
+                                                            @foreach (var action in group.Actions)
+                                                            {
+                                                                <button class="dropdown-item" style="width:100%;text-align:left;padding:8px 12px;background:none;border:none;color:var(--text);cursor:pointer" @onclick:stopPropagation="true" @onclick="() => ExecuteAction(card, action.Key)">@action.Label</button>
+                                                            }
+                                                        }
+                                                    </div>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
                         <div class="footer">
-                            <div>Двойной клик по строке — открыть карточку ХК.</div>
-                            <div class="mono">Показано @filteredCards.Count из @totalCount</div>
+                            <div>
+                                @if (_result.Page > 1)
+                                {
+                                    <button class="linkBtn" @onclick="() => GoToPage(_result.Page - 1)">← Назад</button>
+                                }
+                                <span class="mono">стр. @_result.Page из @Math.Max(1, (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)</span>
+                                @if (_result.Page < (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)
+                                {
+                                    <button class="linkBtn" @onclick="() => GoToPage(_result.Page + 1)">Вперёд →</button>
+                                }
+                            </div>
+                            <div class="mono">Показано @_result.Items.Count из @_result.TotalCount</div>
                         </div>
                     }
                 </div>
             </section>
         </div>
 
-        <aside class="stack">
+        <aside class="stack" style="min-width:440px;max-width:480px">
             <section class="panel">
                 <div class="panelHeader"><h2>Карточка ХК</h2><div class="hint">Быстрый просмотр</div></div>
                 <div class="panelBody">
-                    @if (selectedCard == null)
+                    @if (_selectedCard == null)
                     {
                         <div class="empty-state">Выберите ХК из списка</div>
                     }
                     else
                     {
                         <div class="metrics2">
-                            <div class="metric"><div class="label">Статус</div><div class="value"><StatusBadge Status="@selectedCard.Status" /></div></div>
-                            <div class="metric"><div class="label">Версия</div><div class="value mono">@selectedCard.Version</div></div>
-                            <div class="metric"><div class="label">Уровень</div><div class="value">@LevelName(selectedCard.ObjectLevel)</div></div>
-                            <div class="metric"><div class="label">Объект</div><div class="value">@(selectedCard.Node?.Name ?? selectedCard.Aggregate?.Name ?? selectedCard.EquipmentModel?.Name ?? selectedCard.Complex?.Name)</div></div>
-                            <div class="metric"><div class="label">Строк в ХК</div><div class="value">@selectedCard.Items.Count</div></div>
-                            <div class="metric"><div class="label">Дата создания</div><div class="value">@selectedCard.CreatedAt.ToString("dd.MM.yyyy")</div></div>
+                            <div class="metric"><div class="label">Код</div><div class="value mono">@_selectedCard.Code</div></div>
+                            <div class="metric"><div class="label">Версия</div><div class="value mono">@_selectedCard.Version</div></div>
+                            <div class="metric"><div class="label">Статус</div><div class="value"><StatusBadge Status="@_selectedCard.Status" /></div></div>
+                            <div class="metric"><div class="label">Уровень</div><div class="value">@LevelName(_selectedCard.ObjectLevel)</div></div>
+                            <div class="metric"><div class="label">Объект</div><div class="value">@_selectedCard.ObjectName</div></div>
+                            <div class="metric"><div class="label">Филиал</div><div class="value">@_selectedCard.BranchName</div></div>
+                            <div class="metric"><div class="label">Автор</div><div class="value">@(_selectedCard.AuthorName ?? "—")</div></div>
+                            <div class="metric"><div class="label">Создана</div><div class="value mono">@_selectedCard.CreatedAt.ToString("dd.MM.yyyy")</div></div>
                         </div>
-                        <div class="note" style="margin-top:12px;">
-                            @(selectedCard.Purpose?.Length > 120 ? selectedCard.Purpose[..120] : selectedCard.Purpose)
+                        <div class="field" style="margin-top:12px"><label>Период действия</label>
+                            <div>
+                                @if (_selectedCard.EffectiveDate.HasValue)
+                                {
+                                    <span>Действует с @_selectedCard.EffectiveDate.Value.ToString("dd.MM.yyyy")</span>
+                                    @if (_selectedCard.ExpirationDate.HasValue)
+                                    {
+                                        <span> — @_selectedCard.ExpirationDate.Value.ToString("dd.MM.yyyy")</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="muted">Не задан</span>
+                                }
+                            </div>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_selectedCard.RequestOrganization) || !string.IsNullOrEmpty(_selectedCard.IncomingLetterNumber) || !string.IsNullOrEmpty(_selectedCard.OutgoingLetterNumber))
+                        {
+                            <div class="field"><label>Основание</label>
+                                <div class="mono">
+                                    @if (!string.IsNullOrEmpty(_selectedCard.RequestOrganization))
+                                    {
+                                        <div>@_selectedCard.RequestOrganization</div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(_selectedCard.IncomingLetterNumber))
+                                    {
+                                        <div>Вход. № @_selectedCard.IncomingLetterNumber</div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(_selectedCard.OutgoingLetterNumber))
+                                    {
+                                        <div>Исх. № @_selectedCard.OutgoingLetterNumber</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        <div class="field"><label>PDF-скан</label>
+                            @if (_selectedCard.HasPdf)
+                            {
+                                <a class="btn" href="@PdfUrl(_selectedCard.Id)" target="_blank">Открыть PDF</a>
+                            }
+                            else
+                            {
+                                <span class="muted">PDF не прикреплён</span>
+                            }
                         </div>
                         <div class="btnRow" style="margin-top:12px">
-                            <button class="btn primary" @onclick="() => GoToEdit(selectedCard.Id)">Открыть</button>
+                            <button class="btn primary" @onclick="() => GoToEdit(_selectedCard.Id)">Открыть карточку</button>
                         </div>
                     }
-                </div>
-            </section>
-
-            <section class="panel">
-                <div class="panelHeader"><h2>Мои задачи</h2><div class="hint">Рабочий процесс</div></div>
-                <div class="panelBody">
-                    <div class="alerts">
-                        @foreach (var card in taskCardsOnReview)
-                        {
-                            <div class="alert">
-                                <div class="top"><p class="title">Согласовать @card.Code</p><span class="tag warn">до @card.CreatedAt.AddDays(7).ToString("dd.MM")</span></div>
-                                <p class="desc">Проверить состав марок ГСМ и маршрут согласования.</p>
-                            </div>
-                        }
-                        @foreach (var card in taskCardsRevision)
-                        {
-                            <div class="alert">
-                                <div class="top"><p class="title">Замечания по @card.Code</p><span class="tag bad">критично</span></div>
-                                <p class="desc">Заполнить поля «срок действия» и «основание утверждения».</p>
-                            </div>
-                        }
-                        @if (!taskCardsOnReview.Any() && !taskCardsRevision.Any())
-                        {
-                            <div class="note">Нет активных задач</div>
-                        }
-                    </div>
                 </div>
             </section>
         </aside>
@@ -276,33 +413,41 @@
     </div>
 }
 
+@if (!string.IsNullOrEmpty(_errorMessage))
+{
+    <div class="note bad" style="margin-top:12px">@_errorMessage</div>
+}
+
 @code {
-    private List<HKCardListItemDto> filteredCards = new();
-    private List<HKCardListItemDto> taskCardsOnReview = new();
-    private List<HKCardListItemDto> taskCardsRevision = new();
-    private Dictionary<HKCardStatus, int> statusCounts = new();
-    private int totalCount;
-    private HKCard? selectedCard;
-    private bool loading = true;
-    private bool canCreate;
-    private bool canSendToApprove;
-    private bool canApprove;
-    private bool canVerify;
-    private bool canReturn;
-    private bool canCreateNewVersion;
-    private bool canArchive;
-    private string userBranchId = "";
-    private string currentUserId = "";
+    private HKCardKpiDto _kpi = new();
+    private PagedResult<HKCardRegistryListItemDto> _result = new() { Items = new List<HKCardRegistryListItemDto>() };
+    private List<WorkTaskListItemDto> _myTasks = new();
+    private HKCardRegistryListItemDto? _selectedCard;
+    private HKCardRegistryQuery _query = new() { PageSize = 50 };
+    private List<Branch> _branches = new();
+    private List<HKCardRegistryAuthorDto> _authors = new();
+    private bool _loading = true;
+    private bool _showAdvanced;
+    private string _sortDescStr = "true";
+    private string _hasPdfStr = "";
+    private string _branchFilterId = "";
+    private string _currentUserId = "";
+    private string _userBranchId = "";
+    private bool _canCreateAnyHk;
+    private bool _canSystemConfig;
+    private bool _canReview;
+    private bool _canApprove;
+    private bool _canArchive;
     private readonly HashSet<HKCardStatus> _deletableStatuses = new();
-    private bool canSystemConfig;
-    private System.Security.Claims.ClaimsPrincipal? _currentUser;
+    private Guid? _openActionMenuCardId;
+    private CancellationTokenSource? _loadCts;
+    private string? _errorMessage;
 
     private bool _showDeleteDialog;
     private Guid _deleteCardId;
     private string _deleteReason = "";
     private string? _deleteError;
-    private HKCardListItemDto? _deleteCard;
-    private CancellationTokenSource? _loadCts;
+    private HKCardRegistryListItemDto? _deleteCard;
 
     private bool _showArchiveModal;
     private Guid _archiveCardId;
@@ -311,143 +456,322 @@
     private string _archiveReason = "";
     private string? _archiveError;
 
-    private string filterCode = "";
-    private string filterStatus = "";
-    private string filterVersion = "";
-    private string filterLevel = "";
-    private string filterNode = "";
+    private readonly List<StatusOption> _statusOptions = new()
+    {
+        new(HKCardStatus.Draft, "Черновик"),
+        new(HKCardStatus.OnReview, "На согласовании"),
+        new(HKCardStatus.RevisionRequired, "На доработке"),
+        new(HKCardStatus.Approved, "Утверждена"),
+        new(HKCardStatus.Archived, "В архиве"),
+        new(HKCardStatus.Deleted, "Закрыта")
+    };
+
+    private readonly List<LevelOption> _levelOptions = new()
+    {
+        new(HKObjectLevel.Complex, "Комплекс"),
+        new(HKObjectLevel.EquipmentModel, "Изделие"),
+        new(HKObjectLevel.Aggregate, "Агрегат"),
+        new(HKObjectLevel.Node, "Узел")
+    };
+
+    private readonly List<ExpirationOption> _expirationOptions = new()
+    {
+        new(HKCardExpirationFilter.All, "Все"),
+        new(HKCardExpirationFilter.Expiring90Days, "Истекает в течение 90 дней"),
+        new(HKCardExpirationFilter.Expiring30Days, "Истекает в течение 30 дней"),
+        new(HKCardExpirationFilter.Expired, "Просрочена")
+    };
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
-        _currentUser = user;
-        currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
-        canCreate = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate, PermissionCodes.HKAggregateCreate, PermissionCodes.HKEquipmentCreate, PermissionCodes.HKComplexCreate);
-        canSendToApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeSubmit, PermissionCodes.HKAggregateSubmit, PermissionCodes.HKEquipmentSubmit, PermissionCodes.HKComplexSubmit);
-        canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
-        canVerify = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
-        canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
-        canCreateNewVersion = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
-        canArchive = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKArchive);
-        canSystemConfig = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
+        _currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        _userBranchId = user.FindFirst("BranchId")?.Value ?? "";
 
-        var checks = new (HKCardStatus Status, string PermissionCode)[]
+        _canCreateAnyHk = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKNodeCreate)
+            || await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKAggregateCreate)
+            || await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKEquipmentCreate)
+            || await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKComplexCreate);
+        _canSystemConfig = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.SystemConfig);
+        _canReview = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKReview);
+        _canApprove = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKApprove);
+        _canArchive = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKArchive);
+
+        var deleteChecks = new (HKCardStatus Status, string PermissionCode)[]
         {
             (HKCardStatus.Draft, PermissionCodes.HKDeleteDraft),
             (HKCardStatus.OnReview, PermissionCodes.HKDeleteOnReview),
             (HKCardStatus.RevisionRequired, PermissionCodes.HKDeleteRevisionRequired),
         };
-        foreach (var (status, permissionCode) in checks)
+        foreach (var (status, permissionCode) in deleteChecks)
         {
-            if (await Perms.HasPermissionAsync(currentUserId, permissionCode))
+            if (await Perms.HasPermissionAsync(_currentUserId, permissionCode))
                 _deletableStatuses.Add(status);
         }
 
-        var claim = user.FindFirst("BranchId");
-        if (claim != null) userBranchId = claim.Value;
         _loadCts = new CancellationTokenSource();
-        await LoadCards();
+        await LoadBranchesAsync();
+        await LoadAuthorsAsync();
+        await LoadDataAsync();
     }
 
-    private async Task LoadCards()
+    private async Task LoadBranchesAsync()
     {
-        if (_loadCts is null)
-            return;
+        if (!_canSystemConfig) return;
+        await using (await DbLock.WaitAsync())
+        {
+            _branches = await HKCardService.GetAllBranchesAsync();
+        }
+    }
 
+    private async Task LoadAuthorsAsync()
+    {
+        await using (await DbLock.WaitAsync())
+        {
+            _authors = await HKCardService.GetAuthorsAsync();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        if (_loadCts is null) return;
         var ct = _loadCts.Token;
-        loading = true;
+        _loading = true;
+        _errorMessage = null;
         try
         {
             await using (await DbLock.WaitAsync(ct))
             {
-                if (ct.IsCancellationRequested)
-                    return;
+                if (ct.IsCancellationRequested) return;
 
-                Guid? branchFilter = Guid.TryParse(userBranchId, out var branchId) ? branchId : null;
-                statusCounts = await HKCardService.GetStatusCountsAsync(branchFilter, ct);
-                totalCount = statusCounts.Values.Sum();
+                _query.BranchId = Guid.TryParse(_branchFilterId, out var b) ? b : (_canSystemConfig ? null : Guid.TryParse(_userBranchId, out var ub) ? ub : null);
+                _query.SortDescending = _sortDescStr == "true";
+                _query.HasPdf = _hasPdfStr switch { "true" => true, "false" => false, _ => null };
 
-                HKCardStatus? statusFilter = null;
-                if (!string.IsNullOrEmpty(filterStatus) && Enum.TryParse<HKCardStatus>(filterStatus, out var parsedStatus))
-                    statusFilter = parsedStatus;
+                _kpi = await HKCardService.GetRegistryKpiAsync(_query.BranchId, ct);
+                _result = await HKCardService.GetRegistryPageAsync(_query, ct);
 
-                HKObjectLevel? levelFilter = null;
-                if (!string.IsNullOrEmpty(filterLevel) && Enum.TryParse<HKObjectLevel>(filterLevel, out var parsedLevel))
-                    levelFilter = parsedLevel;
+                var taskResult = await TaskService.GetMyTasksAsync(new WorkTaskQuery
+                {
+                    Page = 1,
+                    PageSize = 5,
+                    ActiveOnly = true,
+                    SortBy = "due",
+                    SortDescending = false
+                }, ct);
+                _myTasks = taskResult.Items.ToList();
 
-                var paged = await HKCardService.GetFilteredAsync(
-                    code: string.IsNullOrWhiteSpace(filterCode) ? null : filterCode,
-                    status: statusFilter,
-                    objectLevel: levelFilter,
-                    version: string.IsNullOrWhiteSpace(filterVersion) ? null : filterVersion,
-                    nodeSearch: string.IsNullOrWhiteSpace(filterNode) ? null : filterNode,
-                    branchId: branchFilter,
-                    page: 1,
-                    pageSize: 200,
-                    ct: ct);
-                filteredCards = paged.Items.ToList();
-
-                taskCardsOnReview = await HKCardService.GetTaskCardsAsync(HKCardStatus.OnReview, branchFilter, ct);
-                taskCardsRevision = await HKCardService.GetTaskCardsAsync(HKCardStatus.RevisionRequired, branchFilter, ct);
+                if (_selectedCard != null)
+                {
+                    _selectedCard = _result.Items.FirstOrDefault(c => c.Id == _selectedCard.Id);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // компонент уже уничтожен, не обновляем UI
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Ошибка загрузки: {ex.Message}";
         }
         finally
         {
-            loading = false;
+            _loading = false;
         }
     }
 
     private async Task ApplyFilters()
     {
-        await LoadCards();
+        _query.Page = 1;
+        await LoadDataAsync();
     }
 
-    private async Task SelectCard(Guid id)
+    private async Task ResetFilters()
     {
-        selectedCard = await HKCardService.GetByIdAsync(id);
+        _query = new HKCardRegistryQuery { PageSize = 50 };
+        _sortDescStr = "true";
+        _hasPdfStr = "";
+        _branchFilterId = "";
+        _showAdvanced = false;
+        await LoadDataAsync();
     }
+
+    private async Task GoToPage(int page)
+    {
+        _query.Page = page;
+        await LoadDataAsync();
+    }
+
+    private async Task SetStatusFilter(HKCardStatus? status)
+    {
+        _query.Status = status;
+        _query.RequiresMyAction = false;
+        _query.Page = 1;
+        await LoadDataAsync();
+    }
+
+    private async Task SetRequiresMyAction(bool value)
+    {
+        _query.RequiresMyAction = value;
+        _query.Status = null;
+        _query.Page = 1;
+        await LoadDataAsync();
+    }
+
+    private void ToggleAdvanced() => _showAdvanced = !_showAdvanced;
 
     private void GoToCreate() => Nav.NavigateTo("/хк/создать");
     private void GoToEdit(Guid id) => Nav.NavigateTo($"/хк/{id}");
+    private string PdfUrl(Guid id) => $"{Nav.BaseUri}api/hkcards/{id}/attachment/content?inline=true";
 
-    private bool CanDeleteCard(HKCardListItemDto card)
+    private async Task SelectCard(Guid id)
     {
-        if (!_deletableStatuses.Contains(card.Status)) return false;
-        if (canSystemConfig) return true;
-        return card.BranchId.ToString() == userBranchId;
+        _openActionMenuCardId = null;
+        _selectedCard = _result.Items.FirstOrDefault(c => c.Id == id);
+        if (_selectedCard == null)
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                var card = await HKCardService.GetByIdAsync(id);
+                if (card != null)
+                {
+                    _selectedCard = new HKCardRegistryListItemDto
+                    {
+                        Id = card.Id,
+                        Code = card.Code,
+                        Version = card.Version,
+                        Status = card.Status,
+                        ObjectLevel = card.ObjectLevel,
+                        BranchId = card.BranchId,
+                        BranchName = card.Branch?.Name,
+                        EffectiveDate = card.EffectiveDate,
+                        ExpirationDate = card.ExpirationDate,
+                        RequestOrganization = card.RequestOrganization,
+                        IncomingLetterNumber = card.IncomingLetterNumber,
+                        OutgoingLetterNumber = card.OutgoingLetterNumber,
+                        AuthorId = card.AuthorId?.ToString()
+                    };
+                }
+            }
+        }
     }
 
-    private bool CanCreateNewVersion(HKCardListItemDto card)
+    private void ToggleActionMenu(Guid cardId)
     {
-        if (!canCreateNewVersion) return false;
-        if (card.Status is not (HKCardStatus.Approved or HKCardStatus.Archived)) return false;
-        if (canSystemConfig) return true;
-        return card.BranchId.ToString() == userBranchId;
+        _openActionMenuCardId = _openActionMenuCardId == cardId ? null : cardId;
     }
+
+    private List<ActionGroup> GetActionGroups(HKCardRegistryListItemDto card)
+    {
+        var document = new List<ActionItem>();
+        if (CanEdit(card))
+            document.Add(new ActionItem("edit", "Редактировать"));
+        if (CanCreateNewVersion(card))
+            document.Add(new ActionItem("version", "Создать новую версию"));
+        if (card.HasPdf)
+            document.Add(new ActionItem("pdf", "Открыть PDF"));
+
+        var approval = new List<ActionItem>();
+        if (CanSubmit(card))
+            approval.Add(new ActionItem("submit", "Отправить на согласование"));
+        if (CanReturn(card))
+            approval.Add(new ActionItem("return", "Вернуть в черновик"));
+        if (CanApprove(card))
+            approval.Add(new ActionItem("approve", "Утвердить"));
+        if (CanArchive(card))
+            approval.Add(new ActionItem("archive", "Архивировать"));
+
+        var closing = new List<ActionItem>();
+        if (CanDelete(card))
+            closing.Add(new ActionItem("delete", "Удалить"));
+
+        var groups = new List<ActionGroup>();
+        if (document.Any()) groups.Add(new ActionGroup("Документ", document));
+        if (approval.Any()) groups.Add(new ActionGroup("Согласование", approval));
+        if (closing.Any()) groups.Add(new ActionGroup("Закрытие", closing));
+        return groups;
+    }
+
+    private async Task ExecuteAction(HKCardRegistryListItemDto card, string key)
+    {
+        _openActionMenuCardId = null;
+        switch (key)
+        {
+            case "edit": GoToEdit(card.Id); break;
+            case "version": await CreateNewVersion(card.Id); break;
+            case "pdf": Nav.NavigateTo(PdfUrl(card.Id), forceLoad: true); break;
+            case "submit": await ChangeStatus(card.Id, HKCardStatus.OnReview, "Отправлено на согласование из реестра"); break;
+            case "return": await ChangeStatus(card.Id, HKCardStatus.RevisionRequired, "Возвращено в черновик из реестра"); break;
+            case "approve": await ChangeStatus(card.Id, HKCardStatus.Approved, "Утверждено из реестра"); break;
+            case "archive": await OpenArchiveModal(card.Id); break;
+            case "delete": OpenDeleteDialog(card); break;
+        }
+    }
+
+    private async Task ChangeStatus(Guid id, HKCardStatus status, string comment)
+    {
+        var (success, error) = await HKCardService.ChangeStatusAsync(id, status, comment);
+        if (!success)
+        {
+            _errorMessage = error ?? "Не удалось изменить статус.";
+            return;
+        }
+        await LoadDataAsync();
+    }
+
+    private bool CanEdit(HKCardRegistryListItemDto card) =>
+        (card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired)
+        && HasEditDraftPermission(card.ObjectLevel)
+        && (card.BranchId.ToString() == _userBranchId || _canSystemConfig);
+
+    private bool HasEditDraftPermission(HKObjectLevel level) => level switch
+    {
+        HKObjectLevel.Node => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKNodeEditDraft).Result,
+        HKObjectLevel.Aggregate => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKAggregateEditDraft).Result,
+        HKObjectLevel.EquipmentModel => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKEquipmentEditDraft).Result,
+        HKObjectLevel.Complex => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKComplexEditDraft).Result,
+        _ => false
+    };
+
+    private bool CanSubmit(HKCardRegistryListItemDto card) =>
+        (card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired)
+        && HasSubmitPermission(card.ObjectLevel)
+        && (card.BranchId.ToString() == _userBranchId || _canSystemConfig);
+
+    private bool HasSubmitPermission(HKObjectLevel level) => level switch
+    {
+        HKObjectLevel.Node => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKNodeSubmit).Result,
+        HKObjectLevel.Aggregate => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKAggregateSubmit).Result,
+        HKObjectLevel.EquipmentModel => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKEquipmentSubmit).Result,
+        HKObjectLevel.Complex => Perms.HasPermissionAsync(_currentUserId, PermissionCodes.HKComplexSubmit).Result,
+        _ => false
+    };
+
+    private bool CanReturn(HKCardRegistryListItemDto card) =>
+        card.Status == HKCardStatus.OnReview && _canReview && (card.BranchId.ToString() == _userBranchId || _canSystemConfig);
+
+    private bool CanApprove(HKCardRegistryListItemDto card) =>
+        card.Status == HKCardStatus.OnReview && _canApprove && (card.BranchId.ToString() == _userBranchId || _canSystemConfig);
+
+    private bool CanArchive(HKCardRegistryListItemDto card) =>
+        card.Status == HKCardStatus.Approved && _canArchive && (card.BranchId.ToString() == _userBranchId || _canSystemConfig);
+
+    private bool CanCreateNewVersion(HKCardRegistryListItemDto card) =>
+        (card.Status is HKCardStatus.Approved or HKCardStatus.Archived)
+        && _canCreateAnyHk
+        && (card.BranchId.ToString() == _userBranchId || _canSystemConfig);
+
+    private bool CanDelete(HKCardRegistryListItemDto card) =>
+        _deletableStatuses.Contains(card.Status) && (card.BranchId.ToString() == _userBranchId || _canSystemConfig);
 
     private async Task CreateNewVersion(Guid id)
     {
         var (success, newCardId, error) = await HKCardService.CreateNewVersionAsync(id);
         if (success && newCardId.HasValue)
-        {
             Nav.NavigateTo($"/хк/{newCardId.Value}");
-        }
-    }
-
-    private bool CanArchiveCard(HKCardListItemDto card)
-    {
-        if (!canArchive) return false;
-        if (card.Status != HKCardStatus.Approved) return false;
-        if (canSystemConfig) return true;
-        return card.BranchId.ToString() == userBranchId;
+        else
+            _errorMessage = error ?? "Не удалось создать версию.";
     }
 
     private async Task OpenArchiveModal(Guid id)
@@ -486,21 +810,19 @@
             _archiveError = "Выберите заменяющую утверждённую ХК.";
             return;
         }
-
         var (success, error) = await HKCardService.ArchiveAsync(_archiveCardId, _archiveReplacementCardId, reason);
         if (!success)
         {
             _archiveError = error ?? "Не удалось заархивировать ХК.";
             return;
         }
-
         CloseArchiveModal();
-        await LoadCards();
+        await LoadDataAsync();
     }
 
-    private void OpenDeleteDialog(HKCardListItemDto card)
+    private void OpenDeleteDialog(HKCardRegistryListItemDto card)
     {
-        if (!CanDeleteCard(card)) return;
+        if (!CanDelete(card)) return;
         _deleteCard = card;
         _deleteCardId = card.Id;
         _deleteReason = "";
@@ -525,16 +847,14 @@
             _deleteError = "Укажите причину удаления ХК.";
             return;
         }
-
         var (success, error) = await HKCardService.DeleteAsync(_deleteCardId, reason);
         if (!success)
         {
             _deleteError = error ?? "Не удалось удалить ХК.";
             return;
         }
-
         CloseDeleteDialog();
-        await LoadCards();
+        await LoadDataAsync();
     }
 
     private static string LevelName(HKObjectLevel level) => level switch
@@ -546,16 +866,64 @@
         _ => "—"
     };
 
-    private void DeleteCard(Guid id)
+    private static string TaskStatusLabel(WorkTaskStatus status) => status switch
     {
-        var card = filteredCards.FirstOrDefault(c => c.Id == id);
-        if (card == null || !CanDeleteCard(card)) return;
-        OpenDeleteDialog(card);
-    }
+        WorkTaskStatus.Open => "Открыта",
+        WorkTaskStatus.InProgress => "В работе",
+        WorkTaskStatus.Completed => "Выполнена",
+        WorkTaskStatus.Cancelled => "Отменена",
+        WorkTaskStatus.Overdue => "Просрочена",
+        _ => status.ToString()
+    };
+
+    private static string TaskStatusTag(WorkTaskStatus status) => status switch
+    {
+        WorkTaskStatus.Open => "warn",
+        WorkTaskStatus.InProgress => "",
+        WorkTaskStatus.Completed => "ok",
+        WorkTaskStatus.Cancelled => "",
+        WorkTaskStatus.Overdue => "bad",
+        _ => ""
+    };
+
+    private static string TaskTypeLabel(WorkTaskType type) => type switch
+    {
+        WorkTaskType.HKReview => "Проверка ХК",
+        WorkTaskType.HKRevision => "Доработка ХК",
+        WorkTaskType.HKExpirationReview => "Срок действия ХК",
+        WorkTaskType.ParentHKRevision => "Доработка родительской ХК",
+        WorkTaskType.CompositionReview => "Согласование состава",
+        WorkTaskType.CompositionReadiness => "Готовность состава",
+        _ => type.ToString()
+    };
+
+    private static string TaskEntityLabel(WorkTaskListItemDto task) => task.EntityType switch
+    {
+        "HKCard" => $"ХК {task.EntityCodeSnapshot}",
+        "ProductComposition" => $"Состав изделия {task.EntityCodeSnapshot}",
+        "ComplexComposition" => $"Состав комплекса {task.EntityCodeSnapshot}",
+        "AggregateComposition" => $"Состав агрегата {task.EntityCodeSnapshot}",
+        _ => task.EntityType ?? ""
+    };
+
+    private static string TaskEntityUrl(WorkTaskListItemDto task) => task.EntityType switch
+    {
+        "HKCard" when task.EntityId.HasValue => $"/хк/{task.EntityId.Value}",
+        "ProductComposition" when task.EntityId.HasValue => $"/составы/изделия/{task.EntityId.Value}/версии/{task.EntityId.Value}",
+        "ComplexComposition" when task.EntityId.HasValue => $"/составы/комплексы/{task.EntityId.Value}/версии/{task.EntityId.Value}",
+        "AggregateComposition" when task.EntityId.HasValue => $"/составы/агрегаты/{task.EntityId.Value}/версии/{task.EntityId.Value}",
+        _ => $"/задачи/{task.Id}"
+    };
 
     public void Dispose()
     {
         _loadCts?.Cancel();
         _loadCts?.Dispose();
     }
+
+    private sealed record StatusOption(HKCardStatus Value, string Label);
+    private sealed record LevelOption(HKObjectLevel Value, string Label);
+    private sealed record ExpirationOption(HKCardExpirationFilter Value, string Label);
+    private sealed record ActionItem(string Key, string Label);
+    private sealed record ActionGroup(string Title, List<ActionItem> Actions);
 }

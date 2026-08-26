@@ -208,16 +208,20 @@
                         <div class="field">
                             <label>Уровень объекта</label>
                             <div class="hk-level-segmented" role="tablist" aria-label="Уровень объекта">
-                                @foreach (var lvl in LevelOrder)
+                                @foreach (var lvl in GetVisibleLevels())
                                 {
                                     var active = selectedLevel == lvl;
                                     <button type="button"
                                             class="hk-level-segmented-item @(active ? "active" : "")"
                                             role="tab" aria-selected="@active.ToString().ToLower()"
-                                            disabled="@(!canEdit)"
+                                            disabled="@(!IsNew || !canEdit)"
                                             @onclick="() => SelectLevel(lvl)">
                                         @LevelName(lvl)
                                     </button>
+                                }
+                                @if (!GetVisibleLevels().Any())
+                                {
+                                    <div class="note">Нет прав для создания ХК ни на одном уровне.</div>
                                 }
                             </div>
                         </div>
@@ -881,6 +885,10 @@
     private bool canReturn;
     private bool canArchive;
     private bool canCreateNewVersion;
+    private bool canCreateNode;
+    private bool canCreateAggregate;
+    private bool canCreateEquipmentModel;
+    private bool canCreateComplex;
     private string currentUserId = "";
     private string? errorMessage;
     private bool showReturnModal;
@@ -998,6 +1006,10 @@
             || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate)
             || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate)
             || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
+        canCreateNode = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate);
+        canCreateAggregate = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate);
+        canCreateEquipmentModel = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate);
+        canCreateComplex = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
 
         complexes = await EquipmentService.GetComplexesAsync();
         models = await EquipmentService.GetModelsAsync();
@@ -1720,8 +1732,20 @@
         };
     }
 
+    private HKObjectLevel[] GetVisibleLevels() => IsNew
+        ? LevelOrder.Where(l => l switch
+        {
+            HKObjectLevel.Node => canCreateNode,
+            HKObjectLevel.Aggregate => canCreateAggregate,
+            HKObjectLevel.EquipmentModel => canCreateEquipmentModel,
+            HKObjectLevel.Complex => canCreateComplex,
+            _ => false
+        }).ToArray()
+        : new[] { selectedLevel };
+
     private void SelectLevel(HKObjectLevel level)
     {
+        if (!IsNew) return;
         selectedLevel = level;
         ClearObject();
         if (IsNew)
