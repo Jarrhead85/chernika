@@ -12,7 +12,9 @@ public record AddPartRequest(Guid CompositionId, string Name, string? Descriptio
 
 public record UpdatePartRequest(Guid PartId, string Name, string? Description, int SortOrder);
 
-public record AddProductCompositionAggregateRequest(Guid PartId, Guid AggregateId, int Quantity);
+public record AddProductCompositionAggregateRequest(Guid ProductCompositionId, Guid? PartId, Guid AggregateId, int Quantity, int SortOrder = 0, string? Notes = null);
+
+public record MoveProductCompositionAggregateRequest(Guid AggregateItemId, Guid? TargetPartId);
 
 public record UpdateProductCompositionAggregateRequest(Guid Id, int Quantity, int SortOrder, string? Notes);
 

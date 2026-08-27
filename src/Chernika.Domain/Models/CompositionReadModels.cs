@@ -22,7 +22,8 @@ public record ProductCompositionReadModel(
     Guid? SupersedesProductCompositionId,
     string? AuthorName,
     EquipmentModelRef? EquipmentModel,
-    IReadOnlyList<ProductCompositionPartReadModel> Parts);
+    IReadOnlyList<ProductCompositionPartReadModel> Parts,
+    IReadOnlyList<ProductCompositionAggregateReadModel> UngroupedAggregates);
 
 public record ProductCompositionPartReadModel(
     Guid Id,

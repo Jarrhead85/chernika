@@ -188,12 +188,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<ProductCompositionAggregate>(e =>
         {
             e.HasKey(x => x.Id);
-            e.HasOne(x => x.ProductComposition).WithMany().HasForeignKey(x => x.ProductCompositionId)
+            e.HasOne(x => x.ProductComposition).WithMany(x => x.Aggregates).HasForeignKey(x => x.ProductCompositionId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Part).WithMany(x => x.Aggregates).HasForeignKey(x => x.PartId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Aggregate).WithMany(x => x.ProductCompositionAggregates).HasForeignKey(x => x.AggregateId);
-            e.HasIndex(x => new { x.ProductCompositionId, x.AggregateId }).IsUnique();
+
+            e.HasIndex(x => new { x.PartId, x.AggregateId })
+                .IsUnique()
+                .HasFilter("\"PartId\" IS NOT NULL")
+                .HasDatabaseName("IX_ProductCompositionAggregates_PartId_AggregateId");
+
+            e.HasIndex(x => new { x.ProductCompositionId, x.AggregateId })
+                .IsUnique()
+                .HasFilter("\"PartId\" IS NULL")
+                .HasDatabaseName("IX_ProductCompositionAggregates_ProductCompositionId_AggregateId_NoPart");
+
+            e.ToTable(t => t.HasCheckConstraint("CK_ProductCompositionAggregates_Quantity", "\"Quantity\" > 0"));
         });
 
         modelBuilder.Entity<AggregateComposition>(e =>

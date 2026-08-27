@@ -19,7 +19,7 @@ public class CompositionWorkflowIntegrationTests
     {
         await using var s = _fixture.CreateScope();
         var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
-        var aggregate = await AddAggregateAsync(s, partId);
+        var aggregate = await AddAggregateAsync(s, compositionId, partId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await s.Equipment.SubmitForReviewAsync(compositionId);
@@ -44,7 +44,7 @@ public class CompositionWorkflowIntegrationTests
     {
         await using var s = _fixture.CreateScope();
         var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
-        var aggregate = await AddAggregateAsync(s, partId);
+        var aggregate = await AddAggregateAsync(s, compositionId, partId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await s.Equipment.SubmitForReviewAsync(compositionId);
@@ -73,7 +73,7 @@ public class CompositionWorkflowIntegrationTests
     {
         await using var s = _fixture.CreateScope();
         var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
-        var aggregate = await AddAggregateAsync(s, partId);
+        var aggregate = await AddAggregateAsync(s, compositionId, partId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await s.Equipment.SubmitForReviewAsync(compositionId);
@@ -104,7 +104,7 @@ public class CompositionWorkflowIntegrationTests
     {
         await using var s = _fixture.CreateScope();
         var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
-        var aggregate = await AddAggregateAsync(s, partId);
+        var aggregate = await AddAggregateAsync(s, compositionId, partId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await s.Equipment.SubmitForReviewAsync(compositionId);
@@ -147,7 +147,7 @@ public class CompositionWorkflowIntegrationTests
         var aggregate = new Aggregate { Id = Guid.NewGuid(), Code = "A-" + Guid.NewGuid().ToString("N")[..6], Name = "Агрегат C" };
         s.Db.Aggregates.Add(aggregate);
         await s.Db.SaveChangesAsync();
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(part.Id, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(comp.Id, part.Id, aggregate.Id, 1));
 
         await s.Users.RemoveFromRoleAsync(normAdminC, nameof(UserRole.NormAdmin));
 
@@ -170,7 +170,7 @@ public class CompositionWorkflowIntegrationTests
     {
         await using var s = _fixture.CreateScope();
         var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
-        var aggregate = await AddAggregateAsync(s, partId);
+        var aggregate = await AddAggregateAsync(s, compositionId, partId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await s.Equipment.SubmitForReviewAsync(compositionId);
@@ -188,7 +188,7 @@ public class CompositionWorkflowIntegrationTests
     {
         await using var s = _fixture.CreateScope();
         var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
-        var aggregate = await AddAggregateAsync(s, partId);
+        var aggregate = await AddAggregateAsync(s, compositionId, partId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await s.Equipment.SubmitForReviewAsync(compositionId);
@@ -211,7 +211,7 @@ public class CompositionWorkflowIntegrationTests
     {
         await using var s = _fixture.CreateScope();
         var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
-        var aggregate = await AddAggregateAsync(s, partId);
+        var aggregate = await AddAggregateAsync(s, compositionId, partId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await s.Equipment.SubmitForReviewAsync(compositionId);
@@ -248,7 +248,7 @@ public class CompositionWorkflowIntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
         await s.Equipment.SubmitForReviewAsync(compositionId);
         await s.Equipment.ApproveCompositionAsync(compositionId, null);
 
@@ -265,7 +265,7 @@ public class CompositionWorkflowIntegrationTests
         Assert.Single(notifications);
     }
 
-    private async Task<Aggregate> AddAggregateAsync(TestScope s, Guid partId)
+    private async Task<Aggregate> AddAggregateAsync(TestScope s, Guid compositionId, Guid partId)
     {
         var aggregate = new Aggregate
         {
@@ -277,7 +277,7 @@ public class CompositionWorkflowIntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
         return aggregate;
     }
 

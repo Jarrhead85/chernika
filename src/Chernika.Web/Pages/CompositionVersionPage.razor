@@ -120,12 +120,38 @@
                     }
                     else if (Level == 1)
                     {
-                        @if (!selectedProductComposition!.Parts.Any())
+                        @if (!selectedProductComposition!.Parts.Any() && !selectedProductComposition.UngroupedAggregates.Any())
                         {
-                            <div class="compositionEmpty">Нет составных частей.</div>
+                            <div class="compositionEmpty">Нет составных частей и агрегатов.</div>
                         }
                         else
                         {
+                            @if (selectedProductComposition.UngroupedAggregates.Any())
+                            {
+                                <div class="compositionPartPanel">
+                                    <div class="compositionPartHeader">
+                                        <span>Без группы</span>
+                                        <span class="hint">@selectedProductComposition.UngroupedAggregates.Count агрегатов</span>
+                                    </div>
+                                    <div class="tableWrap">
+                                        <table>
+                                            <thead>
+                                                <tr><th>Код агрегата</th><th>Наименование</th><th class="numeric">Количество</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var a in selectedProductComposition.UngroupedAggregates.OrderBy(x => x.Aggregate?.Code))
+                                                {
+                                                    <tr>
+                                                        <td class="mono">@a.Aggregate?.Code</td>
+                                                        <td>@a.Aggregate?.Name</td>
+                                                        <td class="numeric">@a.Quantity</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            }
                             @foreach (var part in selectedProductComposition.Parts.OrderBy(p => p.SortOrder))
                             {
                                 <div class="compositionPartPanel">
@@ -453,7 +479,8 @@
             if (Level == 1)
             {
                 var parts = selectedProductComposition?.Parts.Count ?? 0;
-                var aggregates = selectedProductComposition?.Parts.Sum(p => p.Aggregates.Count) ?? 0;
+                var aggregates = (selectedProductComposition?.Parts.Sum(p => p.Aggregates.Count) ?? 0)
+                    + (selectedProductComposition?.UngroupedAggregates.Count ?? 0);
                 return $"{parts} {(parts == 1 ? "часть" : parts is >= 2 and <= 4 ? "части" : "частей")} · {aggregates} {(aggregates == 1 ? "агрегат" : aggregates is >= 2 and <= 4 ? "агрегата" : "агрегатов")}";
             }
             var nodes = selectedAggregateComposition?.Nodes.Count ?? 0;

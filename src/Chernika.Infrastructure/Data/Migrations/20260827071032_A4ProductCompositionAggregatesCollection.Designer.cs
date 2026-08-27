@@ -3,17 +3,20 @@ using System;
 using Chernika.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace Chernika.Infrastructure.Migrations
+namespace Chernika.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260827071032_A4ProductCompositionAggregatesCollection")]
+    partial class A4ProductCompositionAggregatesCollection
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -54,7 +57,7 @@ namespace Chernika.Infrastructure.Migrations
                         .IsUnique()
                         .HasFilter("\"IsDeleted\" = false");
 
-                    b.ToTable("Aggregates", (string)null);
+                    b.ToTable("Aggregates");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.AggregateComposition", b =>
@@ -124,7 +127,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("Status", "EffectiveDate");
 
-                    b.ToTable("AggregateCompositions", (string)null);
+                    b.ToTable("AggregateCompositions");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.AggregateCompositionNode", b =>
@@ -155,7 +158,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("AggregateCompositionId", "NodeId")
                         .IsUnique();
 
-                    b.ToTable("AggregateCompositionNodes", (string)null);
+                    b.ToTable("AggregateCompositionNodes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.ApplicationUser", b =>
@@ -286,7 +289,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("Code")
                         .IsUnique();
 
-                    b.ToTable("AssemblyUnits", (string)null);
+                    b.ToTable("AssemblyUnits");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.AuditLog", b =>
@@ -339,7 +342,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("EntityType", "EntityId");
 
-                    b.ToTable("AuditLogs", (string)null);
+                    b.ToTable("AuditLogs");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.Branch", b =>
@@ -374,7 +377,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Branches", (string)null);
+                    b.ToTable("Branches");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.Coefficient", b =>
@@ -415,7 +418,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("CoefficientTypeId");
 
-                    b.ToTable("Coefficients", (string)null);
+                    b.ToTable("Coefficients");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.CoefficientType", b =>
@@ -442,7 +445,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("CoefficientTypes", (string)null);
+                    b.ToTable("CoefficientTypes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.Complex", b =>
@@ -476,7 +479,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("Code")
                         .IsUnique();
 
-                    b.ToTable("Complexes", (string)null);
+                    b.ToTable("Complexes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.ComplexComposition", b =>
@@ -546,7 +549,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("Status", "EffectiveDate");
 
-                    b.ToTable("ComplexCompositions", (string)null);
+                    b.ToTable("ComplexCompositions");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.ComplexCompositionItem", b =>
@@ -577,7 +580,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("ComplexCompositionId", "EquipmentModelId")
                         .IsUnique();
 
-                    b.ToTable("ComplexCompositionItems", (string)null);
+                    b.ToTable("ComplexCompositionItems");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.EquipmentInstance", b =>
@@ -617,7 +620,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("EquipmentModelId");
 
-                    b.ToTable("EquipmentInstances", (string)null);
+                    b.ToTable("EquipmentInstances");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.EquipmentModel", b =>
@@ -664,7 +667,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("EquipmentTypeId");
 
-                    b.ToTable("EquipmentModels", (string)null);
+                    b.ToTable("EquipmentModels");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.EquipmentType", b =>
@@ -700,7 +703,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("EquipmentTypes", (string)null);
+                    b.ToTable("EquipmentTypes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.GsmMaterial", b =>
@@ -737,7 +740,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("GsmMaterials", (string)null);
+                    b.ToTable("GsmMaterials");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCard", b =>
@@ -874,7 +877,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("Code", "Version")
                         .IsUnique();
 
-                    b.ToTable("HKCards", (string)null);
+                    b.ToTable("HKCards");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardAttachment", b =>
@@ -926,7 +929,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("HKCardId")
                         .IsUnique();
 
-                    b.ToTable("HKCardAttachments", (string)null);
+                    b.ToTable("HKCardAttachments");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardComponent", b =>
@@ -972,7 +975,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("ParentHKCardId", "ChildHKCardId")
                         .IsUnique();
 
-                    b.ToTable("HKCardComponents", (string)null);
+                    b.ToTable("HKCardComponents");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardItem", b =>
@@ -1015,7 +1018,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("HKCardId");
 
-                    b.ToTable("HKCardItems", (string)null);
+                    b.ToTable("HKCardItems");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardItemMaterial", b =>
@@ -1041,7 +1044,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("HKCardItemId");
 
-                    b.ToTable("HKCardItemMaterials", (string)null);
+                    b.ToTable("HKCardItemMaterials");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardMilitaryBranch", b =>
@@ -1056,7 +1059,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("MilitaryBranchId");
 
-                    b.ToTable("HKCardMilitaryBranches", (string)null);
+                    b.ToTable("HKCardMilitaryBranches");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -1092,7 +1095,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("HKCardId");
 
-                    b.ToTable("HKCardStatusLogs", (string)null);
+                    b.ToTable("HKCardStatusLogs");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.IndividualCard", b =>
@@ -1139,7 +1142,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("ProductCompositionId");
 
-                    b.ToTable("IndividualCards", (string)null);
+                    b.ToTable("IndividualCards");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.IndividualCardItem", b =>
@@ -1171,7 +1174,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("IndividualCardId");
 
-                    b.ToTable("IndividualCardItems", (string)null);
+                    b.ToTable("IndividualCardItems");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.MilitaryBranch", b =>
@@ -1208,7 +1211,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("MilitaryBranches", (string)null);
+                    b.ToTable("MilitaryBranches");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.Node", b =>
@@ -1244,7 +1247,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("Code")
                         .IsUnique();
 
-                    b.ToTable("Nodes", (string)null);
+                    b.ToTable("Nodes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.Notification", b =>
@@ -1325,7 +1328,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("UserId", "IsRead", "CreatedAtUtc")
                         .HasDatabaseName("IX_Notifications_UserId_IsRead_CreatedAtUtc");
 
-                    b.ToTable("Notifications", (string)null);
+                    b.ToTable("Notifications");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.ProductComposition", b =>
@@ -1395,7 +1398,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("Status", "EffectiveDate");
 
-                    b.ToTable("ProductCompositions", (string)null);
+                    b.ToTable("ProductCompositions");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.ProductCompositionAggregate", b =>
@@ -1436,7 +1439,7 @@ namespace Chernika.Infrastructure.Migrations
                         .HasDatabaseName("IX_ProductCompositionAggregates_ProductCompositionId_AggregateId_NoPart")
                         .HasFilter("\"PartId\" IS NULL");
 
-                    b.ToTable("ProductCompositionAggregates", null, t =>
+                    b.ToTable("ProductCompositionAggregates", t =>
                         {
                             t.HasCheckConstraint("CK_ProductCompositionAggregates_Quantity", "\"Quantity\" > 0");
                         });
@@ -1467,7 +1470,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("ProductCompositionId", "SortOrder");
 
-                    b.ToTable("ProductCompositionParts", (string)null);
+                    b.ToTable("ProductCompositionParts");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.ReferenceProposal", b =>
@@ -1532,7 +1535,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("HKCardId")
                         .HasDatabaseName("IX_ReferenceProposals_HKCardId");
 
-                    b.ToTable("ReferenceProposals", (string)null);
+                    b.ToTable("ReferenceProposals");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.RolePermissionTemplate", b =>
@@ -1557,7 +1560,7 @@ namespace Chernika.Infrastructure.Migrations
                         .IsUnique()
                         .HasDatabaseName("UX_RolePermissionTemplates_RoleName_PermissionCode");
 
-                    b.ToTable("RolePermissionTemplates", (string)null);
+                    b.ToTable("RolePermissionTemplates");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.UserPermissionOverride", b =>
@@ -1605,7 +1608,7 @@ namespace Chernika.Infrastructure.Migrations
                         .IsUnique()
                         .HasDatabaseName("UX_UserPermissionOverrides_UserId_PermissionCode");
 
-                    b.ToTable("UserPermissionOverrides", (string)null);
+                    b.ToTable("UserPermissionOverrides");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.WorkTask", b =>
@@ -1716,7 +1719,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("AssignedToUserId", "Status", "IsDeleted")
                         .HasDatabaseName("IX_WorkTasks_AssignedToUserId_Status_IsDeleted");
 
-                    b.ToTable("WorkTasks", null, t =>
+                    b.ToTable("WorkTasks", t =>
                         {
                             t.HasCheckConstraint("CK_WorkTasks_Assignee", "\"AssignedToUserId\" IS NOT NULL OR \"AssignedRole\" IS NOT NULL");
 
@@ -1778,7 +1781,7 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("EntityType", "EntityId", "BranchId")
                         .HasDatabaseName("IX_WorkTaskGroups_EntityType_EntityId_BranchId");
 
-                    b.ToTable("WorkTaskGroups", (string)null);
+                    b.ToTable("WorkTaskGroups");
                 });
 
             modelBuilder.Entity("CoefficientIndividualCard", b =>
@@ -1793,7 +1796,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("IndividualCardsId");
 
-                    b.ToTable("CoefficientIndividualCard", (string)null);
+                    b.ToTable("CoefficientIndividualCard");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>

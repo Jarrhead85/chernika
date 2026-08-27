@@ -86,7 +86,7 @@ public class CompositionReadModelIntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 2));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 2));
 
         var detail = await s.Equipment.GetProductCompositionDetailAsync(compositionId);
         Assert.NotNull(detail);
@@ -144,7 +144,7 @@ public class CompositionReadModelIntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 2));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 2));
 
         var summaries = await s.Equipment.GetProductCompositionSummariesAsync(modelId);
         var summary = summaries.Single(x => x.Id == compositionId);

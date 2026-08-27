@@ -100,13 +100,23 @@ public class ProductCompositionsController : ControllerBase
         return Ok(ProductCompositionMapper.ToAggregateDto(agg));
     }
 
-    [HttpPost("parts/{partId}/aggregates")]
+    [HttpPost("{compositionId}/aggregates")]
     [Authorize(Policy = "ManageComposition")]
-    public async Task<ActionResult<ProductCompositionAggregateDto>> AddAggregate(Guid partId, [FromBody] AddProductCompositionAggregateRequest req)
+    public async Task<ActionResult<ProductCompositionAggregateDto>> AddAggregate(Guid compositionId, [FromBody] AddProductCompositionAggregateRequest req)
     {
-        var request = req with { PartId = partId };
+        var request = req with { ProductCompositionId = compositionId };
         var agg = await _equipService.AddAggregateAsync(request);
         return CreatedAtAction(nameof(GetAggregateById), new { id = agg.Id }, ProductCompositionMapper.ToAggregateDto(agg));
+    }
+
+    [HttpPost("aggregates/{id}/move")]
+    [Authorize(Policy = "ManageComposition")]
+    public async Task<ActionResult> MoveAggregate(Guid id, [FromBody] MoveProductCompositionAggregateRequest req)
+    {
+        var request = req with { AggregateItemId = id };
+        var success = await _equipService.MoveProductCompositionAggregateAsync(request.AggregateItemId, request.TargetPartId);
+        if (!success) return NotFound();
+        return NoContent();
     }
 
     [HttpPut("aggregates/{id}")]

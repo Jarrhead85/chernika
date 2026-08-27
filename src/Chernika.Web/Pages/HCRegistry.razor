@@ -357,6 +357,10 @@
                         </div>
                         <div class="btnRow">
                             <button class="btn primary" @onclick="() => GoToEdit(_selectedCard.Id)">Открыть карточку</button>
+                            @if (_selectedCard.ObjectLevel != HKObjectLevel.Node)
+                            {
+                                <button class="btn" @onclick="() => OpenComposition(_selectedCard)">Открыть состав</button>
+                            }
                         </div>
                     }
                 </div>
@@ -842,6 +846,8 @@
             document.Add(new ActionItem("version", "Создать новую версию"));
         if (card.HasPdf)
             document.Add(new ActionItem("pdf", "Открыть PDF"));
+        if (card.ObjectLevel != HKObjectLevel.Node)
+            document.Add(new ActionItem("composition", "Открыть состав"));
 
         var approval = new List<ActionItem>();
         if (CanSubmit(card))
@@ -872,6 +878,7 @@
             case "edit": GoToEdit(card.Id); break;
             case "version": await CreateNewVersion(card.Id); break;
             case "pdf": Nav.NavigateTo(PdfUrl(card.Id), forceLoad: true); break;
+            case "composition": OpenComposition(card); break;
             case "submit": await ChangeStatus(card.Id, HKCardStatus.OnReview, "Отправлено на согласование из реестра"); break;
             case "return": await ChangeStatus(card.Id, HKCardStatus.RevisionRequired, "Возвращено на доработку из реестра"); break;
             case "approve": await ChangeStatus(card.Id, HKCardStatus.Approved, "Утверждено из реестра"); break;
@@ -1039,6 +1046,20 @@
         HKObjectLevel.Node => "Узел",
         _ => "—"
     };
+
+    private void OpenComposition(HKCardRegistryListItemDto card)
+    {
+        var level = card.ObjectLevel switch
+        {
+            HKObjectLevel.Complex => CompositionRegistryLevel.Complex,
+            HKObjectLevel.EquipmentModel => CompositionRegistryLevel.EquipmentModel,
+            HKObjectLevel.Aggregate => CompositionRegistryLevel.Aggregate,
+            _ => (CompositionRegistryLevel?)null
+        };
+        if (level is null) return;
+        var term = Uri.EscapeDataString(card.ObjectCode ?? card.Code);
+        Nav.NavigateTo($"/составы?level={level}&search={term}");
+    }
 
     public void Dispose()
     {

@@ -26,7 +26,7 @@ public class CompositionA2IntegrationTests
 
         s.User.CurrentUserId = Guid.Parse(_fixture.OperatorA.Id);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1)));
+            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1)));
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public class CompositionA2IntegrationTests
         s.Db.Aggregates.Add(ag);
         await s.Db.SaveChangesAsync();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, ag.Id, 1)));
+            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(productId, partId, ag.Id, 1)));
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        var pca = await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 2));
+        var pca = await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 2));
         await s.Equipment.SubmitForReviewAsync(compositionId);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -100,10 +100,10 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 2)));
+            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 2)));
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public class CompositionA2IntegrationTests
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 0)));
+            s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 0)));
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
         await s.Equipment.SubmitForReviewAsync(compositionId);
 
         var group = await s.Db.WorkTaskGroups.AsNoTracking()
@@ -181,7 +181,7 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
         await s.Equipment.SubmitForReviewAsync(compositionId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
@@ -268,7 +268,7 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
 
         var today = DateTime.UtcNow.Date;
 
@@ -316,7 +316,7 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
         await s.Equipment.SubmitForReviewAsync(compositionId);
 
         var approved = await s.Equipment.ApproveCompositionAsync(compositionId, null);
@@ -338,7 +338,7 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
         await s.Equipment.SubmitForReviewAsync(compositionId);
 
         Assert.True(await s.Db.AuditLogs.AnyAsync(a => a.EntityType == "ProductComposition" && a.EntityId == compositionId.ToString()
@@ -411,7 +411,7 @@ public class CompositionA2IntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 2));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 2));
         await s.Equipment.SubmitForReviewAsync(compositionId);
         var approved = await s.Equipment.ApproveCompositionAsync(compositionId, null);
         Assert.True(approved);

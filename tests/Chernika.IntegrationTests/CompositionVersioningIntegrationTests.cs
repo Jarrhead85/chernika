@@ -127,7 +127,7 @@ public class CompositionVersioningIntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        var pca = await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 3));
+        var pca = await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 3));
 
         Assert.Equal(compositionId, pca.ProductCompositionId);
         Assert.Equal(partId, pca.PartId);
@@ -144,7 +144,7 @@ public class CompositionVersioningIntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 1));
 
         s.Db.ProductCompositionAggregates.Add(new ProductCompositionAggregate
         {
@@ -291,7 +291,7 @@ public class CompositionVersioningIntegrationTests
         await s.Db.SaveChangesAsync();
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(partId, aggregate.Id, 2));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 2));
         await s.Equipment.SubmitForReviewAsync(compositionId);
         var approved = await s.Equipment.ApproveCompositionAsync(compositionId, null);
         Assert.True(approved);

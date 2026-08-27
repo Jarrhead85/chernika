@@ -31,4 +31,7 @@ public class ProductComposition
     public ICollection<ProductComposition> SupersededByCompositions { get; set; } = new List<ProductComposition>();
 
     public ICollection<ProductCompositionPart> Parts { get; set; } = new List<ProductCompositionPart>();
+
+    /// <summary>Все агрегаты версии состава, включая агрегаты без группы (PartId = null).</summary>
+    public ICollection<ProductCompositionAggregate> Aggregates { get; set; } = new List<ProductCompositionAggregate>();
 }

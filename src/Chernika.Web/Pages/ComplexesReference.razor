@@ -5,6 +5,7 @@
 @using Chernika.Domain.Models
 @using Chernika.Web.Services
 @inject EquipmentService EquipService
+@inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject CircuitDbLock DbLock
@@ -100,6 +101,7 @@
                                                     <button class="linkBtn" @onclick="() => EditEntity(e)">Изменить</button>
                                                     <button class="linkBtn" style="color:var(--bad)" @onclick="() => DeleteEntity(e.Id)">Удалить</button>
                                                 }
+                                                <button class="linkBtn" @onclick="() => OpenComposition(e)">Открыть состав</button>
                                             }
                                         </div>
                                     </td>
@@ -342,6 +344,8 @@
         currentPage++;
         await ReloadAsync();
     }
+
+    void OpenComposition(Complex c) => Nav.NavigateTo($"/составы?level=Complex&search={Uri.EscapeDataString(c.Code)}");
 
     public void Dispose()
     {

@@ -169,117 +169,64 @@
                                 </div>
                             </div>
 
-                            <div class="form compositionFormRow">
-                                <div class="field"><label>Составная часть</label>
-                                    <select @bind="selectedPartId" class="field-select">
-                                        <option value="">— Выберите часть —</option>
-                                        @foreach (var p in selectedComposition.Parts.OrderBy(p => p.SortOrder))
-                                        {
-                                            <option value="@p.Id">@p.SortOrder. @p.Name</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div class="field"><label>Новая часть</label><input @bind="newPartName" placeholder="Напр. Силовая установка" /></div>
-                                <div class="field"><label>Порядок</label><input type="number" @bind="newPartSortOrder" class="field-input" /></div>
+                            <div class="form compositionFormRow compositionAddPartRow">
+                                <div class="field"><label>Новая часть</label><input @bind="inlinePartName" placeholder="Напр. Силовая установка" class="field-input" /></div>
                                 <div class="field compositionFormAction">
                                     <button class="btn" @onclick="AddPart">+ Добавить часть</button>
                                 </div>
                             </div>
+                        }
 
-                            <div class="form compositionFormRow">
-                                <div class="field"><label>Агрегат</label>
-                                    <select @bind="newAggregateId" class="field-select">
-                                        <option value="">— Выберите агрегат —</option>
-                                        @foreach (var a in aggregates)
-                                        {
-                                            <option value="@a.Id">@a.Code — @a.Name</option>
-                                        }
-                                    </select>
+                        <div class="form compositionFilterForm">
+                            <div class="field compositionFilterInput"><label>Фильтр агрегатов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
+                        </div>
+
+                        @if (CanEditSelectedDraft || selectedComposition.UngroupedAggregates.Any())
+                        {
+                            <div class="compositionPartPanel">
+                                <div class="compositionPartHeader">
+                                    <span>Без группы</span>
+                                    <span class="hint">@selectedComposition.UngroupedAggregates.Count агрегатов</span>
                                 </div>
-                                <div class="field"><label>Количество</label><input type="number" @bind="newAggregateQty" min="1" class="field-input" /></div>
-                                <div class="field compositionFormAction">
-                                    <button class="btn primary" @onclick="AddAggregate" disabled="@(selectedPartId == Guid.Empty)">+ Добавить агрегат</button>
-                                </div>
+                                @RenderAggregateTable(selectedComposition.UngroupedAggregates)
+                                @if (CanEditSelectedDraft)
+                                {
+                                    @RenderInlineAddAggregate(null)
+                                }
                             </div>
                         }
 
-                        @if (!selectedComposition.Parts.Any())
+                        @foreach (var part in selectedComposition.Parts.OrderBy(p => p.SortOrder))
                         {
-                            <div class="empty-state">Нет составных частей. Добавьте часть и агрегаты.</div>
-                        }
-                        else
-                        {
-                            <div class="form compositionFilterForm">
-                                <div class="field compositionFilterInput"><label>Фильтр агрегатов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
-                            </div>
-                            @foreach (var part in selectedComposition.Parts.OrderBy(p => p.SortOrder))
-                            {
-                                <div class="compositionPartPanel">
-                                    <div class="compositionPartHeader">
+                            <div class="compositionPartPanel">
+                                <div class="compositionPartHeader">
+                                    @if (editingPartId == part.Id)
+                                    {
+                                        <div class="field"><input @bind="editingPartName" class="field-input" /></div>
+                                        <div class="rowActions">
+                                            <button class="linkBtn" @onclick="() => SavePartName(part.Id)">Сохранить</button>
+                                            <button class="linkBtn" @onclick="CancelEditPart">Отмена</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
                                         <span>@part.Name</span>
                                         <div class="compositionPartMeta">
                                             <span class="hint">@part.Aggregates.Count агрегатов</span>
                                             @if (CanEditSelectedDraft)
                                             {
+                                                <button class="linkBtn" @onclick="() => StartEditPart(part)">Переименовать</button>
                                                 <button class="linkBtn compositionPartDelete" @onclick="() => PromptDeletePart(part.Id)">Удалить часть</button>
                                             }
                                         </div>
-                                    </div>
-                                    @{
-                                        var filteredAggregates = part.Aggregates
-                                            .Where(a => a.Aggregate != null && (string.IsNullOrWhiteSpace(nodeFilter)
-                                                || (a.Aggregate.Code?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)
-                                                || (a.Aggregate.Name?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)))
-                                            .OrderBy(a => a.Aggregate!.Code)
-                                            .ToList();
-                                    }
-                                    @if (!filteredAggregates.Any())
-                                    {
-                                        <div class="empty-state compositionEmptyCompact">В этой части нет агрегатов.</div>
-                                    }
-                                    else
-                                    {
-                                        <div class="tableWrap">
-                                            <table>
-                                                <thead>
-                                                    <tr><th>Код агрегата</th><th>Наименование</th><th class="numeric">Количество</th>@if (ShowRowActions) { <th>Действия</th> }</tr>
-                                                </thead>
-                                                <tbody>
-                                                    @foreach (var pca in filteredAggregates)
-                                                    {
-                                                        <tr>
-                                                            <td class="mono">@pca.Aggregate?.Code</td>
-                                                            <td>@pca.Aggregate?.Name</td>
-                                                            <td class="numeric">
-                                                                @if (editingAggregateId == pca.Id && CanEditSelectedDraft)
-                                                                {
-                                                                    <input type="number" @bind="editAggregateQty" class="field-input compositionQtyInput" min="1" />
-                                                                    <button class="linkBtn" @onclick="() => SaveAggregateQuantity(pca.Id)">✓</button>
-                                                                    <button class="linkBtn" @onclick="() => CancelEditAggregate()">✕</button>
-                                                                }
-                                                                else
-                                                                {
-                                                                    <span>@pca.Quantity</span>
-                                                                }
-                                                            </td>
-                                                            @if (ShowRowActions)
-                                                            {
-                                                                <td>
-                                                                    <div class="rowActions">
-                                                                        <button class="linkBtn" @onclick="() => StartEditAggregateQty(pca.Id, pca.Quantity)">Изменить кол-во</button>
-                                                                        <button class="linkBtn" @onclick="() => PromptReplaceAggregate(pca)">Заменить</button>
-                                                                        <button class="linkBtn" @onclick="() => RemoveAggregate(pca.Id)">Удалить</button>
-                                                                    </div>
-                                                                </td>
-                                                            }
-                                                        </tr>
-                                                    }
-                                                </tbody>
-                                            </table>
-                                        </div>
                                     }
                                 </div>
-                            }
+                                @RenderAggregateTable(part.Aggregates)
+                                @if (CanEditSelectedDraft)
+                                {
+                                    @RenderInlineAddAggregate(part.Id)
+                                }
+                            </div>
                         }
                     </div>
                 </section>
@@ -363,7 +310,18 @@
                 <button type="button" class="linkBtn" @onclick="CancelDeletePart">✕</button>
             </div>
             <div class="modalBody">
-                <p>Вы уверены, что хотите удалить составную часть и все входящие в неё агрегаты?</p>
+                @{
+                    var partToDelete = selectedComposition?.Parts.FirstOrDefault(p => p.Id == deletingPartId);
+                }
+                <p>Удалить часть «@(partToDelete?.Name ?? "—")»?</p>
+                @if (partToDelete != null)
+                {
+                    <p class="hint">Агрегатов в части: @partToDelete.Aggregates.Count. Они будут сохранены и перенесены в раздел «Без группы».</p>
+                }
+                @if (!string.IsNullOrEmpty(error))
+                {
+                    <div class="note warn">@error</div>
+                }
             </div>
             <div class="modalFooter">
                 <button type="button" class="btn ghost" @onclick="CancelDeletePart">Отмена</button>
@@ -392,24 +350,31 @@
     private Guid selectedModelId;
     private string comment = "";
 
-    private Guid selectedPartId;
-    private string newPartName = "Основная часть";
-    private int newPartSortOrder = 1;
-    private Guid newAggregateId;
-    private int newAggregateQty = 1;
-
     private string editComment = "";
     private DateTime? editEffectiveDate;
     private DateTime? editExpirationDate;
     private string reviewComment = "";
 
+    private string inlinePartName = "";
+
+    private Guid? editingPartId;
+    private string editingPartName = "";
+
+    private Guid? inlineAddForPartId;
+    private Guid inlineAddAggregateId;
+    private int inlineAddQty = 1;
+
     private Guid? editingAggregateId;
     private int editAggregateQty;
+
+    private Guid? movingAggregateId;
+    private Guid? moveTargetPartId;
 
     private string nodeFilter = "";
     private Guid? replacingAggregateId;
     private Guid replaceWithAggregateId = Guid.Empty;
     private Guid? deletingPartId;
+    private string? error;
 
     [Inject] private TimeProvider TimeProvider { get; set; } = null!;
     private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
@@ -469,8 +434,11 @@
             editComment = selectedComposition.Comment ?? "";
             editEffectiveDate = selectedComposition.EffectiveDate;
             editExpirationDate = selectedComposition.ExpirationDate;
-            selectedPartId = selectedComposition.Parts.OrderBy(p => p.SortOrder).FirstOrDefault()?.Id ?? Guid.Empty;
             editingAggregateId = null;
+            movingAggregateId = null;
+            inlineAddForPartId = null;
+            editingPartId = null;
+            error = null;
         }
     }
 
@@ -523,8 +491,12 @@
 
     async Task AddPart()
     {
-        if (!CanEditSelectedDraft || string.IsNullOrWhiteSpace(newPartName)) return;
-        await EquipService.AddPartAsync(new AddPartRequest(selectedComposition!.Id, newPartName.Trim(), null, newPartSortOrder));
+        if (!CanEditSelectedDraft || string.IsNullOrWhiteSpace(inlinePartName)) return;
+        var nextOrder = selectedComposition!.Parts.Any()
+            ? selectedComposition.Parts.Max(p => p.SortOrder) + 1
+            : 1;
+        await EquipService.AddPartAsync(new AddPartRequest(selectedComposition.Id, inlinePartName.Trim(), null, nextOrder));
+        inlinePartName = "";
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
     }
@@ -537,14 +509,88 @@
         await SelectCompositionAsync(selectedComposition!.Id);
     }
 
-    async Task AddAggregate()
+    void ShowInlineAddForm(Guid? partId)
     {
-        if (!CanEditSelectedDraft || newAggregateId == Guid.Empty || selectedPartId == Guid.Empty) return;
-        await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(selectedPartId, newAggregateId, newAggregateQty));
+        inlineAddForPartId = partId;
+        inlineAddAggregateId = Guid.Empty;
+        inlineAddQty = 1;
+    }
+
+    void CancelInlineAdd()
+    {
+        inlineAddForPartId = null;
+    }
+
+    async Task AddAggregateToPart(Guid? partId)
+    {
+        if (!CanEditSelectedDraft || inlineAddAggregateId == Guid.Empty) return;
+        try
+        {
+            await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(
+                selectedComposition!.Id, partId, inlineAddAggregateId, inlineAddQty));
+            inlineAddForPartId = null;
+            inlineAddAggregateId = Guid.Empty;
+            inlineAddQty = 1;
+            await LoadCompositions();
+            await SelectCompositionAsync(selectedComposition.Id);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    void StartEditPart(ProductCompositionPartReadModel part)
+    {
+        editingPartId = part.Id;
+        editingPartName = part.Name;
+    }
+
+    void CancelEditPart()
+    {
+        editingPartId = null;
+        editingPartName = "";
+    }
+
+    async Task SavePartName(Guid partId)
+    {
+        if (!CanEditSelectedDraft || string.IsNullOrWhiteSpace(editingPartName)) return;
+        var part = selectedComposition?.Parts.FirstOrDefault(p => p.Id == partId);
+        if (part == null) return;
+        await EquipService.UpdatePartAsync(new UpdatePartRequest(partId, editingPartName.Trim(), part.Description, part.SortOrder));
+        editingPartId = null;
+        editingPartName = "";
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition!.Id);
-        newAggregateId = Guid.Empty;
-        newAggregateQty = 1;
+    }
+
+    void StartMoveAggregate(ProductCompositionAggregateReadModel pca)
+    {
+        movingAggregateId = pca.Id;
+        moveTargetPartId = pca.PartId;
+    }
+
+    void CancelMoveAggregate()
+    {
+        movingAggregateId = null;
+        moveTargetPartId = null;
+    }
+
+    async Task ConfirmMoveAggregate(Guid aggregateItemId)
+    {
+        if (!CanEditSelectedDraft || !movingAggregateId.HasValue) return;
+        try
+        {
+            await EquipService.MoveProductCompositionAggregateAsync(aggregateItemId, moveTargetPartId);
+            movingAggregateId = null;
+            moveTargetPartId = null;
+            await LoadCompositions();
+            await SelectCompositionAsync(selectedComposition!.Id);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
     }
 
     void StartEditAggregateQty(Guid id, int qty)
@@ -600,8 +646,15 @@
     async Task ConfirmDeletePart()
     {
         if (!deletingPartId.HasValue) return;
-        await RemovePart(deletingPartId.Value);
-        deletingPartId = null;
+        try
+        {
+            await RemovePart(deletingPartId.Value);
+            deletingPartId = null;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
     }
 
     async Task ConfirmReplaceAggregate()
@@ -609,11 +662,12 @@
         if (!CanEditSelectedDraft || !replacingAggregateId.HasValue || replaceWithAggregateId == Guid.Empty) return;
         var oldAggregate = selectedComposition!.Parts
             .SelectMany(p => p.Aggregates)
+            .Concat(selectedComposition.UngroupedAggregates)
             .FirstOrDefault(a => a.Id == replacingAggregateId.Value);
         if (oldAggregate == null) return;
 
         await EquipService.RemoveAggregateAsync(replacingAggregateId.Value);
-        await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(oldAggregate.PartId ?? Guid.Empty, replaceWithAggregateId, oldAggregate.Quantity));
+        await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(selectedComposition!.Id, oldAggregate.PartId, replaceWithAggregateId, oldAggregate.Quantity));
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
         replacingAggregateId = null;
@@ -626,12 +680,117 @@
         if (comp == null || comp.Status != ProductCompositionStatus.Draft || !canEditDraft) return;
         await EquipService.DeleteCompositionDraftAsync(id);
         compositions.RemoveAll(c => c.Id == id);
-        if (selectedComposition?.Id == id) { selectedComposition = null; selectedPartId = Guid.Empty; editingAggregateId = null; }
+        if (selectedComposition?.Id == id) { selectedComposition = null; editingAggregateId = null; }
     }
 
     void OpenHK(Guid hkId) => Nav.NavigateTo($"/хк/{hkId}");
 
     void CreateHKForAggregate(Guid aggregateId) => Nav.NavigateTo($"/хк/создать?aggregateId={aggregateId}");
+
+    private List<ProductCompositionAggregateReadModel> FilteredAggregates(IEnumerable<ProductCompositionAggregateReadModel> aggregates) =>
+        aggregates
+            .Where(a => a.Aggregate != null && (string.IsNullOrWhiteSpace(nodeFilter)
+                || (a.Aggregate.Code?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (a.Aggregate.Name?.Contains(nodeFilter, StringComparison.OrdinalIgnoreCase) ?? false)))
+            .OrderBy(a => a.Aggregate!.Code)
+            .ToList();
+
+    private RenderFragment RenderAggregateTable(IEnumerable<ProductCompositionAggregateReadModel> aggregates)
+    {
+        var filtered = FilteredAggregates(aggregates);
+        if (!filtered.Any())
+        {
+            return @<div class="empty-state compositionEmptyCompact">Нет агрегатов.</div>;
+        }
+
+        return @<div class="tableWrap">
+            <table>
+                <thead>
+                    <tr><th>Код агрегата</th><th>Наименование</th><th class="numeric">Количество</th>@if (ShowRowActions) { <th>Действия</th> }</tr>
+                </thead>
+                <tbody>
+                    @foreach (var pca in filtered)
+                    {
+                        <tr>
+                            <td class="mono">@pca.Aggregate?.Code</td>
+                            <td>@pca.Aggregate?.Name</td>
+                            <td class="numeric">
+                                @if (editingAggregateId == pca.Id && CanEditSelectedDraft)
+                                {
+                                    <input type="number" @bind="editAggregateQty" class="field-input compositionQtyInput" min="1" />
+                                    <button class="linkBtn" @onclick="() => SaveAggregateQuantity(pca.Id)">✓</button>
+                                    <button class="linkBtn" @onclick="CancelEditAggregate">✕</button>
+                                }
+                                else
+                                {
+                                    <span>@pca.Quantity</span>
+                                }
+                            </td>
+                            @if (ShowRowActions)
+                            {
+                                <td>
+                                    @if (movingAggregateId == pca.Id)
+                                    {
+                                        <div class="rowActions compositionMoveRow">
+                                            <select class="field-select" @bind="moveTargetPartId">
+                                                <option value="@((Guid?)null)">Без группы</option>
+                                                @foreach (var p in selectedComposition!.Parts.OrderBy(x => x.SortOrder))
+                                                {
+                                                    <option value="@p.Id">@p.Name</option>
+                                                }
+                                            </select>
+                                            <button class="linkBtn" @onclick="() => ConfirmMoveAggregate(pca.Id)">Переместить</button>
+                                            <button class="linkBtn" @onclick="CancelMoveAggregate">Отмена</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="rowActions">
+                                            <button class="linkBtn" @onclick="() => StartEditAggregateQty(pca.Id, pca.Quantity)">Изменить кол-во</button>
+                                            <button class="linkBtn" @onclick="() => StartMoveAggregate(pca)">Переместить</button>
+                                            <button class="linkBtn" @onclick="() => PromptReplaceAggregate(pca)">Заменить</button>
+                                            <button class="linkBtn" @onclick="() => RemoveAggregate(pca.Id)">Удалить</button>
+                                        </div>
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>;
+    }
+
+    private RenderFragment RenderInlineAddAggregate(Guid? partId)
+    {
+        if (inlineAddForPartId != partId)
+        {
+            return @<div class="compositionSectionAction">
+                <button class="linkBtn" @onclick="() => ShowInlineAddForm(partId)">+ Добавить агрегат @(partId.HasValue ? "в часть" : "без группы")</button>
+            </div>;
+        }
+
+        return @<div class="form compositionFormRow compositionInlineAddRow">
+            <div class="field">
+                <label>Агрегат</label>
+                <select @bind="inlineAddAggregateId" class="field-select">
+                    <option value="">— Выберите агрегат —</option>
+                    @foreach (var a in aggregates.OrderBy(x => x.Code))
+                    {
+                        <option value="@a.Id">@a.Code — @a.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="field">
+                <label>Количество</label>
+                <input type="number" @bind="inlineAddQty" min="1" class="field-input" />
+            </div>
+            <div class="field compositionFormAction">
+                <button class="btn primary" @onclick="() => AddAggregateToPart(partId)" disabled="@(inlineAddAggregateId == Guid.Empty)">Добавить</button>
+                <button class="btn ghost" @onclick="CancelInlineAdd">Отмена</button>
+            </div>
+        </div>;
+    }
 
     public void Dispose()
     {
