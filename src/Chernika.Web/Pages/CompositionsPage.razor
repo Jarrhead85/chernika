@@ -73,6 +73,10 @@
             <h2>@PageTitle</h2>
             <div class="hint">@(registry?.TotalCount ?? 0) записей</div>
         </div>
+        @if (registry?.HasMoreResults == true)
+        {
+            <div class="note warn compositionRegistryLimit">Показаны первые @registry.TotalCount результатов. Уточните запрос.</div>
+        }
         <div class="panelBody">
             @if (loading)
             {

@@ -331,6 +331,204 @@ public class CompositionA4IntegrationTests
         Assert.Contains(result.Items, r => r.ObjectId == model.Id && !r.IsHistoricalArchiveRow);
     }
 
+    [Fact]
+    public async Task Registry_BranchIsolation_NormAdminBDoesNotSeeBranchAComposition()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-BRISO", Name = "Изделие филиала А" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, null));
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminB.Id);
+        var result = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            Presence = CompositionPresenceFilter.All
+        });
+
+        var row = result.Items.FirstOrDefault(r => r.ObjectId == model.Id);
+        Assert.NotNull(row);
+        Assert.Null(row.CompositionId);
+        Assert.Null(row.Status);
+    }
+
+    [Fact]
+    public async Task Registry_BranchIsolation_NormAdminB_CannotRequestBranchA()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminB.Id);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+            {
+                Level = CompositionRegistryLevel.EquipmentModel,
+                BranchId = _fixture.BranchA
+            }));
+    }
+
+    [Fact]
+    public async Task Registry_BranchIsolation_SystemAdmin_CanFilterByBranch()
+    {
+        await using var s = _fixture.CreateScope();
+        var modelA = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-SA-A", Name = "Изделие А" };
+        var modelB = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-SA-B", Name = "Изделие Б" };
+        s.Db.EquipmentModels.AddRange(modelA, modelB);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(modelA.Id, null));
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminB.Id);
+        await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(modelB.Id, null));
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        var branchAResult = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            BranchId = _fixture.BranchA
+        });
+        Assert.Contains(branchAResult.Items, r => r.ObjectId == modelA.Id && r.CompositionId.HasValue);
+        Assert.DoesNotContain(branchAResult.Items, r => r.ObjectId == modelB.Id && r.CompositionId.HasValue);
+
+        var branchBResult = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            BranchId = _fixture.BranchB
+        });
+        Assert.Contains(branchBResult.Items, r => r.ObjectId == modelB.Id && r.CompositionId.HasValue);
+        Assert.DoesNotContain(branchBResult.Items, r => r.ObjectId == modelA.Id && r.CompositionId.HasValue);
+    }
+
+    [Fact]
+    public async Task Registry_Pagination_ServerSide_ReturnsCorrectPage()
+    {
+        await using var s = _fixture.CreateScope();
+        var existingCount = await s.Db.EquipmentModels.CountAsync(m => !m.IsDeleted);
+        for (int i = 0; i < 5; i++)
+        {
+            var m = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-PAG-" + i.ToString("D2"), Name = "Пагинация " + i };
+            s.Db.EquipmentModels.Add(m);
+        }
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var all = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            PageSize = 2,
+            Page = 1,
+            SortBy = "name"
+        });
+        Assert.Equal(existingCount + 5, all.TotalCount);
+        Assert.Equal(2, all.Items.Count);
+
+        var page2 = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            PageSize = 2,
+            Page = 2,
+            SortBy = "name"
+        });
+        Assert.Equal(2, page2.Items.Count);
+        Assert.DoesNotContain(page2.Items, r => all.Items.Any(a => a.ObjectId == r.ObjectId));
+    }
+
+    [Fact]
+    public async Task Registry_ArchivedStatusFilter_WithoutShowArchived_ReturnsNothing()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-ARCHF", Name = "Архивное изделие" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (approvedId, _, _) = await CreateApprovedProductCompositionAsync(s, model.Id);
+        await s.Equipment.ArchiveCompositionAsync(approvedId);
+
+        var result = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            Status = ProductCompositionStatus.Archived,
+            ShowArchivedVersions = false
+        });
+        Assert.DoesNotContain(result.Items, r => r.ObjectId == model.Id);
+    }
+
+    [Fact]
+    public async Task Registry_ArchivedStatusFilter_WithShowArchived_ReturnsOnlyArchiveRows()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-ARCHF2", Name = "Изделие с архивом" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (approvedId, _, _) = await CreateApprovedProductCompositionAsync(s, model.Id);
+        await s.Equipment.ArchiveCompositionAsync(approvedId);
+
+        var result = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            Status = ProductCompositionStatus.Archived,
+            ShowArchivedVersions = true
+        });
+        Assert.Contains(result.Items, r => r.ObjectId == model.Id && r.IsHistoricalArchiveRow && r.Status == ProductCompositionStatus.Archived);
+        Assert.DoesNotContain(result.Items, r => r.ObjectId == model.Id && !r.IsHistoricalArchiveRow);
+    }
+
+    [Fact]
+    public async Task RemovePart_NonEmptyPart_CreatesAuditWithMovedCount()
+    {
+        await using var s = _fixture.CreateScope();
+        var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
+        var aggregate = await AddAggregateEntityAsync(s, "A-PART-AUD");
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 3));
+
+        var auditCountBefore = await s.Db.AuditLogs.CountAsync(a => a.Action == "ProductComposition.PartRemoved");
+
+        var ok = await s.Equipment.RemovePartAsync(partId);
+        Assert.True(ok);
+
+        var auditCountAfter = await s.Db.AuditLogs.CountAsync(a => a.Action == "ProductComposition.PartRemoved");
+        Assert.Equal(auditCountBefore + 1, auditCountAfter);
+
+        var audit = await s.Db.AuditLogs
+            .Where(a => a.Action == "ProductComposition.PartRemoved")
+            .OrderByDescending(a => a.CreatedAt)
+            .FirstAsync();
+        Assert.Contains("1", audit.Details);
+    }
+
+    [Fact]
+    public async Task RemovePart_DuplicateConflict_LeavesDataAndNoSuccessAudit()
+    {
+        await using var s = _fixture.CreateScope();
+        var (compositionId, _, partId) = await CreateProductCompositionDraftAsync(s);
+        var aggregate = await AddAggregateEntityAsync(s, "A-PART-CONF2");
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, null, aggregate.Id, 1));
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, partId, aggregate.Id, 2));
+
+        var auditCountBefore = await s.Db.AuditLogs.CountAsync(a => a.Action == "ProductComposition.PartRemoved");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => s.Equipment.RemovePartAsync(partId));
+
+        var partStillExists = await s.Db.ProductCompositionParts.AnyAsync(p => p.Id == partId);
+        Assert.True(partStillExists);
+
+        var rowStillInPart = await s.Db.ProductCompositionAggregates
+            .AnyAsync(a => a.ProductCompositionId == compositionId && a.PartId == partId && a.AggregateId == aggregate.Id);
+        Assert.True(rowStillInPart);
+
+        var auditCountAfter = await s.Db.AuditLogs.CountAsync(a => a.Action == "ProductComposition.PartRemoved");
+        Assert.Equal(auditCountBefore, auditCountAfter);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private async Task<(Guid CompositionId, Guid ModelId, Guid PartId)> CreateProductCompositionDraftAsync(TestScope s)

@@ -318,9 +318,9 @@
                 {
                     <p class="hint">Агрегатов в части: @partToDelete.Aggregates.Count. Они будут сохранены и перенесены в раздел «Без группы».</p>
                 }
-                @if (!string.IsNullOrEmpty(error))
+                @if (!string.IsNullOrEmpty(deletePartError))
                 {
-                    <div class="note warn">@error</div>
+                    <div class="note warn">@deletePartError</div>
                 }
             </div>
             <div class="modalFooter">
@@ -360,21 +360,27 @@
     private Guid? editingPartId;
     private string editingPartName = "";
 
-    private Guid? inlineAddForPartId;
+    private bool _isInlineAddOpen;
+    private Guid? _inlineAddForPartId;
     private Guid inlineAddAggregateId;
     private int inlineAddQty = 1;
+    private string? inlineAddError;
 
     private Guid? editingAggregateId;
     private int editAggregateQty;
 
     private Guid? movingAggregateId;
     private Guid? moveTargetPartId;
+    private string? moveError;
 
     private string nodeFilter = "";
     private Guid? replacingAggregateId;
     private Guid replaceWithAggregateId = Guid.Empty;
     private Guid? deletingPartId;
+    private string? deletePartError;
     private string? error;
+
+    private bool IsInlineAddOpenFor(Guid? partId) => _isInlineAddOpen && _inlineAddForPartId == partId;
 
     [Inject] private TimeProvider TimeProvider { get; set; } = null!;
     private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
@@ -436,8 +442,13 @@
             editExpirationDate = selectedComposition.ExpirationDate;
             editingAggregateId = null;
             movingAggregateId = null;
-            inlineAddForPartId = null;
+            moveTargetPartId = null;
+            moveError = null;
+            _isInlineAddOpen = false;
+            _inlineAddForPartId = null;
+            inlineAddError = null;
             editingPartId = null;
+            deletePartError = null;
             error = null;
         }
     }
@@ -511,14 +522,18 @@
 
     void ShowInlineAddForm(Guid? partId)
     {
-        inlineAddForPartId = partId;
+        _isInlineAddOpen = true;
+        _inlineAddForPartId = partId;
         inlineAddAggregateId = Guid.Empty;
         inlineAddQty = 1;
+        inlineAddError = null;
     }
 
     void CancelInlineAdd()
     {
-        inlineAddForPartId = null;
+        _isInlineAddOpen = false;
+        _inlineAddForPartId = null;
+        inlineAddError = null;
     }
 
     async Task AddAggregateToPart(Guid? partId)
@@ -528,15 +543,21 @@
         {
             await EquipService.AddAggregateAsync(new AddProductCompositionAggregateRequest(
                 selectedComposition!.Id, partId, inlineAddAggregateId, inlineAddQty));
-            inlineAddForPartId = null;
+            _isInlineAddOpen = false;
+            _inlineAddForPartId = null;
             inlineAddAggregateId = Guid.Empty;
             inlineAddQty = 1;
+            inlineAddError = null;
             await LoadCompositions();
             await SelectCompositionAsync(selectedComposition.Id);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            error = ex.Message;
+            inlineAddError = ex.Message;
+        }
+        catch (Exception)
+        {
+            inlineAddError = "Не удалось выполнить действие. Повторите попытку.";
         }
     }
 
@@ -567,13 +588,15 @@
     void StartMoveAggregate(ProductCompositionAggregateReadModel pca)
     {
         movingAggregateId = pca.Id;
-        moveTargetPartId = pca.PartId;
+        moveTargetPartId = null;
+        moveError = null;
     }
 
     void CancelMoveAggregate()
     {
         movingAggregateId = null;
         moveTargetPartId = null;
+        moveError = null;
     }
 
     async Task ConfirmMoveAggregate(Guid aggregateItemId)
@@ -584,12 +607,17 @@
             await EquipService.MoveProductCompositionAggregateAsync(aggregateItemId, moveTargetPartId);
             movingAggregateId = null;
             moveTargetPartId = null;
+            moveError = null;
             await LoadCompositions();
             await SelectCompositionAsync(selectedComposition!.Id);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            error = ex.Message;
+            moveError = ex.Message;
+        }
+        catch (Exception)
+        {
+            moveError = "Не удалось выполнить действие. Повторите попытку.";
         }
     }
 
@@ -641,6 +669,7 @@
     void CancelDeletePart()
     {
         deletingPartId = null;
+        deletePartError = null;
     }
 
     async Task ConfirmDeletePart()
@@ -650,10 +679,15 @@
         {
             await RemovePart(deletingPartId.Value);
             deletingPartId = null;
+            deletePartError = null;
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            error = ex.Message;
+            deletePartError = ex.Message;
+        }
+        catch (Exception)
+        {
+            deletePartError = "Не удалось выполнить действие. Повторите попытку.";
         }
     }
 
@@ -733,14 +767,23 @@
                                     {
                                         <div class="rowActions compositionMoveRow">
                                             <select class="field-select" @bind="moveTargetPartId">
-                                                <option value="@((Guid?)null)">Без группы</option>
-                                                @foreach (var p in selectedComposition!.Parts.OrderBy(x => x.SortOrder))
+                                                @if (pca.PartId.HasValue)
+                                                {
+                                                    <option value="@((Guid?)null)">Без группы</option>
+                                                }
+                                                @foreach (var p in selectedComposition!.Parts
+                                                    .Where(p => p.Id != pca.PartId)
+                                                    .OrderBy(x => x.SortOrder))
                                                 {
                                                     <option value="@p.Id">@p.Name</option>
                                                 }
                                             </select>
                                             <button class="linkBtn" @onclick="() => ConfirmMoveAggregate(pca.Id)">Переместить</button>
                                             <button class="linkBtn" @onclick="CancelMoveAggregate">Отмена</button>
+                                            @if (!string.IsNullOrEmpty(moveError))
+                                            {
+                                                <span class="note warn compositionMoveError">@moveError</span>
+                                            }
                                         </div>
                                     }
                                     else
@@ -763,7 +806,7 @@
 
     private RenderFragment RenderInlineAddAggregate(Guid? partId)
     {
-        if (inlineAddForPartId != partId)
+        if (!IsInlineAddOpenFor(partId))
         {
             return @<div class="compositionSectionAction">
                 <button class="linkBtn" @onclick="() => ShowInlineAddForm(partId)">+ Добавить агрегат @(partId.HasValue ? "в часть" : "без группы")</button>
@@ -789,6 +832,10 @@
                 <button class="btn primary" @onclick="() => AddAggregateToPart(partId)" disabled="@(inlineAddAggregateId == Guid.Empty)">Добавить</button>
                 <button class="btn ghost" @onclick="CancelInlineAdd">Отмена</button>
             </div>
+            @if (!string.IsNullOrEmpty(inlineAddError))
+            {
+                <div class="note warn compositionInlineAddError">@inlineAddError</div>
+            }
         </div>;
     }
 

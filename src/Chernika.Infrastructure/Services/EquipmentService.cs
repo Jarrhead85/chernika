@@ -1264,13 +1264,39 @@ public class EquipmentService
         {
             if (existingUngroupedAggregateIds.Contains(aggregate.AggregateId))
                 throw new InvalidOperationException($"Нельзя удалить часть: агрегат «{aggregate.AggregateId}» уже присутствует в разделе «Без группы».");
-            aggregate.PartId = null;
         }
 
-        _db.ProductCompositionParts.Remove(part);
-        await _db.SaveChangesAsync(ct);
-        await _audit.LogAsync(new AuditWriteRequest("ProductCompositionPart", partId.ToString(), "ProductComposition.PartRemoved", _currentUser.GetRequiredUserId()));
-        return true;
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            foreach (var aggregate in part.Aggregates)
+                aggregate.PartId = null;
+
+            _db.ProductCompositionParts.Remove(part);
+
+            var movedCount = part.Aggregates.Count;
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "ProductCompositionPart",
+                partId.ToString(),
+                "ProductComposition.PartRemoved",
+                _currentUser.GetRequiredUserId(),
+                Details: $"Часть «{part.Name}» удалена. Агрегатов перенесено в раздел «Без группы»: {movedCount}.",
+                EntityDisplayName: part.Name), ct);
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+        catch (DbUpdateException)
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 
     // ── Aggregates ────────────────────────────────────────────────────────
@@ -1877,6 +1903,8 @@ public class EquipmentService
 
     // ── Composition Registry ─────────────────────────────────────────────
 
+    private const int CompositionRegistryGlobalLimit = 300;
+
     public async Task<PagedResult<CompositionRegistryRow>> GetCompositionRegistryAsync(CompositionRegistryQuery query, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.CompositionView, ct);
@@ -1884,245 +1912,317 @@ public class EquipmentService
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
         var search = query.SearchText?.Trim();
-        var globalSearch = !string.IsNullOrWhiteSpace(search);
-        var levels = query.Level == CompositionRegistryLevel.All || globalSearch
-            ? new[] { CompositionRegistryLevel.Aggregate, CompositionRegistryLevel.EquipmentModel, CompositionRegistryLevel.Complex }
-            : new[] { query.Level };
+        var searchLower = search?.ToLowerInvariant();
+        var globalSearch = query.Level == CompositionRegistryLevel.All || !string.IsNullOrWhiteSpace(search);
+        var safeBranchId = await GetAccessibleCompositionBranchIdAsync(query.BranchId, ct);
 
-        var allRows = new List<CompositionRegistryRow>();
+        IQueryable<CompositionRegistryRow> rowsQ;
 
-        foreach (var level in levels)
+        if (globalSearch)
         {
-            allRows.AddRange(level switch
+            var aggregateQ = BuildAggregateRegistryQuery(search, searchLower, query.Status, query.Presence, query.ShowArchivedVersions, safeBranchId);
+            var modelQ = BuildEquipmentModelRegistryQuery(search, searchLower, query.Status, query.Presence, query.ShowArchivedVersions, safeBranchId);
+            var complexQ = BuildComplexRegistryQuery(search, searchLower, query.Status, query.Presence, query.ShowArchivedVersions, safeBranchId);
+            rowsQ = aggregateQ.Concat(modelQ).Concat(complexQ);
+        }
+        else
+        {
+            rowsQ = query.Level switch
             {
-                CompositionRegistryLevel.Aggregate => await BuildAggregateRegistryRowsAsync(search, query.Status, query.Presence, query.ShowArchivedVersions, query.BranchId, ct),
-                CompositionRegistryLevel.EquipmentModel => await BuildEquipmentModelRegistryRowsAsync(search, query.Status, query.Presence, query.ShowArchivedVersions, query.BranchId, ct),
-                CompositionRegistryLevel.Complex => await BuildComplexRegistryRowsAsync(search, query.Status, query.Presence, query.ShowArchivedVersions, query.BranchId, ct),
-                _ => Array.Empty<CompositionRegistryRow>()
-            });
+                CompositionRegistryLevel.Aggregate => BuildAggregateRegistryQuery(search, searchLower, query.Status, query.Presence, query.ShowArchivedVersions, safeBranchId),
+                CompositionRegistryLevel.EquipmentModel => BuildEquipmentModelRegistryQuery(search, searchLower, query.Status, query.Presence, query.ShowArchivedVersions, safeBranchId),
+                CompositionRegistryLevel.Complex => BuildComplexRegistryQuery(search, searchLower, query.Status, query.Presence, query.ShowArchivedVersions, safeBranchId),
+                _ => EmptyCompositionRegistryQuery()
+            };
         }
 
-        IOrderedEnumerable<CompositionRegistryRow> ordered = query.SortBy?.ToLowerInvariant() switch
-        {
-            "updated" => query.SortDescending
-                ? allRows.OrderByDescending(r => r.UpdatedAt ?? DateTime.MinValue).ThenByDescending(r => r.ObjectCode)
-                : allRows.OrderBy(r => r.UpdatedAt ?? DateTime.MinValue).ThenBy(r => r.ObjectCode),
-            "status" => query.SortDescending
-                ? allRows.OrderByDescending(r => r.Status?.ToString()).ThenByDescending(r => r.ObjectCode)
-                : allRows.OrderBy(r => r.Status?.ToString()).ThenBy(r => r.ObjectCode),
-            _ => query.SortDescending
-                ? allRows.OrderByDescending(r => r.ObjectCode).ThenByDescending(r => r.ObjectName)
-                : allRows.OrderBy(r => r.ObjectCode).ThenBy(r => r.ObjectName)
-        };
+        var ordered = ApplyCompositionRegistrySort(rowsQ, query.SortBy, query.SortDescending);
+        var totalCount = await rowsQ.CountAsync(ct);
+        var limited = globalSearch && totalCount > CompositionRegistryGlobalLimit;
+        var effectiveTotal = limited ? CompositionRegistryGlobalLimit : totalCount;
 
-        var sorted = ordered.ToList();
-        var totalCount = sorted.Count;
-        var paged = sorted.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        var pagedQuery = globalSearch
+            ? ordered.Take(CompositionRegistryGlobalLimit)
+            : ordered;
+
+        var paged = await pagedQuery
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
 
         return new PagedResult<CompositionRegistryRow>
         {
             Items = paged,
-            TotalCount = totalCount,
+            TotalCount = effectiveTotal,
             Page = page,
-            PageSize = pageSize
+            PageSize = pageSize,
+            HasMoreResults = limited
         };
     }
 
-    private async Task<IReadOnlyList<CompositionRegistryRow>> BuildAggregateRegistryRowsAsync(
-        string? search, ProductCompositionStatus? statusFilter, CompositionPresenceFilter presence,
-        bool showArchived, Guid? branchId, CancellationToken ct)
-    {
-        var aggregates = await _db.Aggregates.AsNoTracking()
-            .Where(a => !a.IsDeleted)
-            .Select(a => new { a.Id, a.Code, a.Name })
-            .ToListAsync(ct);
-
-        var compositionsQ = _db.AggregateCompositions.AsNoTracking().AsQueryable();
-        if (branchId.HasValue)
-            compositionsQ = compositionsQ.Where(c => c.BranchId == branchId.Value);
-        var compositions = await compositionsQ
-            .Where(c => aggregates.Select(a => a.Id).Contains(c.AggregateId))
-            .Select(c => new
-            {
-                c.Id, c.AggregateId, c.Version, c.Status, c.UpdatedAt, c.BranchId,
-                NodeCount = c.Nodes.Count
-            })
-            .ToListAsync(ct);
-
-        return BuildRows(CompositionRegistryLevel.Aggregate, aggregates, compositions,
-            a => a.Id, a => a.Code, a => a.Name,
-            c => c.AggregateId, c => c.Id, c => c.Version, c => c.Status, c => c.UpdatedAt,
-            c => 0, c => 0, c => c.NodeCount, c => 0,
-            search, statusFilter, presence, showArchived);
-    }
-
-    private async Task<IReadOnlyList<CompositionRegistryRow>> BuildEquipmentModelRegistryRowsAsync(
-        string? search, ProductCompositionStatus? statusFilter, CompositionPresenceFilter presence,
-        bool showArchived, Guid? branchId, CancellationToken ct)
-    {
-        var models = await _db.EquipmentModels.AsNoTracking()
-            .Where(m => !m.IsDeleted)
-            .Select(m => new { m.Id, Code = m.Index, m.Name })
-            .ToListAsync(ct);
-
-        var compositionsQ = _db.ProductCompositions.AsNoTracking().AsQueryable();
-        if (branchId.HasValue)
-            compositionsQ = compositionsQ.Where(c => c.BranchId == branchId.Value);
-        var compositions = await compositionsQ
-            .Where(c => models.Select(m => m.Id).Contains(c.EquipmentModelId))
-            .Select(c => new
-            {
-                c.Id, AggregateId = c.EquipmentModelId, c.Version, c.Status, c.UpdatedAt, c.BranchId,
-                PartCount = c.Parts.Count,
-                AggregateCount = c.Aggregates.Count
-            })
-            .ToListAsync(ct);
-
-        return BuildRows(CompositionRegistryLevel.EquipmentModel, models, compositions,
-            m => m.Id, m => m.Code, m => m.Name,
-            c => c.AggregateId, c => c.Id, c => c.Version, c => c.Status, c => c.UpdatedAt,
-            c => c.PartCount, c => c.AggregateCount, c => 0, c => 0,
-            search, statusFilter, presence, showArchived);
-    }
-
-    private async Task<IReadOnlyList<CompositionRegistryRow>> BuildComplexRegistryRowsAsync(
-        string? search, ProductCompositionStatus? statusFilter, CompositionPresenceFilter presence,
-        bool showArchived, Guid? branchId, CancellationToken ct)
-    {
-        var complexes = await _db.Complexes.AsNoTracking()
-            .Where(c => !c.IsDeleted)
-            .Select(c => new { c.Id, c.Code, c.Name })
-            .ToListAsync(ct);
-
-        var compositionsQ = _db.ComplexCompositions.AsNoTracking().AsQueryable();
-        if (branchId.HasValue)
-            compositionsQ = compositionsQ.Where(c => c.BranchId == branchId.Value);
-        var compositions = await compositionsQ
-            .Where(c => complexes.Select(x => x.Id).Contains(c.ComplexId))
-            .Select(c => new
-            {
-                c.Id, AggregateId = c.ComplexId, c.Version, c.Status, c.UpdatedAt, c.BranchId,
-                ItemCount = c.Items.Count
-            })
-            .ToListAsync(ct);
-
-        return BuildRows(CompositionRegistryLevel.Complex, complexes, compositions,
-            c => c.Id, c => c.Code, c => c.Name,
-            c => c.AggregateId, c => c.Id, c => c.Version, c => c.Status, c => c.UpdatedAt,
-            c => 0, c => 0, c => 0, c => c.ItemCount,
-            search, statusFilter, presence, showArchived);
-    }
-
-    private static IReadOnlyList<CompositionRegistryRow> BuildRows<TObject, TComp>(
-        CompositionRegistryLevel level,
-        List<TObject> objects,
-        List<TComp> compositions,
-        Func<TObject, Guid> objectIdSelector,
-        Func<TObject, string> objectCodeSelector,
-        Func<TObject, string> objectNameSelector,
-        Func<TComp, Guid> compObjectIdSelector,
-        Func<TComp, Guid> compIdSelector,
-        Func<TComp, string> compVersionSelector,
-        Func<TComp, ProductCompositionStatus> compStatusSelector,
-        Func<TComp, DateTime> compUpdatedAtSelector,
-        Func<TComp, int> partCountSelector,
-        Func<TComp, int> aggregateCountSelector,
-        Func<TComp, int> nodeCountSelector,
-        Func<TComp, int> itemCountSelector,
-        string? search,
-        ProductCompositionStatus? statusFilter,
-        CompositionPresenceFilter presence,
-        bool showArchived)
-    {
-        var compByObject = compositions.GroupBy(compObjectIdSelector).ToDictionary(g => g.Key, g => g.ToList());
-        var rows = new List<CompositionRegistryRow>();
-
-        foreach (var obj in objects)
+    private IQueryable<CompositionRegistryRow> EmptyCompositionRegistryQuery() =>
+        _db.Aggregates.Where(a => false).Select(a => new CompositionRegistryRow
         {
-            var objId = objectIdSelector(obj);
-            var comps = compByObject.GetValueOrDefault(objId) ?? new List<TComp>();
+            Level = CompositionRegistryLevel.Aggregate,
+            ObjectId = Guid.Empty,
+            ObjectCode = string.Empty,
+            ObjectName = string.Empty
+        });
 
-            if (!string.IsNullOrWhiteSpace(search))
+    private static IQueryable<CompositionRegistryRow> ApplyCompositionRegistrySort(
+        IQueryable<CompositionRegistryRow> query, string? sortBy, bool descending) =>
+        sortBy?.ToLowerInvariant() switch
+        {
+            "updated" => descending
+                ? query.OrderByDescending(r => r.UpdatedAt ?? DateTime.MinValue).ThenByDescending(r => r.ObjectCode)
+                : query.OrderBy(r => r.UpdatedAt ?? DateTime.MinValue).ThenBy(r => r.ObjectCode),
+            "status" => descending
+                ? query.OrderByDescending(r => r.Status).ThenByDescending(r => r.ObjectCode)
+                : query.OrderBy(r => r.Status).ThenBy(r => r.ObjectCode),
+            _ => descending
+                ? query.OrderByDescending(r => r.ObjectCode).ThenByDescending(r => r.ObjectName).ThenByDescending(r => r.IsHistoricalArchiveRow)
+                : query.OrderBy(r => r.ObjectCode).ThenBy(r => r.ObjectName).ThenBy(r => r.IsHistoricalArchiveRow)
+        };
+
+    private IQueryable<CompositionRegistryRow> BuildAggregateRegistryQuery(
+        string? search, string? searchLower, ProductCompositionStatus? statusFilter,
+        CompositionPresenceFilter presence, bool showArchived, Guid? effectiveBranchId)
+    {
+        var compositions = _db.AggregateCompositions.AsNoTracking()
+            .Where(c => !effectiveBranchId.HasValue || c.BranchId == effectiveBranchId.Value);
+
+        var operational =
+            from a in _db.Aggregates.AsNoTracking().Where(a => !a.IsDeleted)
+            let op = compositions
+                .Where(c => c.AggregateId == a.Id && c.Status != ProductCompositionStatus.Archived)
+                .OrderBy(c => c.Status == ProductCompositionStatus.Draft ? 0 : c.Status == ProductCompositionStatus.OnReview ? 1 : c.Status == ProductCompositionStatus.Approved ? 2 : 3)
+                .ThenByDescending(c => c.UpdatedAt)
+                .Select(c => new { c.Id, c.Version, c.Status, c.UpdatedAt, NodeCount = c.Nodes.Count })
+                .FirstOrDefault()
+            let hasAny = compositions.Any(c => c.AggregateId == a.Id)
+            let hasArchived = compositions.Any(c => c.AggregateId == a.Id && c.Status == ProductCompositionStatus.Archived)
+            where string.IsNullOrWhiteSpace(search) ||
+                  a.Code.ToLower().Contains(searchLower) ||
+                  a.Name.ToLower().Contains(searchLower) ||
+                  (op != null && op.Version.ToLower().Contains(searchLower))
+            where presence != CompositionPresenceFilter.WithComposition || hasAny
+            where presence != CompositionPresenceFilter.WithoutComposition || !hasAny
+            where !statusFilter.HasValue || (statusFilter.Value != ProductCompositionStatus.Archived && op.Status == statusFilter.Value)
+            select new CompositionRegistryRow
             {
-                var term = search!;
-                var objectMatches =
-                    objectCodeSelector(obj).Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                    objectNameSelector(obj).Contains(term, StringComparison.OrdinalIgnoreCase);
-                var versionMatches = comps.Any(c => compVersionSelector(c).Contains(term, StringComparison.OrdinalIgnoreCase));
-                if (!objectMatches && !versionMatches)
-                    continue;
-            }
-
-            var operational = comps
-                .Where(c => compStatusSelector(c) != ProductCompositionStatus.Archived)
-                .OrderBy(c => compStatusSelector(c) switch
-                {
-                    ProductCompositionStatus.Draft => 0,
-                    ProductCompositionStatus.OnReview => 1,
-                    ProductCompositionStatus.Approved => 2,
-                    _ => 3
-                })
-                .ThenByDescending(c => compUpdatedAtSelector(c))
-                .FirstOrDefault();
-
-            var hasAnyComposition = comps.Any();
-            var hasArchivedVersions = comps.Any(c => compStatusSelector(c) == ProductCompositionStatus.Archived);
-            var operationalStatus = operational is not null ? compStatusSelector(operational) : (ProductCompositionStatus?)null;
-
-            if (statusFilter.HasValue && operationalStatus != statusFilter.Value)
-                continue;
-
-            if (presence == CompositionPresenceFilter.WithComposition && !hasAnyComposition)
-                continue;
-            if (presence == CompositionPresenceFilter.WithoutComposition && hasAnyComposition)
-                continue;
-
-            rows.Add(new CompositionRegistryRow
-            {
-                Level = level,
-                ObjectId = objId,
-                ObjectCode = objectCodeSelector(obj),
-                ObjectName = objectNameSelector(obj),
-                CompositionId = operational is not null ? compIdSelector(operational) : null,
-                Version = operational is not null ? compVersionSelector(operational) : null,
-                Status = operationalStatus,
+                Level = CompositionRegistryLevel.Aggregate,
+                ObjectId = a.Id,
+                ObjectCode = a.Code,
+                ObjectName = a.Name,
+                CompositionId = op != null ? op.Id : null,
+                Version = op != null ? op.Version : null,
+                Status = op != null ? op.Status : null,
+                HasArchivedVersions = hasArchived,
                 IsHistoricalArchiveRow = false,
-                HasArchivedVersions = hasArchivedVersions,
-                PartCount = operational is not null ? partCountSelector(operational) : 0,
-                AggregateCount = operational is not null ? aggregateCountSelector(operational) : 0,
-                NodeCount = operational is not null ? nodeCountSelector(operational) : 0,
-                ItemCount = operational is not null ? itemCountSelector(operational) : 0,
-                UpdatedAt = operational is not null ? compUpdatedAtSelector(operational) : (DateTime?)null
-            });
+                NodeCount = op != null ? op.NodeCount : 0,
+                PartCount = 0,
+                AggregateCount = 0,
+                ItemCount = 0,
+                UpdatedAt = op != null ? op.UpdatedAt : (DateTime?)null
+            };
 
-            if (showArchived)
+        if (!showArchived || (statusFilter.HasValue && statusFilter.Value != ProductCompositionStatus.Archived))
+            return operational;
+
+        var archiveRows =
+            from a in _db.Aggregates.AsNoTracking().Where(a => !a.IsDeleted)
+            from c in compositions.Where(c => c.AggregateId == a.Id && c.Status == ProductCompositionStatus.Archived)
+            where presence != CompositionPresenceFilter.WithoutComposition
+            where string.IsNullOrWhiteSpace(search) ||
+                  a.Code.ToLower().Contains(searchLower) ||
+                  a.Name.ToLower().Contains(searchLower) ||
+                  c.Version.ToLower().Contains(searchLower)
+            select new CompositionRegistryRow
             {
-                foreach (var archive in comps
-                    .Where(c => compStatusSelector(c) == ProductCompositionStatus.Archived)
-                    .Where(c => operational is null || compIdSelector(c) != compIdSelector(operational))
-                    .OrderByDescending(c => compUpdatedAtSelector(c)))
-                {
-                    rows.Add(new CompositionRegistryRow
-                    {
-                        Level = level,
-                        ObjectId = objId,
-                        ObjectCode = objectCodeSelector(obj),
-                        ObjectName = objectNameSelector(obj),
-                        CompositionId = compIdSelector(archive),
-                        Version = compVersionSelector(archive),
-                        Status = ProductCompositionStatus.Archived,
-                        IsHistoricalArchiveRow = true,
-                        PartCount = partCountSelector(archive),
-                        AggregateCount = aggregateCountSelector(archive),
-                        NodeCount = nodeCountSelector(archive),
-                        ItemCount = itemCountSelector(archive),
-                        UpdatedAt = compUpdatedAtSelector(archive)
-                    });
-                }
-            }
-        }
+                Level = CompositionRegistryLevel.Aggregate,
+                ObjectId = a.Id,
+                ObjectCode = a.Code,
+                ObjectName = a.Name,
+                CompositionId = c.Id,
+                Version = c.Version,
+                Status = c.Status,
+                HasArchivedVersions = true,
+                IsHistoricalArchiveRow = true,
+                NodeCount = c.Nodes.Count,
+                PartCount = 0,
+                AggregateCount = 0,
+                ItemCount = 0,
+                UpdatedAt = c.UpdatedAt
+            };
 
-        return rows;
+        return operational.Concat(archiveRows);
+    }
+
+    private IQueryable<CompositionRegistryRow> BuildEquipmentModelRegistryQuery(
+        string? search, string? searchLower, ProductCompositionStatus? statusFilter,
+        CompositionPresenceFilter presence, bool showArchived, Guid? effectiveBranchId)
+    {
+        var compositions = _db.ProductCompositions.AsNoTracking()
+            .Where(c => !effectiveBranchId.HasValue || c.BranchId == effectiveBranchId.Value);
+
+        var operational =
+            from m in _db.EquipmentModels.AsNoTracking().Where(m => !m.IsDeleted)
+            let op = compositions
+                .Where(c => c.EquipmentModelId == m.Id && c.Status != ProductCompositionStatus.Archived)
+                .OrderBy(c => c.Status == ProductCompositionStatus.Draft ? 0 : c.Status == ProductCompositionStatus.OnReview ? 1 : c.Status == ProductCompositionStatus.Approved ? 2 : 3)
+                .ThenByDescending(c => c.UpdatedAt)
+                .Select(c => new { c.Id, c.Version, c.Status, c.UpdatedAt, PartCount = c.Parts.Count, AggregateCount = c.Aggregates.Count })
+                .FirstOrDefault()
+            let hasAny = compositions.Any(c => c.EquipmentModelId == m.Id)
+            let hasArchived = compositions.Any(c => c.EquipmentModelId == m.Id && c.Status == ProductCompositionStatus.Archived)
+            where string.IsNullOrWhiteSpace(search) ||
+                  m.Index.ToLower().Contains(searchLower) ||
+                  m.Name.ToLower().Contains(searchLower) ||
+                  (op != null && op.Version.ToLower().Contains(searchLower))
+            where presence != CompositionPresenceFilter.WithComposition || hasAny
+            where presence != CompositionPresenceFilter.WithoutComposition || !hasAny
+            where !statusFilter.HasValue || (statusFilter.Value != ProductCompositionStatus.Archived && op.Status == statusFilter.Value)
+            select new CompositionRegistryRow
+            {
+                Level = CompositionRegistryLevel.EquipmentModel,
+                ObjectId = m.Id,
+                ObjectCode = m.Index,
+                ObjectName = m.Name,
+                CompositionId = op != null ? op.Id : null,
+                Version = op != null ? op.Version : null,
+                Status = op != null ? op.Status : null,
+                HasArchivedVersions = hasArchived,
+                IsHistoricalArchiveRow = false,
+                PartCount = op != null ? op.PartCount : 0,
+                AggregateCount = op != null ? op.AggregateCount : 0,
+                NodeCount = 0,
+                ItemCount = 0,
+                UpdatedAt = op != null ? op.UpdatedAt : (DateTime?)null
+            };
+
+        if (!showArchived || (statusFilter.HasValue && statusFilter.Value != ProductCompositionStatus.Archived))
+            return operational;
+
+        var archiveRows =
+            from m in _db.EquipmentModels.AsNoTracking().Where(m => !m.IsDeleted)
+            from c in compositions.Where(c => c.EquipmentModelId == m.Id && c.Status == ProductCompositionStatus.Archived)
+            where presence != CompositionPresenceFilter.WithoutComposition
+            where string.IsNullOrWhiteSpace(search) ||
+                  m.Index.ToLower().Contains(searchLower) ||
+                  m.Name.ToLower().Contains(searchLower) ||
+                  c.Version.ToLower().Contains(searchLower)
+            select new CompositionRegistryRow
+            {
+                Level = CompositionRegistryLevel.EquipmentModel,
+                ObjectId = m.Id,
+                ObjectCode = m.Index,
+                ObjectName = m.Name,
+                CompositionId = c.Id,
+                Version = c.Version,
+                Status = c.Status,
+                HasArchivedVersions = true,
+                IsHistoricalArchiveRow = true,
+                PartCount = c.Parts.Count,
+                AggregateCount = c.Aggregates.Count,
+                NodeCount = 0,
+                ItemCount = 0,
+                UpdatedAt = c.UpdatedAt
+            };
+
+        return operational.Concat(archiveRows);
+    }
+
+    private IQueryable<CompositionRegistryRow> BuildComplexRegistryQuery(
+        string? search, string? searchLower, ProductCompositionStatus? statusFilter,
+        CompositionPresenceFilter presence, bool showArchived, Guid? effectiveBranchId)
+    {
+        var compositions = _db.ComplexCompositions.AsNoTracking()
+            .Where(c => !effectiveBranchId.HasValue || c.BranchId == effectiveBranchId.Value);
+
+        var operational =
+            from x in _db.Complexes.AsNoTracking().Where(x => !x.IsDeleted)
+            let op = compositions
+                .Where(c => c.ComplexId == x.Id && c.Status != ProductCompositionStatus.Archived)
+                .OrderBy(c => c.Status == ProductCompositionStatus.Draft ? 0 : c.Status == ProductCompositionStatus.OnReview ? 1 : c.Status == ProductCompositionStatus.Approved ? 2 : 3)
+                .ThenByDescending(c => c.UpdatedAt)
+                .Select(c => new { c.Id, c.Version, c.Status, c.UpdatedAt, ItemCount = c.Items.Count })
+                .FirstOrDefault()
+            let hasAny = compositions.Any(c => c.ComplexId == x.Id)
+            let hasArchived = compositions.Any(c => c.ComplexId == x.Id && c.Status == ProductCompositionStatus.Archived)
+            where string.IsNullOrWhiteSpace(search) ||
+                  x.Code.ToLower().Contains(searchLower) ||
+                  x.Name.ToLower().Contains(searchLower) ||
+                  (op != null && op.Version.ToLower().Contains(searchLower))
+            where presence != CompositionPresenceFilter.WithComposition || hasAny
+            where presence != CompositionPresenceFilter.WithoutComposition || !hasAny
+            where !statusFilter.HasValue || (statusFilter.Value != ProductCompositionStatus.Archived && op.Status == statusFilter.Value)
+            select new CompositionRegistryRow
+            {
+                Level = CompositionRegistryLevel.Complex,
+                ObjectId = x.Id,
+                ObjectCode = x.Code,
+                ObjectName = x.Name,
+                CompositionId = op != null ? op.Id : null,
+                Version = op != null ? op.Version : null,
+                Status = op != null ? op.Status : null,
+                HasArchivedVersions = hasArchived,
+                IsHistoricalArchiveRow = false,
+                PartCount = 0,
+                AggregateCount = 0,
+                NodeCount = 0,
+                ItemCount = op != null ? op.ItemCount : 0,
+                UpdatedAt = op != null ? op.UpdatedAt : (DateTime?)null
+            };
+
+        if (!showArchived || (statusFilter.HasValue && statusFilter.Value != ProductCompositionStatus.Archived))
+            return operational;
+
+        var archiveRows =
+            from x in _db.Complexes.AsNoTracking().Where(x => !x.IsDeleted)
+            from c in compositions.Where(c => c.ComplexId == x.Id && c.Status == ProductCompositionStatus.Archived)
+            where presence != CompositionPresenceFilter.WithoutComposition
+            where string.IsNullOrWhiteSpace(search) ||
+                  x.Code.ToLower().Contains(searchLower) ||
+                  x.Name.ToLower().Contains(searchLower) ||
+                  c.Version.ToLower().Contains(searchLower)
+            select new CompositionRegistryRow
+            {
+                Level = CompositionRegistryLevel.Complex,
+                ObjectId = x.Id,
+                ObjectCode = x.Code,
+                ObjectName = x.Name,
+                CompositionId = c.Id,
+                Version = c.Version,
+                Status = c.Status,
+                HasArchivedVersions = true,
+                IsHistoricalArchiveRow = true,
+                PartCount = 0,
+                AggregateCount = 0,
+                NodeCount = 0,
+                ItemCount = c.Items.Count,
+                UpdatedAt = c.UpdatedAt
+            };
+
+        return operational.Concat(archiveRows);
+    }
+
+    private async Task<Guid?> GetAccessibleCompositionBranchIdAsync(Guid? requestedBranchId, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        if (await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig))
+            return requestedBranchId;
+
+        var actor = await _userManager.FindByIdAsync(actorId.ToString());
+        if (actor is null)
+            throw new UnauthorizedAccessException("Пользователь не найден.");
+
+        if (actor.BranchId is null || actor.BranchId == Guid.Empty)
+            throw new UnauthorizedAccessException("У пользователя не указан филиал.");
+
+        if (requestedBranchId.HasValue && requestedBranchId != actor.BranchId)
+            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+
+        return actor.BranchId;
     }
 
     private static AggregateCompositionReadModel ToAggregateCompositionReadModel(AggregateComposition c, string? authorName) => new(
