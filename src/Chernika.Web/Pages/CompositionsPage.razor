@@ -20,17 +20,33 @@
         </div>
         <div class="panelBody">
             <div class="btnRow compositionRegistryTabs">
-                <button class="btn @(IsActiveTab(CompositionRegistryLevel.Aggregate) ? "primary" : "ghost")" @onclick="() => SetTab(CompositionRegistryLevel.Aggregate)">Агрегаты</button>
-                <button class="btn @(IsActiveTab(CompositionRegistryLevel.EquipmentModel) ? "primary" : "ghost")" @onclick="() => SetTab(CompositionRegistryLevel.EquipmentModel)">Изделия</button>
-                <button class="btn @(IsActiveTab(CompositionRegistryLevel.Complex) ? "primary" : "ghost")" @onclick="() => SetTab(CompositionRegistryLevel.Complex)">Комплексы</button>
+                <button class="btn @(IsActiveTab(CompositionRegistryLevel.Aggregate) ? "primary" : "ghost")" @onclick="() => SetTabAsync(CompositionRegistryLevel.Aggregate)">Агрегаты</button>
+                <button class="btn @(IsActiveTab(CompositionRegistryLevel.EquipmentModel) ? "primary" : "ghost")" @onclick="() => SetTabAsync(CompositionRegistryLevel.EquipmentModel)">Изделия</button>
+                <button class="btn @(IsActiveTab(CompositionRegistryLevel.Complex) ? "primary" : "ghost")" @onclick="() => SetTabAsync(CompositionRegistryLevel.Complex)">Комплексы</button>
             </div>
 
-            <div class="form compositionRegistryFilters">
+            <div class="compositionRegistryFilters">
                 <div class="field compositionRegistrySearch">
-                    <label>Поиск по всем составам техники</label>
-                    <input @bind="searchText" @bind:event="oninput" placeholder="Код, наименование или версия..." class="field-input" />
+                    <label>Поиск</label>
+                    <input @bind="searchText" placeholder="Код, наименование или версия..." class="field-input" />
                 </div>
-                <div class="field">
+                <div class="compositionRegistryQuickFilters" aria-label="Область поиска и фильтры">
+                    <button type="button"
+                            class="filterToggle @(searchAllLevels ? "active" : null)"
+                            aria-pressed="@searchAllLevels"
+                            @onclick="ToggleSearchAllLevels">
+                        <span class="filterToggleMark">@(searchAllLevels ? "✓" : "")</span>
+                        По всем составам
+                    </button>
+                    <button type="button"
+                            class="filterToggle @(showArchived ? "active" : null)"
+                            aria-pressed="@showArchived"
+                            @onclick="ToggleArchived">
+                        <span class="filterToggleMark">@(showArchived ? "✓" : "")</span>
+                        Архивные версии
+                    </button>
+                </div>
+                <div class="field compositionRegistryStatus">
                     <label>Статус</label>
                     <select @bind="statusFilter" class="field-select">
                         <option value="">Все</option>
@@ -40,7 +56,7 @@
                         <option value="@ProductCompositionStatus.Archived">Архивный</option>
                     </select>
                 </div>
-                <div class="field">
+                <div class="field compositionRegistryPresence">
                     <label>Наличие состава</label>
                     <select @bind="presence" class="field-select">
                         <option value="@CompositionPresenceFilter.All">Все объекты</option>
@@ -48,16 +64,8 @@
                         <option value="@CompositionPresenceFilter.WithoutComposition">Только без состава</option>
                     </select>
                 </div>
-                <div class="field compositionRegistryToggle">
-                    <label>&nbsp;</label>
-                    <label class="btn ghost">
-                        <input type="checkbox" @bind="showArchived" />
-                        Архивные версии
-                    </label>
-                </div>
-                <div class="field compositionRegistryFilterAction">
-                    <label>&nbsp;</label>
-                    <button class="btn primary" @onclick="ApplyFilters">Обновить</button>
+                <div class="compositionRegistryFilterAction">
+                    <button class="btn primary" @onclick="ApplyFilters">Применить</button>
                 </div>
             </div>
 
@@ -195,6 +203,7 @@
 
     private CompositionRegistryLevel level = CompositionRegistryLevel.Aggregate;
     private string searchText = "";
+    private bool searchAllLevels;
     private ProductCompositionStatus? statusFilter;
     private CompositionPresenceFilter presence = CompositionPresenceFilter.All;
     private bool showArchived;
@@ -220,7 +229,7 @@
 
     private CancellationTokenSource? _loadCts;
 
-    private bool IsGlobalSearch => !string.IsNullOrWhiteSpace(searchText);
+    private bool IsGlobalSearch => !string.IsNullOrWhiteSpace(searchText) && searchAllLevels;
 
     private string PageTitle => (IsGlobalSearch, level) switch
     {
@@ -267,8 +276,9 @@
             {
                 var query = new CompositionRegistryQuery
                 {
-                    Level = IsGlobalSearch ? CompositionRegistryLevel.All : level,
+                    Level = level,
                     SearchText = searchText,
+                    SearchAllLevels = searchAllLevels,
                     Status = statusFilter,
                     Presence = presence,
                     ShowArchivedVersions = showArchived,
@@ -277,6 +287,10 @@
                     SortBy = "name"
                 };
                 registry = await EquipService.GetCompositionRegistryAsync(query, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
             }
             catch (Exception ex)
             {
@@ -289,19 +303,40 @@
                     PageSize = PageSize
                 };
             }
-            loading = false;
+            finally
+            {
+                loading = false;
+            }
         }
     }
 
-    private void SetTab(CompositionRegistryLevel l)
+    private async Task SetTabAsync(CompositionRegistryLevel newLevel)
     {
-        level = l;
-        searchText = "";
+        if (level == newLevel && !IsGlobalSearch)
+            return;
+
+        level = newLevel;
+        searchAllLevels = false;
         page = 1;
         error = null;
+
         _loadCts?.Cancel();
+        _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
-        _ = LoadData();
+
+        await LoadData();
+    }
+
+    private void ToggleSearchAllLevels()
+    {
+        searchAllLevels = !searchAllLevels;
+        page = 1;
+    }
+
+    private void ToggleArchived()
+    {
+        showArchived = !showArchived;
+        page = 1;
     }
 
     private bool IsActiveTab(CompositionRegistryLevel l) => !IsGlobalSearch && level == l;

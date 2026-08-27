@@ -1913,7 +1913,8 @@ public class EquipmentService
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
         var search = query.SearchText?.Trim();
         var searchLower = search?.ToLowerInvariant();
-        var globalSearch = query.Level == CompositionRegistryLevel.All || !string.IsNullOrWhiteSpace(search);
+        var hasSearch = !string.IsNullOrWhiteSpace(search);
+        var globalSearch = hasSearch && query.SearchAllLevels;
         var safeBranchId = await GetAccessibleCompositionBranchIdAsync(query.BranchId, ct);
 
         IQueryable<CompositionRegistryRow> rowsQ;

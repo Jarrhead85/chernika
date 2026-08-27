@@ -270,17 +270,108 @@ public class CompositionA4IntegrationTests
 
         var byCode = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
         {
-            Level = CompositionRegistryLevel.All,
-            SearchText = "T-SEARCH-IDX"
+            Level = CompositionRegistryLevel.EquipmentModel,
+            SearchText = "T-SEARCH-IDX",
+            SearchAllLevels = true
         });
         Assert.Contains(byCode.Items, r => r.ObjectId == model.Id);
 
         var byVersion = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
         {
-            Level = CompositionRegistryLevel.All,
-            SearchText = draft.Version
+            Level = CompositionRegistryLevel.EquipmentModel,
+            SearchText = draft.Version,
+            SearchAllLevels = true
         });
         Assert.Contains(byVersion.Items, r => r.ObjectId == model.Id);
+    }
+
+    [Fact]
+    public async Task Registry_SearchAllLevels_False_SearchesOnlyCurrentLevel()
+    {
+        await using var s = _fixture.CreateScope();
+        var aggregate = new Aggregate { Id = Guid.NewGuid(), Code = "A-LEV", Name = "Агрегат уровня" };
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-LEV", Name = "Изделие уровня" };
+        s.Db.Aggregates.Add(aggregate);
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, null));
+
+        var aggregateResult = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.Aggregate,
+            SearchText = "T-LEV",
+            SearchAllLevels = false
+        });
+        Assert.DoesNotContain(aggregateResult.Items, r => r.ObjectCode == "T-LEV");
+
+        var modelResult = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.EquipmentModel,
+            SearchText = "T-LEV",
+            SearchAllLevels = false
+        });
+        Assert.Contains(modelResult.Items, r => r.ObjectCode == "T-LEV");
+    }
+
+    [Fact]
+    public async Task Registry_SearchAllLevels_True_FindsAllLevels()
+    {
+        await using var s = _fixture.CreateScope();
+        var aggregate = new Aggregate { Id = Guid.NewGuid(), Code = "A-ALL", Name = "Агрегат общий" };
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-ALL", Name = "Изделие общий" };
+        var complex = new Complex { Id = Guid.NewGuid(), Code = "C-ALL", Name = "Комплекс общий" };
+        s.Db.Aggregates.Add(aggregate);
+        s.Db.EquipmentModels.Add(model);
+        s.Db.Complexes.Add(complex);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, null));
+
+        var result = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.Aggregate,
+            SearchText = "A-ALL",
+            SearchAllLevels = true
+        });
+        Assert.Contains(result.Items, r => r.Level == CompositionRegistryLevel.Aggregate && r.ObjectCode == "A-ALL");
+
+        var modelSearch = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.Aggregate,
+            SearchText = "T-ALL",
+            SearchAllLevels = true
+        });
+        Assert.Contains(modelSearch.Items, r => r.Level == CompositionRegistryLevel.EquipmentModel && r.ObjectCode == "T-ALL");
+
+        var complexSearch = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.Aggregate,
+            SearchText = "C-ALL",
+            SearchAllLevels = true
+        });
+        Assert.Contains(complexSearch.Items, r => r.Level == CompositionRegistryLevel.Complex && r.ObjectCode == "C-ALL");
+    }
+
+    [Fact]
+    public async Task Registry_SearchAllLevels_True_EmptySearchText_ReturnsCurrentLevelOnly()
+    {
+        await using var s = _fixture.CreateScope();
+        var otherLevelModel = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-OTHER", Name = "Другое изделие" };
+        s.Db.EquipmentModels.Add(otherLevelModel);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var result = await s.Equipment.GetCompositionRegistryAsync(new CompositionRegistryQuery
+        {
+            Level = CompositionRegistryLevel.Aggregate,
+            SearchText = "",
+            SearchAllLevels = true
+        });
+        Assert.DoesNotContain(result.Items, r => r.Level == CompositionRegistryLevel.EquipmentModel);
     }
 
     [Fact]

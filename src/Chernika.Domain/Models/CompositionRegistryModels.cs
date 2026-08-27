@@ -24,6 +24,7 @@ public sealed class CompositionRegistryQuery
     public ProductCompositionStatus? Status { get; init; }
     public CompositionPresenceFilter Presence { get; init; } = CompositionPresenceFilter.All;
     public bool ShowArchivedVersions { get; init; }
+    public bool SearchAllLevels { get; init; }
     public Guid? BranchId { get; init; }
     public int Page { get; init; } = 1;
     public int PageSize { get; init; } = 50;
