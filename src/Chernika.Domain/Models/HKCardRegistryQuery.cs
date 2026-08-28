@@ -42,6 +42,7 @@ public sealed class HKCardRegistryListItemDto
     public string? BranchName { get; init; }
     public string? ObjectCode { get; init; }
     public string? ObjectName { get; init; }
+    public Guid? ObjectId { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? ApprovedDate { get; init; }
     public DateTime? EffectiveDate { get; init; }

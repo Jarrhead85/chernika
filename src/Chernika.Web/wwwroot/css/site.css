@@ -1058,7 +1058,8 @@ input:-webkit-autofill:focus {
   grid-area:tasks;
   align-self:stretch;
 }
-.registryFiltersPanel{grid-area:filters}
+.registryFiltersPanel{grid-area:filters;box-shadow:none}
+[data-theme="light"] .registryFiltersPanel{box-shadow:none}
 .registryListPanel{grid-area:list}
 .registryDetailPanel{
   grid-area:detail;
@@ -1645,4 +1646,54 @@ input:-webkit-autofill:focus {
   .compositionRegistryQuickFilters{
     justify-content:flex-start;
   }
+}
+
+.hkStatusWithReadiness{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.hkReadinessWarning{
+  font-size:10px;
+  padding:2px 6px;
+  line-height:1.2;
+}
+.hkReadinessBlock{
+  margin-top:14px;
+  padding-top:14px;
+  border-top:1px solid var(--line);
+}
+.hkReadinessHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:8px;
+}
+.hkReadinessHeader .label{
+  font-weight:600;
+  font-size:13px;
+}
+.hkReadinessStateLine{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.hkReadinessIssues{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+.hkReadinessIssue{
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:var(--radius2);
+  background:var(--panel2);
+}
+.hkReadinessIssue .hint{
+  margin-top:2px;
+}
+.hkReadinessOpen{
+  margin-top:10px;
 }

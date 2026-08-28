@@ -7,6 +7,7 @@
 @using Chernika.Web.Services
 @using Chernika.Web.Components
 @inject HKCardService HKCardService
+@inject EquipmentService EquipService
 @inject TaskService TaskService
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
@@ -244,8 +245,19 @@
                                         @ondblclick="() => GoToEdit(card.Id)">
                                         <td class="mono">@card.Code<br/><span class="muted">@card.Version</span></td>
                                         <td>@card.ObjectName<br/><span class="mono muted">@card.ObjectCode</span></td>
-                                        <td>@LevelName(card.ObjectLevel)</td>
-                                        <td><StatusBadge Status="@card.Status" /></td>
+                                         <td>@LevelName(card.ObjectLevel)</td>
+                                        <td>
+                                            <div class="hkStatusWithReadiness">
+                                                <StatusBadge Status="@card.Status" />
+                                                @if (TryGetReadinessWarning(card.Id, out var readiness))
+                                                {
+                                                    <span class="auditAction auditAction--warning hkReadinessWarning"
+                                                          title="@ReadinessTooltip(readiness)">
+                                                        @ReadinessWarningLabel(readiness)
+                                                    </span>
+                                                }
+                                            </div>
+                                        </td>
                                         <td>@card.BranchName</td>
                                         <td>
                                             <div class="rowActions">
@@ -355,6 +367,32 @@
                                 <span class="muted">PDF не прикреплён</span>
                             }
                         </div>
+                        @if (_selectedCard.ObjectLevel != HKObjectLevel.Node)
+                        {
+                            <div class="hkReadinessBlock">
+                                <div class="hkReadinessHeader">
+                                    <span class="label">Нормативная готовность</span>
+                                    @if (_readinessDetailsLoading)
+                                    {
+                                        <span class="hint">Проверяем…</span>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrEmpty(_readinessDetailsError))
+                                {
+                                    <div class="note warn">@_readinessDetailsError</div>
+                                }
+                                else if (_readinessDetails != null)
+                                {
+                                    @ReadinessDetailBlock(_readinessDetails)
+                                }
+                                else if (_readinessSummaries != null
+                                         && _readinessSummaries.TryGetValue(_selectedCard.Id, out var summary)
+                                         && summary.State != HKCompositionReadinessState.NotApplicable)
+                                {
+                                    @ReadinessDetailBlock(summary)
+                                }
+                            </div>
+                        }
                         <div class="btnRow">
                             <button class="btn primary" @onclick="() => GoToEdit(_selectedCard.Id)">Открыть карточку</button>
                             @if (_selectedCard.ObjectLevel != HKObjectLevel.Node)
@@ -496,6 +534,7 @@
     private bool _canReview;
     private bool _canApprove;
     private bool _canArchive;
+    private bool _canCompositionView;
     private readonly HashSet<HKCardStatus> _deletableStatuses = new();
     private Guid? _openActionMenuCardId;
     private double _actionMenuLeft;
@@ -505,6 +544,10 @@
     private ElementReference _actionMenuOverlayRef;
     private CancellationTokenSource? _loadCts;
     private string? _errorMessage;
+    private IReadOnlyDictionary<Guid, HKCompositionReadinessSummary>? _readinessSummaries;
+    private HKCompositionReadinessDetails? _readinessDetails;
+    private bool _readinessDetailsLoading;
+    private string? _readinessDetailsError;
 
     private const double ActionMenuWidth = 220;
     private const double ActionMenuEstimatedHeight = 220;
@@ -590,6 +633,7 @@
         _canReview = HasPermission(PermissionCodes.HKReview);
         _canApprove = HasPermission(PermissionCodes.HKApprove);
         _canArchive = HasPermission(PermissionCodes.HKArchive);
+        _canCompositionView = HasPermission(PermissionCodes.CompositionView);
 
         if (HasPermission(PermissionCodes.HKDeleteDraft))
             _deletableStatuses.Add(HKCardStatus.Draft);
@@ -680,6 +724,8 @@
                 _kpi = await HKCardService.GetRegistryKpiAsync(_query.BranchId, ct);
                 _result = await HKCardService.GetRegistryPageAsync(_query, ct);
 
+                await LoadReadinessSummariesAsync(ct);
+
                 var taskResult = await TaskService.GetMyTasksAsync(new WorkTaskQuery
                 {
                     Page = 1,
@@ -706,6 +752,52 @@
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task LoadReadinessSummariesAsync(CancellationToken ct)
+    {
+        _readinessSummaries = null;
+        try
+        {
+            var contexts = _result.Items
+                .Where(c => c.ObjectLevel != HKObjectLevel.Node && c.ObjectId.HasValue)
+                .Select(c => new HKReadinessContext(c.Id, c.ObjectLevel, c.ObjectId, c.BranchId))
+                .ToList();
+
+            if (contexts.Count > 0)
+            {
+                _readinessSummaries = await EquipService.GetHKCompositionReadinessSummariesAsync(contexts, ct);
+            }
+        }
+        catch
+        {
+            _readinessSummaries = null;
+        }
+    }
+
+    private async Task LoadReadinessDetailsAsync(Guid cardId)
+    {
+        _readinessDetails = null;
+        _readinessDetailsError = null;
+        if (!_canCompositionView) return;
+        var card = _selectedCard;
+        if (card == null || card.ObjectLevel == HKObjectLevel.Node || !card.ObjectId.HasValue) return;
+
+        _readinessDetailsLoading = true;
+        try
+        {
+            var context = new HKReadinessContext(card.Id, card.ObjectLevel, card.ObjectId, card.BranchId);
+            _readinessDetails = await EquipService.GetHKCompositionReadinessDetailsAsync(context);
+        }
+        catch (Exception ex)
+        {
+            _readinessDetailsError = $"Не удалось проверить нормативную готовность: {ex.Message}";
+            _readinessDetails = null;
+        }
+        finally
+        {
+            _readinessDetailsLoading = false;
         }
     }
 
@@ -784,6 +876,10 @@
                     };
                 }
             }
+        }
+        if (_selectedCard != null)
+        {
+            _ = LoadReadinessDetailsAsync(id);
         }
     }
 
@@ -1060,6 +1156,102 @@
         var term = Uri.EscapeDataString(card.ObjectCode ?? card.Code);
         Nav.NavigateTo($"/составы?level={level}&search={term}");
     }
+
+    private bool TryGetReadinessWarning(Guid cardId, out HKCompositionReadinessSummary readiness)
+    {
+        if (_readinessSummaries != null && _readinessSummaries.TryGetValue(cardId, out readiness!))
+        {
+            return readiness.State == HKCompositionReadinessState.RequiresAttention
+                || readiness.State == HKCompositionReadinessState.NoComposition
+                || readiness.State == HKCompositionReadinessState.NoActiveComposition;
+        }
+        readiness = null!;
+        return false;
+    }
+
+    private static string ReadinessWarningLabel(HKCompositionReadinessSummary readiness) => readiness.State switch
+    {
+        HKCompositionReadinessState.RequiresAttention => $"Требует внимания: {readiness.IssueCount}",
+        HKCompositionReadinessState.NoComposition => "Нет состава",
+        HKCompositionReadinessState.NoActiveComposition => "Нет актуальной версии состава",
+        _ => ""
+    };
+
+    private static string ReadinessTooltip(HKCompositionReadinessSummary readiness) => readiness.State switch
+    {
+        HKCompositionReadinessState.RequiresAttention => $"Проблем нормативной готовности: {readiness.IssueCount}",
+        HKCompositionReadinessState.NoComposition => "Конструктивный состав не создан",
+        HKCompositionReadinessState.NoActiveComposition => "Нет актуальной утверждённой версии состава",
+        _ => ""
+    };
+
+    private RenderFragment ReadinessDetailBlock(HKCompositionReadinessDetails details) => @<div>
+        @if (details.State == HKCompositionReadinessState.Ready)
+        {
+            <span class="tag ok">Готово</span>
+        }
+        else
+        {
+            <div class="hkReadinessStateLine">
+                <span>@ReadinessDetailStateLabel(details.State)</span>
+                @if (details.State == HKCompositionReadinessState.RequiresAttention)
+                {
+                    <span class="hint">(@details.IssueCount)</span>
+                }
+            </div>
+        }
+        @if (details.State == HKCompositionReadinessState.RequiresAttention && details.Issues.Count > 0)
+        {
+            <div class="hkReadinessIssues">
+                @foreach (var issue in details.Issues.Take(3))
+                {
+                    <div class="hkReadinessIssue">
+                        <div class="mono">@issue.ChildCode</div>
+                        <div class="hint">@ReadinessRowLabel(issue.Status)</div>
+                    </div>
+                }
+                @if (details.Issues.Count > 3)
+                {
+                    <div class="hint">И ещё @(details.Issues.Count - 3)</div>
+                }
+            </div>
+            @if (_canCompositionView && details.CompositionId.HasValue)
+            {
+                <div class="hkReadinessOpen">
+                    <button class="linkBtn" @onclick="() => OpenComposition(_selectedCard!)">Открыть состав</button>
+                </div>
+            }
+        }
+    </div>;
+
+    private RenderFragment ReadinessDetailBlock(HKCompositionReadinessSummary summary) => @<div>
+        <div class="hkReadinessStateLine">
+            <span>@ReadinessDetailStateLabel(summary.State)</span>
+            @if (summary.State == HKCompositionReadinessState.RequiresAttention)
+            {
+                <span class="hint">(@summary.IssueCount)</span>
+            }
+        </div>
+    </div>;
+
+    private static string ReadinessDetailStateLabel(HKCompositionReadinessState state) => state switch
+    {
+        HKCompositionReadinessState.Ready => "Готово",
+        HKCompositionReadinessState.RequiresAttention => "Требует внимания",
+        HKCompositionReadinessState.NoComposition => "Нет состава",
+        HKCompositionReadinessState.NoActiveComposition => "Нет актуальной версии состава",
+        _ => ""
+    };
+
+    private static string ReadinessRowLabel(string status) => status switch
+    {
+        ReadinessRow.Ready => "действующая ХК",
+        ReadinessRow.Missing => "ХК отсутствует",
+        ReadinessRow.Expired => "срок ХК истёк",
+        ReadinessRow.FutureEffective => "ХК ещё не вступила в силу",
+        ReadinessRow.ArchivedOrClosed => "нет действующей ХК",
+        _ => status
+    };
 
     public void Dispose()
     {

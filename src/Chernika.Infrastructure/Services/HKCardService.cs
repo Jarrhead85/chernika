@@ -369,6 +369,10 @@ public class HKCardService
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
+                ObjectId = x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.AggregateId
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModelId
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Complex ? x.ComplexId
+                    : (Guid?)null,
                 CreatedAt = x.CreatedAt,
                 ApprovedDate = x.ApprovedDate,
                 EffectiveDate = x.EffectiveDate,

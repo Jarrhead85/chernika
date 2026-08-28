@@ -769,6 +769,198 @@ public class EquipmentService
         return new ReadinessRow(childId, code, name, ReadinessRow.Missing, null, null);
     }
 
+    // ── HK Registry composition readiness (B2) ──────────────────────────
+
+    private static int ObjectLevelToEvalLevel(HKObjectLevel level) => level switch
+    {
+        HKObjectLevel.Complex => 0,
+        HKObjectLevel.EquipmentModel => 1,
+        HKObjectLevel.Aggregate => 2,
+        _ => -1
+    };
+
+    public async Task<IReadOnlyDictionary<Guid, HKCompositionReadinessSummary>> GetHKCompositionReadinessSummariesAsync(
+        IReadOnlyCollection<HKReadinessContext> cards, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.HKView, ct);
+
+        var result = new Dictionary<Guid, HKCompositionReadinessSummary>();
+
+        var accessibleBranchId = await GetAccessibleCompositionBranchIdAsync(null, ct);
+
+        if (cards.Any(c => !IsBranchAccessible(c.BranchId, accessibleBranchId)))
+        {
+            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+        }
+
+        var applicable = cards
+            .Where(c => c.ObjectLevel != HKObjectLevel.Node && c.ObjectId.HasValue)
+            .ToList();
+
+        foreach (var card in cards.Except(applicable))
+        {
+            result[card.HKCardId] = new HKCompositionReadinessSummary
+            {
+                HKCardId = card.HKCardId,
+                State = HKCompositionReadinessState.NotApplicable
+            };
+        }
+
+        if (!applicable.Any())
+            return result;
+
+        var complexIds = applicable.Where(c => c.ObjectLevel == HKObjectLevel.Complex).Select(c => c.ObjectId!.Value).Distinct().ToList();
+        var modelIds = applicable.Where(c => c.ObjectLevel == HKObjectLevel.EquipmentModel).Select(c => c.ObjectId!.Value).Distinct().ToList();
+        var aggregateIds = applicable.Where(c => c.ObjectLevel == HKObjectLevel.Aggregate).Select(c => c.ObjectId!.Value).Distinct().ToList();
+
+        var complexCompositions = await GetActiveComplexCompositionIdsAsync(complexIds, ct);
+        var modelCompositions = await GetActiveModelCompositionIdsAsync(modelIds, ct);
+        var aggregateCompositions = await GetActiveAggregateCompositionIdsAsync(aggregateIds, ct);
+
+        foreach (var card in applicable)
+        {
+            Guid? compositionId = null;
+            switch (card.ObjectLevel)
+            {
+                case HKObjectLevel.Complex:
+                    if (complexCompositions.TryGetValue(card.ObjectId!.Value, out var cId))
+                        compositionId = cId;
+                    break;
+                case HKObjectLevel.EquipmentModel:
+                    if (modelCompositions.TryGetValue(card.ObjectId!.Value, out var mId))
+                        compositionId = mId;
+                    break;
+                case HKObjectLevel.Aggregate:
+                    if (aggregateCompositions.TryGetValue(card.ObjectId!.Value, out var aId))
+                        compositionId = aId;
+                    break;
+            }
+
+            if (compositionId == null)
+            {
+                var hasAny = await HasAnyCompositionAsync(card.ObjectLevel, card.ObjectId!.Value, ct);
+                result[card.HKCardId] = new HKCompositionReadinessSummary
+                {
+                    HKCardId = card.HKCardId,
+                    State = hasAny ? HKCompositionReadinessState.NoActiveComposition : HKCompositionReadinessState.NoComposition
+                };
+                continue;
+            }
+
+            var level = ObjectLevelToEvalLevel(card.ObjectLevel);
+            var rows = await EvaluateReadinessAsync(level, compositionId.Value, ct);
+            var issues = rows.Where(r => r.IsProblem).ToList();
+
+            result[card.HKCardId] = new HKCompositionReadinessSummary
+            {
+                HKCardId = card.HKCardId,
+                State = issues.Count > 0 ? HKCompositionReadinessState.RequiresAttention : HKCompositionReadinessState.Ready,
+                IssueCount = issues.Count,
+                CompositionId = compositionId
+            };
+        }
+
+        return result;
+    }
+
+    public async Task<HKCompositionReadinessDetails> GetHKCompositionReadinessDetailsAsync(
+        HKReadinessContext card, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.CompositionView, ct);
+
+        var accessibleBranchId = await GetAccessibleCompositionBranchIdAsync(null, ct);
+        if (!IsBranchAccessible(card.BranchId, accessibleBranchId))
+        {
+            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+        }
+
+        if (card.ObjectLevel == HKObjectLevel.Node || !card.ObjectId.HasValue)
+        {
+            return new HKCompositionReadinessDetails
+            {
+                HKCardId = card.HKCardId,
+                State = HKCompositionReadinessState.NotApplicable
+            };
+        }
+
+        var compositionId = await FindActiveCompositionIdAsync(card.ObjectLevel, card.ObjectId.Value, ct);
+
+        if (compositionId == null)
+        {
+            var hasAny = await HasAnyCompositionAsync(card.ObjectLevel, card.ObjectId.Value, ct);
+            return new HKCompositionReadinessDetails
+            {
+                HKCardId = card.HKCardId,
+                State = hasAny ? HKCompositionReadinessState.NoActiveComposition : HKCompositionReadinessState.NoComposition
+            };
+        }
+
+        var level = ObjectLevelToEvalLevel(card.ObjectLevel);
+        var rows = await EvaluateReadinessAsync(level, compositionId.Value, ct);
+        var issues = rows.Where(r => r.IsProblem).ToList();
+
+        return new HKCompositionReadinessDetails
+        {
+            HKCardId = card.HKCardId,
+            State = issues.Count > 0 ? HKCompositionReadinessState.RequiresAttention : HKCompositionReadinessState.Ready,
+            IssueCount = issues.Count,
+            CompositionId = compositionId,
+            Issues = issues
+        };
+    }
+
+    private async Task<Dictionary<Guid, Guid>> GetActiveComplexCompositionIdsAsync(IReadOnlyList<Guid> complexIds, CancellationToken ct)
+    {
+        if (!complexIds.Any())
+            return new Dictionary<Guid, Guid>();
+        return await _db.ComplexCompositions
+            .Where(c => complexIds.Contains(c.ComplexId) && c.IsActive)
+            .ToDictionaryAsync(c => c.ComplexId, c => c.Id, ct);
+    }
+
+    private async Task<Dictionary<Guid, Guid>> GetActiveModelCompositionIdsAsync(IReadOnlyList<Guid> modelIds, CancellationToken ct)
+    {
+        if (!modelIds.Any())
+            return new Dictionary<Guid, Guid>();
+        return await _db.ProductCompositions
+            .Where(c => modelIds.Contains(c.EquipmentModelId) && c.IsActive)
+            .ToDictionaryAsync(c => c.EquipmentModelId, c => c.Id, ct);
+    }
+
+    private async Task<Dictionary<Guid, Guid>> GetActiveAggregateCompositionIdsAsync(IReadOnlyList<Guid> aggregateIds, CancellationToken ct)
+    {
+        if (!aggregateIds.Any())
+            return new Dictionary<Guid, Guid>();
+        return await _db.AggregateCompositions
+            .Where(c => aggregateIds.Contains(c.AggregateId) && c.IsActive)
+            .ToDictionaryAsync(c => c.AggregateId, c => c.Id, ct);
+    }
+
+    private static bool IsBranchAccessible(Guid branchId, Guid? accessibleBranchId) =>
+        !accessibleBranchId.HasValue || branchId == accessibleBranchId.Value;
+
+    private async Task<Guid?> FindActiveCompositionIdAsync(HKObjectLevel level, Guid objectId, CancellationToken ct)
+    {
+        return level switch
+        {
+            HKObjectLevel.Complex => await _db.ComplexCompositions.Where(c => c.ComplexId == objectId && c.IsActive).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
+            HKObjectLevel.EquipmentModel => await _db.ProductCompositions.Where(c => c.EquipmentModelId == objectId && c.IsActive).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
+            HKObjectLevel.Aggregate => await _db.AggregateCompositions.Where(c => c.AggregateId == objectId && c.IsActive).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
+            _ => null
+        };
+    }
+
+    private async Task<bool> HasAnyCompositionAsync(HKObjectLevel level, Guid objectId, CancellationToken ct)
+    {
+        return level switch
+        {
+            HKObjectLevel.Complex => await _db.ComplexCompositions.AnyAsync(c => c.ComplexId == objectId, ct),
+            HKObjectLevel.EquipmentModel => await _db.ProductCompositions.AnyAsync(c => c.EquipmentModelId == objectId, ct),
+            HKObjectLevel.Aggregate => await _db.AggregateCompositions.AnyAsync(c => c.AggregateId == objectId, ct),
+            _ => false
+        };
+    }
+
     private static string BuildUniqueVersion(string baseVersion, IReadOnlyCollection<string> existing)
     {
         if (existing.Count == 0)
