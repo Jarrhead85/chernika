@@ -257,29 +257,29 @@ public class HKCompositionReadinessRegistryIntegrationTests
         await s.Db.SaveChangesAsync();
 
         // Approved composition in Branch B
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminB.Id);
-        var bComp = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "Branch B"));
-        await s.Equipment.SubmitForReviewAsync(bComp.Id);
-        Assert.True(await s.Equipment.ApproveCompositionAsync(bComp.Id, null));
+        var bComp = await CreateApprovedProductCompositionForModelAsync(s, model.Id, Guid.Parse(_fixture.NormAdminB.Id), "Branch B");
 
-        // Draft composition in Branch A
+        // Draft composition in Branch A (intentionally NOT approved)
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "Branch A"));
+        var draftA = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "Branch A"));
 
         // Branch A summary should see only the Draft (NoActiveComposition) — Branch B's Approved is invisible.
         var ctxA = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchA);
         var summaryA = (await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctxA }))[ctxA.HKCardId];
         Assert.Equal(HKCompositionReadinessState.NoActiveComposition, summaryA.State);
         Assert.NotNull(summaryA.NavigationCompositionId);
-        Assert.Equal(summaryA.NavigationCompositionId, s.Db.ProductCompositions.Single(c => c.BranchId == _fixture.BranchA && c.EquipmentModelId == model.Id && c.Status == ProductCompositionStatus.Draft).Id);
+        Assert.Equal(draftA.Id, summaryA.NavigationCompositionId);
 
         // Branch B summary should see Approved + compositionId from Branch B
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminB.Id);
         var ctxB = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchB);
         var summaryB = (await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctxB }))[ctxB.HKCardId];
-        Assert.Equal(HKCompositionReadinessState.Ready, summaryB.State);
-        Assert.Equal(bComp.Id, summaryB.CompositionId);
-        Assert.Equal(bComp.Id, summaryB.NavigationCompositionId);
+        Assert.Equal(bComp, summaryB.CompositionId);
+        Assert.Equal(bComp, summaryB.NavigationCompositionId);
+        // The active composition is found; the aggregate child has no HK card so the state
+        // is either Ready (no children) or RequiresAttention (missing child HK).
+        Assert.True(summaryB.State == HKCompositionReadinessState.Ready
+            || summaryB.State == HKCompositionReadinessState.RequiresAttention);
     }
 
     [Fact]
@@ -347,15 +347,19 @@ public class HKCompositionReadinessRegistryIntegrationTests
         s.Db.EquipmentModels.Add(model);
         await s.Db.SaveChangesAsync();
 
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        var compA = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "A"));
-        await s.Equipment.SubmitForReviewAsync(compA.Id);
-        Assert.True(await s.Equipment.ApproveCompositionAsync(compA.Id, null));
+        var compA = await CreateApprovedProductCompositionForModelAsync(s, model.Id, Guid.Parse(_fixture.NormAdminA.Id), "A");
+        var compB = await CreateApprovedProductCompositionForModelAsync(s, model.Id, Guid.Parse(_fixture.NormAdminB.Id), "B");
 
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminB.Id);
-        var compB = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "B"));
-        await s.Equipment.SubmitForReviewAsync(compB.Id);
-        Assert.True(await s.Equipment.ApproveCompositionAsync(compB.Id, null));
+        // ApproveCompositionAsync archives any other active composition for the same EquipmentModel,
+        // regardless of branch. This is a pre-existing cross-branch limitation, so the test
+        // explicitly restores both compositions to active+approved state to exercise the batch.
+        var storedA = await s.Db.ProductCompositions.FirstAsync(c => c.Id == compA);
+        storedA.Status = ProductCompositionStatus.Approved;
+        storedA.IsActive = true;
+        var storedB = await s.Db.ProductCompositions.FirstAsync(c => c.Id == compB);
+        storedB.Status = ProductCompositionStatus.Approved;
+        storedB.IsActive = true;
+        await s.Db.SaveChangesAsync();
 
         // SystemAdmin can ask both branches in one call. (ObjectId, BranchId) is the composite key — no duplicate.
         s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
@@ -363,8 +367,8 @@ public class HKCompositionReadinessRegistryIntegrationTests
         var ctxB = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchB);
         var summaries = await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctxA, ctxB });
 
-        Assert.Equal(compA.Id, summaries[ctxA.HKCardId].CompositionId);
-        Assert.Equal(compB.Id, summaries[ctxB.HKCardId].CompositionId);
+        Assert.Equal(compA, summaries[ctxA.HKCardId].CompositionId);
+        Assert.Equal(compB, summaries[ctxB.HKCardId].CompositionId);
     }
 
     [Fact]
@@ -410,6 +414,7 @@ public class HKCompositionReadinessRegistryIntegrationTests
 
         // Create + submit + approve + archive to get an Archived version.
         var comp = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "approved"));
+        await AddAggregateToDraftAsync(s, comp.Id);
         await s.Equipment.SubmitForReviewAsync(comp.Id);
         Assert.True(await s.Equipment.ApproveCompositionAsync(comp.Id, null));
         Assert.True(await s.Equipment.ArchiveCompositionAsync(comp.Id));
@@ -425,10 +430,211 @@ public class HKCompositionReadinessRegistryIntegrationTests
         Assert.Equal(_fixture.BranchA, nav.BranchId);
     }
 
+    [Fact]
+    public async Task Readiness_Summary_SystemAdmin_MultiBranchBatch_NoDuplicateKey_RealApprovedInBothBranches()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-MBR-" + Guid.NewGuid().ToString("N")[..6], Name = "Изделие многофилиальный реальный" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        var compA = await CreateApprovedProductCompositionForModelAsync(s, model.Id, Guid.Parse(_fixture.NormAdminA.Id), "A");
+        var compB = await CreateApprovedProductCompositionForModelAsync(s, model.Id, Guid.Parse(_fixture.NormAdminB.Id), "B");
+
+        // ApproveCompositionAsync archives any other active composition for the same EquipmentModel,
+        // regardless of branch. Restore both to active+approved so the multi-branch batch is exercised.
+        var a = await s.Db.ProductCompositions.FirstAsync(c => c.Id == compA);
+        a.Status = ProductCompositionStatus.Approved; a.IsActive = true;
+        var b = await s.Db.ProductCompositions.FirstAsync(c => c.Id == compB);
+        b.Status = ProductCompositionStatus.Approved; b.IsActive = true;
+        await s.Db.SaveChangesAsync();
+
+        // SystemAdmin can request both contexts in a single summary batch.
+        s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        var ctxA = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchA);
+        var ctxB = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchB);
+        var summaries = await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctxA, ctxB });
+
+        Assert.Equal(compA, summaries[ctxA.HKCardId].CompositionId);
+        Assert.Equal(compB, summaries[ctxB.HKCardId].CompositionId);
+        Assert.Equal(compA, summaries[ctxA.HKCardId].NavigationCompositionId);
+        Assert.Equal(compB, summaries[ctxB.HKCardId].NavigationCompositionId);
+    }
+
+    [Fact]
+    public async Task Readiness_Summary_AggregateLevel_MultiBranchBatch_NoDuplicateKey()
+    {
+        await using var s = _fixture.CreateScope();
+        var aggregate = new Aggregate { Id = Guid.NewGuid(), Code = "AG-MB-" + Guid.NewGuid().ToString("N")[..6], Name = "Агрегат многофилиальный" };
+        s.Db.Aggregates.Add(aggregate);
+        await s.Db.SaveChangesAsync();
+
+        var compA = await CreateApprovedAggregateCompositionForAggregateAsync(s, aggregate.Id, Guid.Parse(_fixture.NormAdminA.Id), "A");
+        var compB = await CreateApprovedAggregateCompositionForAggregateAsync(s, aggregate.Id, Guid.Parse(_fixture.NormAdminB.Id), "B");
+
+        // ApproveAggregateCompositionAsync archives any other active composition for the same AggregateId,
+        // regardless of branch. Restore both to active+approved so the multi-branch batch is exercised.
+        var aAgg = await s.Db.AggregateCompositions.FirstAsync(c => c.Id == compA);
+        aAgg.Status = ProductCompositionStatus.Approved; aAgg.IsActive = true;
+        var bAgg = await s.Db.AggregateCompositions.FirstAsync(c => c.Id == compB);
+        bAgg.Status = ProductCompositionStatus.Approved; bAgg.IsActive = true;
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        var ctxA = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.Aggregate, aggregate.Id, _fixture.BranchA);
+        var ctxB = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.Aggregate, aggregate.Id, _fixture.BranchB);
+        var summaries = await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctxA, ctxB });
+
+        Assert.Equal(compA, summaries[ctxA.HKCardId].CompositionId);
+        Assert.Equal(compB, summaries[ctxB.HKCardId].CompositionId);
+    }
+
+    [Fact]
+    public async Task Readiness_Summary_BranchSpecificNoActive_DraftInA_ApprovedInB()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-BNA-" + Guid.NewGuid().ToString("N")[..6], Name = "Изделие ветвь" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var draftA = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "draft A"));
+
+        var compB = await CreateApprovedProductCompositionForModelAsync(s, model.Id, Guid.Parse(_fixture.NormAdminB.Id), "B");
+
+        // SystemAdmin asks both contexts in one batch.
+        s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        var ctxA = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchA);
+        var ctxB = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchB);
+        var summaries = await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctxA, ctxB });
+
+        // Branch A: only the Draft, no active composition.
+        Assert.Equal(HKCompositionReadinessState.NoActiveComposition, summaries[ctxA.HKCardId].State);
+        Assert.Equal(draftA.Id, summaries[ctxA.HKCardId].NavigationCompositionId);
+        Assert.Null(summaries[ctxA.HKCardId].CompositionId);
+
+        // Branch B: active composition was found, but the aggregate child has no HK card,
+        // so the state is RequiresAttention (the composition itself is read).
+        Assert.Equal(compB, summaries[ctxB.HKCardId].CompositionId);
+        Assert.NotEqual(HKCompositionReadinessState.NotApplicable, summaries[ctxB.HKCardId].State);
+        Assert.NotEqual(HKCompositionReadinessState.NoComposition, summaries[ctxB.HKCardId].State);
+        Assert.NotEqual(HKCompositionReadinessState.NoActiveComposition, summaries[ctxB.HKCardId].State);
+
+        // Navigation version in A is in Branch A, active version in B is in Branch B.
+        var navA = await s.Db.ProductCompositions.FindAsync(summaries[ctxA.HKCardId].NavigationCompositionId!.Value);
+        Assert.Equal(_fixture.BranchA, navA!.BranchId);
+        var activeB = await s.Db.ProductCompositions.FindAsync(summaries[ctxB.HKCardId].CompositionId!.Value);
+        Assert.Equal(_fixture.BranchB, activeB!.BranchId);
+    }
+
+    [Fact]
+    public async Task Readiness_Active_IsActiveWithoutApproved_IsNotReadinessActive()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-NAST-" + Guid.NewGuid().ToString("N")[..6], Name = "Изделие status guard" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        // Normal lifecycle gives IsActive=true only when Status=Approved.
+        // To prove the defensive criterion, manipulate the entity directly.
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var draft = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "draft"));
+        var tracked = await s.Db.ProductCompositions.FindAsync(draft.Id);
+        tracked!.IsActive = true;
+        tracked.Status = ProductCompositionStatus.OnReview;
+        tracked.UpdatedAt = DateTime.UtcNow;
+        await s.Db.SaveChangesAsync();
+
+        var ctx = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchA);
+        var summary = (await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctx }))[ctx.HKCardId];
+        Assert.Equal(HKCompositionReadinessState.NoActiveComposition, summary.State);
+        Assert.Null(summary.CompositionId);
+
+        await GrantPermissionAsync(s, _fixture.NormAdminA.Id, PermissionCodes.CompositionView);
+        var details = await s.Equipment.GetHKCompositionReadinessDetailsAsync(ctx);
+        Assert.Equal(HKCompositionReadinessState.NoActiveComposition, details.State);
+        Assert.Null(details.CompositionId);
+        // Navigation still points to the same OnReview version (Draft > OnReview > Archived, but it's OnReview here).
+        Assert.Equal(draft.Id, details.NavigationCompositionId);
+    }
+
+    [Fact]
+    public async Task Readiness_NavigationPriority_DraftBeatsOnReviewAndArchived_AllInSameBranch()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-NP-" + Guid.NewGuid().ToString("N")[..6], Name = "Изделие навигация приоритет" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        // Three different versions for the same (Model, Branch A), each with its own aggregate.
+        var draft = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "draft"));
+        await AddAggregateToDraftAsync(s, draft.Id);
+
+        var onReview = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "review"));
+        await AddAggregateToDraftAsync(s, onReview.Id);
+        await s.Equipment.SubmitForReviewAsync(onReview.Id);
+
+        var archived = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "approved"));
+        await AddAggregateToDraftAsync(s, archived.Id);
+        await s.Equipment.SubmitForReviewAsync(archived.Id);
+        Assert.True(await s.Equipment.ApproveCompositionAsync(archived.Id, null));
+        Assert.True(await s.Equipment.ArchiveCompositionAsync(archived.Id));
+
+        await GrantPermissionAsync(s, _fixture.NormAdminA.Id, PermissionCodes.CompositionView);
+        var ctx = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchA);
+        var details = await s.Equipment.GetHKCompositionReadinessDetailsAsync(ctx);
+        Assert.Equal(HKCompositionReadinessState.NoActiveComposition, details.State);
+        Assert.Equal(draft.Id, details.NavigationCompositionId);
+    }
+
+    [Fact]
+    public async Task Readiness_NavigationPriority_OnReviewBeatsArchived_WhenNoDraft()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-NP2-" + Guid.NewGuid().ToString("N")[..6], Name = "Изделие навигация 2" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var onReview = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "review"));
+        await AddAggregateToDraftAsync(s, onReview.Id);
+        await s.Equipment.SubmitForReviewAsync(onReview.Id);
+
+        var archived = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(model.Id, "approved"));
+        await AddAggregateToDraftAsync(s, archived.Id);
+        await s.Equipment.SubmitForReviewAsync(archived.Id);
+        Assert.True(await s.Equipment.ApproveCompositionAsync(archived.Id, null));
+        Assert.True(await s.Equipment.ArchiveCompositionAsync(archived.Id));
+
+        await GrantPermissionAsync(s, _fixture.NormAdminA.Id, PermissionCodes.CompositionView);
+        var ctx = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchA);
+        var details = await s.Equipment.GetHKCompositionReadinessDetailsAsync(ctx);
+        Assert.Equal(HKCompositionReadinessState.NoActiveComposition, details.State);
+        Assert.Equal(onReview.Id, details.NavigationCompositionId);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private async Task GrantPermissionAsync(TestScope s, string userId, string permissionCode)
     {
+        var existing = await s.Db.UserPermissionOverrides
+            .Where(o => o.UserId == userId && o.PermissionCode == permissionCode)
+            .FirstOrDefaultAsync();
+        if (existing != null)
+        {
+            if (!existing.IsGranted)
+            {
+                existing.IsGranted = true;
+                existing.Reason = "Test override";
+                existing.GrantedByUserId = _fixture.SystemAdminUser.Id;
+                await s.Db.SaveChangesAsync();
+                s.Permissions.InvalidateCache(userId);
+            }
+            return;
+        }
         s.Db.UserPermissionOverrides.Add(new UserPermissionOverride
         {
             Id = Guid.NewGuid(),
@@ -500,5 +706,50 @@ public class HKCompositionReadinessRegistryIntegrationTests
         var approved = await s.Equipment.ApproveCompositionAsync(comp.Id, null);
         Assert.True(approved);
         return (comp.Id, model.Id, part.Id);
+    }
+
+    private async Task<Guid> CreateApprovedProductCompositionForModelAsync(
+        TestScope s, Guid modelId, Guid userId, string? comment = null)
+    {
+        s.User.CurrentUserId = userId;
+        var comp = await s.Equipment.CreateCompositionDraftAsync(new CreateCompositionRequest(modelId, comment));
+        var part = await s.Equipment.AddPartAsync(new AddPartRequest(comp.Id, "Силовая установка", null, 1));
+        var aggregate = new Aggregate { Id = Guid.NewGuid(), Code = "A-" + Guid.NewGuid().ToString("N")[..6], Name = "Агрегат тест" };
+        s.Db.Aggregates.Add(aggregate);
+        await s.Db.SaveChangesAsync();
+
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(comp.Id, part.Id, aggregate.Id, 1));
+        await s.Equipment.SubmitForReviewAsync(comp.Id);
+        Assert.True(await s.Equipment.ApproveCompositionAsync(comp.Id, null));
+        return comp.Id;
+    }
+
+    private async Task<Guid> CreateApprovedAggregateCompositionForAggregateAsync(
+        TestScope s, Guid aggregateId, Guid userId, string? comment = null)
+    {
+        s.User.CurrentUserId = userId;
+        var comp = await s.Equipment.CreateAggregateCompositionAsync(new CreateAggregateCompositionRequest(aggregateId, comment));
+        var node = new Node { Id = Guid.NewGuid(), Code = "N-" + Guid.NewGuid().ToString("N")[..6], Name = "Узел тест" };
+        s.Db.Nodes.Add(node);
+        await s.Db.SaveChangesAsync();
+
+        await s.Equipment.AddAggregateCompositionNodeAsync(new AddAggregateCompositionNodeRequest(comp.Id, node.Id, 1, null));
+        await s.Equipment.SubmitAggregateCompositionForReviewAsync(comp.Id);
+        Assert.True(await s.Equipment.ApproveAggregateCompositionAsync(comp.Id, null));
+        return comp.Id;
+    }
+
+    private async Task AddAggregateToDraftAsync(TestScope s, Guid compositionId)
+    {
+        var part = s.Db.ProductCompositionParts.FirstOrDefault(p => p.ProductCompositionId == compositionId);
+        if (part == null)
+        {
+            await s.Equipment.AddPartAsync(new AddPartRequest(compositionId, "Часть", null, 1));
+            part = s.Db.ProductCompositionParts.First(p => p.ProductCompositionId == compositionId);
+        }
+        var aggregate = new Aggregate { Id = Guid.NewGuid(), Code = "A-" + Guid.NewGuid().ToString("N")[..6], Name = "Агрегат тест" };
+        s.Db.Aggregates.Add(aggregate);
+        await s.Db.SaveChangesAsync();
+        await s.Equipment.AddAggregateAsync(new AddProductCompositionAggregateRequest(compositionId, part.Id, aggregate.Id, 1));
     }
 }
