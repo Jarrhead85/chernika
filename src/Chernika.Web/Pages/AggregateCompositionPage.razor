@@ -52,7 +52,7 @@
                     }
                     else if (!compositions.Any())
                     {
-                        <div class="empty-state">Нет составов. Выберите агрегат и нажмите «Создать черновик».</div>
+                        <div class="empty-state">@EmptyStateText</div>
                     }
                     else
                     {
@@ -275,6 +275,8 @@
 </div>
 
 @code {
+    [SupplyParameterFromQuery(Name = "aggregateId")] public Guid? AggregateIdQuery { get; set; }
+
     private List<Aggregate> aggregates = new();
     private List<Node> nodes = new();
     private List<CompositionVersionSummary> compositions = new();
@@ -304,6 +306,8 @@
     private Guid? editingNodeId;
     private int editNodeQty;
 
+    private bool HasEmptyState => selectedAggregateId != Guid.Empty && !compositions.Any();
+
     [Inject] private TimeProvider TimeProvider { get; set; } = null!;
     private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
 
@@ -319,6 +323,11 @@
         canCreateVersion = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion);
         _loadCts = new CancellationTokenSource();
         await LoadData();
+        if (AggregateIdQuery.HasValue && AggregateIdQuery.Value != Guid.Empty)
+        {
+            selectedAggregateId = AggregateIdQuery.Value;
+            await LoadCompositions();
+        }
     }
 
     private async Task LoadData()
@@ -513,4 +522,8 @@
 
     bool CanEditComposition(ProductCompositionStatus status) =>
         canEditDraft && status == ProductCompositionStatus.Draft;
+
+    private string EmptyStateText => HasEmptyState
+        ? "Состав не создан"
+        : "Нет составов. Выберите агрегат и нажмите «Создать черновик».";
 }

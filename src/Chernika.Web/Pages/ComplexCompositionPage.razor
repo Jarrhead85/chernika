@@ -52,7 +52,7 @@
                     }
                     else if (!compositions.Any())
                     {
-                        <div class="empty-state">Нет составов. Выберите комплекс и нажмите «Создать черновик».</div>
+                        <div class="empty-state">@EmptyStateText</div>
                     }
                     else
                     {
@@ -275,6 +275,8 @@
 </div>
 
 @code {
+    [SupplyParameterFromQuery(Name = "complexId")] public Guid? ComplexIdQuery { get; set; }
+
     private List<Complex> complexes = new();
     private List<EquipmentModel> models = new();
     private List<CompositionVersionSummary> compositions = new();
@@ -304,6 +306,8 @@
     private Guid? editingItemId;
     private int editItemQty;
 
+    private bool HasEmptyState => selectedComplexId != Guid.Empty && !compositions.Any();
+
     [Inject] private TimeProvider TimeProvider { get; set; } = null!;
     private DateTime _now => TimeProvider.GetUtcNow().UtcDateTime;
 
@@ -319,6 +323,11 @@
         canCreateVersion = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion);
         _loadCts = new CancellationTokenSource();
         await LoadData();
+        if (ComplexIdQuery.HasValue && ComplexIdQuery.Value != Guid.Empty)
+        {
+            selectedComplexId = ComplexIdQuery.Value;
+            await LoadCompositions();
+        }
     }
 
     private async Task LoadData()
@@ -513,4 +522,8 @@
 
     bool CanEditComposition(ProductCompositionStatus status) =>
         canEditDraft && status == ProductCompositionStatus.Draft;
+
+    private string EmptyStateText => HasEmptyState
+        ? "Состав не создан"
+        : "Нет составов. Выберите комплекс и нажмите «Создать черновик».";
 }

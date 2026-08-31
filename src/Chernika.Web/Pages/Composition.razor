@@ -51,7 +51,7 @@
                     }
                     else if (!compositions.Any())
                     {
-                        <div class="empty-state">Нет конструктивных составов. Выберите модель и нажмите «Создать черновик».</div>
+                        <div class="empty-state">@EmptyStateText</div>
                     }
                     else
                     {
@@ -332,6 +332,8 @@
 }
 
 @code {
+    [SupplyParameterFromQuery(Name = "equipmentModelId")] public Guid? EquipmentModelIdQuery { get; set; }
+
     private List<EquipmentModel> models = new();
     private List<Aggregate> aggregates = new();
     private List<CompositionVersionSummary> compositions = new();
@@ -380,6 +382,8 @@
     private string? deletePartError;
     private string? error;
 
+    private bool HasEmptyState => selectedModelId != Guid.Empty && !compositions.Any();
+
     private bool IsInlineAddOpenFor(Guid? partId) => _isInlineAddOpen && _inlineAddForPartId == partId;
 
     [Inject] private TimeProvider TimeProvider { get; set; } = null!;
@@ -397,6 +401,11 @@
         canCreateVersion = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion);
         _loadCts = new CancellationTokenSource();
         await LoadData();
+        if (EquipmentModelIdQuery.HasValue && EquipmentModelIdQuery.Value != Guid.Empty)
+        {
+            selectedModelId = EquipmentModelIdQuery.Value;
+            await LoadCompositions();
+        }
     }
 
     private async Task LoadData()
@@ -902,4 +911,10 @@
         if (from.HasValue) return $"с {from.Value:dd.MM.yy}";
         return $"до {to!.Value:dd.MM.yy}";
     }
+
+    private string EmptyStateText => HasEmptyState
+        ? "Состав не создан"
+        : "Нет конструктивных составов. Выберите модель и нажмите «Создать черновик».";
+
+    private bool ShowCreateDraftInEmptyState => HasEmptyState && canCreate;
 }

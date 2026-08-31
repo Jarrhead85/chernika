@@ -2,7 +2,7 @@ using Chernika.Domain.Enums;
 
 namespace Chernika.Domain.Entities;
 
-public class ComplexComposition
+public partial class ComplexComposition
 {
     public Guid Id { get; set; }
     public Guid ComplexId { get; set; }

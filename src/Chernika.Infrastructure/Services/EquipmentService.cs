@@ -779,13 +779,15 @@ public class EquipmentService
         _ => -1
     };
 
+    private static bool IsBranchAccessible(Guid branchId, Guid? accessibleBranchId) =>
+        !accessibleBranchId.HasValue || branchId == accessibleBranchId.Value;
+
     public async Task<IReadOnlyDictionary<Guid, HKCompositionReadinessSummary>> GetHKCompositionReadinessSummariesAsync(
         IReadOnlyCollection<HKReadinessContext> cards, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.HKView, ct);
 
         var result = new Dictionary<Guid, HKCompositionReadinessSummary>();
-
         var accessibleBranchId = await GetAccessibleCompositionBranchIdAsync(null, ct);
 
         if (cards.Any(c => !IsBranchAccessible(c.BranchId, accessibleBranchId)))
@@ -809,46 +811,81 @@ public class EquipmentService
         if (!applicable.Any())
             return result;
 
+        var today = _time.GetUtcNow().UtcDateTime.Date;
+
         var complexIds = applicable.Where(c => c.ObjectLevel == HKObjectLevel.Complex).Select(c => c.ObjectId!.Value).Distinct().ToList();
         var modelIds = applicable.Where(c => c.ObjectLevel == HKObjectLevel.EquipmentModel).Select(c => c.ObjectId!.Value).Distinct().ToList();
         var aggregateIds = applicable.Where(c => c.ObjectLevel == HKObjectLevel.Aggregate).Select(c => c.ObjectId!.Value).Distinct().ToList();
 
-        var complexCompositions = await GetActiveComplexCompositionIdsAsync(complexIds, ct);
-        var modelCompositions = await GetActiveModelCompositionIdsAsync(modelIds, ct);
-        var aggregateCompositions = await GetActiveAggregateCompositionIdsAsync(aggregateIds, ct);
+        // Batch: active compositions by (ObjectId + BranchId)
+        var complexActive = await GetActiveComplexCompositionIdsAsync(complexIds, accessibleBranchId, ct);
+        var modelActive = await GetActiveModelCompositionIdsAsync(modelIds, accessibleBranchId, ct);
+        var aggregateActive = await GetActiveAggregateCompositionIdsAsync(aggregateIds, accessibleBranchId, ct);
+
+        // Batch: any version existence by (ObjectId + BranchId)
+        var complexAny = await HasAnyComplexCompositionAsync(complexIds, accessibleBranchId, ct);
+        var modelAny = await HasAnyModelCompositionAsync(modelIds, accessibleBranchId, ct);
+        var aggregateAny = await HasAnyAggregateCompositionAsync(aggregateIds, accessibleBranchId, ct);
+
+        // Batch: navigation composition (Draft > OnReview > Archived) by (ObjectId + BranchId)
+        var complexNav = await GetNavigationComplexCompositionIdsAsync(complexIds, accessibleBranchId, ct);
+        var modelNav = await GetNavigationModelCompositionIdsAsync(modelIds, accessibleBranchId, ct);
+        var aggregateNav = await GetNavigationAggregateCompositionIdsAsync(aggregateIds, accessibleBranchId, ct);
+
+        // Collect all active composition IDs to batch-load children + HK metadata
+        var allActiveCompositionIds = new List<Guid>();
+        allActiveCompositionIds.AddRange(complexActive.Values);
+        allActiveCompositionIds.AddRange(modelActive.Values);
+        allActiveCompositionIds.AddRange(aggregateActive.Values);
+
+        // Batch-load children for all active compositions
+        var childrenByComposition = await LoadCompositionChildrenAsync(allActiveCompositionIds, ct);
+
+        // Collect all distinct child object IDs to batch-load HK metadata
+        var allChildIds = new List<Guid>();
+        foreach (var kvp in childrenByComposition)
+        {
+            allChildIds.AddRange(kvp.Value.Select(ch => ch.ChildId));
+        }
+        var hkByChildId = await LoadChildHkSnapshotsAsync(allChildIds, accessibleBranchId, ct);
 
         foreach (var card in applicable)
         {
-            Guid? compositionId = null;
-            switch (card.ObjectLevel)
+            Guid? compositionId = card.ObjectLevel switch
             {
-                case HKObjectLevel.Complex:
-                    if (complexCompositions.TryGetValue(card.ObjectId!.Value, out var cId))
-                        compositionId = cId;
-                    break;
-                case HKObjectLevel.EquipmentModel:
-                    if (modelCompositions.TryGetValue(card.ObjectId!.Value, out var mId))
-                        compositionId = mId;
-                    break;
-                case HKObjectLevel.Aggregate:
-                    if (aggregateCompositions.TryGetValue(card.ObjectId!.Value, out var aId))
-                        compositionId = aId;
-                    break;
-            }
+                HKObjectLevel.Complex => complexActive.GetValueOrDefault(card.ObjectId!.Value),
+                HKObjectLevel.EquipmentModel => modelActive.GetValueOrDefault(card.ObjectId!.Value),
+                HKObjectLevel.Aggregate => aggregateActive.GetValueOrDefault(card.ObjectId!.Value),
+                _ => null
+            };
 
             if (compositionId == null)
             {
-                var hasAny = await HasAnyCompositionAsync(card.ObjectLevel, card.ObjectId!.Value, ct);
+                var hasAny = card.ObjectLevel switch
+                {
+                    HKObjectLevel.Complex => complexAny.GetValueOrDefault(card.ObjectId!.Value),
+                    HKObjectLevel.EquipmentModel => modelAny.GetValueOrDefault(card.ObjectId!.Value),
+                    HKObjectLevel.Aggregate => aggregateAny.GetValueOrDefault(card.ObjectId!.Value),
+                    _ => false
+                };
+                Guid? navId = card.ObjectLevel switch
+                {
+                    HKObjectLevel.Complex => complexNav.GetValueOrDefault(card.ObjectId!.Value),
+                    HKObjectLevel.EquipmentModel => modelNav.GetValueOrDefault(card.ObjectId!.Value),
+                    HKObjectLevel.Aggregate => aggregateNav.GetValueOrDefault(card.ObjectId!.Value),
+                    _ => null
+                };
                 result[card.HKCardId] = new HKCompositionReadinessSummary
                 {
                     HKCardId = card.HKCardId,
-                    State = hasAny ? HKCompositionReadinessState.NoActiveComposition : HKCompositionReadinessState.NoComposition
+                    State = hasAny ? HKCompositionReadinessState.NoActiveComposition : HKCompositionReadinessState.NoComposition,
+                    NavigationCompositionId = navId
                 };
                 continue;
             }
 
-            var level = ObjectLevelToEvalLevel(card.ObjectLevel);
-            var rows = await EvaluateReadinessAsync(level, compositionId.Value, ct);
+            var children = childrenByComposition.GetValueOrDefault(compositionId.Value) ?? new List<ReadinessChild>();
+            var rows = EvaluateReadinessCore(children, hkByChildId, today);
             var issues = rows.Where(r => r.IsProblem).ToList();
 
             result[card.HKCardId] = new HKCompositionReadinessSummary
@@ -856,7 +893,8 @@ public class EquipmentService
                 HKCardId = card.HKCardId,
                 State = issues.Count > 0 ? HKCompositionReadinessState.RequiresAttention : HKCompositionReadinessState.Ready,
                 IssueCount = issues.Count,
-                CompositionId = compositionId
+                CompositionId = compositionId,
+                NavigationCompositionId = compositionId
             };
         }
 
@@ -883,20 +921,25 @@ public class EquipmentService
             };
         }
 
-        var compositionId = await FindActiveCompositionIdAsync(card.ObjectLevel, card.ObjectId.Value, ct);
+        var compositionId = await FindActiveCompositionIdAsync(card.ObjectLevel, card.ObjectId.Value, accessibleBranchId, ct);
 
         if (compositionId == null)
         {
-            var hasAny = await HasAnyCompositionAsync(card.ObjectLevel, card.ObjectId.Value, ct);
+            var hasAny = await HasAnyCompositionAsync(card.ObjectLevel, card.ObjectId.Value, accessibleBranchId, ct);
+            var navId = await FindNavigationCompositionIdAsync(card.ObjectLevel, card.ObjectId.Value, accessibleBranchId, ct);
             return new HKCompositionReadinessDetails
             {
                 HKCardId = card.HKCardId,
-                State = hasAny ? HKCompositionReadinessState.NoActiveComposition : HKCompositionReadinessState.NoComposition
+                State = hasAny ? HKCompositionReadinessState.NoActiveComposition : HKCompositionReadinessState.NoComposition,
+                NavigationCompositionId = navId
             };
         }
 
-        var level = ObjectLevelToEvalLevel(card.ObjectLevel);
-        var rows = await EvaluateReadinessAsync(level, compositionId.Value, ct);
+        var children = await LoadSingleCompositionChildrenAsync(compositionId.Value, ct);
+        var childIds = children.Select(ch => ch.ChildId).ToList();
+        var hkByChildId = await LoadChildHkSnapshotsAsync(childIds, accessibleBranchId, ct);
+        var today = _time.GetUtcNow().UtcDateTime.Date;
+        var rows = EvaluateReadinessCore(children, hkByChildId, today);
         var issues = rows.Where(r => r.IsProblem).ToList();
 
         return new HKCompositionReadinessDetails
@@ -905,58 +948,342 @@ public class EquipmentService
             State = issues.Count > 0 ? HKCompositionReadinessState.RequiresAttention : HKCompositionReadinessState.Ready,
             IssueCount = issues.Count,
             CompositionId = compositionId,
+            NavigationCompositionId = compositionId,
             Issues = issues
         };
     }
 
-    private async Task<Dictionary<Guid, Guid>> GetActiveComplexCompositionIdsAsync(IReadOnlyList<Guid> complexIds, CancellationToken ct)
+    // ── Shared readiness core ──────────────────────────────────────────
+
+    private static List<ReadinessRow> EvaluateReadinessCore(
+        IReadOnlyList<ReadinessChild> children,
+        IReadOnlyDictionary<Guid, HKCardSnapshot> hkByChildId,
+        DateTime today)
+    {
+        var rows = new List<ReadinessRow>();
+        foreach (var child in children)
+        {
+            hkByChildId.TryGetValue(child.ChildId, out var hk);
+            rows.Add(EvaluateChildReadinessCore(child.ChildId, child.Code, child.Name, hk, today));
+        }
+        return rows;
+    }
+
+    private static ReadinessRow EvaluateChildReadinessCore(Guid childId, string code, string name, HKCardSnapshot? hk, DateTime today)
+    {
+        if (hk == null)
+            return new ReadinessRow(childId, code, name, ReadinessRow.Missing, null, null);
+
+        if (hk.Status == HKCardStatus.Approved)
+        {
+            var effectiveOk = !hk.EffectiveDate.HasValue || hk.EffectiveDate.Value.Date <= today;
+            var expirationOk = !hk.ExpirationDate.HasValue || hk.ExpirationDate.Value.Date >= today;
+            if (effectiveOk && expirationOk)
+                return new ReadinessRow(childId, code, name, ReadinessRow.Ready, hk.Id, hk.Version);
+
+            if (hk.ExpirationDate.HasValue && hk.ExpirationDate.Value.Date < today)
+                return new ReadinessRow(childId, code, name, ReadinessRow.Expired, hk.Id, hk.Version);
+
+            return new ReadinessRow(childId, code, name, ReadinessRow.FutureEffective, hk.Id, hk.Version);
+        }
+
+        if (hk.Status == HKCardStatus.Archived)
+            return new ReadinessRow(childId, code, name, ReadinessRow.ArchivedOrClosed, hk.Id, hk.Version);
+
+        return new ReadinessRow(childId, code, name, ReadinessRow.Missing, null, null);
+    }
+
+    // ── Batch data loaders ─────────────────────────────────────────────
+
+    private async Task<Dictionary<Guid, Guid>> GetActiveComplexCompositionIdsAsync(IReadOnlyList<Guid> complexIds, Guid? branchId, CancellationToken ct)
     {
         if (!complexIds.Any())
             return new Dictionary<Guid, Guid>();
-        return await _db.ComplexCompositions
-            .Where(c => complexIds.Contains(c.ComplexId) && c.IsActive)
+        return await _db.ComplexCompositions.AsNoTracking()
+            .Where(c => complexIds.Contains(c.ComplexId) && c.IsActive && (!branchId.HasValue || c.BranchId == branchId.Value))
             .ToDictionaryAsync(c => c.ComplexId, c => c.Id, ct);
     }
 
-    private async Task<Dictionary<Guid, Guid>> GetActiveModelCompositionIdsAsync(IReadOnlyList<Guid> modelIds, CancellationToken ct)
+    private async Task<Dictionary<Guid, Guid>> GetActiveModelCompositionIdsAsync(IReadOnlyList<Guid> modelIds, Guid? branchId, CancellationToken ct)
     {
         if (!modelIds.Any())
             return new Dictionary<Guid, Guid>();
-        return await _db.ProductCompositions
-            .Where(c => modelIds.Contains(c.EquipmentModelId) && c.IsActive)
+        return await _db.ProductCompositions.AsNoTracking()
+            .Where(c => modelIds.Contains(c.EquipmentModelId) && c.IsActive && (!branchId.HasValue || c.BranchId == branchId.Value))
             .ToDictionaryAsync(c => c.EquipmentModelId, c => c.Id, ct);
     }
 
-    private async Task<Dictionary<Guid, Guid>> GetActiveAggregateCompositionIdsAsync(IReadOnlyList<Guid> aggregateIds, CancellationToken ct)
+    private async Task<Dictionary<Guid, Guid>> GetActiveAggregateCompositionIdsAsync(IReadOnlyList<Guid> aggregateIds, Guid? branchId, CancellationToken ct)
     {
         if (!aggregateIds.Any())
             return new Dictionary<Guid, Guid>();
-        return await _db.AggregateCompositions
-            .Where(c => aggregateIds.Contains(c.AggregateId) && c.IsActive)
+        return await _db.AggregateCompositions.AsNoTracking()
+            .Where(c => aggregateIds.Contains(c.AggregateId) && c.IsActive && (!branchId.HasValue || c.BranchId == branchId.Value))
             .ToDictionaryAsync(c => c.AggregateId, c => c.Id, ct);
     }
 
-    private static bool IsBranchAccessible(Guid branchId, Guid? accessibleBranchId) =>
-        !accessibleBranchId.HasValue || branchId == accessibleBranchId.Value;
+    private async Task<Dictionary<Guid, bool>> HasAnyComplexCompositionAsync(IReadOnlyList<Guid> complexIds, Guid? branchId, CancellationToken ct)
+    {
+        if (!complexIds.Any())
+            return new Dictionary<Guid, bool>();
+        var withVersion = await _db.ComplexCompositions.AsNoTracking()
+            .Where(c => complexIds.Contains(c.ComplexId) && (!branchId.HasValue || c.BranchId == branchId.Value))
+            .Select(c => c.ComplexId)
+            .Distinct()
+            .ToListAsync(ct);
+        return complexIds.ToDictionary(id => id, id => withVersion.Contains(id));
+    }
 
-    private async Task<Guid?> FindActiveCompositionIdAsync(HKObjectLevel level, Guid objectId, CancellationToken ct)
+    private async Task<Dictionary<Guid, bool>> HasAnyModelCompositionAsync(IReadOnlyList<Guid> modelIds, Guid? branchId, CancellationToken ct)
+    {
+        if (!modelIds.Any())
+            return new Dictionary<Guid, bool>();
+        var withVersion = await _db.ProductCompositions.AsNoTracking()
+            .Where(c => modelIds.Contains(c.EquipmentModelId) && (!branchId.HasValue || c.BranchId == branchId.Value))
+            .Select(c => c.EquipmentModelId)
+            .Distinct()
+            .ToListAsync(ct);
+        return modelIds.ToDictionary(id => id, id => withVersion.Contains(id));
+    }
+
+    private async Task<Dictionary<Guid, bool>> HasAnyAggregateCompositionAsync(IReadOnlyList<Guid> aggregateIds, Guid? branchId, CancellationToken ct)
+    {
+        if (!aggregateIds.Any())
+            return new Dictionary<Guid, bool>();
+        var withVersion = await _db.AggregateCompositions.AsNoTracking()
+            .Where(c => aggregateIds.Contains(c.AggregateId) && (!branchId.HasValue || c.BranchId == branchId.Value))
+            .Select(c => c.AggregateId)
+            .Distinct()
+            .ToListAsync(ct);
+        return aggregateIds.ToDictionary(id => id, id => withVersion.Contains(id));
+    }
+
+    private async Task<Dictionary<Guid, Guid>> GetNavigationComplexCompositionIdsAsync(IReadOnlyList<Guid> complexIds, Guid? branchId, CancellationToken ct)
+    {
+        if (!complexIds.Any())
+            return new Dictionary<Guid, Guid>();
+        var filtered = _db.ComplexCompositions.AsNoTracking()
+            .Where(c => complexIds.Contains(c.ComplexId) && (!branchId.HasValue || c.BranchId == branchId.Value));
+        return await BuildNavigationIdsAsync(filtered, c => c.ComplexId, ct);
+    }
+
+    private async Task<Dictionary<Guid, Guid>> GetNavigationModelCompositionIdsAsync(IReadOnlyList<Guid> modelIds, Guid? branchId, CancellationToken ct)
+    {
+        if (!modelIds.Any())
+            return new Dictionary<Guid, Guid>();
+        var filtered = _db.ProductCompositions.AsNoTracking()
+            .Where(c => modelIds.Contains(c.EquipmentModelId) && (!branchId.HasValue || c.BranchId == branchId.Value));
+        return await BuildNavigationIdsAsync(filtered, c => c.EquipmentModelId, ct);
+    }
+
+    private async Task<Dictionary<Guid, Guid>> GetNavigationAggregateCompositionIdsAsync(IReadOnlyList<Guid> aggregateIds, Guid? branchId, CancellationToken ct)
+    {
+        if (!aggregateIds.Any())
+            return new Dictionary<Guid, Guid>();
+        var filtered = _db.AggregateCompositions.AsNoTracking()
+            .Where(c => aggregateIds.Contains(c.AggregateId) && (!branchId.HasValue || c.BranchId == branchId.Value));
+        return await BuildNavigationIdsAsync(filtered, c => c.AggregateId, ct);
+    }
+
+    private static async Task<Dictionary<Guid, Guid>> BuildNavigationIdsAsync(
+        IQueryable<ComplexComposition> filtered, Func<ComplexComposition, Guid> oid, CancellationToken ct)
+    {
+        var draft = await filtered.Where(c => c.Status == ProductCompositionStatus.Draft).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        var onReview = await filtered.Where(c => c.Status == ProductCompositionStatus.OnReview).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        var archived = await filtered.Where(c => c.Status == ProductCompositionStatus.Archived).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        return ToNavigationDictionary(draft, onReview, archived);
+    }
+
+    private static async Task<Dictionary<Guid, Guid>> BuildNavigationIdsAsync(
+        IQueryable<ProductComposition> filtered, Func<ProductComposition, Guid> oid, CancellationToken ct)
+    {
+        var draft = await filtered.Where(c => c.Status == ProductCompositionStatus.Draft).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        var onReview = await filtered.Where(c => c.Status == ProductCompositionStatus.OnReview).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        var archived = await filtered.Where(c => c.Status == ProductCompositionStatus.Archived).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        return ToNavigationDictionary(draft, onReview, archived);
+    }
+
+    private static async Task<Dictionary<Guid, Guid>> BuildNavigationIdsAsync(
+        IQueryable<AggregateComposition> filtered, Func<AggregateComposition, Guid> oid, CancellationToken ct)
+    {
+        var draft = await filtered.Where(c => c.Status == ProductCompositionStatus.Draft).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        var onReview = await filtered.Where(c => c.Status == ProductCompositionStatus.OnReview).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        var archived = await filtered.Where(c => c.Status == ProductCompositionStatus.Archived).OrderByDescending(c => c.UpdatedAt).Select(c => new NavigationRow(oid(c), c.Id)).ToListAsync(ct);
+        return ToNavigationDictionary(draft, onReview, archived);
+    }
+
+    private static Dictionary<Guid, Guid> ToNavigationDictionary(
+        IReadOnlyList<NavigationRow> draft,
+        IReadOnlyList<NavigationRow> onReview,
+        IReadOnlyList<NavigationRow> archived)
+    {
+        var result = new Dictionary<Guid, Guid>();
+        var all = draft.Concat(onReview).Concat(archived);
+        foreach (var grp in all.GroupBy(x => x.ObjectId))
+        {
+            NavigationRow? match = null;
+            foreach (var x in draft)
+            {
+                if (x.ObjectId == grp.Key) { match = x; break; }
+            }
+            if (match is null)
+            {
+                foreach (var x in onReview)
+                {
+                    if (x.ObjectId == grp.Key) { match = x; break; }
+                }
+            }
+            if (match is null)
+            {
+                foreach (var x in archived)
+                {
+                    if (x.ObjectId == grp.Key) { match = x; break; }
+                }
+            }
+            if (match is { } m && !result.ContainsKey(grp.Key))
+                result[grp.Key] = m.Id;
+        }
+        return result;
+    }
+
+    private readonly record struct NavigationRow(Guid ObjectId, Guid Id);
+
+    private async Task<Dictionary<Guid, List<ReadinessChild>>> LoadCompositionChildrenAsync(IReadOnlyList<Guid> compositionIds, CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, List<ReadinessChild>>();
+        foreach (var id in compositionIds)
+            result[id] = new List<ReadinessChild>();
+
+        if (!compositionIds.Any())
+            return result;
+
+        var productChildren = await _db.ProductCompositionAggregates.AsNoTracking()
+            .Where(a => compositionIds.Contains(a.ProductCompositionId))
+            .Select(a => new { a.ProductCompositionId, a.AggregateId, Code = a.Aggregate.Code, Name = a.Aggregate.Name })
+            .ToListAsync(ct);
+        foreach (var c in productChildren)
+            result[c.ProductCompositionId].Add(new ReadinessChild(c.AggregateId, c.Code, c.Name));
+
+        var aggregateChildren = await _db.AggregateCompositionNodes.AsNoTracking()
+            .Where(n => compositionIds.Contains(n.AggregateCompositionId))
+            .Select(n => new { n.AggregateCompositionId, n.NodeId, Code = n.Node.Code, Name = n.Node.Name })
+            .ToListAsync(ct);
+        foreach (var c in aggregateChildren)
+            result[c.AggregateCompositionId].Add(new ReadinessChild(c.NodeId, c.Code, c.Name));
+
+        var complexChildren = await _db.ComplexCompositionItems.AsNoTracking()
+            .Where(i => compositionIds.Contains(i.ComplexCompositionId))
+            .Select(i => new { i.ComplexCompositionId, i.EquipmentModelId, Code = i.EquipmentModel.Index, Name = i.EquipmentModel.Name })
+            .ToListAsync(ct);
+        foreach (var c in complexChildren)
+            result[c.ComplexCompositionId].Add(new ReadinessChild(c.EquipmentModelId, c.Code, c.Name));
+
+        return result;
+    }
+
+    private async Task<List<ReadinessChild>> LoadSingleCompositionChildrenAsync(Guid compositionId, CancellationToken ct)
+    {
+        var result = await LoadCompositionChildrenAsync(new[] { compositionId }, ct);
+        return result.TryGetValue(compositionId, out var children) ? children : new List<ReadinessChild>();
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, HKCardSnapshot>> LoadChildHkSnapshotsAsync(IReadOnlyList<Guid> childIds, Guid? branchId, CancellationToken ct)
+    {
+        if (!childIds.Any())
+            return new Dictionary<Guid, HKCardSnapshot>();
+
+        var childIdsSet = childIds.Distinct().ToList();
+
+        var complexes = await _db.HKCards.AsNoTracking()
+            .Where(h => childIdsSet.Contains(h.ComplexId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Select(h => new { h.ComplexId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
+            .ToListAsync(ct);
+        var models = await _db.HKCards.AsNoTracking()
+            .Where(h => childIdsSet.Contains(h.EquipmentModelId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Select(h => new { h.EquipmentModelId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
+            .ToListAsync(ct);
+        var aggregates = await _db.HKCards.AsNoTracking()
+            .Where(h => childIdsSet.Contains(h.AggregateId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Select(h => new { h.AggregateId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
+            .ToListAsync(ct);
+        var nodes = await _db.HKCards.AsNoTracking()
+            .Where(h => childIdsSet.Contains(h.NodeId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Select(h => new { h.NodeId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
+            .ToListAsync(ct);
+
+        var result = new Dictionary<Guid, HKCardSnapshot>();
+        foreach (var e in complexes)
+            if (e.ComplexId.HasValue && !result.ContainsKey(e.ComplexId.Value))
+                result[e.ComplexId.Value] = new HKCardSnapshot(e.Id, e.Version, e.Status, e.EffectiveDate, e.ExpirationDate);
+        foreach (var e in models)
+            if (e.EquipmentModelId.HasValue && !result.ContainsKey(e.EquipmentModelId.Value))
+                result[e.EquipmentModelId.Value] = new HKCardSnapshot(e.Id, e.Version, e.Status, e.EffectiveDate, e.ExpirationDate);
+        foreach (var e in aggregates)
+            if (e.AggregateId.HasValue && !result.ContainsKey(e.AggregateId.Value))
+                result[e.AggregateId.Value] = new HKCardSnapshot(e.Id, e.Version, e.Status, e.EffectiveDate, e.ExpirationDate);
+        foreach (var e in nodes)
+            if (e.NodeId.HasValue && !result.ContainsKey(e.NodeId.Value))
+                result[e.NodeId.Value] = new HKCardSnapshot(e.Id, e.Version, e.Status, e.EffectiveDate, e.ExpirationDate);
+
+        return result;
+    }
+
+    private async Task<Guid?> FindActiveCompositionIdAsync(HKObjectLevel level, Guid objectId, Guid? branchId, CancellationToken ct)
     {
         return level switch
         {
-            HKObjectLevel.Complex => await _db.ComplexCompositions.Where(c => c.ComplexId == objectId && c.IsActive).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
-            HKObjectLevel.EquipmentModel => await _db.ProductCompositions.Where(c => c.EquipmentModelId == objectId && c.IsActive).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
-            HKObjectLevel.Aggregate => await _db.AggregateCompositions.Where(c => c.AggregateId == objectId && c.IsActive).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
+            HKObjectLevel.Complex => await _db.ComplexCompositions.AsNoTracking().Where(c => c.ComplexId == objectId && c.IsActive && (!branchId.HasValue || c.BranchId == branchId.Value)).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
+            HKObjectLevel.EquipmentModel => await _db.ProductCompositions.AsNoTracking().Where(c => c.EquipmentModelId == objectId && c.IsActive && (!branchId.HasValue || c.BranchId == branchId.Value)).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
+            HKObjectLevel.Aggregate => await _db.AggregateCompositions.AsNoTracking().Where(c => c.AggregateId == objectId && c.IsActive && (!branchId.HasValue || c.BranchId == branchId.Value)).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct),
             _ => null
         };
     }
 
-    private async Task<bool> HasAnyCompositionAsync(HKObjectLevel level, Guid objectId, CancellationToken ct)
+    private async Task<Guid?> FindNavigationCompositionIdAsync(HKObjectLevel level, Guid objectId, Guid? branchId, CancellationToken ct)
     {
         return level switch
         {
-            HKObjectLevel.Complex => await _db.ComplexCompositions.AnyAsync(c => c.ComplexId == objectId, ct),
-            HKObjectLevel.EquipmentModel => await _db.ProductCompositions.AnyAsync(c => c.EquipmentModelId == objectId, ct),
-            HKObjectLevel.Aggregate => await _db.AggregateCompositions.AnyAsync(c => c.AggregateId == objectId, ct),
+            HKObjectLevel.Complex => await FindNavigationCompositionIdQuery(_db.ComplexCompositions.Where(c => c.ComplexId == objectId && (!branchId.HasValue || c.BranchId == branchId.Value)), ct),
+            HKObjectLevel.EquipmentModel => await FindNavigationCompositionIdQuery(_db.ProductCompositions.Where(c => c.EquipmentModelId == objectId && (!branchId.HasValue || c.BranchId == branchId.Value)), ct),
+            HKObjectLevel.Aggregate => await FindNavigationCompositionIdQuery(_db.AggregateCompositions.Where(c => c.AggregateId == objectId && (!branchId.HasValue || c.BranchId == branchId.Value)), ct),
+            _ => null
+        };
+    }
+
+    private static async Task<Guid?> FindNavigationCompositionIdQuery(IQueryable<ComplexComposition> filtered, CancellationToken ct)
+    {
+        var draft = await filtered.Where(c => c.Status == ProductCompositionStatus.Draft).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        if (draft.HasValue) return draft;
+        var onReview = await filtered.Where(c => c.Status == ProductCompositionStatus.OnReview).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        if (onReview.HasValue) return onReview;
+        return await filtered.Where(c => c.Status == ProductCompositionStatus.Archived).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+    }
+
+    private static async Task<Guid?> FindNavigationCompositionIdQuery(IQueryable<ProductComposition> filtered, CancellationToken ct)
+    {
+        var draft = await filtered.Where(c => c.Status == ProductCompositionStatus.Draft).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        if (draft.HasValue) return draft;
+        var onReview = await filtered.Where(c => c.Status == ProductCompositionStatus.OnReview).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        if (onReview.HasValue) return onReview;
+        return await filtered.Where(c => c.Status == ProductCompositionStatus.Archived).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+    }
+
+    private static async Task<Guid?> FindNavigationCompositionIdQuery(IQueryable<AggregateComposition> filtered, CancellationToken ct)
+    {
+        var draft = await filtered.Where(c => c.Status == ProductCompositionStatus.Draft).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        if (draft.HasValue) return draft;
+        var onReview = await filtered.Where(c => c.Status == ProductCompositionStatus.OnReview).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        if (onReview.HasValue) return onReview;
+        return await filtered.Where(c => c.Status == ProductCompositionStatus.Archived).OrderByDescending(c => c.UpdatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<bool> HasAnyCompositionAsync(HKObjectLevel level, Guid objectId, Guid? branchId, CancellationToken ct)
+    {
+        return level switch
+        {
+            HKObjectLevel.Complex => await _db.ComplexCompositions.AsNoTracking().AnyAsync(c => c.ComplexId == objectId && (!branchId.HasValue || c.BranchId == branchId.Value), ct),
+            HKObjectLevel.EquipmentModel => await _db.ProductCompositions.AsNoTracking().AnyAsync(c => c.EquipmentModelId == objectId && (!branchId.HasValue || c.BranchId == branchId.Value), ct),
+            HKObjectLevel.Aggregate => await _db.AggregateCompositions.AsNoTracking().AnyAsync(c => c.AggregateId == objectId && (!branchId.HasValue || c.BranchId == branchId.Value), ct),
             _ => false
         };
     }

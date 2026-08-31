@@ -1649,15 +1649,52 @@ input:-webkit-autofill:focus {
 }
 
 .hkStatusWithReadiness{
-  display:flex;
+  display:inline-flex;
   align-items:center;
-  flex-wrap:wrap;
+  flex-wrap:nowrap;
   gap:6px;
 }
-.hkReadinessWarning{
-  font-size:10px;
-  padding:2px 6px;
-  line-height:1.2;
+.hkReadinessDot{
+  position:relative;
+  display:inline-block;
+  width:12px;
+  height:12px;
+  flex:0 0 12px;
+  border:1px solid color-mix(in srgb, var(--warn) 55%, var(--line));
+  border-radius:50%;
+  background:color-mix(in srgb, var(--warn) 70%, transparent);
+  cursor:help;
+  outline:none;
+  vertical-align:middle;
+}
+.hkReadinessDot:hover,
+.hkReadinessDot:focus-visible{
+  box-shadow:0 0 0 3px rgba(79,140,255,.12);
+}
+.hkReadinessDot::after{
+  position:absolute;
+  z-index:50;
+  bottom:calc(100% + 8px);
+  left:50%;
+  display:none;
+  width:max-content;
+  max-width:260px;
+  padding:8px 10px;
+  border:1px solid var(--line);
+  border-radius:var(--radius2);
+  background:var(--panel);
+  box-shadow:var(--shadow);
+  color:var(--text);
+  content:attr(data-tooltip);
+  font-size:12px;
+  line-height:1.35;
+  transform:translateX(-50%);
+  white-space:normal;
+  pointer-events:none;
+}
+.hkReadinessDot:hover::after,
+.hkReadinessDot:focus-visible::after{
+  display:block;
 }
 .hkReadinessBlock{
   margin-top:14px;
