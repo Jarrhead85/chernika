@@ -559,6 +559,38 @@ public class HKCompositionReadinessRegistryIntegrationTests
     }
 
     [Fact]
+    public async Task Readiness_NavigationFallback_ExcludesInactiveApproved_NoDraftOnReviewOrArchived()
+    {
+        await using var s = _fixture.CreateScope();
+        var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-NAF-" + Guid.NewGuid().ToString("N")[..6], Name = "Изделие no fallback" };
+        s.Db.EquipmentModels.Add(model);
+        await s.Db.SaveChangesAsync();
+
+        // Create an Approved composition and then deactivate it (IsActive = false).
+        // No Draft / OnReview / Archived version exists for the same (model, branch).
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var comp = await CreateApprovedProductCompositionForModelAsync(s, model.Id, Guid.Parse(_fixture.NormAdminA.Id), "approved");
+        var tracked = await s.Db.ProductCompositions.FindAsync(comp);
+        tracked!.IsActive = false;
+        tracked.UpdatedAt = DateTime.UtcNow;
+        await s.Db.SaveChangesAsync();
+
+        // Summary: no active, no navigation fallback.
+        var ctx = new HKReadinessContext(Guid.NewGuid(), HKObjectLevel.EquipmentModel, model.Id, _fixture.BranchA);
+        var summary = (await s.Equipment.GetHKCompositionReadinessSummariesAsync(new[] { ctx }))[ctx.HKCardId];
+        Assert.Equal(HKCompositionReadinessState.NoActiveComposition, summary.State);
+        Assert.Null(summary.CompositionId);
+        Assert.Null(summary.NavigationCompositionId);
+
+        // Details: same expectations.
+        await GrantPermissionAsync(s, _fixture.NormAdminA.Id, PermissionCodes.CompositionView);
+        var details = await s.Equipment.GetHKCompositionReadinessDetailsAsync(ctx);
+        Assert.Equal(HKCompositionReadinessState.NoActiveComposition, details.State);
+        Assert.Null(details.CompositionId);
+        Assert.Null(details.NavigationCompositionId);
+    }
+
+    [Fact]
     public async Task Readiness_NavigationPriority_DraftBeatsOnReviewAndArchived_AllInSameBranch()
     {
         await using var s = _fixture.CreateScope();

@@ -1184,7 +1184,10 @@ public class EquipmentService
             var objectIds = group.Select(k => k.ObjectId).Distinct().ToList();
 
             var branchRows = await _db.ComplexCompositions.AsNoTracking()
-                .Where(c => objectIds.Contains(c.ComplexId) && c.BranchId == branchId)
+                .Where(c => objectIds.Contains(c.ComplexId) && c.BranchId == branchId
+                    && (c.Status == ProductCompositionStatus.Draft
+                        || c.Status == ProductCompositionStatus.OnReview
+                        || c.Status == ProductCompositionStatus.Archived))
                 .Select(c => new ReadinessNavigationRow(
                     new ReadinessObjectBranchKey(c.ComplexId, branchId),
                     c.Id,
@@ -1208,7 +1211,10 @@ public class EquipmentService
             var objectIds = group.Select(k => k.ObjectId).Distinct().ToList();
 
             var branchRows = await _db.ProductCompositions.AsNoTracking()
-                .Where(c => objectIds.Contains(c.EquipmentModelId) && c.BranchId == branchId)
+                .Where(c => objectIds.Contains(c.EquipmentModelId) && c.BranchId == branchId
+                    && (c.Status == ProductCompositionStatus.Draft
+                        || c.Status == ProductCompositionStatus.OnReview
+                        || c.Status == ProductCompositionStatus.Archived))
                 .Select(c => new ReadinessNavigationRow(
                     new ReadinessObjectBranchKey(c.EquipmentModelId, branchId),
                     c.Id,
@@ -1232,7 +1238,10 @@ public class EquipmentService
             var objectIds = group.Select(k => k.ObjectId).Distinct().ToList();
 
             var branchRows = await _db.AggregateCompositions.AsNoTracking()
-                .Where(c => objectIds.Contains(c.AggregateId) && c.BranchId == branchId)
+                .Where(c => objectIds.Contains(c.AggregateId) && c.BranchId == branchId
+                    && (c.Status == ProductCompositionStatus.Draft
+                        || c.Status == ProductCompositionStatus.OnReview
+                        || c.Status == ProductCompositionStatus.Archived))
                 .Select(c => new ReadinessNavigationRow(
                     new ReadinessObjectBranchKey(c.AggregateId, branchId),
                     c.Id,
