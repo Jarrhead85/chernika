@@ -24,6 +24,7 @@ public sealed class TestScope : IAsyncDisposable
         Permissions = scope.ServiceProvider.GetRequiredService<IPermissionService>();
         Users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         Equipment = scope.ServiceProvider.GetRequiredService<EquipmentService>();
+        CoeffService = scope.ServiceProvider.GetRequiredService<CoefficientService>();
         GsmMaterials = scope.ServiceProvider.GetRequiredService<GsmMaterialService>();
     }
 
@@ -37,6 +38,7 @@ public sealed class TestScope : IAsyncDisposable
     public IPermissionService Permissions { get; }
     public UserManager<ApplicationUser> Users { get; }
     public EquipmentService Equipment { get; }
+    public CoefficientService CoeffService { get; }
     public GsmMaterialService GsmMaterials { get; }
 
     public async ValueTask DisposeAsync()

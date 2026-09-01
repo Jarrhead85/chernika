@@ -79,6 +79,11 @@ public static class AuditDisplayCatalog
         ["AggregateComposition.Approved"] = new("Состав агрегата утверждён", AuditSeverity.Success),
         ["AggregateComposition.Archived"] = new("Состав агрегата архивирован", AuditSeverity.Neutral),
 
+        ["CoefficientType.Created"] = new("Создание типа коэффициента", AuditSeverity.Success),
+        ["CoefficientType.Updated"] = new("Изменение типа коэффициента", AuditSeverity.Neutral),
+        ["CoefficientType.Archived"] = new("Архивирование типа коэффициента", AuditSeverity.Neutral),
+        ["CoefficientType.Restored"] = new("Восстановление типа коэффициента", AuditSeverity.Success),
+
         ["WorkTaskGroup.Completed"] = new("Групповая задача выполнена", AuditSeverity.Success),
     };
 

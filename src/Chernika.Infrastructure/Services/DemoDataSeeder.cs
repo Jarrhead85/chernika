@@ -111,27 +111,25 @@ public static class DemoDataSeeder
         };
         db.EquipmentModels.AddRange(models);
 
-        var coeffTypes = new List<CoefficientType>
-        {
-            new() { Id = Guid.NewGuid(), Name = "Сезонный", Group = CoefficientGroup.Seasonal, SortOrder = 1 },
-            new() { Id = Guid.NewGuid(), Name = "Климатический", Group = CoefficientGroup.Climatic, SortOrder = 2 },
-            new() { Id = Guid.NewGuid(), Name = "Территориальный", Group = CoefficientGroup.Territorial, SortOrder = 3 },
-            new() { Id = Guid.NewGuid(), Name = "Режим эксплуатации", Group = CoefficientGroup.OperationMode, SortOrder = 4 },
-        };
-        db.CoefficientTypes.AddRange(coeffTypes);
+        SeedCoefficientTypes(db);
+        await db.SaveChangesAsync();
 
-        var coefficients = new List<Coefficient>
+        var seededTypes = db.CoefficientTypes.OrderBy(t => t.SortOrder).ToList();
+        if (seededTypes.Count >= 4)
         {
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[0].Id, Name = "Зимняя эксплуатация", ConditionDescription = "Температура ниже -20°C", Value = 1.10m, SortOrder = 1 },
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[0].Id, Name = "Летняя эксплуатация", ConditionDescription = "Температура выше +25°C", Value = 1.05m, SortOrder = 2 },
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[1].Id, Name = "Холодный регион", ConditionDescription = "Среднегодовая t < 0°C", Value = 1.08m, SortOrder = 1 },
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[1].Id, Name = "Умеренный регион", ConditionDescription = "Среднегодовая t 0..+15°C", Value = 1.00m, SortOrder = 2 },
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[2].Id, Name = "Базовый район", ConditionDescription = "Основная территория эксплуатации", Value = 1.00m, SortOrder = 1 },
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[2].Id, Name = "Горная местность", ConditionDescription = "Высота над уровнем моря > 1500м", Value = 1.15m, SortOrder = 2 },
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[3].Id, Name = "Штатный режим", ConditionDescription = "Стандартная эксплуатация", Value = 1.00m, SortOrder = 1 },
-            new() { Id = Guid.NewGuid(), CoefficientTypeId = coeffTypes[3].Id, Name = "Усиленный режим", ConditionDescription = "Интенсивная эксплуатация", Value = 1.12m, SortOrder = 2 },
-        };
-        db.Coefficients.AddRange(coefficients);
+            var coefficients = new List<Coefficient>
+            {
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[0].Id, Name = "Зимняя эксплуатация", ConditionDescription = "Температура ниже -20°C", Value = 1.10m, SortOrder = 1 },
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[0].Id, Name = "Летняя эксплуатация", ConditionDescription = "Температура выше +25°C", Value = 1.05m, SortOrder = 2 },
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[1].Id, Name = "Холодный регион", ConditionDescription = "Среднегодовая t < 0°C", Value = 1.08m, SortOrder = 1 },
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[1].Id, Name = "Умеренный регион", ConditionDescription = "Среднегодовая t 0..+15°C", Value = 1.00m, SortOrder = 2 },
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[2].Id, Name = "Базовый район", ConditionDescription = "Основная территория эксплуатации", Value = 1.00m, SortOrder = 1 },
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[2].Id, Name = "Горная местность", ConditionDescription = "Высота над уровнем моря > 1500м", Value = 1.15m, SortOrder = 2 },
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[3].Id, Name = "Штатный режим", ConditionDescription = "Стандартная эксплуатация", Value = 1.00m, SortOrder = 1 },
+                new() { Id = Guid.NewGuid(), CoefficientTypeId = seededTypes[3].Id, Name = "Усиленный режим", ConditionDescription = "Интенсивная эксплуатация", Value = 1.12m, SortOrder = 2 },
+            };
+            db.Coefficients.AddRange(coefficients);
+        }
 
         var card = new HKCard
         {
@@ -224,5 +222,44 @@ public static class DemoDataSeeder
         db.HKCards.Add(card3);
 
         await db.SaveChangesAsync();
+    }
+
+    private static void SeedCoefficientTypes(AppDbContext db)
+    {
+        var types = new[]
+        {
+            ("Климатический", 10),
+            ("Температурный", 20),
+            ("Сезонный", 30),
+            ("Дорожный", 40),
+            ("Местность", 50),
+            ("Интенсивность эксплуатации", 60),
+            ("Учебно-боевая эксплуатация", 70),
+            ("Техническое состояние", 80),
+            ("Дополнительный", 90)
+        };
+
+        foreach (var (name, sortOrder) in types)
+        {
+            var existing = db.CoefficientTypes.Local.FirstOrDefault(t => t.Name == name)
+                ?? db.CoefficientTypes.AsNoTracking().FirstOrDefault(t => t.Name == name);
+            if (existing != null) continue;
+
+            db.CoefficientTypes.Add(new CoefficientType
+            {
+                Id = Guid.NewGuid(),
+                Name = name,
+                SortOrder = sortOrder,
+                IsDeleted = false,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+
+        var unseeded = db.CoefficientTypes.Where(t => !types.Any(x => x.Item1 == t.Name)).ToList();
+        foreach (var legacy in unseeded.Where(t => t.Coefficients.Any()))
+        {
+            legacy.SortOrder = 100 + legacy.Id.GetHashCode() % 1000;
+        }
     }
 }

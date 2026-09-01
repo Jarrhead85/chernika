@@ -62,6 +62,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         });
         services.AddScoped<HKCardExpirationService>();
         services.AddScoped<EquipmentService>();
+        services.AddScoped<CoefficientService>();
         services.AddScoped<GsmMaterialService>();
         Services = services.BuildServiceProvider();
 

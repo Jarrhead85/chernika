@@ -355,7 +355,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
-            e.Property(x => x.Group).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.SortOrder).IsRequired();
+            e.Property(x => x.IsDeleted).IsRequired().HasDefaultValue(false);
+
+            e.HasIndex(x => x.SortOrder);
+            e.HasIndex(x => x.Name).HasDatabaseName("IX_CoefficientTypes_Name");
+            e.HasIndex(x => x.IsDeleted);
+
+            e.HasMany(x => x.Coefficients).WithOne(x => x.CoefficientType).HasForeignKey(x => x.CoefficientTypeId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Coefficient>(e =>
@@ -364,7 +371,6 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
             e.Property(x => x.ConditionDescription).HasMaxLength(2000);
             e.Property(x => x.Value).HasPrecision(18, 6);
-            e.HasOne(x => x.CoefficientType).WithMany(x => x.Coefficients).HasForeignKey(x => x.CoefficientTypeId);
         });
 
         modelBuilder.Entity<IndividualCard>(e =>

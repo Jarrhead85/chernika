@@ -1,11 +1,10 @@
 using Chernika.Domain.Entities;
-using Chernika.Domain.Enums;
 
 namespace Chernika.Api.Contracts;
 
-public record CoefficientTypeDto(Guid Id, string Name, string Group, string? Description, int SortOrder);
-public record CreateCoefficientTypeRequest(string Name, CoefficientGroup Group, string? Description, int SortOrder = 0);
-public record UpdateCoefficientTypeRequest(string Name, CoefficientGroup Group, string? Description, int SortOrder = 0);
+public record CoefficientTypeDto(Guid Id, string Name, int SortOrder, int CoefficientCount, int ActiveCoefficientCount, bool IsDeleted);
+public record CreateCoefficientTypeRequest(string Name, int? SortOrder = null);
+public record UpdateCoefficientTypeRequest(Guid Id, string Name, int SortOrder);
 
 public record CoefficientDto(Guid Id, Guid CoefficientTypeId, string? TypeName, string Name, string? ConditionDescription, decimal Value, bool IsActive, int SortOrder);
 public record CreateCoefficientRequest(Guid CoefficientTypeId, string Name, string? ConditionDescription, decimal Value, bool IsActive = true, int SortOrder = 0);
@@ -13,17 +12,19 @@ public record UpdateCoefficientRequest(Guid CoefficientTypeId, string Name, stri
 
 public static class CoefficientTypeMapper
 {
-    public static CoefficientTypeDto ToDto(CoefficientType t) =>
-        new(t.Id, t.Name, t.Group.ToString(), t.Description, t.SortOrder);
+    public static CoefficientTypeDto ToDto(CoefficientType t, int coefficientCount = 0, int activeCoefficientCount = 0) =>
+        new(t.Id, t.Name, t.SortOrder, coefficientCount, activeCoefficientCount, t.IsDeleted);
 
     public static CoefficientType FromCreate(CreateCoefficientTypeRequest r) => new()
     {
-        Name = r.Name, Group = r.Group, Description = r.Description, SortOrder = r.SortOrder
+        Name = r.Name,
+        SortOrder = r.SortOrder ?? 0
     };
 
     public static void ApplyUpdate(CoefficientType t, UpdateCoefficientTypeRequest r)
     {
-        t.Name = r.Name; t.Group = r.Group; t.Description = r.Description; t.SortOrder = r.SortOrder;
+        t.Name = r.Name;
+        t.SortOrder = r.SortOrder;
     }
 }
 
