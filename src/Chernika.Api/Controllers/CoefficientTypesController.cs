@@ -16,59 +16,57 @@ public class CoefficientTypesController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<PagedResult<CoefficientTypeListItemDto>>> GetPaged(
-        [FromQuery] CoefficientTypeListQuery query)
+        [FromQuery] CoefficientTypeListQuery query, CancellationToken ct)
     {
-        var result = await _svc.GetCoefficientTypesAsync(query);
+        var result = await _svc.GetCoefficientTypesAsync(query, ct);
         return Ok(result);
     }
 
     [HttpGet("select")]
-    public async Task<ActionResult<List<CoefficientTypeListItemDto>>> GetForSelect()
-        => Ok(await _svc.GetActiveCoefficientTypesForSelectAsync());
+    public async Task<ActionResult<List<CoefficientTypeListItemDto>>> GetForSelect(CancellationToken ct)
+        => Ok(await _svc.GetActiveCoefficientTypesForSelectAsync(ct));
 
     [HttpPost]
     [Authorize(Policy = "ManageCoefficients")]
-    public async Task<ActionResult<CoefficientTypeListItemDto>> Create([FromBody] CreateCoefficientTypeRequest request)
+    public async Task<ActionResult<CoefficientTypeListItemDto>> Create(
+        [FromBody] CreateCoefficientTypeRequest request, CancellationToken ct)
     {
-        var created = await _svc.CreateCoefficientTypeAsync(request);
+        var created = await _svc.CreateCoefficientTypeAsync(request, ct);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<ActionResult<CoefficientTypeListItemDto>> GetById(Guid id)
+    public async Task<ActionResult<CoefficientTypeListItemDto>> GetById(Guid id, CancellationToken ct)
     {
-        var type = _svc.GetById(id);
-        if (type == null) return NotFound();
-
-        var all = await _svc.GetActiveCoefficientTypesForSelectAsync();
-        var match = all.FirstOrDefault(t => t.Id == id);
-        return match == null ? NotFound() : Ok(match);
+        var item = await _svc.GetCoefficientTypeByIdAsync(id, includeArchived: false, ct);
+        return item is null ? NotFound() : Ok(item);
     }
 
     [HttpPut("{id:guid}")]
     [Authorize(Policy = "ManageCoefficients")]
-    public async Task<ActionResult<CoefficientTypeListItemDto>> Update(Guid id, [FromBody] UpdateCoefficientTypeRequest request)
+    public async Task<ActionResult<CoefficientTypeListItemDto>> Update(
+        Guid id, [FromBody] UpdateCoefficientTypeRequest request, CancellationToken ct)
     {
         if (id != request.Id)
             return BadRequest("Идентификатор в маршруте не совпадает с телом запроса.");
 
-        var updated = await _svc.UpdateCoefficientTypeAsync(request);
+        var updated = await _svc.UpdateCoefficientTypeAsync(request, ct);
         return Ok(updated);
     }
 
     [HttpPost("{id:guid}/archive")]
     [Authorize(Policy = "ManageCoefficients")]
-    public async Task<ActionResult> Archive(Guid id)
+    public async Task<ActionResult> Archive(Guid id, CancellationToken ct)
     {
-        await _svc.ArchiveCoefficientTypeAsync(id);
+        await _svc.ArchiveCoefficientTypeAsync(id, ct);
         return NoContent();
     }
 
     [HttpPost("{id:guid}/restore")]
     [Authorize(Policy = "ManageCoefficients")]
-    public async Task<ActionResult> Restore(Guid id)
+    public async Task<ActionResult> Restore(Guid id, CancellationToken ct)
     {
-        await _svc.RestoreCoefficientTypeAsync(id);
+        await _svc.RestoreCoefficientTypeAsync(id, ct);
         return NoContent();
     }
 }

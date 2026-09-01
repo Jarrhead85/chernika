@@ -6,8 +6,6 @@
 @inject CircuitDbLock DbLock
 @implements IDisposable
 
-
-
 @if (_show)
 {
     <div class="modalOverlay" @onclick="Close">
@@ -24,10 +22,11 @@
 
                 <div class="mbFilters">
                     <input class="fieldInput mbSearch" @bind="_search" @bind:event="oninput" @bind:after="LoadAsync" placeholder="Поиск по наименованию..." />
-                    <label class="checkboxLabel">
-                        <input type="checkbox" @bind="_showArchived" @bind:after="LoadAsync" />
-                        Показать архивные
-                    </label>
+                    <select class="field-select" @bind="_statusFilter" @bind:after="LoadAsync">
+                        <option value="@ReferenceStatusFilter.Active">Рабочие</option>
+                        <option value="@ReferenceStatusFilter.Archived">Архивные</option>
+                        <option value="@ReferenceStatusFilter.All">Все</option>
+                    </select>
                 </div>
 
                 @if (_canCreate)
@@ -106,7 +105,7 @@
                                                 else
                                                 {
                                                     <button class="linkBtn" @onclick="() => StartEdit(type)">Изменить</button>
-                                                    <button class="linkBtn" @onclick="() => ArchiveAsync(type.Id)">Архивировать</button>
+                                                    <button class="linkBtn" @onclick="() => ConfirmArchive(type)">Архивировать</button>
                                                 }
                                             </div>
                                         </td>
@@ -124,10 +123,34 @@
     </div>
 }
 
+@if (_showArchiveConfirm && _typePendingArchive is not null)
+{
+    <div class="modalOverlay" @onclick="CancelArchiveConfirm">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="archive-confirm-title" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3 id="archive-confirm-title">Архивирование типа</h3>
+                <button type="button" class="modalCloseButton" @onclick="CancelArchiveConfirm">×</button>
+            </div>
+            <div class="modalBody">
+                <p>Архивировать тип «@_typePendingArchive.Name»?</p>
+                <p class="hint">Тип перестанет быть доступен для выбора новых коэффициентов и будущих ИК.</p>
+                @if (_typePendingArchive.CoefficientCount > 0)
+                {
+                    <p class="note warn">В типе есть @_typePendingArchive.CoefficientCount рабочих коэффициентов. Архивирование будет отклонено, пока они не будут архивированы или перенесены.</p>
+                }
+            </div>
+            <div class="modalFooter">
+                <button class="btn ghost" @onclick="CancelArchiveConfirm">Отмена</button>
+                <button class="btn bad" @onclick="ExecuteArchiveAsync">Архивировать</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private bool _show;
     private bool _loading;
-    private bool _showArchived;
+    private ReferenceStatusFilter _statusFilter = ReferenceStatusFilter.Active;
     private bool _canCreate;
     private bool _canEdit;
     private string? _error;
@@ -137,6 +160,8 @@
     private string _editName = "";
     private string _editSortOrder = "";
     private Guid? _editingId;
+    private bool _showArchiveConfirm;
+    private CoefficientTypeListItemDto? _typePendingArchive;
     private List<CoefficientTypeListItemDto> _types = new();
 
     [Parameter] public EventCallback<CoefficientTypeListItemDto> OnTypeCreated { get; set; }
@@ -155,10 +180,10 @@
         _canEdit = _canCreate;
     }
 
-    public void Show()
+    public async Task ShowAsync()
     {
         _show = true;
-        _ = LoadAsync();
+        await LoadAsync();
     }
 
     private void Close()
@@ -166,6 +191,8 @@
         _show = false;
         _error = null;
         _editingId = null;
+        _showArchiveConfirm = false;
+        _typePendingArchive = null;
     }
 
     private async Task LoadAsync()
@@ -182,7 +209,7 @@
                 if (ct.IsCancellationRequested) return;
                 var query = new CoefficientTypeListQuery(
                     SearchText: string.IsNullOrWhiteSpace(_search) ? null : _search,
-                    ArchiveFilter: _showArchived);
+                    StatusFilter: _statusFilter);
                 var result = await CoeffService.GetCoefficientTypesAsync(query, ct);
                 if (ct.IsCancellationRequested) return;
                 _types = result.Items.ToList();
@@ -193,7 +220,7 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = GetSafeErrorMessage(ex);
         }
         finally
         {
@@ -220,7 +247,7 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = GetSafeErrorMessage(ex);
         }
     }
 
@@ -258,12 +285,27 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = GetSafeErrorMessage(ex);
         }
     }
 
-    private async Task ArchiveAsync(Guid id)
+    private void ConfirmArchive(CoefficientTypeListItemDto type)
     {
+        _typePendingArchive = type;
+        _showArchiveConfirm = true;
+    }
+
+    private void CancelArchiveConfirm()
+    {
+        _showArchiveConfirm = false;
+        _typePendingArchive = null;
+    }
+
+    private async Task ExecuteArchiveAsync()
+    {
+        if (_typePendingArchive is null) return;
+        var id = _typePendingArchive.Id;
+        CancelArchiveConfirm();
         _error = null;
         try
         {
@@ -273,7 +315,7 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = GetSafeErrorMessage(ex);
         }
     }
 
@@ -288,9 +330,16 @@
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = GetSafeErrorMessage(ex);
         }
     }
+
+    private static string GetSafeErrorMessage(Exception ex) => ex switch
+    {
+        InvalidOperationException biz => biz.Message,
+        UnauthorizedAccessException auth => "Недостаточно прав для выполнения действия.",
+        _ => "Не удалось выполнить действие. Повторите попытку."
+    };
 
     public void Dispose()
     {

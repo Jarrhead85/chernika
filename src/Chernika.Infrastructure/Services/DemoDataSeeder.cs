@@ -224,7 +224,10 @@ public static class DemoDataSeeder
         await db.SaveChangesAsync();
     }
 
-    private static void SeedCoefficientTypes(AppDbContext db)
+    internal static string NormalizeSeedKey(string value) =>
+        value.Trim().ToUpperInvariant();
+
+    public static void SeedCoefficientTypes(AppDbContext db)
     {
         var types = new[]
         {
@@ -239,11 +242,15 @@ public static class DemoDataSeeder
             ("Дополнительный", 90)
         };
 
+        var existingKeys = db.CoefficientTypes.AsNoTracking()
+            .Where(t => !t.IsDeleted)
+            .Select(t => NormalizeSeedKey(t.Name))
+            .ToHashSet();
+
         foreach (var (name, sortOrder) in types)
         {
-            var existing = db.CoefficientTypes.Local.FirstOrDefault(t => t.Name == name)
-                ?? db.CoefficientTypes.AsNoTracking().FirstOrDefault(t => t.Name == name);
-            if (existing != null) continue;
+            var key = NormalizeSeedKey(name);
+            if (existingKeys.Contains(key)) continue;
 
             db.CoefficientTypes.Add(new CoefficientType
             {
@@ -254,12 +261,6 @@ public static class DemoDataSeeder
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             });
-        }
-
-        var unseeded = db.CoefficientTypes.Where(t => !types.Any(x => x.Item1 == t.Name)).ToList();
-        foreach (var legacy in unseeded.Where(t => t.Coefficients.Any()))
-        {
-            legacy.SortOrder = 100 + legacy.Id.GetHashCode() % 1000;
         }
     }
 }

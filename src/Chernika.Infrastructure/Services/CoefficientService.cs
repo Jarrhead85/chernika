@@ -31,16 +31,23 @@ public class CoefficientService
         return trimmed;
     }
 
+    private static string NormalizeTypeKey(string value) =>
+        NormalizeTypeName(value).ToUpperInvariant();
+
     public async Task<PagedResult<CoefficientTypeListItemDto>> GetCoefficientTypesAsync(
         CoefficientTypeListQuery query, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
-        var baseQuery = _db.CoefficientTypes.AsNoTracking().AsSplitQuery();
+        var baseQuery = _db.CoefficientTypes.AsNoTracking();
 
-        if (query.ArchiveFilter == true)
+        if (query.StatusFilter == ReferenceStatusFilter.All)
         {
             baseQuery = baseQuery.IgnoreQueryFilters();
+        }
+        else if (query.StatusFilter == ReferenceStatusFilter.Archived)
+        {
+            baseQuery = baseQuery.IgnoreQueryFilters().Where(t => t.IsDeleted);
         }
         else
         {
@@ -79,7 +86,6 @@ public class CoefficientService
                 t.Name,
                 t.SortOrder,
                 t.Coefficients.Count(c => !c.IsDeleted),
-                t.Coefficients.Count(c => !c.IsDeleted && c.IsActive),
                 t.IsDeleted,
                 t.CreatedAt,
                 t.UpdatedAt,
@@ -109,12 +115,36 @@ public class CoefficientService
                 t.Name,
                 t.SortOrder,
                 t.Coefficients.Count(c => !c.IsDeleted),
-                t.Coefficients.Count(c => !c.IsDeleted && c.IsActive),
                 t.IsDeleted,
                 t.CreatedAt,
                 t.UpdatedAt,
                 t.DeletedAt))
             .ToListAsync(ct);
+    }
+
+    public async Task<CoefficientTypeListItemDto?> GetCoefficientTypeByIdAsync(
+        Guid id, bool includeArchived = false, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        var query = _db.CoefficientTypes.AsNoTracking();
+        if (!includeArchived)
+            query = query.Where(t => !t.IsDeleted);
+        else
+            query = query.IgnoreQueryFilters();
+
+        return await query
+            .Where(t => t.Id == id)
+            .Select(t => new CoefficientTypeListItemDto(
+                t.Id,
+                t.Name,
+                t.SortOrder,
+                t.Coefficients.Count(c => !c.IsDeleted),
+                t.IsDeleted,
+                t.CreatedAt,
+                t.UpdatedAt,
+                t.DeletedAt))
+            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<CoefficientTypeListItemDto> CreateCoefficientTypeAsync(
@@ -123,7 +153,6 @@ public class CoefficientService
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var name = NormalizeTypeName(request.Name);
-
         await EnsureNameUniqueAsync(name, null, ct);
 
         var now = _time.GetUtcNow().UtcDateTime;
@@ -140,17 +169,13 @@ public class CoefficientService
         };
 
         _db.CoefficientTypes.Add(type);
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "CoefficientType", type.Id.ToString(), "CoefficientType.Created",
+            _currentUser.GetRequiredUserId(), EntityDisplayName: type.Name), ct);
         await _db.SaveChangesAsync(ct);
 
-        await _audit.LogAsync(new AuditWriteRequest(
-            "CoefficientType",
-            type.Id.ToString(),
-            "CoefficientType.Created",
-            _currentUser.GetRequiredUserId(),
-            EntityDisplayName: type.Name), ct);
-
         return new CoefficientTypeListItemDto(
-            type.Id, type.Name, type.SortOrder, 0, 0, false, type.CreatedAt, type.UpdatedAt, null);
+            type.Id, type.Name, type.SortOrder, 0, false, type.CreatedAt, type.UpdatedAt, null);
     }
 
     public async Task<CoefficientTypeListItemDto> UpdateCoefficientTypeAsync(
@@ -162,21 +187,16 @@ public class CoefficientService
             ?? throw new InvalidOperationException("Тип коэффициента не найден. Обновите список и повторите попытку.");
 
         var name = NormalizeTypeName(request.Name);
-
         await EnsureNameUniqueAsync(name, type.Id, ct);
 
         type.Name = name;
         type.SortOrder = request.SortOrder;
         type.UpdatedAt = _time.GetUtcNow().UtcDateTime;
 
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "CoefficientType", type.Id.ToString(), "CoefficientType.Updated",
+            _currentUser.GetRequiredUserId(), EntityDisplayName: type.Name), ct);
         await _db.SaveChangesAsync(ct);
-
-        await _audit.LogAsync(new AuditWriteRequest(
-            "CoefficientType",
-            type.Id.ToString(),
-            "CoefficientType.Updated",
-            _currentUser.GetRequiredUserId(),
-            EntityDisplayName: type.Name), ct);
 
         return await GetTypeListItemAsync(type.Id, ct);
     }
@@ -204,14 +224,10 @@ public class CoefficientService
         type.DeletedAt = _time.GetUtcNow().UtcDateTime;
         type.UpdatedAt = type.DeletedAt.Value;
 
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "CoefficientType", type.Id.ToString(), "CoefficientType.Archived",
+            _currentUser.GetRequiredUserId(), EntityDisplayName: type.Name), ct);
         await _db.SaveChangesAsync(ct);
-
-        await _audit.LogAsync(new AuditWriteRequest(
-            "CoefficientType",
-            type.Id.ToString(),
-            "CoefficientType.Archived",
-            _currentUser.GetRequiredUserId(),
-            EntityDisplayName: type.Name), ct);
     }
 
     public async Task RestoreCoefficientTypeAsync(Guid id, CancellationToken ct = default)
@@ -231,29 +247,20 @@ public class CoefficientService
         type.DeletedAt = null;
         type.UpdatedAt = _time.GetUtcNow().UtcDateTime;
 
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "CoefficientType", type.Id.ToString(), "CoefficientType.Restored",
+            _currentUser.GetRequiredUserId(), EntityDisplayName: type.Name), ct);
         await _db.SaveChangesAsync(ct);
-
-        await _audit.LogAsync(new AuditWriteRequest(
-            "CoefficientType",
-            type.Id.ToString(),
-            "CoefficientType.Restored",
-            _currentUser.GetRequiredUserId(),
-            EntityDisplayName: type.Name), ct);
-    }
-
-    public CoefficientType? GetById(Guid id)
-    {
-        return _db.CoefficientTypes.AsNoTracking().FirstOrDefault(t => t.Id == id && !t.IsDeleted);
     }
 
     private async Task EnsureNameUniqueAsync(string name, Guid? excludeId, CancellationToken ct)
     {
-        var normalized = name.Trim().ToLowerInvariant();
+        var key = NormalizeTypeKey(name);
         var conflict = await _db.CoefficientTypes.IgnoreQueryFilters()
             .Where(t => !t.IsDeleted && t.Id != excludeId)
             .ToListAsync(ct);
 
-        if (conflict.Any(t => t.Name.Trim().ToLower() == normalized))
+        if (conflict.Any(t => NormalizeTypeKey(t.Name) == key))
             throw new InvalidOperationException($"Тип коэффициента «{name}» уже существует.");
     }
 
@@ -271,7 +278,6 @@ public class CoefficientService
                 t.Name,
                 t.SortOrder,
                 t.Coefficients.Count(c => !c.IsDeleted),
-                t.Coefficients.Count(c => !c.IsDeleted && c.IsActive),
                 t.IsDeleted,
                 t.CreatedAt,
                 t.UpdatedAt,

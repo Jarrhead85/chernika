@@ -11,17 +11,14 @@ namespace Chernika.Infrastructure.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            // Legacy Group/Description columns are retained for historical data compatibility.
+            // Physical cleanup requires a separate approved data migration after production review.
+            // modelBuilder.Entity<CoefficientType>().Ignore(x => x.Group);
+            // modelBuilder.Entity<CoefficientType>().Ignore(x => x.Description);
+
             migrationBuilder.DropForeignKey(
                 name: "FK_Coefficients_CoefficientTypes_CoefficientTypeId",
                 table: "Coefficients");
-
-            migrationBuilder.DropColumn(
-                name: "Description",
-                table: "CoefficientTypes");
-
-            migrationBuilder.DropColumn(
-                name: "Group",
-                table: "CoefficientTypes");
 
             migrationBuilder.AddColumn<DateTime>(
                 name: "CreatedAt",
@@ -117,19 +114,7 @@ namespace Chernika.Infrastructure.Data.Migrations
                 name: "UpdatedAt",
                 table: "CoefficientTypes");
 
-            migrationBuilder.AddColumn<string>(
-                name: "Description",
-                table: "CoefficientTypes",
-                type: "text",
-                nullable: true);
-
-            migrationBuilder.AddColumn<string>(
-                name: "Group",
-                table: "CoefficientTypes",
-                type: "character varying(30)",
-                maxLength: 30,
-                nullable: false,
-                defaultValue: "");
+            // Legacy Group/Description are not restored here because they were never dropped in Up.
 
             migrationBuilder.AddForeignKey(
                 name: "FK_Coefficients_CoefficientTypes_CoefficientTypeId",

@@ -1,6 +1,7 @@
 using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Models;
+using Chernika.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -168,7 +169,7 @@ public class CoefficientTypeIntegrationTests
         var active = await s.CoeffService.GetCoefficientTypesAsync(new CoefficientTypeListQuery(SearchText: marker));
         Assert.Single(active.Items);
 
-        var all = await s.CoeffService.GetCoefficientTypesAsync(new CoefficientTypeListQuery(SearchText: marker, ArchiveFilter: true));
+        var all = await s.CoeffService.GetCoefficientTypesAsync(new CoefficientTypeListQuery(SearchText: marker, StatusFilter: ReferenceStatusFilter.All));
         Assert.Equal(2, all.Items.Count);
     }
 
@@ -252,7 +253,7 @@ public class CoefficientTypeIntegrationTests
         await s.CoeffService.ArchiveCoefficientTypeAsync(type.Id);
         await s.CoeffService.RestoreCoefficientTypeAsync(type.Id);
 
-        var all = await s.CoeffService.GetCoefficientTypesAsync(new CoefficientTypeListQuery(ArchiveFilter: true));
+        var all = await s.CoeffService.GetCoefficientTypesAsync(new CoefficientTypeListQuery(StatusFilter: ReferenceStatusFilter.All));
         var restored = all.Items.FirstOrDefault(t => t.Id == type.Id);
         Assert.NotNull(restored);
         Assert.False(restored.IsDeleted);
@@ -316,13 +317,44 @@ public class CoefficientTypeIntegrationTests
         await using var s = Scope();
         SetSystemAdmin(s);
 
+        DemoDataSeeder.SeedCoefficientTypes(s.Db);
+        await s.Db.SaveChangesAsync();
+
         var first = await s.CoeffService.GetActiveCoefficientTypesForSelectAsync();
-        var firstName = string.Join(",", first.Select(t => t.Name).OrderBy(n => n));
+        var firstNormalized = string.Join(",", first.Select(t => t.Name.Trim().ToUpperInvariant()).OrderBy(n => n));
+        var firstCount = first.Count;
+
+        DemoDataSeeder.SeedCoefficientTypes(s.Db);
+        await s.Db.SaveChangesAsync();
 
         var second = await s.CoeffService.GetActiveCoefficientTypesForSelectAsync();
-        var secondName = string.Join(",", second.Select(t => t.Name).OrderBy(n => n));
+        var secondNormalized = string.Join(",", second.Select(t => t.Name.Trim().ToUpperInvariant()).OrderBy(n => n));
 
-        Assert.Equal(firstName, secondName);
+        Assert.Equal(firstCount, second.Count);
+        Assert.Equal(firstNormalized, secondNormalized);
+    }
+
+    [Fact]
+    public async Task ArchiveConflict_ProducesNoAudit()
+    {
+        await using var s = Scope();
+        SetSystemAdmin(s);
+        await GrantPermissionAsync(s, _fixture.SystemAdminUser.Id, PermissionCodes.ReferenceEdit);
+
+        var type = await s.CoeffService.CreateCoefficientTypeAsync(new CreateCoefficientTypeRequest("ConflictAudit " + Guid.NewGuid().ToString("N")[..4]));
+        s.Db.Coefficients.Add(new Coefficient
+        {
+            Id = Guid.NewGuid(), CoefficientTypeId = type.Id, Name = "К1", Value = 1.0m,
+            IsActive = true, IsDeleted = false
+        });
+        await s.Db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            s.CoeffService.ArchiveCoefficientTypeAsync(type.Id));
+
+        var archiveAudits = await s.Db.AuditLogs
+            .CountAsync(a => a.EntityType == "CoefficientType" && a.EntityId == type.Id.ToString() && a.Action == "CoefficientType.Archived");
+        Assert.Equal(0, archiveAudits);
     }
 
     [Fact]

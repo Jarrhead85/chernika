@@ -1,8 +1,15 @@
-namespace Chernika.Domain.Models;
+﻿namespace Chernika.Domain.Models;
+
+public enum ReferenceStatusFilter
+{
+    Active = 0,
+    Archived = 1,
+    All = 2
+}
 
 public sealed record CoefficientTypeListQuery(
     string? SearchText = null,
-    bool? ArchiveFilter = false,
+    ReferenceStatusFilter StatusFilter = ReferenceStatusFilter.Active,
     string SortBy = "sort",
     bool SortDescending = false,
     int Page = 1,
@@ -13,7 +20,6 @@ public sealed record CoefficientTypeListItemDto(
     string Name,
     int SortOrder,
     int CoefficientCount,
-    int ActiveCoefficientCount,
     bool IsDeleted,
     DateTime CreatedAt,
     DateTime UpdatedAt,

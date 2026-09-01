@@ -78,6 +78,7 @@ builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<EquipmentService>();
 builder.Services.AddScoped<GsmMaterialService>();
 builder.Services.AddScoped<IndividualCardService>();
+builder.Services.AddScoped<CoefficientService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<TaskService>();
 builder.Services.AddScoped<NotificationService>();
