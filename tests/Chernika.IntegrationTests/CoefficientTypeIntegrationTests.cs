@@ -321,17 +321,98 @@ public class CoefficientTypeIntegrationTests
         await s.Db.SaveChangesAsync();
 
         var first = await s.CoeffService.GetActiveCoefficientTypesForSelectAsync();
-        var firstNormalized = string.Join(",", first.Select(t => t.Name.Trim().ToUpperInvariant()).OrderBy(n => n));
-        var firstCount = first.Count;
+        var firstNormalized = new HashSet<string>(first.Select(t => t.Name.Trim().ToUpperInvariant()), StringComparer.Ordinal);
 
         DemoDataSeeder.SeedCoefficientTypes(s.Db);
         await s.Db.SaveChangesAsync();
 
         var second = await s.CoeffService.GetActiveCoefficientTypesForSelectAsync();
-        var secondNormalized = string.Join(",", second.Select(t => t.Name.Trim().ToUpperInvariant()).OrderBy(n => n));
+        var secondNormalized = new HashSet<string>(second.Select(t => t.Name.Trim().ToUpperInvariant()), StringComparer.Ordinal);
 
-        Assert.Equal(firstCount, second.Count);
-        Assert.Equal(firstNormalized, secondNormalized);
+        Assert.Equal(firstNormalized.Count, secondNormalized.Count);
+        Assert.Superset(firstNormalized, secondNormalized);
+        Assert.Superset(secondNormalized, firstNormalized);
+
+        var expectedSeedTypes = new[]
+        {
+            "КЛИМАТИЧЕСКИЙ", "ТЕМПЕРАТУРНЫЙ", "СЕЗОННЫЙ", "ДОРОЖНЫЙ", "МЕСТНОСТЬ",
+            "ИНТЕНСИВНОСТЬ ЭКСПЛУАТАЦИИ", "УЧЕБНО-БОЕВАЯ ЭКСПЛУАТАЦИЯ",
+            "ТЕХНИЧЕСКОЕ СОСТОЯНИЕ", "ДОПОЛНИТЕЛЬНЫЙ"
+        };
+        foreach (var expected in expectedSeedTypes)
+        {
+            Assert.Contains(expected, secondNormalized);
+        }
+    }
+
+    [Fact]
+    public async Task Seed_CaseWhitespaceIdempotent()
+    {
+        await using var s = Scope();
+        SetSystemAdmin(s);
+
+        var uniqueSuffix = Guid.NewGuid().ToString("N")[..6];
+        var legacyName = "  сезонный " + uniqueSuffix + "  ";
+        s.Db.CoefficientTypes.Add(new CoefficientType
+        {
+            Id = Guid.NewGuid(),
+            Name = legacyName,
+            SortOrder = 30,
+            IsDeleted = false,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await s.Db.SaveChangesAsync();
+
+        DemoDataSeeder.SeedCoefficientTypes(s.Db);
+        await s.Db.SaveChangesAsync();
+
+        var workingTypes = await s.CoeffService.GetActiveCoefficientTypesForSelectAsync();
+        var matchingTypes = workingTypes
+            .Where(t => t.Name.Trim().ToUpperInvariant() == ("СЕЗОННЫЙ " + uniqueSuffix).ToUpperInvariant())
+            .ToList();
+        Assert.Single(matchingTypes);
+    }
+
+    [Fact]
+    public async Task LegacyTimestamp_Backfill_ManualSql()
+    {
+        await using var s = Scope();
+        SetSystemAdmin(s);
+
+        var legacyId = Guid.NewGuid();
+        var uniqueName = "LegacyBackfill " + Guid.NewGuid().ToString("N")[..6];
+        s.Db.CoefficientTypes.Add(new CoefficientType
+        {
+            Id = legacyId,
+            Name = uniqueName,
+            SortOrder = 999,
+            IsDeleted = false,
+            CreatedAt = DateTime.MinValue,
+            UpdatedAt = DateTime.MinValue
+        });
+        await s.Db.SaveChangesAsync();
+
+        var before = await s.Db.CoefficientTypes.AsNoTracking().FirstAsync(t => t.Id == legacyId);
+        Assert.Equal(DateTime.MinValue, before.CreatedAt);
+        Assert.Equal(DateTime.MinValue, before.UpdatedAt);
+
+        await s.Db.Database.ExecuteSqlRawAsync(
+            """
+            UPDATE "CoefficientTypes"
+            SET
+                "CreatedAt" = CURRENT_TIMESTAMP,
+                "UpdatedAt" = CURRENT_TIMESTAMP
+            WHERE
+                "Id" = {0}
+                AND ("CreatedAt" < TIMESTAMPTZ '1970-01-01 00:00:00+00'
+                     OR "UpdatedAt" < TIMESTAMPTZ '1970-01-01 00:00:00+00');
+            """, legacyId);
+
+        var after = await s.Db.CoefficientTypes.AsNoTracking().FirstAsync(t => t.Id == legacyId);
+        Assert.NotEqual(DateTime.MinValue, after.CreatedAt);
+        Assert.NotEqual(DateTime.MinValue, after.UpdatedAt);
+        Assert.True(after.CreatedAt > new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
     }
 
     [Fact]

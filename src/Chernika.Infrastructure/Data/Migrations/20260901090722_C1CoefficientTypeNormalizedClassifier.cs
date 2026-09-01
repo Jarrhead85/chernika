@@ -13,8 +13,6 @@ namespace Chernika.Infrastructure.Data.Migrations
         {
             // Legacy Group/Description columns are retained for historical data compatibility.
             // Physical cleanup requires a separate approved data migration after production review.
-            // modelBuilder.Entity<CoefficientType>().Ignore(x => x.Group);
-            // modelBuilder.Entity<CoefficientType>().Ignore(x => x.Description);
 
             migrationBuilder.DropForeignKey(
                 name: "FK_Coefficients_CoefficientTypes_CoefficientTypeId",
@@ -46,6 +44,20 @@ namespace Chernika.Infrastructure.Data.Migrations
                 type: "timestamp with time zone",
                 nullable: false,
                 defaultValue: new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified));
+
+            // Backfill legacy rows with valid UTC timestamps.
+            // New rows always get UTC time from TimeProvider in CoefficientService.
+            // Use a range check to handle potential timezone representation differences.
+            migrationBuilder.Sql(
+                """
+                UPDATE "CoefficientTypes"
+                SET
+                    "CreatedAt" = CURRENT_TIMESTAMP,
+                    "UpdatedAt" = CURRENT_TIMESTAMP
+                WHERE
+                    "CreatedAt" < TIMESTAMPTZ '1970-01-01 00:00:00+00'
+                    OR "UpdatedAt" < TIMESTAMPTZ '1970-01-01 00:00:00+00';
+                """);
 
             migrationBuilder.CreateIndex(
                 name: "IX_CoefficientTypes_IsDeleted",

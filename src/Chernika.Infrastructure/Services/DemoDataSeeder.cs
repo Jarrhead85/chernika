@@ -242,10 +242,15 @@ public static class DemoDataSeeder
             ("Дополнительный", 90)
         };
 
-        var existingKeys = db.CoefficientTypes.AsNoTracking()
+        var existingNames = db.CoefficientTypes
+            .AsNoTracking()
             .Where(t => !t.IsDeleted)
-            .Select(t => NormalizeSeedKey(t.Name))
-            .ToHashSet();
+            .Select(t => t.Name)
+            .ToList();
+
+        var existingKeys = existingNames
+            .Select(NormalizeSeedKey)
+            .ToHashSet(StringComparer.Ordinal);
 
         foreach (var (name, sortOrder) in types)
         {
