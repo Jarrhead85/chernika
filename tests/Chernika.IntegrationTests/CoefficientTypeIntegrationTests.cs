@@ -351,12 +351,21 @@ public class CoefficientTypeIntegrationTests
         await using var s = Scope();
         SetSystemAdmin(s);
 
-        var uniqueSuffix = Guid.NewGuid().ToString("N")[..6];
-        var legacyName = "  сезонный " + uniqueSuffix + "  ";
+        await GrantPermissionAsync(s, _fixture.SystemAdminUser.Id, PermissionCodes.ReferenceEdit);
+
+        var allWorking = await s.Db.CoefficientTypes
+            .Where(t => !t.IsDeleted)
+            .ToListAsync();
+        var existingSeasons = allWorking
+            .Where(t => t.Name.Trim().ToUpperInvariant() == "СЕЗОННЫЙ")
+            .ToList();
+        s.Db.CoefficientTypes.RemoveRange(existingSeasons);
+        await s.Db.SaveChangesAsync();
+
         s.Db.CoefficientTypes.Add(new CoefficientType
         {
             Id = Guid.NewGuid(),
-            Name = legacyName,
+            Name = "  сезонный  ",
             SortOrder = 30,
             IsDeleted = false,
             CreatedAt = DateTime.UtcNow,
@@ -368,10 +377,9 @@ public class CoefficientTypeIntegrationTests
         await s.Db.SaveChangesAsync();
 
         var workingTypes = await s.CoeffService.GetActiveCoefficientTypesForSelectAsync();
-        var matchingTypes = workingTypes
-            .Where(t => t.Name.Trim().ToUpperInvariant() == ("СЕЗОННЫЙ " + uniqueSuffix).ToUpperInvariant())
-            .ToList();
-        Assert.Single(matchingTypes);
+        var seasonCount = workingTypes
+            .Count(t => t.Name.Trim().ToUpperInvariant() == "СЕЗОННЫЙ");
+        Assert.Equal(1, seasonCount);
     }
 
     [Fact]
