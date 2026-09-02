@@ -1,0 +1,557 @@
+@page "/справочник-коэффициентов"
+@attribute [Authorize(Policy = "ViewReferences")]
+@implements IDisposable
+@using Chernika.Domain
+@using Chernika.Domain.Models
+@using Chernika.Web.Services
+@using Chernika.Web.Components
+@inject CoefficientService CoeffService
+@inject CircuitDbLock DbLock
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
+
+<div class="stack">
+    <ReferenceBreadcrumb Group="Классификаторы" Current="Коэффициенты" />
+
+    @if (canEdit)
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>@(editing ? "Редактирование коэффициента" : "Новый коэффициент")</h2>
+                <div class="hint">Корректирующие коэффициенты для будущего расчёта индивидуальных карт</div>
+            </div>
+            <div class="panelBody">
+                <div class="form">
+                    <div class="field">
+                        <label>Тип коэффициента <span class="text-danger">*</span></label>
+                        <div class="mbQuickCreate">
+                            <input class="fieldInput" @bind="_typeInputText" @bind:event="oninput" placeholder="Введите или выберите тип..." list="coefTypeList" />
+                            <datalist id="coefTypeList">
+                                @foreach (var t in workingTypes)
+                                {
+                                    <option value="@t.Name">@t.Name</option>
+                                }
+                            </datalist>
+                            @if (canEdit && !string.IsNullOrWhiteSpace(_typeInputText)
+                                && workingTypes.All(t => !string.Equals(t.Name.Trim(), _typeInputText.Trim(), StringComparison.OrdinalIgnoreCase)))
+                            {
+                                <button type="button" class="linkBtn" @onclick="QuickCreateTypeAsync">
+                                    Создать тип «@_typeInputText.Trim()»
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <div class="field"><label>Наименование <span class="text-danger">*</span></label><input @ref="_firstField" @bind="form.Name" maxlength="256" /></div>
+                    <div class="field"><label>Значение <span class="text-danger">*</span></label><input type="number" step="0.000001" min="0.000001" @bind="form.Value" /></div>
+                    <div class="field"><label>Условия применения</label><input @bind="form.ConditionDescription" maxlength="2000" /></div>
+                    <div class="field"><label>Нормативное основание</label><input @bind="form.NormativeBasis" maxlength="2000" /></div>
+                    <div class="formActions">
+                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                        <button class="btn primary" @onclick="SaveAsync">@(editing ? "Сохранить" : "Добавить")</button>
+                        @if (canEdit)
+                        {
+                            <button type="button" class="btn ghost" @onclick="OpenTypeManagementAsync">Управление типами</button>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="mbError">@errorMessage</div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Список коэффициентов</h2>
+            <div class="hint">@totalCount записей</div>
+        </div>
+        <div class="panelBody">
+            <div class="mbFilters">
+                <input class="fieldInput mbSearch" @bind="_search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск: тип, наименование, условие, основание..." />
+                <select class="field-select" @bind="_typeFilter" @bind:after="OnFiltersChanged">
+                    <option value="">Все типы</option>
+                    @foreach (var t in workingTypes)
+                    {
+                        <option value="@t.Id">@t.Name</option>
+                    }
+                </select>
+                <select class="field-select" @bind="_statusFilterStr" @bind:after="OnFiltersChanged">
+                    <option value="0">Рабочие</option>
+                    <option value="1">Архивные</option>
+                    <option value="2">Все</option>
+                </select>
+                <select class="field-select" @bind="_basisFilterStr" @bind:after="OnFiltersChanged">
+                    <option value="">Основание: все</option>
+                    <option value="true">Есть основание</option>
+                    <option value="false">Без основания</option>
+                </select>
+                <select class="field-select" @bind="_sortBy" @bind:after="OnFiltersChanged">
+                    <option value="type">Тип</option>
+                    <option value="name">Наименование</option>
+                    <option value="value">Значение</option>
+                    <option value="updated">Обновлено</option>
+                </select>
+                <button class="btn ghost" @onclick="ToggleSortDir">@(_sortDesc ? "По убыванию" : "По возрастанию")</button>
+                @if (HasActiveFilters)
+                {
+                    <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                }
+            </div>
+
+            @if (loading)
+            {
+                <div class="loading-state">Загрузка...</div>
+            }
+            else if (!coefficients.Any())
+            {
+                <div class="empty-state">Нет коэффициентов</div>
+            }
+            else
+            {
+                <div class="referenceTableWrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Тип</th>
+                                <th>Наименование</th>
+                                <th>Значение</th>
+                                <th>Условия</th>
+                                <th>Нормативное основание</th>
+                                <th>Статус</th>
+                                <th>Обновлён</th>
+                                @if (canEdit)
+                                {
+                                    <th>Действия</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var c in coefficients)
+                            {
+                                <tr class="@(canEdit && !c.IsDeleted ? "clickableRow" : "")" tabindex="@(canEdit && !c.IsDeleted ? "0" : "-1")" @ondblclick="() => OnRowDblClick(c)" @onkeydown="(ev) => OnRowKeyDown(ev, c)">
+                                    <td>@c.CoefficientTypeName</td>
+                                    <td>@c.Name</td>
+                                    <td class="mono">@c.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)</td>
+                                    <td>@c.ConditionDescription</td>
+                                    <td>@(string.IsNullOrEmpty(c.NormativeBasis) ? "—" : c.NormativeBasis)</td>
+                                    <td><span class="tag @(c.IsDeleted ? "" : "ok")">@(c.IsDeleted ? "Архивный" : "Рабочий")</span></td>
+                                    <td class="mono">@c.UpdatedAt.ToString("dd.MM.yyyy")</td>
+                                    @if (canEdit)
+                                    {
+                                        <td @ondblclick:stopPropagation="true">
+                                            <div class="rowActions">
+                                                @if (c.IsDeleted)
+                                                {
+                                                    <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreAsync(c.Id)">Восстановить</button>
+                                                }
+                                                else
+                                                {
+                                                    <button class="linkBtn" @onclick="() => EditCoefficient(c)">Изменить</button>
+                                                    <button class="linkBtn" style="color:var(--bad)" @onclick="() => ConfirmArchiveAsync(c)">Архивировать</button>
+                                                }
+                                            </div>
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="footer">
+                    <div>
+                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
+                        <span style="margin:0 8px">Стр. @currentPage из @totalPages</span>
+                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
+                    </div>
+                    <div class="mono">Показано @coefficients.Count из @totalCount</div>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@if (showArchiveConfirm && pendingArchive is not null)
+{
+    <div class="modalOverlay" @onclick="CancelArchiveConfirm">
+        <div class="modal" role="dialog" aria-modal="true" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3>Архивирование коэффициента</h3>
+                <button type="button" class="modalCloseButton" @onclick="CancelArchiveConfirm">×</button>
+            </div>
+            <div class="modalBody">
+                <p>Архивировать коэффициент «@pendingArchive.Name»?</p>
+                <p class="hint">Коэффициент перестанет быть доступен для выбора в новых ИК. Уже созданные ИК не изменятся.</p>
+            </div>
+            <div class="modalFooter">
+                <button class="btn ghost" @onclick="CancelArchiveConfirm">Отмена</button>
+                <button class="btn bad" @onclick="ExecuteArchiveAsync">Архивировать</button>
+            </div>
+        </div>
+    </div>
+}
+
+<CoefficientTypeManagementModal @ref="_coefficientTypeModal"
+    OnTypeCreated="OnTypeCreatedAsync"
+    OnChanged="ReloadTypesAsync" />
+
+@code {
+    private List<CoefficientListItemDto> coefficients = new();
+    private List<CoefficientTypeListItemDto> workingTypes = new();
+    private CreateCoefficientRequest form = new();
+    private Guid? editingId;
+    private bool editing;
+    private bool loading = true;
+    private bool canEdit;
+    private bool canCreateType;
+    private string? errorMessage;
+    private string _search = "";
+    private string _typeFilter = "";
+    private string _statusFilterStr = "0";
+    private string _basisFilterStr = "";
+    private string _sortBy = "type";
+    private bool _sortDesc;
+    private int currentPage = 1;
+    private int totalPages = 1;
+    private int totalCount;
+    private CancellationTokenSource? _cts;
+    private ElementReference _firstField;
+    private bool _focusForm;
+    private string _typeInputText = "";
+    private CoefficientListItemDto? pendingArchive;
+    private bool showArchiveConfirm;
+    private CoefficientTypeManagementModal? _coefficientTypeModal;
+
+    private bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(_search)
+        || !string.IsNullOrEmpty(_typeFilter)
+        || _statusFilterStr != "0"
+        || !string.IsNullOrEmpty(_basisFilterStr);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        canCreateType = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        await ReloadTypesAsync();
+        await ReloadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusForm)
+        {
+            _focusForm = false;
+            await _firstField.FocusAsync();
+        }
+    }
+
+    private async Task ReloadTypesAsync()
+    {
+        try
+        {
+            workingTypes = (await CoeffService.GetActiveCoefficientTypesForSelectAsync()).ToList();
+        }
+        catch
+        {
+            workingTypes = new();
+        }
+    }
+
+    private async Task OnFiltersChanged()
+    {
+        currentPage = 1;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        var statusFilter = _statusFilterStr switch
+        {
+            "1" => ReferenceStatusFilter.Archived,
+            "2" => ReferenceStatusFilter.All,
+            _ => ReferenceStatusFilter.Active
+        };
+
+        bool? hasBasis = string.IsNullOrEmpty(_basisFilterStr)
+            ? null
+            : bool.Parse(_basisFilterStr);
+
+        Guid? typeId = null;
+        if (!string.IsNullOrEmpty(_typeFilter) && Guid.TryParse(_typeFilter, out var tid))
+            typeId = tid;
+
+        loading = true;
+        try
+        {
+            await using (await DbLock.WaitAsync(ct))
+            {
+                var result = await CoeffService.GetCoefficientsAsync(new CoefficientListQuery
+                {
+                    Page = currentPage,
+                    PageSize = 50,
+                    SearchText = string.IsNullOrWhiteSpace(_search) ? null : _search.Trim(),
+                    CoefficientTypeId = typeId,
+                    StatusFilter = statusFilter,
+                    HasNormativeBasis = hasBasis,
+                    SortBy = _sortBy,
+                    SortDescending = _sortDesc,
+                }, ct);
+
+                if (ct.IsCancellationRequested) return;
+
+                coefficients = result.Items.ToList();
+                totalCount = result.TotalCount;
+                totalPages = Math.Max(1, (int)Math.Ceiling(totalCount / 50.0));
+                if (currentPage > totalPages) currentPage = totalPages;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested) loading = false;
+        }
+    }
+
+    private async Task QuickCreateTypeAsync()
+    {
+        if (!canCreateType) return;
+        var name = _typeInputText.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+        try
+        {
+            var created = await CoeffService.CreateCoefficientTypeAsync(
+                new CreateCoefficientTypeRequest(name));
+            _typeInputText = created.Name;
+            await ReloadTypesAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch
+        {
+            errorMessage = "Не удалось создать тип коэффициента. Повторите попытку.";
+        }
+    }
+
+    private async Task OpenTypeManagementAsync()
+    {
+        if (_coefficientTypeModal is not null)
+            await _coefficientTypeModal.ShowAsync();
+    }
+
+    private async Task OnTypeCreatedAsync(CoefficientTypeListItemDto created)
+    {
+        await ReloadTypesAsync();
+        _typeInputText = created.Name;
+    }
+
+    private async Task SaveAsync()
+    {
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(form.Name))
+        {
+            errorMessage = "Укажите наименование коэффициента.";
+            return;
+        }
+        if (form.Value <= 0m)
+        {
+            errorMessage = "Значение коэффициента должно быть больше нуля.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_typeInputText))
+        {
+            errorMessage = "Укажите тип коэффициента.";
+            return;
+        }
+
+        var matchedType = workingTypes.FirstOrDefault(t =>
+            string.Equals(t.Name.Trim(), _typeInputText.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        if (matchedType is null)
+        {
+            errorMessage = "Тип коэффициента не найден или архивирован. Сначала выберите или создайте тип.";
+            return;
+        }
+
+        try
+        {
+            if (editing && editingId.HasValue)
+            {
+                var updateReq = new UpdateCoefficientRequest
+                {
+                    Id = editingId.Value,
+                    CoefficientTypeId = matchedType.Id,
+                    Name = form.Name,
+                    Value = form.Value,
+                    ConditionDescription = form.ConditionDescription,
+                    NormativeBasis = form.NormativeBasis,
+                    SortOrder = (form.SortOrder ?? 0) > 0 ? (form.SortOrder ?? 1) : 1
+                };
+                await CoeffService.UpdateCoefficientAsync(updateReq);
+            }
+            else
+            {
+                var createReq = new CreateCoefficientRequest
+                {
+                    CoefficientTypeId = matchedType.Id,
+                    Name = form.Name,
+                    Value = form.Value,
+                    ConditionDescription = form.ConditionDescription,
+                    NormativeBasis = form.NormativeBasis,
+                    SortOrder = form.SortOrder
+                };
+                await CoeffService.CreateCoefficientAsync(createReq);
+            }
+            ResetForm();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch
+        {
+            errorMessage = editing
+                ? "Не удалось изменить коэффициент. Обновите список и повторите попытку."
+                : "Не удалось создать коэффициент. Обновите список и повторите попытку.";
+        }
+    }
+
+    void EditCoefficient(CoefficientListItemDto c)
+    {
+        editing = true;
+        editingId = c.Id;
+        _typeInputText = c.CoefficientTypeName;
+        form = new CreateCoefficientRequest
+        {
+            CoefficientTypeId = c.CoefficientTypeId,
+            Name = c.Name,
+            Value = c.Value,
+            ConditionDescription = c.ConditionDescription,
+            NormativeBasis = c.NormativeBasis,
+            SortOrder = c.SortOrder
+        };
+        _focusForm = true;
+    }
+
+    void OnRowDblClick(CoefficientListItemDto c)
+    {
+        if (!canEdit || c.IsDeleted) return;
+        EditCoefficient(c);
+    }
+
+    void OnRowKeyDown(KeyboardEventArgs ev, CoefficientListItemDto c)
+    {
+        if (!canEdit || c.IsDeleted || ev.Key != "Enter") return;
+        EditCoefficient(c);
+    }
+
+    void ConfirmArchiveAsync(CoefficientListItemDto c)
+    {
+        pendingArchive = c;
+        showArchiveConfirm = true;
+    }
+
+    void CancelArchiveConfirm()
+    {
+        showArchiveConfirm = false;
+        pendingArchive = null;
+    }
+
+    private async Task ExecuteArchiveAsync()
+    {
+        if (pendingArchive is null) return;
+        var id = pendingArchive.Id;
+        CancelArchiveConfirm();
+        try
+        {
+            await CoeffService.ArchiveCoefficientAsync(id);
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch
+        {
+            errorMessage = "Не удалось архивировать коэффициент. Повторите попытку.";
+        }
+    }
+
+    private async Task RestoreAsync(Guid id)
+    {
+        errorMessage = null;
+        try
+        {
+            await CoeffService.RestoreCoefficientAsync(id);
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch
+        {
+            errorMessage = "Не удалось восстановить коэффициент. Повторите попытку.";
+        }
+    }
+
+    void ResetForm()
+    {
+        form = new CreateCoefficientRequest();
+        editing = false;
+        editingId = null;
+        _typeInputText = "";
+        errorMessage = null;
+    }
+
+    async Task ToggleSortDir()
+    {
+        _sortDesc = !_sortDesc;
+        await ReloadAsync();
+    }
+
+    async Task ResetFilters()
+    {
+        _search = "";
+        _typeFilter = "";
+        _statusFilterStr = "0";
+        _basisFilterStr = "";
+        _sortBy = "type";
+        _sortDesc = false;
+        currentPage = 1;
+        await ReloadAsync();
+    }
+
+    async Task PrevPage()
+    {
+        if (currentPage <= 1) return;
+        currentPage--;
+        await ReloadAsync();
+    }
+
+    async Task NextPage()
+    {
+        if (currentPage >= totalPages) return;
+        currentPage++;
+        await ReloadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

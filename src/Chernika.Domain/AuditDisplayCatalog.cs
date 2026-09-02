@@ -84,6 +84,11 @@ public static class AuditDisplayCatalog
         ["CoefficientType.Archived"] = new("Архивирование типа коэффициента", AuditSeverity.Neutral),
         ["CoefficientType.Restored"] = new("Восстановление типа коэффициента", AuditSeverity.Success),
 
+        ["Coefficient.Created"] = new("Создание коэффициента", AuditSeverity.Success),
+        ["Coefficient.Updated"] = new("Изменение коэффициента", AuditSeverity.Neutral),
+        ["Coefficient.Archived"] = new("Архивирование коэффициента", AuditSeverity.Neutral),
+        ["Coefficient.Restored"] = new("Восстановление коэффициента", AuditSeverity.Success),
+
         ["WorkTaskGroup.Completed"] = new("Групповая задача выполнена", AuditSeverity.Success),
     };
 

@@ -1,4 +1,4 @@
-using Chernika.Api.Contracts;
+using Chernika.Domain.Models;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,51 +10,64 @@ namespace Chernika.Api.Controllers;
 [Route("api/[controller]")]
 public class CoefficientsController : ControllerBase
 {
-    private readonly IndividualCardService _svc;
+    private readonly CoefficientService _svc;
 
-    public CoefficientsController(IndividualCardService svc) => _svc = svc;
+    public CoefficientsController(CoefficientService svc) => _svc = svc;
 
     [HttpGet]
-    public async Task<ActionResult<List<CoefficientDto>>> GetAll()
+    public async Task<ActionResult<PagedResult<CoefficientListItemDto>>> GetPaged(
+        [FromQuery] CoefficientListQuery query, CancellationToken ct)
     {
-        var coefficients = await _svc.GetAllCoefficientsAsync();
-        return Ok(coefficients.Select(CoefficientMapper.ToDto).ToList());
+        var result = await _svc.GetCoefficientsAsync(query, ct);
+        return Ok(result);
     }
 
-    [HttpGet("{id}")]
-    public async Task<ActionResult<CoefficientDto>> GetById(Guid id)
-    {
-        var c = await _svc.GetCoefficientAsync(id);
-        if (c == null) return NotFound();
-        return Ok(CoefficientMapper.ToDto(c));
-    }
+    [HttpGet("select")]
+    public async Task<ActionResult<List<CoefficientListItemDto>>> GetForSelect(
+        [FromQuery] Guid? coefficientTypeId, CancellationToken ct)
+        => Ok(await _svc.GetWorkingCoefficientsForSelectAsync(coefficientTypeId, ct));
 
     [HttpPost]
     [Authorize(Policy = "ManageCoefficients")]
-    public async Task<ActionResult<CoefficientDto>> Create([FromBody] CreateCoefficientRequest request)
+    public async Task<ActionResult<CoefficientListItemDto>> Create(
+        [FromBody] CreateCoefficientRequest request, CancellationToken ct)
     {
-        var coefficient = CoefficientMapper.FromCreate(request);
-        var created = await _svc.CreateCoefficientAsync(coefficient);
-        var loaded = await _svc.GetCoefficientAsync(created.Id);
-        return CreatedAtAction(nameof(GetById), new { id = created.Id }, CoefficientMapper.ToDto(loaded!));
+        var created = await _svc.CreateCoefficientAsync(request, ct);
+        return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
-    [HttpPut("{id}")]
-    [Authorize(Policy = "ManageCoefficients")]
-    public async Task<ActionResult> Update(Guid id, [FromBody] UpdateCoefficientRequest request)
+    [HttpGet("{id:guid}")]
+    public async Task<ActionResult<CoefficientListItemDto>> GetById(Guid id, CancellationToken ct)
     {
-        var c = await _svc.GetCoefficientAsync(id);
-        if (c == null) return NotFound();
-        CoefficientMapper.ApplyUpdate(c, request);
-        await _svc.UpdateCoefficientAsync(c);
+        var item = await _svc.GetCoefficientByIdAsync(id, includeArchived: false, ct);
+        return item is null ? NotFound() : Ok(item);
+    }
+
+    [HttpPut("{id:guid}")]
+    [Authorize(Policy = "ManageCoefficients")]
+    public async Task<ActionResult<CoefficientListItemDto>> Update(
+        Guid id, [FromBody] UpdateCoefficientRequest request, CancellationToken ct)
+    {
+        if (id != request.Id)
+            return BadRequest("Идентификатор в маршруте не совпадает с телом запроса.");
+
+        var updated = await _svc.UpdateCoefficientAsync(request, ct);
+        return Ok(updated);
+    }
+
+    [HttpPost("{id:guid}/archive")]
+    [Authorize(Policy = "ManageCoefficients")]
+    public async Task<ActionResult> Archive(Guid id, CancellationToken ct)
+    {
+        await _svc.ArchiveCoefficientAsync(id, ct);
         return NoContent();
     }
 
-    [HttpDelete("{id}")]
+    [HttpPost("{id:guid}/restore")]
     [Authorize(Policy = "ManageCoefficients")]
-    public async Task<ActionResult> Delete(Guid id)
+    public async Task<ActionResult> Restore(Guid id, CancellationToken ct)
     {
-        if (!await _svc.DeleteCoefficientAsync(id)) return NotFound();
+        await _svc.RestoreCoefficientAsync(id, ct);
         return NoContent();
     }
 }

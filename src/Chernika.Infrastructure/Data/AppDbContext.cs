@@ -370,7 +370,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
             e.Property(x => x.ConditionDescription).HasMaxLength(2000);
+            e.Property(x => x.NormativeBasis).HasMaxLength(2000);
             e.Property(x => x.Value).HasPrecision(18, 6);
+            e.Property(x => x.IsDeleted).IsRequired().HasDefaultValue(false);
         });
 
         modelBuilder.Entity<IndividualCard>(e =>
