@@ -589,4 +589,173 @@ public class CoefficientIntegrationTests
         var type = await s.Db.CoefficientTypes.IgnoreQueryFilters().FirstAsync(t => t.Id == typeId);
         Assert.True(type.IsDeleted);
     }
+
+    [Fact]
+    public async Task Selector_ExcludesCoefficientOfArchivedType()
+    {
+        await using var s = Scope();
+        SetSystemAdmin(s);
+        await GrantPermissionAsync(s, _fixture.SystemAdminUser.Id, PermissionCodes.ReferenceEdit);
+
+        // Normal flow: working type with a working coefficient cannot be archived until
+        // the coefficient is archived first.
+        var typeId = await CreateWorkingTypeAsync(s, "SelArchType");
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        var coeff = await s.CoeffService.CreateCoefficientAsync(
+            MakeCreateRequest(typeId, "Sel " + suffix, 1.0m));
+
+        Assert.Contains(
+            (await s.CoeffService.GetWorkingCoefficientsForSelectAsync()).Select(c => c.Id),
+            id => id == coeff.Id);
+
+        await s.CoeffService.ArchiveCoefficientAsync(coeff.Id);
+        await s.CoeffService.ArchiveCoefficientTypeAsync(typeId);
+
+        // Defensive setup: create a legacy working (non-deleted) coefficient for the
+        // now-archived type directly in the DB, bypassing the service create guard.
+        var legacyId = Guid.NewGuid();
+        s.Db.Coefficients.Add(new Coefficient
+        {
+            Id = legacyId,
+            CoefficientTypeId = typeId,
+            Name = "Legacy " + suffix,
+            Value = 1.2m,
+            SortOrder = 10,
+            IsDeleted = false,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await s.Db.SaveChangesAsync();
+        s.Db.ChangeTracker.Clear();
+
+        var working = await s.CoeffService.GetWorkingCoefficientsForSelectAsync();
+        var workingIds = working.Select(c => c.Id).ToList();
+
+        Assert.DoesNotContain(legacyId, workingIds);
+        Assert.DoesNotContain(coeff.Id, workingIds);
+    }
+
+    [Fact]
+    public async Task Selector_ExcludesCoefficientOfArchivedType_ScopedByTypeId()
+    {
+        await using var s = Scope();
+        SetSystemAdmin(s);
+        await GrantPermissionAsync(s, _fixture.SystemAdminUser.Id, PermissionCodes.ReferenceEdit);
+
+        var typeId = await CreateWorkingTypeAsync(s, "SelArchTypeId");
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        var coeff = await s.CoeffService.CreateCoefficientAsync(
+            MakeCreateRequest(typeId, "Scoped " + suffix, 1.0m));
+        await s.CoeffService.ArchiveCoefficientAsync(coeff.Id);
+        await s.CoeffService.ArchiveCoefficientTypeAsync(typeId);
+
+        var legacyId = Guid.NewGuid();
+        s.Db.Coefficients.Add(new Coefficient
+        {
+            Id = legacyId,
+            CoefficientTypeId = typeId,
+            Name = "LegacyScoped " + suffix,
+            Value = 1.3m,
+            SortOrder = 20,
+            IsDeleted = false,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await s.Db.SaveChangesAsync();
+        s.Db.ChangeTracker.Clear();
+
+        var working = await s.CoeffService.GetWorkingCoefficientsForSelectAsync(typeId);
+        Assert.Empty(working);
+    }
+
+    [Fact]
+    public async Task Search_FindsCoefficientByTypeName()
+    {
+        await using var s = Scope();
+        SetSystemAdmin(s);
+        await GrantPermissionAsync(s, _fixture.SystemAdminUser.Id, PermissionCodes.ReferenceEdit);
+
+        var typeMarker = "Сезонный-" + Guid.NewGuid().ToString("N")[..6];
+        var typeId = await CreateWorkingTypeAsync(s, "ByName");
+        var type = s.Db.CoefficientTypes.First(t => t.Id == typeId);
+        type.Name = typeMarker;
+        await s.Db.SaveChangesAsync();
+
+        var coeff = await s.CoeffService.CreateCoefficientAsync(
+            MakeCreateRequest(typeId, "Обычное имя", 1.0m, "условие", "основание"));
+
+        // The search term only appears in the type name, not in the coefficient
+        // Name/ConditionDescription/NormativeBasis.
+        var result = await s.CoeffService.GetCoefficientsAsync(new CoefficientListQuery
+        {
+            SearchText = typeMarker,
+            StatusFilter = ReferenceStatusFilter.Active,
+            PageSize = 50
+        });
+
+        Assert.Contains(result.Items, c => c.Id == coeff.Id);
+        Assert.Equal(typeMarker, result.Items.First(c => c.Id == coeff.Id).CoefficientTypeName);
+    }
+
+    [Fact]
+    public async Task Update_ArchivedCoefficientBlocked_NoStateChange_NoAudit()
+    {
+        await using var s = Scope();
+        SetSystemAdmin(s);
+        await GrantPermissionAsync(s, _fixture.SystemAdminUser.Id, PermissionCodes.ReferenceEdit);
+
+        var typeId = await CreateWorkingTypeAsync(s, "UpdArch");
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        var created = await s.CoeffService.CreateCoefficientAsync(
+            MakeCreateRequest(typeId, "ArchUpd " + suffix, 1.0m, "cond", "basis", sortOrder: 5));
+
+        await s.CoeffService.ArchiveCoefficientAsync(created.Id);
+
+        // Capture original state after archive, reloading from the DB so the captured
+        // UpdatedAt matches the PostgreSQL microsecond precision stored value.
+        s.Db.ChangeTracker.Clear();
+        var original = await s.Db.Coefficients.IgnoreQueryFilters().FirstAsync(c => c.Id == created.Id);
+        var originalName = original.Name;
+        var originalValue = original.Value;
+        var originalTypeId = original.CoefficientTypeId;
+        var originalCondition = original.ConditionDescription;
+        var originalBasis = original.NormativeBasis;
+        var originalSortOrder = original.SortOrder;
+        var originalUpdatedAt = original.UpdatedAt;
+        var auditCountBefore = await s.Db.AuditLogs.CountAsync(a =>
+            a.EntityType == "Coefficient" && a.EntityId == created.Id.ToString() && a.Action == "Coefficient.Updated");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            s.CoeffService.UpdateCoefficientAsync(new UpdateCoefficientRequest
+            {
+                Id = created.Id,
+                CoefficientTypeId = typeId,
+                Name = "Changed " + suffix,
+                Value = 9.9m,
+                ConditionDescription = "newcond",
+                NormativeBasis = "newbasis",
+                SortOrder = 99
+            }));
+
+        Assert.Contains("архивирован", ex.Message);
+
+        // Reload with IgnoreQueryFilters to bypass soft-delete filter.
+        s.Db.ChangeTracker.Clear();
+        var reloaded = await s.Db.Coefficients.IgnoreQueryFilters().FirstAsync(c => c.Id == created.Id);
+
+        Assert.True(reloaded.IsDeleted);
+        Assert.Equal(originalName, reloaded.Name);
+        Assert.Equal(originalValue, reloaded.Value);
+        Assert.Equal(originalTypeId, reloaded.CoefficientTypeId);
+        Assert.Equal(originalCondition, reloaded.ConditionDescription);
+        Assert.Equal(originalBasis, reloaded.NormativeBasis);
+        Assert.Equal(originalSortOrder, reloaded.SortOrder);
+        Assert.Equal(originalUpdatedAt, reloaded.UpdatedAt);
+
+        var auditCountAfter = await s.Db.AuditLogs.CountAsync(a =>
+            a.EntityType == "Coefficient" && a.EntityId == created.Id.ToString() && a.Action == "Coefficient.Updated");
+        Assert.Equal(auditCountBefore, auditCountAfter);
+    }
 }

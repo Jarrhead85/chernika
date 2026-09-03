@@ -1,0 +1,11 @@
+.coefficientRestoreAction {
+    color: var(--ok);
+}
+
+.coefficientArchiveAction {
+    color: var(--bad);
+}
+
+.coefficientPagerLabel {
+    margin: 0 8px;
+}

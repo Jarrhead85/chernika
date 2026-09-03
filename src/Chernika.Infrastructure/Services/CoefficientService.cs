@@ -333,11 +333,12 @@ public class CoefficientService
 
         if (!string.IsNullOrWhiteSpace(query.SearchText))
         {
-            var term = query.SearchText.Trim().ToLowerInvariant();
+            var term = query.SearchText.Trim();
             baseQuery = baseQuery.Where(c =>
-                EF.Functions.Like(c.Name.ToLower(), $"%{term}%")
-                || (c.ConditionDescription != null && EF.Functions.Like(c.ConditionDescription.ToLower(), $"%{term}%"))
-                || (c.NormativeBasis != null && EF.Functions.Like(c.NormativeBasis.ToLower(), $"%{term}%")));
+                EF.Functions.ILike(c.Name, $"%{term}%")
+                || (c.ConditionDescription != null && EF.Functions.ILike(c.ConditionDescription, $"%{term}%"))
+                || (c.NormativeBasis != null && EF.Functions.ILike(c.NormativeBasis, $"%{term}%"))
+                || EF.Functions.ILike(c.CoefficientType.Name, $"%{term}%"));
         }
 
         if (query.HasNormativeBasis.HasValue)
@@ -392,7 +393,7 @@ public class CoefficientService
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
         IQueryable<Coefficient> query = _db.Coefficients.AsNoTracking()
-            .Where(c => !c.IsDeleted);
+            .Where(c => !c.IsDeleted && !c.CoefficientType.IsDeleted);
 
         if (coefficientTypeId.HasValue)
         {
@@ -493,6 +494,12 @@ public class CoefficientService
         var coefficient = await _db.Coefficients.IgnoreQueryFilters()
             .FirstOrDefaultAsync(c => c.Id == request.Id, ct)
             ?? throw new InvalidOperationException("Коэффициент не найден. Обновите список и повторите попытку.");
+
+        if (coefficient.IsDeleted)
+        {
+            throw new InvalidOperationException(
+                "Нельзя изменить архивированный коэффициент. Сначала восстановите его.");
+        }
 
         var type = await _db.CoefficientTypes.IgnoreQueryFilters()
             .FirstOrDefaultAsync(t => t.Id == request.CoefficientTypeId, ct);

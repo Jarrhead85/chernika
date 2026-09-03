@@ -145,12 +145,12 @@
                                             <div class="rowActions">
                                                 @if (c.IsDeleted)
                                                 {
-                                                    <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreAsync(c.Id)">Восстановить</button>
+                                                    <button class="linkBtn coefficientRestoreAction" @onclick="() => RestoreAsync(c.Id)">Восстановить</button>
                                                 }
                                                 else
                                                 {
                                                     <button class="linkBtn" @onclick="() => EditCoefficient(c)">Изменить</button>
-                                                    <button class="linkBtn" style="color:var(--bad)" @onclick="() => ConfirmArchiveAsync(c)">Архивировать</button>
+                                                    <button class="linkBtn coefficientArchiveAction" @onclick="() => ConfirmArchiveAsync(c)">Архивировать</button>
                                                 }
                                             </div>
                                         </td>
@@ -163,7 +163,7 @@
                 <div class="footer">
                     <div>
                         <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
-                        <span style="margin:0 8px">Стр. @currentPage из @totalPages</span>
+                        <span class="coefficientPagerLabel">Стр. @currentPage из @totalPages</span>
                         <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
                     </div>
                     <div class="mono">Показано @coefficients.Count из @totalCount</div>
