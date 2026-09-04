@@ -9,18 +9,18 @@
 @if (_show)
 {
     <div class="modalOverlay" @onclick="Close">
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="coeff-types-title" @onclick:stopPropagation>
+        <div class="modal coefficientTypeModal" role="dialog" aria-modal="true" aria-labelledby="coeff-types-title" @onclick:stopPropagation>
             <div class="modalHeader">
                 <h3 id="coeff-types-title">Типы коэффициентов</h3>
                 <button type="button" class="modalCloseButton" @onclick="Close">×</button>
             </div>
-            <div class="modalBody">
+            <div class="coefficientTypeBody">
                 @if (!string.IsNullOrEmpty(_error))
                 {
                     <div class="note warn">@_error</div>
                 }
 
-                <div class="mbFilters">
+                <div class="mbFilters coefficientTypeToolbar">
                     <input class="fieldInput mbSearch" @bind="_search" @bind:event="oninput" @bind:after="LoadAsync" placeholder="Поиск по наименованию..." />
                     <select class="field-select" @bind="_statusFilter" @bind:after="LoadAsync">
                         <option value="@ReferenceStatusFilter.Active">Рабочие</option>
@@ -31,7 +31,7 @@
 
                 @if (_canCreate)
                 {
-                    <div class="mbAddRow">
+                    <div class="coefficientTypeCreateRow">
                         <input class="fieldInput" @bind="_newName" placeholder="Наименование нового типа..." />
                         <input class="fieldInput" type="number" @bind="_newSortOrder" placeholder="Порядковый номер" />
                         <button class="btn primary" @onclick="CreateAsync">+ Добавить тип</button>
@@ -48,72 +48,74 @@
                 }
                 else
                 {
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Наименование</th>
-                                <th>Порядок</th>
-                                <th>Коэффициентов</th>
-                                <th>Статус</th>
-                                @if (_canEdit)
-                                {
-                                    <th>Действия</th>
-                                }
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var type in _types)
-                            {
+                    <div class="coefficientTypeTableScroll" tabindex="0" aria-label="Таблица типов коэффициентов">
+                        <table class="coefficientTypeTable">
+                            <thead>
                                 <tr>
-                                    <td>
-                                        @if (_editingId == type.Id)
-                                        {
-                                            <input class="fieldInput" @bind="_editName" />
-                                        }
-                                        else
-                                        {
-                                            @type.Name
-                                        }
-                                    </td>
-                                    <td>
-                                        @if (_editingId == type.Id)
-                                        {
-                                            <input class="fieldInput" type="number" @bind="_editSortOrder" />
-                                        }
-                                        else
-                                        {
-                                            @type.SortOrder
-                                        }
-                                    </td>
-                                    <td>@type.CoefficientCount</td>
-                                    <td>
-                                        <span class="tag @(type.IsDeleted ? "" : "ok")">@(type.IsDeleted ? "Архивный" : "Рабочий")</span>
-                                    </td>
+                                    <th>Наименование</th>
+                                    <th>Порядок</th>
+                                    <th>Коэффициентов</th>
+                                    <th>Статус</th>
                                     @if (_canEdit)
                                     {
-                                        <td>
-                                            <div class="rowActions">
-                                                @if (_editingId == type.Id)
-                                                {
-                                                    <button class="linkBtn" @onclick="SaveEditAsync">Сохранить</button>
-                                                    <button class="linkBtn" @onclick="CancelEdit">Отмена</button>
-                                                }
-                                                else if (type.IsDeleted)
-                                                {
-                                                    <button class="linkBtn" @onclick="() => RestoreAsync(type.Id)">Восстановить</button>
-                                                }
-                                                else
-                                                {
-                                                    <button class="linkBtn" @onclick="() => StartEdit(type)">Изменить</button>
-                                                    <button class="linkBtn" @onclick="() => ConfirmArchive(type)">Архивировать</button>
-                                                }
-                                            </div>
-                                        </td>
+                                        <th>Действия</th>
                                     }
                                 </tr>
-                            }
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                @foreach (var type in _types)
+                                {
+                                    <tr>
+                                        <td>
+                                            @if (_editingId == type.Id)
+                                            {
+                                                <input class="fieldInput" @bind="_editName" />
+                                            }
+                                            else
+                                            {
+                                                @type.Name
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (_editingId == type.Id)
+                                            {
+                                                <input class="fieldInput" type="number" @bind="_editSortOrder" />
+                                            }
+                                            else
+                                            {
+                                                @type.SortOrder
+                                            }
+                                        </td>
+                                        <td>@type.CoefficientCount</td>
+                                        <td>
+                                            <span class="tag @(type.IsDeleted ? "" : "ok")">@(type.IsDeleted ? "Архивный" : "Рабочий")</span>
+                                        </td>
+                                        @if (_canEdit)
+                                        {
+                                            <td>
+                                                <div class="rowActions">
+                                                    @if (_editingId == type.Id)
+                                                    {
+                                                        <button class="linkBtn" @onclick="SaveEditAsync">Сохранить</button>
+                                                        <button class="linkBtn" @onclick="CancelEdit">Отмена</button>
+                                                    }
+                                                    else if (type.IsDeleted)
+                                                    {
+                                                        <button class="linkBtn" @onclick="() => RestoreAsync(type.Id)">Восстановить</button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button class="linkBtn" @onclick="() => StartEdit(type)">Изменить</button>
+                                                        <button class="linkBtn" @onclick="() => ConfirmArchive(type)">Архивировать</button>
+                                                    }
+                                                </div>
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
                 }
             </div>
             <div class="modalFooter">
