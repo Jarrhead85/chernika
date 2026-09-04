@@ -56,7 +56,8 @@ public class IndividualCardsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return NotFound(ex.Message);
+            // Legacy generation is locked in D2: preflight-based workflow replaces it.
+            return Conflict(new { message = ex.Message });
         }
     }
 

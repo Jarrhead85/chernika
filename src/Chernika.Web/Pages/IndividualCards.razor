@@ -1,4 +1,4 @@
-@page "/инд-карты"
+﻿@page "/инд-карты"
 @attribute [Authorize(Policy = "ViewHK")]
 @using Chernika.Domain
 @inject IndividualCardService IndCardService
@@ -28,7 +28,7 @@
                 </div>
                 <div class="field" style="display:flex;align-items:flex-end;gap:8px">
                     <button class="btn" @onclick="LoadCards">Загрузить карты</button>
-                    @if (canManage) { <button class="btn primary" @onclick="GenerateCards" disabled="@(!canGenerate)">
+                    @if (canManage) { <button class="btn primary" disabled title="Формирование ИК недоступно до завершения перехода на новые версии">
                         Сформировать карты по всем изделиям
                     </button> }
                 </div>
