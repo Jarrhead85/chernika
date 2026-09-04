@@ -438,8 +438,18 @@ public class CoefficientIntegrationTests
         var icId = Guid.NewGuid();
         s.Db.IndividualCards.Add(new IndividualCard
         {
-            Id = icId, EquipmentInstanceId = equipInstId, HKCardId = hkId, NodeId = nodeId,
-            ProductCompositionId = productCompId, Version = "v1", TotalNorm = 1.0m
+            Id = icId,
+            ObjectLevel = IndividualCardObjectLevel.EquipmentInstance,
+            Status = IndividualCardStatus.Draft,
+            RevisionNumber = 1,
+            Code = "ИК-ЭКЗ-SN-" + suffix + "-" + DateTime.UtcNow.Year,
+            EquipmentInstanceId = equipInstId,
+            HKCardId = hkId,
+            ProductCompositionId = productCompId,
+            BranchId = _fixture.BranchA,
+            CreatedByUserId = _fixture.SystemAdminUser.Id,
+            Version = "v1",
+            TotalNorm = 1.0m
         });
         await s.Db.SaveChangesAsync();
 

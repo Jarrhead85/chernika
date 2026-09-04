@@ -71,6 +71,8 @@ public class IndividualCardService
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardGenerate);
         card.Id = Guid.NewGuid();
+        if (card.RevisionNumber < 1) card.RevisionNumber = 1;
+        if (card.Status == 0) card.Status = IndividualCardStatus.Draft;
         card.CreatedAt = _time.GetUtcNow().UtcDateTime;
         _db.IndividualCards.Add(card);
         await _db.SaveChangesAsync(ct);
@@ -171,9 +173,7 @@ public class IndividualCardService
         var coefficientProduct = await GetCoefficientProductAsync(coefficientIds);
         var appliedCoefficients = await LoadActiveCoefficientsAsync(coefficientIds);
         var version = "v" + _time.GetUtcNow().ToString("MMyy");
-        var newCards = new List<IndividualCard>();
-
-        var compositionNodes = await _db.AggregateCompositionNodes
+        var newCards = new List<IndividualCard>();        var compositionNodes = await _db.AggregateCompositionNodes
             .Include(acn => acn.AggregateComposition)
             .Include(acn => acn.Node)
             .Where(acn => aggregateIds.Contains(acn.AggregateComposition.AggregateId)
@@ -225,10 +225,17 @@ public class IndividualCardService
                 var card = new IndividualCard
                 {
                     Id = Guid.NewGuid(),
+                    ObjectLevel = IndividualCardObjectLevel.EquipmentInstance,
+                    Status = IndividualCardStatus.Draft,
+                    RevisionNumber = 1,
                     EquipmentInstanceId = instanceId,
+                    // Legacy D0 links: NodeId must stay NULL for an EquipmentInstance-level
+                    // card (target FK check constraint); the legacy per-node grouping is
+                    // retained through hkCard until the D6 registry replaces this path.
                     ProductCompositionId = composition.Id,
                     HKCardId = hkCard.Id,
-                    NodeId = node.Id,
+                    BranchId = hkCard.BranchId,
+                    CreatedByUserId = _currentUser.GetRequiredUserId().ToString(),
                     Version = version,
                     CreatedAt = now,
                     AppliedCoefficients = appliedCoefficients
@@ -255,6 +262,29 @@ public class IndividualCardService
 
         if (newCards.Count != 0)
         {
+            // Legacy path code assignment: the D1 unique (Code, Version) index requires
+            // distinguishable codes for the legacy one-card-per-node batch. The exact
+            // ИК-ЭКЗ-{Serial}-{YYYY} format is kept for the first card; extra batch cards
+            // and repeated runs get a numeric suffix. A dedicated generator replaces
+            // this in the D3+ services.
+            var baseCode = $"ИК-ЭКЗ-{instance.SerialNumber}-{now.Year}";
+            var existingCodes = await _db.IndividualCards
+                .Where(c => c.Code == baseCode || c.Code.StartsWith(baseCode + "-"))
+                .Select(c => c.Code)
+                .ToListAsync(ct);
+            var usedCodes = existingCodes.ToHashSet(StringComparer.Ordinal);
+            var suffix = 1;
+            foreach (var card in newCards)
+            {
+                string code;
+                do
+                {
+                    code = suffix == 1 ? baseCode : $"{baseCode}-{suffix}";
+                    suffix++;
+                } while (!usedCodes.Add(code));
+                card.Code = code;
+            }
+
             _db.IndividualCards.AddRange(newCards);
             await _db.SaveChangesAsync(ct);
         }

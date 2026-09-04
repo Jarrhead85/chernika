@@ -12,4 +12,5 @@ public class Complex
 
     public ICollection<ComplexComposition> ComplexCompositions { get; set; } = new List<ComplexComposition>();
     public ICollection<HKCard> HKCards { get; set; } = new List<HKCard>();
+    public ICollection<IndividualCard> IndividualCards { get; set; } = new List<IndividualCard>();
 }

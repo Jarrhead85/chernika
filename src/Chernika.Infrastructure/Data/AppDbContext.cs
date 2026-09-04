@@ -34,6 +34,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Coefficient> Coefficients => Set<Coefficient>();
     public DbSet<IndividualCard> IndividualCards => Set<IndividualCard>();
     public DbSet<IndividualCardItem> IndividualCardItems => Set<IndividualCardItem>();
+    public DbSet<IndividualCardCompositionSnapshot> IndividualCardCompositionSnapshots => Set<IndividualCardCompositionSnapshot>();
+    public DbSet<IndividualCardAggregateSnapshot> IndividualCardAggregateSnapshots => Set<IndividualCardAggregateSnapshot>();
+    public DbSet<IndividualCardNodeSnapshot> IndividualCardNodeSnapshots => Set<IndividualCardNodeSnapshot>();
+    public DbSet<IndividualCardHKSourceSnapshot> IndividualCardHKSourceSnapshots => Set<IndividualCardHKSourceSnapshot>();
+    public DbSet<IndividualCardItemMaterialSnapshot> IndividualCardItemMaterialSnapshots => Set<IndividualCardItemMaterialSnapshot>();
+    public DbSet<IndividualCardCoefficientSnapshot> IndividualCardCoefficientSnapshots => Set<IndividualCardCoefficientSnapshot>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
     public DbSet<WorkTaskGroup> WorkTaskGroups => Set<WorkTaskGroup>();
@@ -378,25 +384,151 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<IndividualCard>(e =>
         {
             e.HasKey(x => x.Id);
-            e.Property(x => x.Version).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Code).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Version).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CreatedByUserId).HasMaxLength(450).IsRequired();
+            e.Property(x => x.FormedByUserId).HasMaxLength(450);
+            e.Property(x => x.ArchivedByUserId).HasMaxLength(450);
             e.Property(x => x.TotalNorm).HasPrecision(18, 6);
             e.Property(x => x.Notes).HasMaxLength(4000);
-            e.HasOne(x => x.EquipmentInstance).WithMany(x => x.IndividualCards).HasForeignKey(x => x.EquipmentInstanceId);
+
+            e.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Complex).WithMany(x => x.IndividualCards).HasForeignKey(x => x.ComplexId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.EquipmentModel).WithMany(x => x.IndividualCards).HasForeignKey(x => x.EquipmentModelId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Aggregate).WithMany(x => x.IndividualCards).HasForeignKey(x => x.AggregateId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Node).WithMany(x => x.IndividualCards).HasForeignKey(x => x.NodeId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.EquipmentInstance).WithMany(x => x.IndividualCards).HasForeignKey(x => x.EquipmentInstanceId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.SupersedesIndividualCard).WithMany(x => x.SupersededBy)
+                .HasForeignKey(x => x.SupersedesIndividualCardId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Legacy D0 relationships preserved until a separate cleanup PR.
             e.HasOne(x => x.HKCard).WithMany().HasForeignKey(x => x.HKCardId)
                 .OnDelete(DeleteBehavior.Restrict);
-            e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId);
             e.HasOne(x => x.ProductComposition).WithMany().HasForeignKey(x => x.ProductCompositionId)
                 .OnDelete(DeleteBehavior.Restrict);
+
             e.HasMany(x => x.AppliedCoefficients).WithMany(x => x.IndividualCards);
+
+            e.HasMany(x => x.CompositionSnapshots).WithOne(s => s.IndividualCard)
+                .HasForeignKey(s => s.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.HKSourceSnapshots).WithOne(s => s.IndividualCard)
+                .HasForeignKey(s => s.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Items).WithOne(i => i.IndividualCard)
+                .HasForeignKey(i => i.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.CoefficientSnapshots).WithOne(s => s.IndividualCard)
+                .HasForeignKey(s => s.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
+
+            e.HasIndex(x => new { x.BranchId, x.Status }).HasDatabaseName("IX_IndividualCards_BranchId_Status");
+            e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_IndividualCards_CreatedAt");
+            e.HasIndex(x => x.FormedAt).HasDatabaseName("IX_IndividualCards_FormedAt");
+            e.HasIndex(x => x.SupersedesIndividualCardId).HasDatabaseName("IX_IndividualCards_SupersedesIndividualCardId");
+            e.HasIndex(x => x.ComplexId).HasDatabaseName("IX_IndividualCards_ComplexId");
+            e.HasIndex(x => x.EquipmentModelId).HasDatabaseName("IX_IndividualCards_EquipmentModelId");
+            e.HasIndex(x => x.AggregateId).HasDatabaseName("IX_IndividualCards_AggregateId");
+            e.HasIndex(x => x.NodeId).HasDatabaseName("IX_IndividualCards_NodeId");
+            e.HasIndex(x => x.EquipmentInstanceId).HasDatabaseName("IX_IndividualCards_EquipmentInstanceId");
+            e.HasIndex(x => new { x.Code, x.Version }).IsUnique().HasDatabaseName("UX_IndividualCards_Code_Version");
+        });
+
+        modelBuilder.Entity<IndividualCardCompositionSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.SourceCompositionVersion).HasMaxLength(20).IsRequired();
+            e.Property(x => x.TargetObjectCode).HasMaxLength(100).IsRequired();
+            e.Property(x => x.TargetObjectName).HasMaxLength(500).IsRequired();
+            e.HasIndex(x => x.IndividualCardId).HasDatabaseName("IX_IndividualCardCompositionSnapshots_IndividualCardId");
+        });
+
+        modelBuilder.Entity<IndividualCardAggregateSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.AggregateCode).HasMaxLength(100).IsRequired();
+            e.Property(x => x.AggregateName).HasMaxLength(500).IsRequired();
+            e.HasOne(x => x.CompositionSnapshot).WithMany(s => s.Aggregates)
+                .HasForeignKey(x => x.IndividualCardCompositionSnapshotId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.IndividualCardCompositionSnapshotId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardAggregateSnapshots_CompositionSnapshotId_SortOrder");
+        });
+
+        modelBuilder.Entity<IndividualCardNodeSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.NodeCode).HasMaxLength(100).IsRequired();
+            e.Property(x => x.NodeName).HasMaxLength(500).IsRequired();
+            e.HasOne(x => x.AggregateSnapshot).WithMany(s => s.Nodes)
+                .HasForeignKey(x => x.IndividualCardAggregateSnapshotId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.IndividualCardAggregateSnapshotId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardNodeSnapshots_AggregateSnapshotId_SortOrder");
+        });
+
+        modelBuilder.Entity<IndividualCardHKSourceSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.SourceObjectCode).HasMaxLength(100).IsRequired();
+            e.Property(x => x.SourceObjectName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.HKCardCode).HasMaxLength(100).IsRequired();
+            e.Property(x => x.HKCardVersion).HasMaxLength(20).IsRequired();
+            // Self-reference inside the snapshot tree cascades with the parent:
+            // a Restrict self-FK can break a multi-row cascade delete in PostgreSQL.
+            e.HasOne(x => x.Parent).WithMany(s => s.Children)
+                .HasForeignKey(x => x.ParentHKSourceSnapshotId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardHKSourceSnapshots_IndividualCardId_SortOrder");
+            e.HasIndex(x => x.ParentHKSourceSnapshotId)
+                .HasDatabaseName("IX_IndividualCardHKSourceSnapshots_ParentHKSourceSnapshotId");
         });
 
         modelBuilder.Entity<IndividualCardItem>(e =>
         {
             e.HasKey(x => x.Id);
+            e.Property(x => x.AssemblyUnitCode).HasMaxLength(100).IsRequired();
+            e.Property(x => x.AssemblyUnitName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.UnitOfMeasure).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Periodicity).HasMaxLength(100);
+            e.Property(x => x.Notes).HasMaxLength(2000);
+            e.Property(x => x.SourceVolume).HasPrecision(18, 6);
             e.Property(x => x.BaseVolume).HasPrecision(18, 6);
             e.Property(x => x.CalculatedVolume).HasPrecision(18, 6);
-            e.HasOne(x => x.IndividualCard).WithMany(x => x.Items).HasForeignKey(x => x.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.HKCardItem).WithMany(x => x.IndividualCardItems).HasForeignKey(x => x.HKCardItemId);
+
+            // Legacy D0 relationship preserved until a separate cleanup PR.
+            e.HasOne(x => x.HKCardItem).WithMany(x => x.IndividualCardItems).HasForeignKey(x => x.HKCardItemId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasMany(x => x.MaterialSnapshots).WithOne(s => s.IndividualCardItem)
+                .HasForeignKey(s => s.IndividualCardItemId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardItems_IndividualCardId_SortOrder");
+        });
+
+        modelBuilder.Entity<IndividualCardItemMaterialSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.MaterialName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.MaterialType).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Gost).HasMaxLength(200);
+            e.Property(x => x.CalculatedVolume).HasPrecision(18, 6);
+            e.Property(x => x.UnitOfMeasure).HasMaxLength(50).IsRequired();
+            e.HasIndex(x => new { x.IndividualCardItemId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardItemMaterialSnapshots_IndividualCardItemId_SortOrder");
+        });
+
+        modelBuilder.Entity<IndividualCardCoefficientSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.CoefficientTypeName).HasMaxLength(256).IsRequired();
+            e.Property(x => x.CoefficientName).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Value).HasPrecision(18, 6);
+            e.Property(x => x.ConditionDescription).HasMaxLength(2000);
+            e.Property(x => x.NormativeBasis).HasMaxLength(2000);
+            e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardCoefficientSnapshots_IndividualCardId_SortOrder");
         });
 
         modelBuilder.Entity<AuditLog>(e =>

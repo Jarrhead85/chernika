@@ -57,6 +57,12 @@ public static class PermissionCodes
 
     public const string IndividualCardView = "IndividualCard.View";
     public const string IndividualCardGenerate = "IndividualCard.Generate";
+    public const string IndividualCardCreateDraft = "IndividualCard.CreateDraft";
+    public const string IndividualCardEditDraft = "IndividualCard.EditDraft";
+    public const string IndividualCardRecalculateDraft = "IndividualCard.RecalculateDraft";
+    public const string IndividualCardForm = "IndividualCard.Form";
+    public const string IndividualCardCreateVersion = "IndividualCard.CreateVersion";
+    public const string IndividualCardArchive = "IndividualCard.Archive";
     public const string ReportExport = "Report.Export";
 
     public const string TaskView = "Task.View";
@@ -85,7 +91,10 @@ public static class PermissionCodes
         CompositionComplexCreate, CompositionComplexEditDraft, CompositionComplexSubmit, CompositionComplexReturnForRevision, CompositionComplexApprove, CompositionComplexCreateVersion,
         CompositionEquipmentModelCreate, CompositionEquipmentModelEditDraft, CompositionEquipmentModelSubmit, CompositionEquipmentModelReturnForRevision, CompositionEquipmentModelApprove, CompositionEquipmentModelCreateVersion,
         CompositionAggregateCreate, CompositionAggregateEditDraft, CompositionAggregateSubmit, CompositionAggregateReturnForRevision, CompositionAggregateApprove, CompositionAggregateCreateVersion,
-        IndividualCardView, IndividualCardGenerate, ReportExport,
+        IndividualCardView, IndividualCardGenerate,
+        IndividualCardCreateDraft, IndividualCardEditDraft, IndividualCardRecalculateDraft,
+        IndividualCardForm, IndividualCardCreateVersion, IndividualCardArchive,
+        ReportExport,
         TaskView, TaskAssign, TaskComplete, TaskCancel,
         NotificationView, NotificationMarkRead,
         TaskViewOwn, TaskManage, AuditView,

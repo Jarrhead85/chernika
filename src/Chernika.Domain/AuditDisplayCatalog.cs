@@ -89,6 +89,15 @@ public static class AuditDisplayCatalog
         ["Coefficient.Archived"] = new("Архивирование коэффициента", AuditSeverity.Neutral),
         ["Coefficient.Restored"] = new("Восстановление коэффициента", AuditSeverity.Success),
 
+        ["IndividualCard.DraftCreated"] = new("Создание черновика ИК", AuditSeverity.Success),
+        ["IndividualCard.DraftUpdated"] = new("Изменение черновика ИК", AuditSeverity.Neutral),
+        ["IndividualCard.SourcesRefreshed"] = new("Обновление нормативных источников ИК", AuditSeverity.Neutral),
+        ["IndividualCard.Recalculated"] = new("Перерасчёт ИК", AuditSeverity.Neutral),
+        ["IndividualCard.Formed"] = new("Формирование ИК", AuditSeverity.Success),
+        ["IndividualCard.NewVersionCreated"] = new("Создание новой версии ИК", AuditSeverity.Success),
+        ["IndividualCard.Archived"] = new("Архивирование ИК", AuditSeverity.Neutral),
+        ["IndividualCard.DraftDeleted"] = new("Удаление черновика ИК", AuditSeverity.Danger),
+
         ["WorkTaskGroup.Completed"] = new("Групповая задача выполнена", AuditSeverity.Success),
     };
 

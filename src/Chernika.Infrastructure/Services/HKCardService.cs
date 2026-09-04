@@ -1871,8 +1871,9 @@ public class HKCardService
     private async Task CreateRecalculationTasksAsync(HKCard card, Guid actorUserId, CancellationToken ct)
     {
         var instanceIds = await _db.IndividualCards
-            .Where(c => _db.HKCards.Any(h => h.Id == c.HKCardId && h.Code == card.Code))
-            .Select(c => c.EquipmentInstanceId)
+            .Where(c => c.EquipmentInstanceId != null
+                && _db.HKCards.Any(h => h.Id == c.HKCardId && h.Code == card.Code))
+            .Select(c => c.EquipmentInstanceId!.Value)
             .Distinct()
             .ToListAsync(ct);
 

@@ -5,7 +5,7 @@ namespace Chernika.Api.Contracts;
 
 public record IndividualCardListItemDto(
     Guid Id,
-    Guid EquipmentInstanceId,
+    Guid? EquipmentInstanceId,
     string? InstanceName,
     string? NodeName,
     string? HKCardCode,
@@ -15,9 +15,9 @@ public record IndividualCardListItemDto(
 
 public record IndividualCardDetailDto(
     Guid Id,
-    Guid EquipmentInstanceId,
-    Guid HKCardId,
-    Guid NodeId,
+    Guid? EquipmentInstanceId,
+    Guid? HKCardId,
+    Guid? NodeId,
     string Version,
     decimal TotalNorm,
     string? Notes,
@@ -27,7 +27,7 @@ public record IndividualCardDetailDto(
 
 public record IndividualCardItemDto(
     Guid Id,
-    Guid HKCardItemId,
+    Guid? HKCardItemId,
     Guid AssemblyUnitId,
     string? AssemblyUnitName,
     decimal BaseVolume,
@@ -90,18 +90,18 @@ public static class IndividualCardMapper
         return new IndividualCardItemDto(
             i.Id,
             i.HKCardItemId,
-            hk.AssemblyUnitId,
-            hk.AssemblyUnit?.Name,
+            hk?.AssemblyUnitId ?? Guid.Empty,
+            hk?.AssemblyUnit?.Name,
             i.BaseVolume,
             i.CalculatedVolume,
             i.Quantity,
-            hk.UnitOfMeasure,
-            hk.Periodicity,
-            hk.Notes,
-            hk.SortOrder,
-            MaterialCategorizer.PrimaryMaterials(hk),
-            MaterialCategorizer.DuplicateMaterials(hk),
-            MaterialCategorizer.ReserveMaterials(hk),
-            MaterialCategorizer.ForeignMaterials(hk));
+            hk?.UnitOfMeasure,
+            hk?.Periodicity,
+            hk?.Notes,
+            hk?.SortOrder ?? 0,
+            hk is null ? [] : MaterialCategorizer.PrimaryMaterials(hk),
+            hk is null ? [] : MaterialCategorizer.DuplicateMaterials(hk),
+            hk is null ? [] : MaterialCategorizer.ReserveMaterials(hk),
+            hk is null ? [] : MaterialCategorizer.ForeignMaterials(hk));
     }
 }

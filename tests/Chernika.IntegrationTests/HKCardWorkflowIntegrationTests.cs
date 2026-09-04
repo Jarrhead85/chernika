@@ -251,10 +251,15 @@ public class HKCardWorkflowIntegrationTests
         s.Db.IndividualCards.Add(new IndividualCard
         {
             Id = Guid.NewGuid(),
+            ObjectLevel = IndividualCardObjectLevel.EquipmentInstance,
+            Status = IndividualCardStatus.Draft,
+            RevisionNumber = 1,
+            Code = "ИК-ЭКЗ-" + instance.SerialNumber + "-" + DateTime.UtcNow.Year + "-" + Guid.NewGuid().ToString("N")[..6],
             EquipmentInstanceId = instance.Id,
             HKCardId = card.Id,
-            NodeId = card.NodeId!.Value,
             ProductCompositionId = pc.Id,
+            BranchId = card.BranchId,
+            CreatedByUserId = _fixture.SystemAdminUser.Id,
             Version = "1",
             TotalNorm = 1,
         });

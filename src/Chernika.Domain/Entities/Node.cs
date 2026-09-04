@@ -12,4 +12,5 @@ public class Node
 
     public ICollection<HKCard> HKCards { get; set; } = new List<HKCard>();
     public ICollection<AggregateCompositionNode> AggregateCompositionNodes { get; set; } = new List<AggregateCompositionNode>();
+    public ICollection<IndividualCard> IndividualCards { get; set; } = new List<IndividualCard>();
 }
