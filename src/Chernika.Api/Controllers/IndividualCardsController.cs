@@ -1,4 +1,5 @@
 using Chernika.Api.Contracts;
+using Chernika.Domain.Models;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -40,6 +41,76 @@ public class IndividualCardsController : ControllerBase
     {
         var cards = await _cards.GetCardsByInstanceAsync(instanceId);
         return Ok(cards.Select(IndividualCardMapper.ToListItem).ToList());
+    }
+
+    // ── D2/D3: preflight and Draft workflow ───────────────────────────────
+
+    [HttpPost("preflight")]
+    public async Task<ActionResult<IndividualCardPreflightResult>> Preflight(
+        [FromBody] IndividualCardPreflightRequest request, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _cards.BuildPreflightAsync(request, ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("drafts")]
+    public async Task<ActionResult<IndividualCardDraftDto>> CreateDraft(
+        [FromBody] CreateIndividualCardDraftRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var created = await _cards.CreateDraftAsync(request, ct);
+            return CreatedAtAction(nameof(GetDraftById), new { id = created.Id }, created);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("drafts/{id:guid}")]
+    public async Task<ActionResult<IndividualCardDraftDto>> GetDraftById(Guid id, CancellationToken ct)
+    {
+        var draft = await _cards.GetDraftByIdAsync(id, ct);
+        if (draft is null) return NotFound();
+        return Ok(draft);
+    }
+
+    [HttpPost("drafts/{id:guid}/refresh-sources")]
+    public async Task<ActionResult<IndividualCardDraftDto>> RefreshDraftSources(
+        Guid id, [FromBody] RefreshIndividualCardDraftSourcesRequest request, CancellationToken ct)
+    {
+        if (id != request.IndividualCardId)
+            return BadRequest(new { message = "Идентификатор в маршруте не совпадает с телом запроса." });
+
+        try
+        {
+            return Ok(await _cards.RefreshDraftSourcesAsync(request, ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpDelete("drafts/{id:guid}")]
+    public async Task<ActionResult> DeleteDraft(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            await _cards.DeleteDraftAsync(id, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpPost("generate/{instanceId}")]

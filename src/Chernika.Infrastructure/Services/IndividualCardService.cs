@@ -316,6 +316,30 @@ public class IndividualCardService
         _ => (string.Empty, string.Empty),
     };
 
+    /// <summary>
+    /// Actor scope for IndividualCard operations: cross-branch access is decided
+    /// by the actual SystemAdmin role only — an individual SystemConfig permission
+    /// override must not unlock foreign branches.
+    /// </summary>
+    private sealed record ActorScope(ApplicationUser Actor, bool IsSystemAdmin, Guid? BranchId);
+
+    private async Task<ActorScope> ResolveActorScopeAsync(CancellationToken ct)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var actor = await _userManager.FindByIdAsync(actorId.ToString())
+            ?? throw new UnauthorizedAccessException("Пользователь не найден.");
+        var isSystemAdmin = await _userManager.IsInRoleAsync(actor, UserRole.SystemAdmin.ToString());
+
+        if (!isSystemAdmin)
+        {
+            if (actor.BranchId is null || actor.BranchId == Guid.Empty)
+                throw new UnauthorizedAccessException("У пользователя не указан филиал.");
+            return new ActorScope(actor, false, actor.BranchId);
+        }
+
+        return new ActorScope(actor, true, null);
+    }
+
     public async Task<IndividualCardPreflightResult> BuildPreflightAsync(
         IndividualCardPreflightRequest request, CancellationToken ct = default)
     {
@@ -325,17 +349,9 @@ public class IndividualCardService
             throw new InvalidOperationException("Укажите корректный уровень цели ИК.");
 
         var actorId = _currentUser.GetRequiredUserId();
-        var isSystemAdmin = await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig, ct);
-
-        Guid? actorBranchId = null;
-        if (!isSystemAdmin)
-        {
-            var actor = await _userManager.FindByIdAsync(actorId.ToString())
-                ?? throw new UnauthorizedAccessException("Пользователь не найден.");
-            if (actor.BranchId is null || actor.BranchId == Guid.Empty)
-                throw new UnauthorizedAccessException("У пользователя не указан филиал.");
-            actorBranchId = actor.BranchId;
-        }
+        var actorScope = await ResolveActorScopeAsync(ct);
+        var isSystemAdmin = actorScope.IsSystemAdmin;
+        var actorBranchId = actorScope.BranchId;
 
         var target = await ResolveTargetAsync(request.ObjectLevel, request.ObjectId, ct)
             ?? throw new InvalidOperationException(
@@ -371,6 +387,10 @@ public class IndividualCardService
         {
             rootState = IndividualCardPreflightRootState.AutomaticallySelected;
             selectedRoot = await _db.HKCards.AsNoTracking()
+                .Include(h => h.Complex)
+                .Include(h => h.EquipmentModel)
+                .Include(h => h.Aggregate)
+                .Include(h => h.Node)
                 .FirstOrDefaultAsync(h => h.Id == candidates[0].HKCardId, ct);
         }
         else
@@ -586,11 +606,15 @@ public class IndividualCardService
 
     private static IndividualCardPreflightHKSourceDto ToSourceDto(
         HKCard hk, Guid? parentHKCardId, IndividualCardObjectLevel level,
-        Guid objectId, string objectCode, string objectName, int sortOrder, bool isComplete)
+        Guid objectId, string fallbackObjectCode, string fallbackObjectName, int sortOrder, bool isComplete)
     {
-        var (code, name) = GetHKObjectDisplay(hk, level);
+        var (loadedCode, loadedName) = GetHKObjectDisplay(hk, level);
+
+        var objectCode = string.IsNullOrWhiteSpace(loadedCode) ? fallbackObjectCode : loadedCode;
+        var objectName = string.IsNullOrWhiteSpace(loadedName) ? fallbackObjectName : loadedName;
+
         return new IndividualCardPreflightHKSourceDto(
-            hk.Id, parentHKCardId, level, objectId, code, name,
+            hk.Id, parentHKCardId, level, objectId, objectCode, objectName,
             hk.Code, hk.Version, hk.BranchId,
             hk.ApprovedDate, hk.EffectiveDate, hk.ExpirationDate, sortOrder, isComplete);
     }
@@ -989,8 +1013,11 @@ public class IndividualCardService
                     continue;
                 }
 
-                var approved = candidates.FirstOrDefault(e => e.Child.Status == HKCardStatus.Approved);
-                if (approved is null)
+                var approvedCandidates = candidates
+                    .Where(e => e.Child.Status == HKCardStatus.Approved)
+                    .ToList();
+
+                if (approvedCandidates.Count == 0)
                 {
                     var invalid = candidates[0].Child;
                     match.Gaps.Add(new IndividualCardNormativeGapDto(
@@ -1002,6 +1029,23 @@ public class IndividualCardService
                         gapOrder++));
                     continue;
                 }
+
+                // Automatic selection is only allowed when exactly one valid variant
+                // exists; several Approved linked children of the same object are a
+                // normative inconsistency and must never be silently resolved.
+                if (approvedCandidates.Count > 1)
+                {
+                    match.Gaps.Add(new IndividualCardNormativeGapDto(
+                        IndividualCardNormativeGapKind.InconsistentNormativeChain,
+                        expectedChildLevel, requirement.ObjectId,
+                        IndividualCardDisplay.ObjectLevel(expectedChildLevel),
+                        requirement.Code, requirement.Name, approvedCandidates[0].Child.Id,
+                        $"В ХК «{parent.Code}», {parent.Version} найдено несколько связанных утверждённых ХК {IndividualCardDisplay.ObjectLevel(expectedChildLevel).ToLowerInvariant()} «{requirement.Name}». Устраните противоречие в нормативной цепочке.",
+                        gapOrder++));
+                    continue;
+                }
+
+                var approved = approvedCandidates[0];
 
                 if (approved.Child.BranchId != branchId)
                 {
@@ -1017,10 +1061,9 @@ public class IndividualCardService
 
                 if (match.ResolvedByObject.TryAdd(requirement.ObjectId, approved.Child))
                 {
-                    var (objCode, objName) = GetHKObjectDisplay(approved.Child, expectedChildLevel);
                     match.Sources.Add(ToSourceDto(
                         approved.Child, parent.Id, expectedChildLevel,
-                        requirement.ObjectId, objCode, objName,
+                        requirement.ObjectId, requirement.Code, requirement.Name,
                         approved.Component.SortOrder, isComplete: true));
                 }
             }
@@ -1092,5 +1135,535 @@ public class IndividualCardService
         return components
             .Select(c => new ComponentEdge(c, c.ChildHKCard))
             .ToList();
+    }
+
+    // ── D3: Draft workflow ─────────────────────────────────────────────────
+
+    private static Guid? GetTargetObjectId(IndividualCard card) => card.ObjectLevel switch
+    {
+        IndividualCardObjectLevel.Complex => card.ComplexId,
+        IndividualCardObjectLevel.EquipmentModel => card.EquipmentModelId,
+        IndividualCardObjectLevel.Aggregate => card.AggregateId,
+        IndividualCardObjectLevel.Node => card.NodeId,
+        IndividualCardObjectLevel.EquipmentInstance => card.EquipmentInstanceId,
+        _ => null,
+    };
+
+    private static string BuildCardCode(IndividualCardObjectLevel level, string objectCode, int year) => level switch
+    {
+        IndividualCardObjectLevel.Complex => $"ИК-КОМП-{objectCode}-{year}",
+        IndividualCardObjectLevel.EquipmentModel => $"ИК-ИЗД-{objectCode}-{year}",
+        IndividualCardObjectLevel.Aggregate => $"ИК-АГР-{objectCode}-{year}",
+        IndividualCardObjectLevel.Node => $"ИК-УЗЛ-{objectCode}-{year}",
+        IndividualCardObjectLevel.EquipmentInstance => $"ИК-ЭКЗ-{objectCode}-{year}",
+        _ => throw new ArgumentOutOfRangeException(nameof(level), level, null),
+    };
+
+    private void ApplyTargetFk(IndividualCard draft, IndividualCardObjectLevel level, Guid objectId)
+    {
+        switch (level)
+        {
+            case IndividualCardObjectLevel.Complex: draft.ComplexId = objectId; break;
+            case IndividualCardObjectLevel.EquipmentModel: draft.EquipmentModelId = objectId; break;
+            case IndividualCardObjectLevel.Aggregate: draft.AggregateId = objectId; break;
+            case IndividualCardObjectLevel.Node: draft.NodeId = objectId; break;
+            case IndividualCardObjectLevel.EquipmentInstance: draft.EquipmentInstanceId = objectId; break;
+            default: throw new ArgumentOutOfRangeException(nameof(level), level, null);
+        }
+    }
+
+    private async Task EnsureDraftAccessibleAsync(IndividualCard draft, ActorScope scope, string notFoundMessage, CancellationToken ct)
+    {
+        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
+            throw new UnauthorizedAccessException(notFoundMessage);
+    }
+
+    private async Task EnsureDraftEditorAsync(
+        IndividualCard draft, ActorScope scope, string deniedMessage, CancellationToken ct)
+    {
+        var actorId = _currentUser.GetRequiredUserId().ToString();
+        var isAuthor = draft.CreatedByUserId == actorId;
+        if (!isAuthor)
+        {
+            var canEdit = await _permissions.HasPermissionAsync(
+                actorId, PermissionCodes.IndividualCardEditDraft, ct);
+            if (!canEdit)
+                throw new UnauthorizedAccessException(deniedMessage);
+        }
+
+        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
+            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другого филиала.");
+    }
+
+    private void CopyDraftSnapshots(
+        IndividualCard draft, IndividualCardPreflightResult preflight, DateTime now)
+    {
+        // New snapshot entities are attached explicitly: a dependent discovered
+        // by DetectChanges through a tracked (Unchanged) principal with a client
+        // key set would be tracked as Modified instead of Added.
+        var newSnapshots = new List<object>();
+
+        // Compositions with aggregates and nodes.
+        foreach (var composition in preflight.Compositions)
+        {
+            var compositionSnapshot = new IndividualCardCompositionSnapshot
+            {
+                Id = Guid.NewGuid(),
+                IndividualCardId = draft.Id,
+                SourceLevel = composition.SourceLevel,
+                SourceCompositionId = composition.CompositionId,
+                SourceCompositionVersion = composition.CompositionVersion,
+                SourceApprovedAt = composition.ApprovedAt,
+                TargetObjectId = composition.TargetObjectId,
+                TargetObjectCode = composition.TargetObjectCode,
+                TargetObjectName = composition.TargetObjectName,
+                Quantity = composition.Quantity,
+                CapturedAt = now,
+            };
+            newSnapshots.Add(compositionSnapshot);
+
+            foreach (var aggregate in composition.Aggregates)
+            {
+                var aggregateSnapshot = new IndividualCardAggregateSnapshot
+                {
+                    Id = Guid.NewGuid(),
+                    IndividualCardCompositionSnapshotId = compositionSnapshot.Id,
+                    AggregateId = aggregate.AggregateId,
+                    AggregateCode = aggregate.Code,
+                    AggregateName = aggregate.Name,
+                    Quantity = aggregate.Quantity,
+                    SortOrder = aggregate.SortOrder,
+                };
+                newSnapshots.Add(aggregateSnapshot);
+
+                foreach (var node in aggregate.Nodes)
+                {
+                    newSnapshots.Add(new IndividualCardNodeSnapshot
+                    {
+                        Id = Guid.NewGuid(),
+                        IndividualCardAggregateSnapshotId = aggregateSnapshot.Id,
+                        NodeId = node.NodeId,
+                        NodeCode = node.Code,
+                        NodeName = node.Name,
+                        Quantity = node.Quantity,
+                        SortOrder = node.SortOrder,
+                    });
+                }
+
+                compositionSnapshot.Aggregates.Add(aggregateSnapshot);
+            }
+
+            draft.CompositionSnapshots.Add(compositionSnapshot);
+        }
+
+        // HK source chain: parents map only inside the same preflight tree.
+        var snapshotByHKCardId = new Dictionary<Guid, IndividualCardHKSourceSnapshot>();
+        foreach (var source in preflight.HKSources)
+        {
+            var snapshot = new IndividualCardHKSourceSnapshot
+            {
+                Id = Guid.NewGuid(),
+                IndividualCardId = draft.Id,
+                SourceHKCardId = source.HKCardId,
+                ObjectLevel = source.ObjectLevel,
+                SourceObjectId = source.ObjectId,
+                SourceObjectCode = source.ObjectCode,
+                SourceObjectName = source.ObjectName,
+                HKCardCode = source.HKCardCode,
+                HKCardVersion = source.HKCardVersion,
+                BranchId = source.BranchId,
+                HKCardApprovedAt = source.ApprovedAt,
+                HKCardEffectiveDate = source.EffectiveDate,
+                HKCardExpirationDate = source.ExpirationDate,
+                SortOrder = source.SortOrder,
+                CapturedAt = now,
+            };
+            snapshotByHKCardId[source.HKCardId] = snapshot;
+            newSnapshots.Add(snapshot);
+        }
+
+        foreach (var source in preflight.HKSources)
+        {
+            if (source.ParentHKCardId.HasValue
+                && snapshotByHKCardId.TryGetValue(source.ParentHKCardId.Value, out var parentSnapshot))
+            {
+                snapshotByHKCardId[source.HKCardId].ParentHKSourceSnapshotId = parentSnapshot.Id;
+            }
+        }
+
+        foreach (var snapshot in snapshotByHKCardId.Values)
+            draft.HKSourceSnapshots.Add(snapshot);
+
+        // Normative gaps: historical explanation of a partial Draft.
+        foreach (var gap in preflight.NormativeGaps)
+        {
+            var snapshot = new IndividualCardNormativeGapSnapshot
+            {
+                Id = Guid.NewGuid(),
+                IndividualCardId = draft.Id,
+                Kind = gap.Kind,
+                RelatedLevel = gap.RelatedLevel,
+                RelatedObjectId = gap.RelatedObjectId,
+                RelatedObjectType = gap.RelatedObjectType,
+                RelatedObjectCode = gap.RelatedObjectCode,
+                RelatedObjectName = gap.RelatedObjectName,
+                RelatedHKCardId = gap.RelatedHKCardId,
+                Message = gap.Message,
+                SortOrder = gap.SortOrder,
+                CapturedAt = now,
+            };
+            newSnapshots.Add(snapshot);
+            draft.NormativeGapSnapshots.Add(snapshot);
+        }
+
+        if (newSnapshots.Count > 0)
+            _db.AddRange(newSnapshots);
+    }
+
+    private static IndividualCardDraftDto ToDraftDto(IndividualCard draft)
+    {
+        var objectId = GetTargetObjectId(draft) ?? Guid.Empty;
+        var objectCode = string.Empty;
+        var objectName = string.Empty;
+
+        switch (draft.ObjectLevel)
+        {
+            case IndividualCardObjectLevel.Complex:
+                objectCode = draft.Complex?.Code ?? string.Empty;
+                objectName = draft.Complex?.Name ?? string.Empty;
+                break;
+            case IndividualCardObjectLevel.EquipmentModel:
+                objectCode = draft.EquipmentModel?.Index ?? string.Empty;
+                objectName = draft.EquipmentModel?.Name ?? string.Empty;
+                break;
+            case IndividualCardObjectLevel.Aggregate:
+                objectCode = draft.Aggregate?.Code ?? string.Empty;
+                objectName = draft.Aggregate?.Name ?? string.Empty;
+                break;
+            case IndividualCardObjectLevel.Node:
+                objectCode = draft.Node?.Code ?? string.Empty;
+                objectName = draft.Node?.Name ?? string.Empty;
+                break;
+            case IndividualCardObjectLevel.EquipmentInstance:
+                objectCode = draft.EquipmentInstance?.SerialNumber ?? string.Empty;
+                objectName = draft.EquipmentInstance?.Name ?? string.Empty;
+                break;
+        }
+
+        return new IndividualCardDraftDto
+        {
+            Id = draft.Id,
+            Code = draft.Code,
+            Version = draft.Version,
+            RevisionNumber = draft.RevisionNumber,
+            ObjectLevel = draft.ObjectLevel,
+            ObjectLevelDisplay = IndividualCardDisplay.ObjectLevel(draft.ObjectLevel),
+            ObjectId = objectId,
+            ObjectCode = objectCode,
+            ObjectName = objectName,
+            BranchId = draft.BranchId,
+            Status = draft.Status,
+            Notes = draft.Notes,
+            CreatedByUserId = draft.CreatedByUserId,
+            CreatedAt = draft.CreatedAt,
+            Compositions = draft.CompositionSnapshots
+                .OrderBy(cs => cs.CapturedAt).ThenBy(cs => cs.TargetObjectCode)
+                .Select(cs => new IndividualCardCompositionSnapshotDto
+                {
+                    Id = cs.Id,
+                    SourceLevel = cs.SourceLevel,
+                    SourceCompositionId = cs.SourceCompositionId,
+                    SourceCompositionVersion = cs.SourceCompositionVersion,
+                    SourceApprovedAt = cs.SourceApprovedAt,
+                    TargetObjectId = cs.TargetObjectId,
+                    TargetObjectCode = cs.TargetObjectCode,
+                    TargetObjectName = cs.TargetObjectName,
+                    Quantity = cs.Quantity,
+                    CapturedAt = cs.CapturedAt,
+                    Aggregates = cs.Aggregates
+                        .OrderBy(a => a.SortOrder)
+                        .Select(a => new IndividualCardAggregateSnapshotDto
+                        {
+                            Id = a.Id,
+                            AggregateId = a.AggregateId,
+                            AggregateCode = a.AggregateCode,
+                            AggregateName = a.AggregateName,
+                            Quantity = a.Quantity,
+                            SortOrder = a.SortOrder,
+                            Nodes = a.Nodes
+                                .OrderBy(n => n.SortOrder)
+                                .Select(n => new IndividualCardNodeSnapshotDto
+                                {
+                                    Id = n.Id,
+                                    NodeId = n.NodeId,
+                                    NodeCode = n.NodeCode,
+                                    NodeName = n.NodeName,
+                                    Quantity = n.Quantity,
+                                    SortOrder = n.SortOrder,
+                                }).ToList(),
+                        }).ToList(),
+                }).ToList(),
+            HKSources = draft.HKSourceSnapshots
+                .OrderBy(s => s.SortOrder)
+                .Select(s => new IndividualCardHKSourceSnapshotDto
+                {
+                    Id = s.Id,
+                    ParentHKSourceSnapshotId = s.ParentHKSourceSnapshotId,
+                    SourceHKCardId = s.SourceHKCardId,
+                    ObjectLevel = s.ObjectLevel,
+                    SourceObjectId = s.SourceObjectId,
+                    SourceObjectCode = s.SourceObjectCode,
+                    SourceObjectName = s.SourceObjectName,
+                    HKCardCode = s.HKCardCode,
+                    HKCardVersion = s.HKCardVersion,
+                    BranchId = s.BranchId,
+                    HKCardApprovedAt = s.HKCardApprovedAt,
+                    HKCardEffectiveDate = s.HKCardEffectiveDate,
+                    HKCardExpirationDate = s.HKCardExpirationDate,
+                    SortOrder = s.SortOrder,
+                    CapturedAt = s.CapturedAt,
+                    IsComplete = s.ParentHKSourceSnapshotId != null || s.SortOrder == 0,
+                }).ToList(),
+            NormativeGaps = draft.NormativeGapSnapshots
+                .OrderBy(g => g.SortOrder)
+                .Select(g => new IndividualCardNormativeGapSnapshotDto
+                {
+                    Id = g.Id,
+                    Kind = g.Kind,
+                    RelatedLevel = g.RelatedLevel,
+                    RelatedObjectId = g.RelatedObjectId,
+                    RelatedObjectType = g.RelatedObjectType,
+                    RelatedObjectCode = g.RelatedObjectCode,
+                    RelatedObjectName = g.RelatedObjectName,
+                    RelatedHKCardId = g.RelatedHKCardId,
+                    Message = g.Message,
+                    SortOrder = g.SortOrder,
+                    CapturedAt = g.CapturedAt,
+                }).ToList(),
+        };
+    }
+
+    public async Task<IndividualCardDraftDto> CreateDraftAsync(
+        CreateIndividualCardDraftRequest request, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
+
+        if (request.ObjectLevel == 0 || !Enum.IsDefined(request.ObjectLevel))
+            throw new InvalidOperationException("Укажите корректный уровень цели ИК.");
+
+        // Preflight is the only source of the allowed normative chain.
+        var preflight = await BuildPreflightAsync(
+            new IndividualCardPreflightRequest(request.ObjectLevel, request.ObjectId, request.RootHKCardId), ct);
+
+        if (preflight.SelectedRoot is null)
+        {
+            throw new InvalidOperationException(preflight.RootState == IndividualCardPreflightRootState.SelectionRequired
+                ? "Для создания черновика ИК выберите утверждённую ХК вручную."
+                : "Невозможно создать черновик ИК: не найдена утверждённая ХК верхнего уровня.");
+        }
+
+        var target = await ResolveTargetAsync(request.ObjectLevel, request.ObjectId, ct)
+            ?? throw new InvalidOperationException(
+                $"Объект цели ИК не найден или архивирован: {IndividualCardDisplay.ObjectLevel(request.ObjectLevel)}.");
+
+        var actorId = _currentUser.GetRequiredUserId();
+        var now = _time.GetUtcNow().UtcDateTime;
+        var year = now.Year;
+        var code = BuildCardCode(request.ObjectLevel, target.Code, year);
+        var version = $"v{now:MMyy}.1";
+
+        var duplicate = await _db.IndividualCards.AsNoTracking()
+            .AnyAsync(c => c.Code == code, ct);
+        if (duplicate)
+        {
+            throw new InvalidOperationException(
+                $"Для объекта «{target.Name}» уже существует ИК «{code}». " +
+                "Для создания следующей версии используйте действие «Создать новую версию».");
+        }
+
+        var draft = new IndividualCard
+        {
+            Id = Guid.NewGuid(),
+            Code = code,
+            Version = version,
+            RevisionNumber = 1,
+            ObjectLevel = request.ObjectLevel,
+            Status = IndividualCardStatus.Draft,
+            BranchId = preflight.BranchId!.Value,
+            CreatedByUserId = actorId.ToString(),
+            CreatedAt = now,
+            Notes = request.Notes,
+        };
+        ApplyTargetFk(draft, request.ObjectLevel, request.ObjectId);
+
+        CopyDraftSnapshots(draft, preflight, now);
+
+        _db.IndividualCards.Add(draft);
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "IndividualCard", draft.Id.ToString(), "IndividualCard.DraftCreated",
+            actorId, EntityDisplayName: $"{code} {version}",
+            Details: $"ObjectLevel={request.ObjectLevel}; ObjectId={request.ObjectId}; BranchId={draft.BranchId}; SelectedRootHKCardId={preflight.SelectedRoot.HKCardId}; CompositionCount={preflight.Compositions.Count}; HKSourceCount={preflight.HKSources.Count}; NormativeGapCount={preflight.NormativeGaps.Count}"), ct);
+
+        // The unique (Code, Version) index guards concurrent duplicate creation.
+        await _db.SaveChangesAsync(ct);
+
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
+    }
+
+    public async Task<IndividualCardDraftDto?> GetDraftByIdAsync(Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var draft = await LoadDraftDetailedAsync(individualCardId, ct);
+
+        if (draft is null)
+            return null;
+
+        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
+            return null;
+
+        // Reading never rebuilds or refreshes snapshots: a Draft is historical
+        // relative to its creation/last explicit refresh.
+        return ToDraftDto(draft);
+    }
+
+    private async Task<IndividualCard?> LoadDraftDetailedAsync(Guid individualCardId, CancellationToken ct) =>
+        await _db.IndividualCards.AsNoTracking()
+            .Include(d => d.Complex)
+            .Include(d => d.EquipmentModel)
+            .Include(d => d.Aggregate)
+            .Include(d => d.Node)
+            .Include(d => d.EquipmentInstance)
+            .Include(d => d.CompositionSnapshots)
+                .ThenInclude(cs => cs.Aggregates)
+                    .ThenInclude(a => a.Nodes)
+            .Include(d => d.HKSourceSnapshots)
+            .Include(d => d.NormativeGapSnapshots)
+            .FirstOrDefaultAsync(d => d.Id == individualCardId && d.Status == IndividualCardStatus.Draft, ct);
+
+    public async Task<IndividualCardDraftDto> RefreshDraftSourcesAsync(
+        RefreshIndividualCardDraftSourcesRequest request, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var draft = await _db.IndividualCards
+            .Include(d => d.CompositionSnapshots)
+                .ThenInclude(cs => cs.Aggregates)
+                    .ThenInclude(a => a.Nodes)
+            .Include(d => d.HKSourceSnapshots)
+            .Include(d => d.NormativeGapSnapshots)
+            .FirstOrDefaultAsync(d => d.Id == request.IndividualCardId, ct)
+            ?? throw new InvalidOperationException("Черновик ИК не найден.");
+
+        if (draft.Status != IndividualCardStatus.Draft)
+            throw new InvalidOperationException("Обновить нормативные источники можно только у черновика ИК.");
+
+        await EnsureDraftEditorAsync(draft, scope, "Недостаточно прав для изменения черновика ИК.", ct);
+
+        var objectId = GetTargetObjectId(draft)
+            ?? throw new InvalidOperationException("Черновик ИК повреждён: не указан объект цели.");
+
+        // Explicit command: a new preflight against current sources.
+        var preflight = await BuildPreflightAsync(
+            new IndividualCardPreflightRequest(draft.ObjectLevel, objectId, request.RootHKCardId), ct);
+
+        // Rejects retain all previous snapshots unchanged.
+        if (preflight.SelectedRoot is null)
+        {
+            throw new InvalidOperationException(preflight.RootState == IndividualCardPreflightRootState.SelectionRequired
+                ? "Для обновления источников выберите утверждённую ХК вручную."
+                : "Невозможно обновить источники черновика ИК: не найдена утверждённая ХК верхнего уровня.");
+        }
+
+        // The immutable branch identity of a Draft never changes on refresh.
+        if (preflight.SelectedRoot.BranchId != draft.BranchId)
+            throw new InvalidOperationException("Нельзя заменить нормативные источники черновика ИК на другой филиал.");
+
+        var oldCompositionCount = draft.CompositionSnapshots.Count;
+        var oldHKSourceCount = draft.HKSourceSnapshots.Count;
+        var oldGapCount = draft.NormativeGapSnapshots.Count;
+        var oldRootHKCardId = draft.HKSourceSnapshots
+            .Where(s => s.ParentHKSourceSnapshotId == null)
+            .OrderBy(s => s.SortOrder)
+            .Select(s => s.SourceHKCardId)
+            .FirstOrDefault();
+
+        // Replace, never merge: delete the whole previous snapshot set with
+        // deterministic bulk deletes (children first), then detach the stale
+        // tracked graph so relationship fixup cannot interfere with the new set.
+        var oldCompositionIds = draft.CompositionSnapshots.Select(c => c.Id).ToList();
+        var oldAggregateIds = draft.CompositionSnapshots
+            .SelectMany(c => c.Aggregates)
+            .Select(a => a.Id)
+            .ToList();
+
+        await _db.IndividualCardNodeSnapshots
+            .Where(n => oldAggregateIds.Contains(n.IndividualCardAggregateSnapshotId))
+            .ExecuteDeleteAsync(ct);
+        await _db.IndividualCardAggregateSnapshots
+            .Where(a => oldCompositionIds.Contains(a.IndividualCardCompositionSnapshotId))
+            .ExecuteDeleteAsync(ct);
+        await _db.IndividualCardCompositionSnapshots
+            .Where(c => c.IndividualCardId == draft.Id)
+            .ExecuteDeleteAsync(ct);
+        await _db.IndividualCardHKSourceSnapshots
+            .Where(s => s.IndividualCardId == draft.Id)
+            .ExecuteDeleteAsync(ct);
+        await _db.IndividualCardNormativeGapSnapshots
+            .Where(s => s.IndividualCardId == draft.Id)
+            .ExecuteDeleteAsync(ct);
+
+        var staleSnapshots = new List<object>();
+        staleSnapshots.AddRange(draft.CompositionSnapshots.SelectMany(c => c.Aggregates).SelectMany(a => a.Nodes));
+        staleSnapshots.AddRange(draft.CompositionSnapshots.SelectMany(c => c.Aggregates));
+        staleSnapshots.AddRange(draft.CompositionSnapshots);
+        staleSnapshots.AddRange(draft.HKSourceSnapshots);
+        staleSnapshots.AddRange(draft.NormativeGapSnapshots);
+        foreach (var stale in staleSnapshots)
+            _db.Entry(stale).State = EntityState.Detached;
+        draft.CompositionSnapshots.Clear();
+        draft.HKSourceSnapshots.Clear();
+        draft.NormativeGapSnapshots.Clear();
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        CopyDraftSnapshots(draft, preflight, now);
+
+        var actorId = _currentUser.GetRequiredUserId();
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "IndividualCard", draft.Id.ToString(), "IndividualCard.SourcesRefreshed",
+            actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
+            Details: $"OldRootHKCardId={oldRootHKCardId}; NewRootHKCardId={preflight.SelectedRoot.HKCardId}; OldCompositionCount={oldCompositionCount}; NewCompositionCount={preflight.Compositions.Count}; OldHKSourceCount={oldHKSourceCount}; NewHKSourceCount={preflight.HKSources.Count}; OldNormativeGapCount={oldGapCount}; NewNormativeGapCount={preflight.NormativeGaps.Count}"), ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
+    }
+
+    public async Task DeleteDraftAsync(Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var draft = await _db.IndividualCards
+            .FirstOrDefaultAsync(d => d.Id == individualCardId, ct)
+            ?? throw new InvalidOperationException("Черновик ИК не найден.");
+
+        if (draft.Status != IndividualCardStatus.Draft)
+            throw new InvalidOperationException("Удалить можно только черновик ИК.");
+
+        await EnsureDraftEditorAsync(draft, scope, "Недостаточно прав для удаления черновика ИК.", ct);
+
+        var actorId = _currentUser.GetRequiredUserId();
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "IndividualCard", draft.Id.ToString(), "IndividualCard.DraftDeleted",
+            actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
+            Details: $"Code={draft.Code}; Version={draft.Version}; ObjectLevel={draft.ObjectLevel}; ObjectId={GetTargetObjectId(draft)}; BranchId={draft.BranchId}; CreatedByUserId={draft.CreatedByUserId}; DeletedByUserId={actorId}"), ct);
+
+        // Cascade removes all snapshots; the audit row is independent and survives.
+        _db.IndividualCards.Remove(draft);
+        await _db.SaveChangesAsync(ct);
     }
 }

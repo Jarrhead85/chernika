@@ -40,6 +40,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<IndividualCardHKSourceSnapshot> IndividualCardHKSourceSnapshots => Set<IndividualCardHKSourceSnapshot>();
     public DbSet<IndividualCardItemMaterialSnapshot> IndividualCardItemMaterialSnapshots => Set<IndividualCardItemMaterialSnapshot>();
     public DbSet<IndividualCardCoefficientSnapshot> IndividualCardCoefficientSnapshots => Set<IndividualCardCoefficientSnapshot>();
+    public DbSet<IndividualCardNormativeGapSnapshot> IndividualCardNormativeGapSnapshots => Set<IndividualCardNormativeGapSnapshot>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
     public DbSet<WorkTaskGroup> WorkTaskGroups => Set<WorkTaskGroup>();
@@ -424,6 +425,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(i => i.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.CoefficientSnapshots).WithOne(s => s.IndividualCard)
                 .HasForeignKey(s => s.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.NormativeGapSnapshots).WithOne(s => s.IndividualCard)
+                .HasForeignKey(s => s.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
 
             e.HasIndex(x => new { x.BranchId, x.Status }).HasDatabaseName("IX_IndividualCards_BranchId_Status");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_IndividualCards_CreatedAt");
@@ -445,7 +448,6 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.TargetObjectName).HasMaxLength(500).IsRequired();
             e.HasIndex(x => x.IndividualCardId).HasDatabaseName("IX_IndividualCardCompositionSnapshots_IndividualCardId");
         });
-
         modelBuilder.Entity<IndividualCardAggregateSnapshot>(e =>
         {
             e.HasKey(x => x.Id);
@@ -529,6 +531,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.NormativeBasis).HasMaxLength(2000);
             e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
                 .HasDatabaseName("IX_IndividualCardCoefficientSnapshots_IndividualCardId_SortOrder");
+        });
+
+        modelBuilder.Entity<IndividualCardNormativeGapSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.RelatedObjectType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.RelatedObjectCode).HasMaxLength(100);
+            e.Property(x => x.RelatedObjectName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Message).HasMaxLength(2000).IsRequired();
+            e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardNormativeGapSnapshots_IndividualCardId_SortOrder");
         });
 
         modelBuilder.Entity<AuditLog>(e =>

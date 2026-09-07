@@ -20,6 +20,9 @@ public class IndividualCardCompositionSnapshot
     public string TargetObjectCode { get; set; } = string.Empty;
     public string TargetObjectName { get; set; } = string.Empty;
 
+    /// <summary>Row multiplier: ComplexCompositionItem.Quantity for a Complex source, otherwise 1.</summary>
+    public int Quantity { get; set; } = 1;
+
     public DateTime CapturedAt { get; set; }
 
     public ICollection<IndividualCardAggregateSnapshot> Aggregates { get; set; }

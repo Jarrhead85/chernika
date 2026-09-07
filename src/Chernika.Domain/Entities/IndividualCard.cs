@@ -61,6 +61,8 @@ public class IndividualCard
     public ICollection<IndividualCardItem> Items { get; set; } = new List<IndividualCardItem>();
     public ICollection<IndividualCardCoefficientSnapshot> CoefficientSnapshots { get; set; }
         = new List<IndividualCardCoefficientSnapshot>();
+    public ICollection<IndividualCardNormativeGapSnapshot> NormativeGapSnapshots { get; set; }
+        = new List<IndividualCardNormativeGapSnapshot>();
 
     public ICollection<Coefficient> AppliedCoefficients { get; set; } = new List<Coefficient>();
 }

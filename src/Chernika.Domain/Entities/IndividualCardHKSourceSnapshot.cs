@@ -24,6 +24,7 @@ public class IndividualCardHKSourceSnapshot
 
     public string HKCardCode { get; set; } = string.Empty;
     public string HKCardVersion { get; set; } = string.Empty;
+    public Guid BranchId { get; set; }
     public DateTime? HKCardApprovedAt { get; set; }
     public DateTime? HKCardEffectiveDate { get; set; }
     public DateTime? HKCardExpirationDate { get; set; }
