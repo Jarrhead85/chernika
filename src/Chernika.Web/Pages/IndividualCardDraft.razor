@@ -1,4 +1,5 @@
 @page "/инд-карты/черновик/{Id:guid}"
+@page "/инд-карты/{Id:guid}"
 @using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
@@ -21,7 +22,276 @@
     }
     else if (_draft is null)
     {
-        @if (_actionHeader is not null)
+        @if (_actionHeader is not null && _detail is not null && _detail.Status != IndividualCardStatus.Draft)
+        {
+            <section class="panel">
+                <div class="panelHeader">
+                    <h2>ИК @_detail.Code @_detail.Version</h2>
+                    <span class="tag @(_detail.Status == IndividualCardStatus.Formed ? "ok" : "")">@IndividualCardDisplay.Status(_detail.Status)</span>
+                </div>
+                <div class="panelBody">
+                    @if (!string.IsNullOrEmpty(_error))
+                    {
+                        <div class="hkc-error">@_error</div>
+                    }
+
+                    <h3 class="hkc-subtitle">Реквизиты ИК</h3>
+                    <div class="hkv-row"><span class="hkv-label">@_detail.ObjectLevelDisplay:</span> @_detail.ObjectCode — @_detail.ObjectName</div>
+                    @if (!string.IsNullOrEmpty(_detail.ContextText))
+                    {
+                        <div class="hkv-row hkv-muted">@_detail.ContextText</div>
+                    }
+                    <div class="hkv-row"><span class="hkv-label">Филиал:</span> @(_detail.BranchName ?? "—")</div>
+                    <div class="hkv-row"><span class="hkv-label">Автор:</span> @(_detail.AuthorName ?? "—")</div>
+                    <div class="hkv-row"><span class="hkv-label">Создана:</span> @_detail.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div>
+                    @if (_detail.FormedAt is { } formedAt)
+                    {
+                        <div class="hkv-row"><span class="hkv-label">Сформирована:</span> @formedAt.ToString("dd.MM.yyyy HH:mm")</div>
+                    }
+                    @if (_detail.ArchivedAt is { } archivedAt)
+                    {
+                        <div class="hkv-row"><span class="hkv-label">Архивирована:</span> @archivedAt.ToString("dd.MM.yyyy HH:mm")</div>
+                    }
+
+                    <div class="formActions">
+                        @if (_detail.Status == IndividualCardStatus.Formed && _canCreateVersion)
+                        {
+                            <button type="button" class="btn primary" @onclick="OpenVersionModalAsync" disabled="@_comparisonLoading">
+                                @(_comparisonLoading ? "Загрузка…" : "Создать новую версию ИК")
+                            </button>
+                        }
+                        @if (_detail.Status == IndividualCardStatus.Formed && _canArchive)
+                        {
+                            <button type="button" class="btn ghost" @onclick="() => _showArchiveConfirm = true">В архив</button>
+                        }
+                    </div>
+
+                    <h3 class="hkc-subtitle">Нормативная готовность</h3>
+                    @if (_detail.NormativeGaps.Count == 0 && _detail.Problems.Count == 0)
+                    {
+                        <div class="note">Готова: нормативные пробелы и проблемы расчёта отсутствуют.</div>
+                    }
+                    else
+                    {
+                        @foreach (var gap in _detail.NormativeGaps)
+                        {
+                            <div class="note">⚠ @gap.Message</div>
+                        }
+                        @foreach (var problem in _detail.Problems)
+                        {
+                            <div class="note">⚠ @problem.Message</div>
+                        }
+                    }
+
+                    <h3 class="hkc-subtitle">Версия состава</h3>
+                    @foreach (var composition in _detail.Compositions)
+                    {
+                        <div class="hkv-row">@(composition.TargetObjectCode) — @(composition.TargetObjectName): состав @composition.SourceCompositionVersion ×@composition.Quantity</div>
+                        @foreach (var aggregate in composition.Aggregates)
+                        {
+                            <div class="hkv-muted">
+                                Агрегат @aggregate.AggregateCode — @aggregate.AggregateName ×@aggregate.Quantity
+                                (узлов: @aggregate.Nodes.Count)
+                            </div>
+                        }
+                    }
+
+                    <h3 class="hkc-subtitle">Источники ХК</h3>
+                    <div class="tableWrap" data-scroll="contained">
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th>Уровень</th>
+                                    <th>Объект</th>
+                                    <th>ХК</th>
+                                    <th>Готовность</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var source in _detail.HKSources)
+                                {
+                                    <tr>
+                                        <td>@IndividualCardDisplay.ObjectLevel(source.ObjectLevel)</td>
+                                        <td>@source.SourceObjectCode — @source.SourceObjectName</td>
+                                        <td class="mono">@source.HKCardCode @source.HKCardVersion</td>
+                                        <td>@(source.IsComplete ? "Полная" : "Частичная")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @if (_detail.Coefficients.Count > 0)
+                    {
+                        <h3 class="hkc-subtitle">Применённые коэффициенты</h3>
+                        <div class="hkv-muted">
+                            @foreach (var coefficient in _detail.Coefficients)
+                            {
+                                <div>@coefficient.CoefficientTypeName / @coefficient.CoefficientName — <span class="mono">@FormatF6(coefficient.Value)</span></div>
+                            }
+                            <div>Общий коэффициент: <span class="mono">@FormatF6(_detail.TotalCoefficient)</span></div>
+                        </div>
+                    }
+
+                    <h3 class="hkc-subtitle">Расчётные строки</h3>
+                    @if (_detail.Rows.Count == 0)
+                    {
+                        <div class="note">Расчётные строки отсутствуют.</div>
+                    }
+                    else
+                    {
+                        <div class="tableWrap" data-scroll="contained">
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th>ХК узла</th>
+                                    <th>Сборочная единица</th>
+                                    <th>Кол-во СЕ</th>
+                                    <th>Кол-во узлов</th>
+                                    <th>Кол-во агрегатов</th>
+                                    <th>Кол-во изделий</th>
+                                    <th>Норма ХК</th>
+                                    <th>Базовая норма</th>
+                                    <th>Расчётная норма, г</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in _detail.Rows)
+                                {
+                                    <tr>
+                                        <td class="mono">@row.HKCardCode @row.HKCardVersion</td>
+                                        <td>@row.AssemblyUnitName</td>
+                                        <td>@row.AssemblyUnitQuantity</td>
+                                        <td>@row.NodeQuantity</td>
+                                        <td>@row.AggregateQuantity</td>
+                                        <td>@row.ProductQuantity</td>
+                                        <td class="mono">@FormatF6(row.SourceVolume)</td>
+                                        <td class="mono">@FormatF6(row.BaseVolume)</td>
+                                        <td class="mono">@FormatF6(row.CalculatedVolume)</td>
+                                    </tr>
+                                    @foreach (var material in row.Materials)
+                                    {
+                                        <tr class="hkc-material-row">
+                                            <td></td>
+                                            <td colspan="8">
+                                                <span class="tag @(material.Category == GsmCategory.Primary ? "ok" : "")">@CategoryName(material.Category)</span>
+                                                @material.MaterialName
+                                                @if (!string.IsNullOrWhiteSpace(material.Gost))
+                                                {
+                                                    <span class="hkc-gost">ГОСТ/ТУ: @material.Gost</span>
+                                                }
+                                                — <span class="mono">@FormatF6(material.CalculatedVolume) @material.UnitOfMeasure</span>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                        </div>
+                    }
+
+                    @if (_detail.PrimaryTotals.Count > 0)
+                    {
+                        <h3 class="hkc-subtitle">Основные марки ГСМ (альтернативы, не суммируются)</h3>
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th>Марка ГСМ</th>
+                                    <th>ГОСТ/ТУ</th>
+                                    <th>Ед. изм.</th>
+                                    <th>Количество строк</th>
+                                    <th>Значение по марке</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var total in _detail.PrimaryTotals)
+                                {
+                                    <tr>
+                                        <td>@total.MaterialName</td>
+                                        <td>@total.Gost</td>
+                                        <td>@total.UnitOfMeasure</td>
+                                        <td>@total.ItemCount</td>
+                                        <td class="mono">@FormatF6(total.TotalVolume) @total.UnitOfMeasure</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+
+                    <h3 class="hkc-subtitle">История версий</h3>
+                    <div class="tableWrap" data-scroll="contained">
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th>Версия</th>
+                                    <th>Статус</th>
+                                    <th>Создана</th>
+                                    <th>Сформирована</th>
+                                    <th>Архив</th>
+                                    <th>Автор</th>
+                                    <th>Действие</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var version in _detail.History)
+                                {
+                                    <tr>
+                                        <td class="mono">@version.Version</td>
+                                        <td>@IndividualCardDisplay.Status(version.Status)</td>
+                                        <td>@version.CreatedAt.ToString("dd.MM.yyyy")</td>
+                                        <td>@(version.FormedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
+                                        <td>@(version.ArchivedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
+                                        <td class="mono">@version.CreatedByUserId[..Math.Min(8, version.CreatedByUserId.Length)]…</td>
+                                        <td>
+                                            @if (version.Id != _detail.Id)
+                                            {
+                                                <button type="button" class="linkBtn" @onclick="() => OpenVersionCard(version.Id)">Открыть</button>
+                                            }
+                                            else
+                                            {
+                                                <span class="tag ok">текущая</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h3 class="hkc-subtitle">Журнал событий</h3>
+                    <div class="tableWrap" data-scroll="contained">
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th>Дата</th>
+                                    <th>Действие</th>
+                                    <th>Пользователь</th>
+                                    <th>Детали</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var entry in _detail.Audit)
+                                {
+                                    <tr>
+                                        <td>@entry.CreatedAt.ToString("dd.MM.yyyy HH:mm")</td>
+                                        <td>@AuditDisplayCatalog.GetAction(entry.Action).Title</td>
+                                        <td>@(entry.UserDisplayName ?? "—")</td>
+                                        <td class="hkr-context">@(entry.Details ?? "—")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h3 class="hkc-subtitle">Экспорт</h3>
+                    <div class="formActions">
+                        <button type="button" class="btn" disabled>PDF</button>
+                        <button type="button" class="btn" disabled>XLSX</button>
+                    </div>
+                </div>
+            </section>
+        }
+        else if (_actionHeader is not null)
         {
             <section class="panel">
                 <div class="panelHeader">
@@ -30,29 +300,23 @@
                     <span class="tag @(_actionHeader.Status == IndividualCardStatus.Formed ? "ok" : "")">@IndividualCardDisplay.Status(_actionHeader.Status)</span>
                 </div>
                 <div class="panelBody">
-                    @if (!_actionHeader.Status.ToString().Equals("Formed"))
+                    @if (!string.IsNullOrEmpty(_error))
                     {
-                        <div class="note">Действия недоступны: ИК не сформирована.</div>
+                        <div class="hkc-error">@_error</div>
                     }
-                    else if (_canCreateVersion || _canArchive)
-                    {
-                        <div class="formActions">
-                            @if (_canCreateVersion)
-                            {
-                                <button type="button" class="btn primary" @onclick="OpenVersionModalAsync" disabled="@_comparisonLoading">
-                                    @(_comparisonLoading ? "Загрузка…" : "Создать новую версию ИК")
-                                </button>
-                            }
-                            @if (_canArchive)
-                            {
-                                <button type="button" class="btn ghost" @onclick="() => _showArchiveConfirm = true">В архив</button>
-                            }
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="note">Недостаточно прав для работы с ИК.</div>
-                    }
+
+                    <div class="formActions">
+                        @if (_actionHeader.Status == IndividualCardStatus.Formed && _canCreateVersion)
+                        {
+                            <button type="button" class="btn primary" @onclick="OpenVersionModalAsync" disabled="@_comparisonLoading">
+                                @(_comparisonLoading ? "Загрузка…" : "Создать новую версию ИК")
+                            </button>
+                        }
+                        @if (_actionHeader.Status == IndividualCardStatus.Formed && _canArchive)
+                        {
+                            <button type="button" class="btn ghost" @onclick="() => _showArchiveConfirm = true">В архив</button>
+                        }
+                    </div>
                 </div>
             </section>
         }
@@ -387,6 +651,7 @@
     private bool _canCreateVersion;
     private bool _canArchive;
     private IndividualCardActionHeaderDto? _actionHeader;
+    private IndividualCardDetailDto? _detail;
     private IndividualCardVersionComparisonDto? _comparison;
     private bool _comparisonLoading;
     private bool _showVersionModal;
@@ -410,17 +675,26 @@
         _draft = await IndCardService.GetDraftByIdAsync(Id);
         if (_draft is null)
         {
-            // Non-Draft card: a lightweight View-only header. New-version and
-            // archive actions are permission-gated independently of each other;
-            // the comparison is loaded only when the user opens the modal.
+            // Non-Draft card: a lightweight View-only header plus the full
+            // read-only detail graph; new-version and archive actions are
+            // permission-gated independently of each other.
             _actionHeader = await IndCardService.GetIndividualCardActionHeaderAsync(Id);
+            _detail = await IndCardService.GetDetailAsync(Id);
             _comparison = null;
             _selectedRootHKCardId = Guid.Empty;
 
-            _canCreateVersion = _actionHeader is { Status: IndividualCardStatus.Formed }
-                && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateVersion);
-            _canArchive = _actionHeader is { Status: IndividualCardStatus.Formed }
-                && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardArchive);
+            var isFormed = _actionHeader is { Status: IndividualCardStatus.Formed };
+            _canCreateVersion = isFormed && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateVersion);
+            _canArchive = isFormed && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardArchive);
+
+            // Deep-link from the registry actions.
+            var action = Microsoft.AspNetCore.WebUtilities.QueryHelpers
+                .ParseQuery(new Uri(Nav.Uri).Query)
+                .TryGetValue("action", out var values) ? values.ToString() : null;
+            if (action == "version" && _canCreateVersion)
+                await OpenVersionModalAsync();
+            else if (action == "archive" && _canArchive)
+                _showArchiveConfirm = true;
             return;
         }
 
@@ -647,6 +921,8 @@
         "Changed" => "warn",
         _ => "",
     };
+
+    private void OpenVersionCard(Guid id) => Nav.NavigateTo($"/инд-карты/{id}");
 
     private void GoBack() => Nav.NavigateTo("/инд-карты");
 

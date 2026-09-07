@@ -2472,6 +2472,462 @@ public class IndividualCardService
         }
     }
 
+    // ── D6: registry, unified detail, history ──────────────────────────────
+
+    public async Task<PagedResult<IndividualCardRegistryItemDto>> GetRegistryAsync(
+        IndividualCardRegistryQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+        var actorId = _currentUser.GetRequiredUserId().ToString();
+
+        // Branch scope: SystemAdmin may pick any branch; everyone else is
+        // forcibly limited to their own branch regardless of the UI filter.
+        var branchId = scope.IsSystemAdmin ? query.BranchId : scope.BranchId;
+        var page = Math.Max(1, query.Page);
+        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+
+        IQueryable<IndividualCard> rows = _db.IndividualCards.AsNoTracking();
+        if (query.ObjectLevel is { } objectLevel)
+            rows = rows.Where(c => c.ObjectLevel == objectLevel);
+        if (query.Status is { } status)
+            rows = rows.Where(c => c.Status == status);
+        if (branchId is { } bid)
+            rows = rows.Where(c => c.BranchId == bid);
+        if (query.CreatedFrom is { } createdFrom)
+            rows = rows.Where(c => c.CreatedAt >= createdFrom);
+        if (query.CreatedTo is { } createdTo)
+            rows = rows.Where(c => c.CreatedAt < createdTo);
+        if (query.OnlyMine)
+            rows = rows.Where(c => c.CreatedByUserId == actorId);
+        if (query.OnlyWithNormativeGaps)
+        {
+            rows = rows.Where(c =>
+                c.NormativeGapSnapshots.Any() || c.CalculationProblemSnapshots.Any());
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SearchText))
+        {
+            var pattern = $"%{query.SearchText.Trim()}%";
+            rows = rows.Where(c =>
+                EF.Functions.ILike(c.Code, pattern) ||
+                EF.Functions.ILike(c.Version, pattern) ||
+                c.HKSourceSnapshots.Where(s => s.ParentHKSourceSnapshotId == null).Any(s =>
+                    EF.Functions.ILike(s.SourceObjectCode, pattern) ||
+                    EF.Functions.ILike(s.SourceObjectName, pattern)) ||
+                c.CompositionSnapshots.Any(cs =>
+                    EF.Functions.ILike(cs.TargetObjectCode, pattern) ||
+                    EF.Functions.ILike(cs.TargetObjectName, pattern)));
+        }
+
+        rows = (query.SortBy?.Trim() ?? string.Empty) switch
+        {
+            "FormedAt" => query.SortDescending
+                ? rows.OrderByDescending(c => c.FormedAt)
+                : rows.OrderBy(c => c.FormedAt),
+            "Code" => query.SortDescending
+                ? rows.OrderByDescending(c => c.Code)
+                : rows.OrderBy(c => c.Code),
+            "Status" => query.SortDescending
+                ? rows.OrderByDescending(c => c.Status)
+                : rows.OrderBy(c => c.Status),
+            "Object" => query.SortDescending
+                ? rows.OrderByDescending(c => c.HKSourceSnapshots
+                    .Where(s => s.ParentHKSourceSnapshotId == null)
+                    .OrderBy(s => s.SortOrder)
+                    .Select(s => s.SourceObjectCode)
+                    .FirstOrDefault())
+                : rows.OrderBy(c => c.HKSourceSnapshots
+                    .Where(s => s.ParentHKSourceSnapshotId == null)
+                    .OrderBy(s => s.SortOrder)
+                    .Select(s => s.SourceObjectCode)
+                    .FirstOrDefault()),
+            _ => query.SortDescending
+                ? rows.OrderByDescending(c => c.CreatedAt)
+                : rows.OrderBy(c => c.CreatedAt),
+        };
+        var orderedRows = query.SortDescending
+            ? ((IOrderedQueryable<IndividualCard>)rows).ThenByDescending(c => c.Id)
+            : ((IOrderedQueryable<IndividualCard>)rows).ThenBy(c => c.Id);
+
+        var totalCount = await orderedRows.CountAsync(ct);
+        var pageItems = await orderedRows
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(c => new
+            {
+                c.Id,
+                c.Code,
+                c.Version,
+                c.ObjectLevel,
+                c.Status,
+                c.BranchId,
+                BranchName = c.Branch.Name,
+                c.CreatedAt,
+                c.FormedAt,
+                c.CreatedByUserId,
+                AuthorName = _db.Users
+                    .Where(u => u.Id == c.CreatedByUserId)
+                    .Select(u => u.FullName ?? u.UserName)
+                    .FirstOrDefault(),
+                ObjectCode = c.HKSourceSnapshots
+                    .Where(s => s.ParentHKSourceSnapshotId == null)
+                    .OrderBy(s => s.SortOrder)
+                    .Select(s => s.SourceObjectCode)
+                    .FirstOrDefault() ?? string.Empty,
+                ObjectName = c.HKSourceSnapshots
+                    .Where(s => s.ParentHKSourceSnapshotId == null)
+                    .OrderBy(s => s.SortOrder)
+                    .Select(s => s.SourceObjectName)
+                    .FirstOrDefault() ?? string.Empty,
+                HKSourceCount = c.HKSourceSnapshots.Count(),
+                HasNormativeGaps = c.NormativeGapSnapshots.Any(),
+                CalculationProblemCount = c.CalculationProblemSnapshots.Count(),
+                c.SupersedesIndividualCardId,
+                HasSuccessor = c.SupersededBy.Any(),
+                InstanceSerial = c.EquipmentInstance != null ? c.EquipmentInstance.SerialNumber : null,
+                InstanceName = c.EquipmentInstance != null ? c.EquipmentInstance.Name : null,
+                InstanceModelIndex = c.EquipmentInstance != null ? c.EquipmentInstance.Index : null,
+            })
+            .ToListAsync(ct);
+
+        // Bounded composition context for the page rows only.
+        var pageIds = pageItems.Select(x => x.Id).ToList();
+        var compositions = await _db.IndividualCardCompositionSnapshots.AsNoTracking()
+            .Where(cs => pageIds.Contains(cs.IndividualCardId))
+            .Select(cs => new { cs.IndividualCardId, cs.SourceLevel, cs.TargetObjectCode })
+            .ToListAsync(ct);
+
+        var items = pageItems.Select(x =>
+        {
+            // Instance cards: identity from the instance row, context from the
+            // model index copy (the root snapshot holds the model HK instead).
+            var isInstance = x.ObjectLevel == IndividualCardObjectLevel.EquipmentInstance;
+            var objectCode = isInstance ? x.InstanceSerial ?? string.Empty : x.ObjectCode;
+            var objectName = isInstance ? x.InstanceName ?? string.Empty : x.ObjectName;
+
+            string? contextText = null;
+            if (isInstance && !string.IsNullOrEmpty(x.InstanceModelIndex))
+                contextText = $"Изделие {x.InstanceModelIndex}";
+            else if (x.ObjectLevel == IndividualCardObjectLevel.Complex)
+            {
+                var contextItems = compositions
+                    .Where(cs => cs.IndividualCardId == x.Id && cs.SourceLevel == IndividualCardObjectLevel.EquipmentModel)
+                    .Select(cs => $"Изделие {cs.TargetObjectCode}")
+                    .Distinct()
+                    .Take(3)
+                    .ToList();
+                if (contextItems.Count > 0)
+                    contextText = string.Join(" • ", contextItems) + (contextItems.Count == 3 ? " • …" : string.Empty);
+            }
+
+            return new IndividualCardRegistryItemDto(
+                x.Id, x.Code, x.Version, x.ObjectLevel,
+                IndividualCardDisplay.ObjectLevel(x.ObjectLevel),
+                objectCode, objectName, contextText,
+                x.Status, x.BranchId, x.BranchName,
+                x.CreatedAt, x.FormedAt, x.CreatedByUserId, x.AuthorName,
+                x.HasNormativeGaps, x.HKSourceCount, x.CalculationProblemCount,
+                x.SupersedesIndividualCardId, x.HasSuccessor);
+        }).ToList();
+
+        return new PagedResult<IndividualCardRegistryItemDto>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
+    public async Task<IReadOnlyList<IndividualCardVersionChainItemDto>> GetHistoryAsync(
+        Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var card = await _db.IndividualCards.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == individualCardId, ct)
+            ?? throw new InvalidOperationException("ИК не найдена.");
+
+        if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
+            return [];
+
+        // Version chain: every revision of the same card code in the branch.
+        var chain = await _db.IndividualCards.AsNoTracking()
+            .Where(c => c.Code == card.Code && c.BranchId == card.BranchId)
+            .OrderBy(c => c.RevisionNumber)
+            .Select(c => new IndividualCardVersionChainItemDto(
+                c.Id, c.Code, c.Version, c.RevisionNumber, c.Status,
+                c.CreatedAt, c.FormedAt, c.ArchivedAt, c.CreatedByUserId,
+                c.SupersedesIndividualCardId))
+            .ToListAsync(ct);
+        return chain;
+    }
+
+    public async Task<IndividualCardDetailDto?> GetDetailAsync(
+        Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var card = await LoadIndividualCardWithSnapshotsAsync(individualCardId, ct);
+        if (card is null)
+            return null;
+        if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
+            return null;
+
+        // Snapshot-derived object identity; instance identity from the
+        // instance row (structural legacy FK), context from the model index copy.
+        var isInstance = card.ObjectLevel == IndividualCardObjectLevel.EquipmentInstance;
+        var rootSnapshot = card.HKSourceSnapshots
+            .Where(s => s.ParentHKSourceSnapshotId == null)
+            .OrderBy(s => s.SortOrder)
+            .FirstOrDefault();
+        var objectCode = isInstance
+            ? card.EquipmentInstance?.SerialNumber ?? string.Empty
+            : rootSnapshot?.SourceObjectCode ?? string.Empty;
+        var objectName = isInstance
+            ? card.EquipmentInstance?.Name ?? string.Empty
+            : rootSnapshot?.SourceObjectName ?? string.Empty;
+
+        string? contextText = null;
+        if (isInstance && !string.IsNullOrEmpty(card.EquipmentInstance?.Index))
+            contextText = $"Изделие {card.EquipmentInstance!.Index}";
+        else if (card.ObjectLevel == IndividualCardObjectLevel.Complex)
+        {
+            var contextItems = card.CompositionSnapshots
+                .Where(cs => cs.SourceLevel == IndividualCardObjectLevel.EquipmentModel)
+                .Select(cs => $"Изделие {cs.TargetObjectCode}")
+                .Distinct()
+                .Take(3)
+                .ToList();
+            if (contextItems.Count > 0)
+                contextText = string.Join(" • ", contextItems) + (contextItems.Count == 3 ? " • …" : string.Empty);
+        }
+
+        var history = await _db.IndividualCards.AsNoTracking()
+            .Where(c => c.Code == card.Code && c.BranchId == card.BranchId)
+            .OrderBy(c => c.RevisionNumber)
+            .Select(c => new IndividualCardVersionChainItemDto(
+                c.Id, c.Code, c.Version, c.RevisionNumber, c.Status,
+                c.CreatedAt, c.FormedAt, c.ArchivedAt, c.CreatedByUserId,
+                c.SupersedesIndividualCardId))
+            .ToListAsync(ct);
+
+        var auditEntries = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.EntityType == "IndividualCard" && a.EntityId == card.Id.ToString())
+            .OrderByDescending(a => a.CreatedAt)
+            .Take(20)
+            .Select(a => new { a.Id, a.CreatedAt, a.Action, a.UserId, a.ActorFullName, a.ActorLogin, a.Details })
+            .ToListAsync(ct);
+        var auditUserIds = auditEntries.Select(a => a.UserId.ToString()).Distinct().ToList();
+        var auditUsers = await _db.Users.AsNoTracking()
+            .Where(u => auditUserIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.FullName, u.UserName })
+            .ToListAsync(ct);
+        var userNames = auditUsers.ToDictionary(u => u.Id, u => u.FullName ?? u.UserName);
+        var audit = auditEntries
+            .Select(a => new IndividualCardAuditItemDto(
+                a.Id, a.CreatedAt, a.Action,
+                a.ActorFullName ?? a.ActorLogin ?? userNames.GetValueOrDefault(a.UserId.ToString()),
+                a.Details))
+            .ToList();
+
+        var branchName = await _db.Branches.AsNoTracking()
+            .Where(b => b.Id == card.BranchId)
+            .Select(b => b.Name)
+            .FirstOrDefaultAsync(ct);
+        var authorName = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == card.CreatedByUserId)
+            .Select(u => u.FullName ?? u.UserName)
+            .FirstOrDefaultAsync(ct);
+
+        var coefficientSnapshots = card.CoefficientSnapshots.OrderBy(s => s.SortOrder).ToList();
+        decimal totalCoefficient = 1m;
+        foreach (var snapshot in coefficientSnapshots)
+            totalCoefficient *= snapshot.Value;
+
+        var detailRows = card.Items.OrderBy(i => i.SortOrder)
+            .Select(i =>
+            {
+                var nodeQuantity = 0;
+                var aggregateQuantity = 0;
+                var productQuantity = 0;
+                if (i.NodeSnapshotId.HasValue)
+                {
+                    var nodeSnapshot = card.CompositionSnapshots
+                        .SelectMany(cs => cs.Aggregates)
+                        .SelectMany(a => a.Nodes.Select(n => (a, n)))
+                        .FirstOrDefault(x => x.n.Id == i.NodeSnapshotId.Value);
+                    if (nodeSnapshot.n is not null && nodeSnapshot.a is not null)
+                    {
+                        var aggregateSnapshot = nodeSnapshot.a;
+                        var composition = card.CompositionSnapshots
+                            .FirstOrDefault(cs => cs.Id == aggregateSnapshot.IndividualCardCompositionSnapshotId);
+                        nodeQuantity = nodeSnapshot.n.Quantity;
+                        aggregateQuantity = aggregateSnapshot.Quantity;
+                        productQuantity = card.ObjectLevel == IndividualCardObjectLevel.Complex
+                            ? composition?.Quantity ?? 0
+                            : 1;
+                    }
+                }
+
+                return new IndividualCardCalculationRowDto(
+                    i.Id,
+                    i.NodeSnapshotId ?? Guid.Empty,
+                    i.SourceHKCardId,
+                    i.SourceHKCardCode,
+                    i.SourceHKCardVersion,
+                    i.AssemblyUnitCode,
+                    i.AssemblyUnitName,
+                    i.AssemblyUnitQuantity,
+                    nodeQuantity,
+                    aggregateQuantity,
+                    productQuantity,
+                    i.SourceVolume,
+                    i.BaseVolume,
+                    i.CalculatedVolume,
+                    i.UnitOfMeasure,
+                    i.SortOrder,
+                    Materials: i.MaterialSnapshots.OrderBy(m => m.SortOrder)
+                        .Select(m => new IndividualCardCalculationMaterialDto(
+                            m.Id, m.SourceGsmMaterialId, m.MaterialName, m.MaterialType,
+                            m.Gost, m.Category, m.CalculatedVolume, m.UnitOfMeasure, m.SortOrder))
+                        .ToList());
+            })
+            .ToList();
+
+        var primaryTotals = card.Items
+            .SelectMany(i => i.MaterialSnapshots.Where(m => m.Category == GsmCategory.Primary)
+                .Select(m => (Item: i, Material: m)))
+            .GroupBy(x => (x.Material.MaterialName, x.Material.Gost, x.Material.UnitOfMeasure))
+            .OrderBy(g => g.Key.MaterialName)
+            .Select(g => new IndividualCardPrimaryTotalDto(
+                g.Key.MaterialName,
+                g.Key.Gost ?? string.Empty,
+                g.Key.UnitOfMeasure,
+                g.Sum(x => x.Item.CalculatedVolume),
+                g.Select(x => x.Item.Id).Distinct().Count()))
+            .ToList();
+
+        var problems = card.CalculationProblemSnapshots
+            .Where(p => p.Code != "IncompleteNormativeChain")
+            .OrderBy(p => p.SortOrder)
+            .Select(p => new IndividualCardCalculationProblemDto(
+                p.Code, p.Message, p.HKCardId, p.HKCardItemId, p.NodeSnapshotId, p.SortOrder))
+            .ToList();
+        if (card.NormativeGapSnapshots.Count > 0 && card.Status == IndividualCardStatus.Draft)
+        {
+            problems.Add(new IndividualCardCalculationProblemDto(
+                "IncompleteNormativeChain", "Черновик ИК содержит нормативные разрывы цепочки.",
+                null, null, null, 0));
+        }
+
+        return new IndividualCardDetailDto(
+            card.Id,
+            card.Code,
+            card.Version,
+            card.RevisionNumber,
+            card.Status,
+            card.ObjectLevel,
+            IndividualCardDisplay.ObjectLevel(card.ObjectLevel),
+            objectCode,
+            objectName,
+            contextText,
+            card.BranchId,
+            branchName,
+            card.CreatedByUserId,
+            authorName,
+            card.CreatedAt,
+            card.FormedAt,
+            card.ArchivedAt,
+            history,
+            card.CompositionSnapshots
+                .OrderBy(cs => cs.CapturedAt).ThenBy(cs => cs.TargetObjectCode)
+                .Select(cs => new IndividualCardCompositionSnapshotDto
+                {
+                    Id = cs.Id,
+                    SourceLevel = cs.SourceLevel,
+                    SourceCompositionId = cs.SourceCompositionId,
+                    SourceCompositionVersion = cs.SourceCompositionVersion,
+                    SourceApprovedAt = cs.SourceApprovedAt,
+                    TargetObjectId = cs.TargetObjectId,
+                    TargetObjectCode = cs.TargetObjectCode,
+                    TargetObjectName = cs.TargetObjectName,
+                    Quantity = cs.Quantity,
+                    CapturedAt = cs.CapturedAt,
+                    Aggregates = cs.Aggregates
+                        .OrderBy(a => a.SortOrder)
+                        .Select(a => new IndividualCardAggregateSnapshotDto
+                        {
+                            Id = a.Id,
+                            AggregateId = a.AggregateId,
+                            AggregateCode = a.AggregateCode,
+                            AggregateName = a.AggregateName,
+                            Quantity = a.Quantity,
+                            SortOrder = a.SortOrder,
+                            Nodes = a.Nodes
+                                .OrderBy(n => n.SortOrder)
+                                .Select(n => new IndividualCardNodeSnapshotDto
+                                {
+                                    Id = n.Id,
+                                    NodeId = n.NodeId,
+                                    NodeCode = n.NodeCode,
+                                    NodeName = n.NodeName,
+                                    Quantity = n.Quantity,
+                                    SortOrder = n.SortOrder,
+                                }).ToList(),
+                        }).ToList(),
+                }).ToList(),
+            card.HKSourceSnapshots
+                .OrderBy(s => s.SortOrder)
+                .Select(s => new IndividualCardHKSourceSnapshotDto
+                {
+                    Id = s.Id,
+                    ParentHKSourceSnapshotId = s.ParentHKSourceSnapshotId,
+                    SourceHKCardId = s.SourceHKCardId,
+                    ObjectLevel = s.ObjectLevel,
+                    SourceObjectId = s.SourceObjectId,
+                    SourceObjectCode = s.SourceObjectCode,
+                    SourceObjectName = s.SourceObjectName,
+                    HKCardCode = s.HKCardCode,
+                    HKCardVersion = s.HKCardVersion,
+                    BranchId = s.BranchId,
+                    HKCardApprovedAt = s.HKCardApprovedAt,
+                    HKCardEffectiveDate = s.HKCardEffectiveDate,
+                    HKCardExpirationDate = s.HKCardExpirationDate,
+                    SortOrder = s.SortOrder,
+                    CapturedAt = s.CapturedAt,
+                    IsComplete = s.IsComplete,
+                }).ToList(),
+            card.NormativeGapSnapshots
+                .OrderBy(g => g.SortOrder)
+                .Select(g => new IndividualCardNormativeGapSnapshotDto
+                {
+                    Id = g.Id,
+                    Kind = g.Kind,
+                    RelatedLevel = g.RelatedLevel,
+                    RelatedObjectId = g.RelatedObjectId,
+                    RelatedObjectType = g.RelatedObjectType,
+                    RelatedObjectCode = g.RelatedObjectCode,
+                    RelatedObjectName = g.RelatedObjectName,
+                    RelatedHKCardId = g.RelatedHKCardId,
+                    Message = g.Message,
+                    SortOrder = g.SortOrder,
+                    CapturedAt = g.CapturedAt,
+                }).ToList(),
+            coefficientSnapshots.Select(s => new IndividualCardCoefficientSnapshotDto(
+                s.Id, s.SourceCoefficientId, s.SourceCoefficientTypeId, s.CoefficientTypeName,
+                s.CoefficientName, s.Value, s.ConditionDescription, s.NormativeBasis, s.SortOrder)).ToList(),
+            totalCoefficient,
+            card.TotalNorm,
+            detailRows,
+            primaryTotals,
+            problems,
+            audit);
+    }
+
     private async Task<IndividualCard?> LoadDraftForCalculationAsync(
         Guid individualCardId, bool tracked = false, CancellationToken ct = default)
     {

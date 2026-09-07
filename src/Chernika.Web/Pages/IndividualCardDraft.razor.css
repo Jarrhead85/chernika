@@ -137,3 +137,10 @@
     color: var(--muted);
     padding: 6px 0 6px 12px;
 }
+
+.hkr-context {
+    color: var(--muted);
+    font-size: 11px;
+    max-width: 420px;
+    overflow-wrap: anywhere;
+}

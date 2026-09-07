@@ -181,6 +181,45 @@ public class IndividualCardsController : ControllerBase
         return Ok(header);
     }
 
+    // ── D6: registry, detail, history (read-only) ─────────────────────────
+
+    [HttpGet("registry")]
+    public async Task<ActionResult<PagedResult<IndividualCardRegistryItemDto>>> GetRegistry(
+        [FromQuery] string? searchText,
+        [FromQuery] IndividualCardObjectLevel? objectLevel,
+        [FromQuery] IndividualCardStatus? status,
+        [FromQuery] Guid? branchId,
+        [FromQuery] DateTime? createdFrom,
+        [FromQuery] DateTime? createdTo,
+        [FromQuery] bool onlyMine = false,
+        [FromQuery] bool onlyWithNormativeGaps = false,
+        [FromQuery] string sortBy = "CreatedAt",
+        [FromQuery] bool sortDescending = true,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
+    {
+        var result = await _cards.GetRegistryAsync(new IndividualCardRegistryQuery(
+            searchText, objectLevel, status, branchId, createdFrom, createdTo,
+            onlyMine, onlyWithNormativeGaps, sortBy, sortDescending,
+            page, pageSize), ct);
+        return Ok(result);
+    }
+
+    [HttpGet("{id:guid}/detail")]
+    public async Task<ActionResult<IndividualCardDetailDto>> GetDetail(Guid id, CancellationToken ct)
+    {
+        var detail = await _cards.GetDetailAsync(id, ct);
+        if (detail is null) return NotFound();
+        return Ok(detail);
+    }
+
+    [HttpGet("{id:guid}/history")]
+    public async Task<ActionResult<IReadOnlyList<IndividualCardVersionChainItemDto>>> GetHistory(Guid id, CancellationToken ct)
+    {
+        return Ok(await _cards.GetHistoryAsync(id, ct));
+    }
+
     [HttpPost("{id:guid}/new-version/preflight")]
     public async Task<ActionResult<IndividualCardVersionComparisonDto>> NewVersionPreflight(
         Guid id, [FromBody] IndividualCardVersionPreflightRequest request, CancellationToken ct)

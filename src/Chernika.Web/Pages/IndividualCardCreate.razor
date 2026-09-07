@@ -1,0 +1,336 @@
+@page "/инд-карты/создать"
+@using Chernika.Domain
+@using Chernika.Domain.Entities
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@using Chernika.Infrastructure.Services
+@using Chernika.Web.Services
+@inject IndividualCardService IndCardService
+@inject EquipmentService EquipService
+@inject IPermissionService Perms
+@inject CircuitDbLock DbLock
+@inject NavigationManager Nav
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Создание черновика ИК</h2>
+            <div class="hint">Шаг @Step из 3 — @StepTitle</div>
+        </div>
+        <div class="panelBody">
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="hkc-error">@_error</div>
+            }
+
+            @if (!_canCreateDraft)
+            {
+                <div class="note">Недостаточно прав: требуется разрешение на создание черновиков ИК.</div>
+            }
+            else if (Step == 1)
+            {
+                <div class="field">
+                    <label>Цель ИК</label>
+                    <div class="hkc-group">
+                        @foreach (var (level, label) in LevelOptions)
+                        {
+                            <label class="hkc-item @(_level == level ? "selected" : "")">
+                                <input type="radio" name="ik-level" checked="@(_level == level)"
+                                       @onchange="() => SelectLevel(level)" />
+                                <span class="hkc-item-name">@label</span>
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                @if (_level is not null)
+                {
+                    <div class="field">
+                        <label>Поиск и выбор объекта</label>
+                        <input class="fieldInput" placeholder="Поиск по коду или наименованию…"
+                               value="@_objectSearch" @oninput="OnObjectSearchChanged" />
+                    </div>
+
+                    <div class="hkc-group">
+                        @if (_loadingObjects)
+                        {
+                            <div class="note">Загрузка…</div>
+                        }
+                        else if (_objects.Count == 0)
+                        {
+                            <div class="note">Ничего не найдено.</div>
+                        }
+                        else
+                        {
+                            @foreach (var obj in _objects)
+                            {
+                                <label class="hkc-item @(_objectId == obj.Id ? "selected" : "")">
+                                    <input type="radio" name="ik-object" checked="@(_objectId == obj.Id)"
+                                           @onchange="() => SelectObject(obj)" />
+                                    <span class="hkc-item-name">@(obj.Code == obj.Name ? obj.Code : $"{obj.Code} — {obj.Name}")</span>
+                                </label>
+                            }
+                        }
+                    </div>
+                }
+
+                <div class="formActions">
+                    <button type="button" class="btn primary" disabled="@(_level is null || _objectId == Guid.Empty)"
+                            @onclick="GoToPreflight">Далее: нормативный анализ</button>
+                </div>
+            }
+            else if (Step == 2)
+            {
+                @if (_preflight is null)
+                {
+                    <div class="loading-state">Нормативный анализ…</div>
+                }
+                else
+                {
+                    <div class="hkv-row"><span class="hkv-label">Цель:</span> @LevelName(_level) — @(_objectCode) @(_objectName)</div>
+
+                    @if (_preflight.RootState == IndividualCardPreflightRootState.SelectionRequired)
+                    {
+                        <div class="field">
+                            <label>ХК верхнего уровня (несколько кандидатов)</label>
+                            @foreach (var candidate in _preflight.RootCandidates)
+                            {
+                                <label class="hkc-item @(_rootHKCardId == candidate.HKCardId ? "selected" : "")">
+                                    <input type="radio" name="ik-root" checked="@(_rootHKCardId == candidate.HKCardId)"
+                                           @onchange="() => SelectRoot(candidate)" />
+                                    <span class="hkc-item-name">@candidate.Code @candidate.Version — @candidate.ObjectName</span>
+                                </label>
+                            }
+                        </div>
+                    }
+                    else if (_preflight.SelectedRoot is not null)
+                    {
+                        <div class="hkv-row"><span class="hkv-label">ХК верхнего уровня:</span>
+                            @_preflight.SelectedRoot.Code @_preflight.SelectedRoot.Version — @_preflight.SelectedRoot.ObjectName
+                            (выбрана автоматически)
+                        </div>
+                    }
+
+                    <h4 class="hkc-subtitle">Состав и источники</h4>
+                    <div class="hkv-muted">
+                        <div>Строк состава: @_preflight.Compositions.Count</div>
+                        <div>Источников ХК: @_preflight.HKSources.Count</div>
+                    </div>
+
+                    <h4 class="hkc-subtitle">Нормативные пробелы</h4>
+                    @if (_preflight.NormativeGaps.Count == 0)
+                    {
+                        <div class="note">Нормативные пробелы не обнаружены.</div>
+                    }
+                    else
+                    {
+                        @foreach (var gap in _preflight.NormativeGaps)
+                        {
+                            <div class="note">⚠ @gap.Message</div>
+                        }
+                        <div class="hkv-row"><span class="hkv-label">@GapLabel</span></div>
+                    }
+
+                    <div class="formActions">
+                        <button type="button" class="btn ghost" @onclick="() => Step = 1">Назад</button>
+                        <button type="button" class="btn primary"
+                                disabled="@(_preflight.SelectedRoot is null && _rootHKCardId == Guid.Empty)"
+                                @onclick="() => Step = 3">Далее: подтверждение</button>
+                    </div>
+                }
+            }
+            else
+            {
+                <div class="hkv-row"><span class="hkv-label">Цель:</span> @LevelName(_level) — @(_objectCode) @(_objectName)</div>
+                <div class="hkv-row"><span class="hkv-label">ХК верхнего уровня:</span>
+                    @(_preflight?.SelectedRoot?.Code) @(_preflight?.SelectedRoot?.Version)
+                </div>
+                <div class="hkv-row"><span class="hkv-label">@GapLabel</span></div>
+                <div class="hkv-row"><span class="hkv-label">Расчёт:</span> будет выполнен в черновике после выбора коэффициентов.</div>
+
+                <div class="formActions">
+                    <button type="button" class="btn ghost" @onclick="() => Step = 2">Назад</button>
+                    <button type="button" class="btn primary" disabled="@_creating" @onclick="Create">
+                        @(_creating ? "Создание…" : "Создать черновик ИК")
+                    </button>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private int Step = 1;
+    private string StepTitle => Step switch { 1 => "цель", 2 => "нормативный анализ", _ => "подтверждение" };
+
+    private string? _error;
+    private bool _canCreateDraft;
+
+    private IndividualCardObjectLevel? _level;
+    private Guid _objectId;
+    private string _objectCode = string.Empty;
+    private string _objectName = string.Empty;
+
+    private string _objectSearch = string.Empty;
+    private List<(Guid Id, string Code, string Name)> _objects = new();
+    private bool _loadingObjects;
+
+    private IndividualCardPreflightResult? _preflight;
+    private Guid _rootHKCardId;
+    private bool _creating;
+
+    private static readonly List<(IndividualCardObjectLevel Level, string Label)> LevelOptions = new()
+    {
+        (IndividualCardObjectLevel.Complex, "Комплекс"),
+        (IndividualCardObjectLevel.EquipmentModel, "Изделие"),
+        (IndividualCardObjectLevel.Aggregate, "Агрегат"),
+        (IndividualCardObjectLevel.Node, "Узел"),
+        (IndividualCardObjectLevel.EquipmentInstance, "Экземпляр техники"),
+    };
+
+    private static string LevelName(IndividualCardObjectLevel? level) => LevelOptions
+        .FirstOrDefault(o => o.Level == level).Label ?? string.Empty;
+
+    private string GapLabel => _preflight is { NormativeGaps.Count: > 0 }
+        ? "Будет создана частичная Draft ИК (нормативные пробелы сохранятся в снапшотах)"
+        : "Нормативная готовность";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _canCreateDraft = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateDraft);
+    }
+
+    private async Task SelectLevel(IndividualCardObjectLevel level)
+    {
+        _level = level;
+        _objectId = Guid.Empty;
+        _objectCode = _objectName = string.Empty;
+        _objectSearch = string.Empty;
+        _preflight = null;
+        await ReloadObjectsAsync();
+    }
+
+    private async Task OnObjectSearchChanged(ChangeEventArgs args)
+    {
+        _objectSearch = args.Value?.ToString() ?? string.Empty;
+        await ReloadObjectsAsync();
+    }
+
+    private async Task ReloadObjectsAsync()
+    {
+        _loadingObjects = true;
+        try
+        {
+            var search = string.IsNullOrWhiteSpace(_objectSearch) ? null : _objectSearch.Trim();
+            switch (_level)
+            {
+                case IndividualCardObjectLevel.Complex:
+                {
+                    var page = await EquipService.GetComplexesPagedAsync(new ComplexQuery { Page = 1, PageSize = 30, Search = search });
+                    _objects = page.Items.Select(o => (o.Id, o.Code, o.Name)).ToList();
+                    break;
+                }
+                case IndividualCardObjectLevel.EquipmentModel:
+                {
+                    var page = await EquipService.GetModelsPagedAsync(new EquipmentModelQuery { Page = 1, PageSize = 30, Search = search });
+                    _objects = page.Items.Select(o => (o.Id, o.Index, o.Name)).ToList();
+                    break;
+                }
+                case IndividualCardObjectLevel.Aggregate:
+                {
+                    var page = await EquipService.GetAggregatesPagedAsync(new AggregateQuery { Page = 1, PageSize = 30, Search = search });
+                    _objects = page.Items.Select(o => (o.Id, o.Code, o.Name)).ToList();
+                    break;
+                }
+                case IndividualCardObjectLevel.Node:
+                {
+                    var page = await EquipService.GetNodesPagedAsync(new NodeQuery { Page = 1, PageSize = 30, Search = search });
+                    _objects = page.Items.Select(o => (o.Id, o.Code, o.Name)).ToList();
+                    break;
+                }
+                case IndividualCardObjectLevel.EquipmentInstance:
+                {
+                    var page = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery { Page = 1, PageSize = 30, Search = search });
+                    _objects = page.Items.Select(o => (o.Id, o.SerialNumber, o.Name)).ToList();
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _loadingObjects = false;
+        }
+    }
+
+    private void SelectObject((Guid Id, string Code, string Name) obj)
+    {
+        _objectId = obj.Id;
+        _objectCode = obj.Code;
+        _objectName = obj.Name;
+    }
+
+    private async Task GoToPreflight()
+    {
+        _error = null;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                _preflight = await IndCardService.BuildPreflightAsync(
+                    new IndividualCardPreflightRequest(_level!.Value, _objectId));
+            }
+            _rootHKCardId = Guid.Empty;
+            Step = 2;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SelectRoot(IndividualCardHKCandidateDto candidate)
+    {
+        _rootHKCardId = candidate.HKCardId;
+        _error = null;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                _preflight = await IndCardService.BuildPreflightAsync(
+                    new IndividualCardPreflightRequest(_level!.Value, _objectId, _rootHKCardId));
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task Create()
+    {
+        _error = null;
+        _creating = true;
+        try
+        {
+            Guid newId;
+            await using (await DbLock.WaitAsync())
+            {
+                var created = await IndCardService.CreateDraftAsync(new CreateIndividualCardDraftRequest(
+                    _level!.Value, _objectId,
+                    _preflight?.RootState == IndividualCardPreflightRootState.SelectionRequired
+                        ? _rootHKCardId
+                        : null));
+                newId = created.Id;
+            }
+            Nav.NavigateTo($"/инд-карты/{newId}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _creating = false;
+        }
+    }
+}
