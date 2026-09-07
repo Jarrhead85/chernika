@@ -39,7 +39,8 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddFilter(_ => false));
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(ConnectionString));
+        services.AddDbContext<AppDbContext>(o =>
+            o.UseNpgsql(ConnectionString).AddInterceptors(FailingCommandInterceptor.Instance));
         services.AddIdentityCore<ApplicationUser>(o => { })
             .AddRoles<IdentityRole>()
             .AddEntityFrameworkStores<AppDbContext>();

@@ -100,7 +100,16 @@ public sealed record IndividualCardPreflightNodeDto(
     int Quantity,
     int SortOrder);
 
+/// <summary>
+/// Resolved HK source in the preflight tree. PreflightOccurrenceId identifies
+/// a POSITION in the resolved tree: the same source HKCardId may legitimately
+/// appear in several branches (different parents), producing separate
+/// occurrences. ParentPreflightOccurrenceId always refers to an occurrence
+/// within the same preflight tree.
+/// </summary>
 public sealed record IndividualCardPreflightHKSourceDto(
+    Guid PreflightOccurrenceId,
+    Guid? ParentPreflightOccurrenceId,
     Guid HKCardId,
     Guid? ParentHKCardId,
     IndividualCardObjectLevel ObjectLevel,

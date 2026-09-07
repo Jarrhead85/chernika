@@ -477,6 +477,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.SourceObjectName).HasMaxLength(500).IsRequired();
             e.Property(x => x.HKCardCode).HasMaxLength(100).IsRequired();
             e.Property(x => x.HKCardVersion).HasMaxLength(20).IsRequired();
+            // Identity of the preflight occurrence that produced this snapshot.
+            // Required: the same source HKCardId may repeat in several branches.
+            e.Property(x => x.PreflightOccurrenceId).IsRequired();
+            // Materialised completeness flag captured at snapshot time.
+            e.Property(x => x.IsComplete).IsRequired();
             // Self-reference inside the snapshot tree cascades with the parent:
             // a Restrict self-FK can break a multi-row cascade delete in PostgreSQL.
             e.HasOne(x => x.Parent).WithMany(s => s.Children)

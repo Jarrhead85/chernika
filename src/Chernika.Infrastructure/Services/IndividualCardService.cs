@@ -289,7 +289,13 @@ public class IndividualCardService
     {
         public List<IndividualCardPreflightHKSourceDto> Sources { get; } = new();
         public List<IndividualCardNormativeGapDto> Gaps { get; } = new();
-        public Dictionary<Guid, HKCard> ResolvedByObject { get; } = new();
+        // Per-parent resolution: the same required object may resolve under
+        // several parents (repeated aggregate under different Изделие chains).
+        public Dictionary<Guid, Dictionary<Guid, HKCard>> ResolvedByParentAndObject { get; } = new();
+        // Tree-position occurrence identity: parent card id → object id → the
+        // occurrence id of the resolved source at that position. The next level
+        // uses it as its parent occurrence, keeping repeated sources distinct.
+        public Dictionary<Guid, Dictionary<Guid, Guid>> OccurrenceByParentAndObject { get; } = new();
     }
 
     private sealed record CompositionData(
@@ -340,10 +346,17 @@ public class IndividualCardService
         return new ActorScope(actor, true, null);
     }
 
+    /// <param name="demandCreateDraftPermission">
+    /// Public entry points demand IndividualCard.CreateDraft; the internal
+    /// refresh path does not (a Draft editor may be only an EditDraft holder).
+    /// </param>
     public async Task<IndividualCardPreflightResult> BuildPreflightAsync(
-        IndividualCardPreflightRequest request, CancellationToken ct = default)
+        IndividualCardPreflightRequest request,
+        bool demandCreateDraftPermission = true,
+        CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
+        if (demandCreateDraftPermission)
+            await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
 
         if (request.ObjectLevel == 0 || !Enum.IsDefined(request.ObjectLevel))
             throw new InvalidOperationException("Укажите корректный уровень цели ИК.");
@@ -416,12 +429,21 @@ public class IndividualCardService
         var hkSources = new List<IndividualCardPreflightHKSourceDto>();
         if (selectedRoot is not null)
         {
-            hkSources.Add(ToSourceDto(selectedRoot, null, target.RootLevel,
+            // Occurrence identity: one entry per tree POSITION, so the same
+            // source HKCardId may appear in several branches.
+            var occurrenceByHKCardId = new Dictionary<Guid, Guid>();
+            var rootOccurrenceId = Guid.NewGuid();
+            occurrenceByHKCardId[selectedRoot.Id] = rootOccurrenceId;
+
+            hkSources.Add(ToSourceDto(rootOccurrenceId, null, selectedRoot, null, target.RootLevel,
                 target.RootObjectId, target.RootObjectCode, target.RootObjectName, 0, isComplete: true));
 
             await ResolveChainAsync(
                 selectedRoot, request.ObjectLevel, selectedRoot.BranchId,
-                compositions, compositionData, hkSources, gaps, gapOrder, ct);
+                compositions, compositionData, hkSources, gaps, gapOrder,
+                rootOccurrenceId, ct);
+
+            MarkSourceCompleteness(hkSources, gaps);
         }
 
         return new IndividualCardPreflightResult
@@ -605,6 +627,7 @@ public class IndividualCardService
             hk.BranchId, hk.ApprovedDate, hk.EffectiveDate, hk.ExpirationDate, sortOrder);
 
     private static IndividualCardPreflightHKSourceDto ToSourceDto(
+        Guid occurrenceId, Guid? parentOccurrenceId,
         HKCard hk, Guid? parentHKCardId, IndividualCardObjectLevel level,
         Guid objectId, string fallbackObjectCode, string fallbackObjectName, int sortOrder, bool isComplete)
     {
@@ -614,6 +637,7 @@ public class IndividualCardService
         var objectName = string.IsNullOrWhiteSpace(loadedName) ? fallbackObjectName : loadedName;
 
         return new IndividualCardPreflightHKSourceDto(
+            occurrenceId, parentOccurrenceId,
             hk.Id, parentHKCardId, level, objectId, objectCode, objectName,
             hk.Code, hk.Version, hk.BranchId,
             hk.ApprovedDate, hk.EffectiveDate, hk.ExpirationDate, sortOrder, isComplete);
@@ -842,13 +866,63 @@ public class IndividualCardService
 
     // ── Normative chain resolution ──
 
+    /// <summary>
+    /// Bottom-up completeness propagation over resolved positions: a source is
+    /// complete when its own required children all resolved (no gaps attached
+    /// to its HK card) and every child position is complete. The root position
+    /// additionally requires the preflight to be gap-free overall, because
+    /// composition gaps attach to no HK card. Gap→HK mapping is by HKCardId,
+    /// so repeated occurrences of the same broken HK are conservatively
+    /// incomplete together.
+    /// </summary>
+    private static void MarkSourceCompleteness(
+        List<IndividualCardPreflightHKSourceDto> hkSources,
+        List<IndividualCardNormativeGapDto> gaps)
+    {
+        if (hkSources.Count == 0)
+            return;
+
+        var byOccurrence = hkSources.ToDictionary(s => s.PreflightOccurrenceId);
+        var childrenByParent = hkSources
+            .Where(s => s.ParentPreflightOccurrenceId.HasValue)
+            .GroupBy(s => s.ParentPreflightOccurrenceId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+        var brokenHkIds = gaps
+            .Where(g => g.RelatedHKCardId.HasValue)
+            .Select(g => g.RelatedHKCardId!.Value)
+            .ToHashSet();
+
+        var completeByOccurrence = new Dictionary<Guid, bool>();
+        bool IsComplete(Guid occurrenceId)
+        {
+            if (completeByOccurrence.TryGetValue(occurrenceId, out var complete))
+                return complete;
+            var source = byOccurrence[occurrenceId];
+            var result = !brokenHkIds.Contains(source.HKCardId)
+                && (!childrenByParent.TryGetValue(occurrenceId, out var children)
+                    || children.All(child => IsComplete(child.PreflightOccurrenceId)));
+            completeByOccurrence[occurrenceId] = result;
+            return result;
+        }
+
+        for (var i = 0; i < hkSources.Count; i++)
+        {
+            var source = hkSources[i];
+            var isComplete = IsComplete(source.PreflightOccurrenceId);
+            if (source.ParentPreflightOccurrenceId is null)
+                isComplete &= gaps.Count == 0;
+            hkSources[i] = source with { IsComplete = isComplete };
+        }
+    }
+
     private async Task ResolveChainAsync(
         HKCard root, IndividualCardObjectLevel level, Guid branchId,
         IReadOnlyList<IndividualCardPreflightCompositionDto> compositions,
         List<CompositionData> compositionData,
         List<IndividualCardPreflightHKSourceDto> hkSources,
         List<IndividualCardNormativeGapDto> gaps,
-        int gapOrderStart, CancellationToken ct)
+        int gapOrderStart,
+        Guid rootOccurrenceId, CancellationToken ct)
     {
         var gapOrder = gapOrderStart;
 
@@ -868,7 +942,7 @@ public class IndividualCardService
                 var data = compositionData[0];
                 var match = await MatchChildLevelAsync(
                     IndividualCardObjectLevel.Node,
-                    new[] { (Parent: root, Requirements: data.Requirements) }.ToList(),
+                    new[] { (Parent: root, ParentOccurrenceId: rootOccurrenceId, Requirements: data.Requirements) }.ToList(),
                     branchId, hkSources, gaps, gapOrder, ct);
                 gapOrder += match.Gaps.Count;
                 break;
@@ -882,17 +956,20 @@ public class IndividualCardService
                 // Aggregate level under the model root.
                 var aggregateMatch = await MatchChildLevelAsync(
                     IndividualCardObjectLevel.Aggregate,
-                    new[] { (Parent: root, Requirements: data.Requirements) }.ToList(),
+                    new[] { (Parent: root, ParentOccurrenceId: rootOccurrenceId, Requirements: data.Requirements) }.ToList(),
                     branchId, hkSources, gaps, gapOrder, ct);
                 gapOrder += aggregateMatch.Gaps.Count;
 
-                // Node level under each resolved aggregate HK.
-                var nodeParentRequirements = new List<(HKCard Parent, IReadOnlyList<ChildRequirement> Requirements)>();
+                // Node level under each resolved aggregate occurrence.
+                var nodeParentRequirements = new List<(HKCard Parent, Guid ParentOccurrenceId, IReadOnlyList<ChildRequirement> Requirements)>();
                 foreach (var aggregateDto in data.Dto.Aggregates)
                 {
-                    if (!aggregateMatch.ResolvedByObject.TryGetValue(aggregateDto.AggregateId, out var aggregateHk))
+                    if (!aggregateMatch.OccurrenceByParentAndObject.TryGetValue(root.Id, out var underRoot)
+                        || !underRoot.TryGetValue(aggregateDto.AggregateId, out var aggregateOccurrence))
                         continue;
-                    nodeParentRequirements.Add((aggregateHk, NodesOf(aggregateDto)));
+                    nodeParentRequirements.Add(
+                        (aggregateMatch.ResolvedByParentAndObject[root.Id][aggregateDto.AggregateId],
+                         aggregateOccurrence, NodesOf(aggregateDto)));
                 }
 
                 if (nodeParentRequirements.Count > 0)
@@ -914,17 +991,20 @@ public class IndividualCardService
                     .ToList();
                 var modelMatch = await MatchChildLevelAsync(
                     IndividualCardObjectLevel.EquipmentModel,
-                    new[] { (Parent: root, Requirements: (IReadOnlyList<ChildRequirement>)modelRequirements) }.ToList(),
+                    new[] { (Parent: root, ParentOccurrenceId: rootOccurrenceId, Requirements: (IReadOnlyList<ChildRequirement>)modelRequirements) }.ToList(),
                     branchId, hkSources, gaps, gapOrder, ct);
                 gapOrder += modelMatch.Gaps.Count;
 
-                // Aggregate level under each resolved изделие HK.
-                var aggregateParentRequirements = new List<(HKCard Parent, IReadOnlyList<ChildRequirement> Requirements)>();
+                // Aggregate level under each resolved изделие occurrence.
+                var aggregateParentRequirements = new List<(HKCard Parent, Guid ParentOccurrenceId, IReadOnlyList<ChildRequirement> Requirements)>();
                 foreach (var composition in compositions)
                 {
-                    if (!modelMatch.ResolvedByObject.TryGetValue(composition.TargetObjectId, out var modelHk))
+                    if (!modelMatch.OccurrenceByParentAndObject.TryGetValue(root.Id, out var underRoot)
+                        || !underRoot.TryGetValue(composition.TargetObjectId, out var modelOccurrence))
                         continue;
-                    aggregateParentRequirements.Add((modelHk, AggregatesOf(composition)));
+                    aggregateParentRequirements.Add(
+                        (modelMatch.ResolvedByParentAndObject[root.Id][composition.TargetObjectId],
+                         modelOccurrence, AggregatesOf(composition)));
                 }
 
                 LevelMatch? aggregateMatch = aggregateParentRequirements.Count > 0
@@ -935,16 +1015,27 @@ public class IndividualCardService
                 if (aggregateMatch is not null)
                     gapOrder += aggregateMatch.Gaps.Count;
 
-                // Node level under each resolved aggregate HK.
-                var nodeParentRequirements = new List<(HKCard Parent, IReadOnlyList<ChildRequirement> Requirements)>();
-                foreach (var composition in compositions)
+                // Node level under each resolved aggregate occurrence. The same
+                // aggregate HK may be resolved under several Изделие chains —
+                // each occurrence gets its own node-level parent requirements.
+                var nodeParentRequirements = new List<(HKCard Parent, Guid ParentOccurrenceId, IReadOnlyList<ChildRequirement> Requirements)>();
+                if (aggregateMatch is not null)
                 {
-                    foreach (var aggregateDto in composition.Aggregates)
+                    foreach (var composition in compositions)
                     {
-                        if (aggregateMatch is null
-                            || !aggregateMatch.ResolvedByObject.TryGetValue(aggregateDto.AggregateId, out var aggregateHk))
-                            continue;
-                        nodeParentRequirements.Add((aggregateHk, NodesOf(aggregateDto)));
+                        foreach (var aggregateDto in composition.Aggregates)
+                        {
+                            if (!modelMatch.OccurrenceByParentAndObject.TryGetValue(root.Id, out var modelsUnderRoot)
+                                || !modelsUnderRoot.TryGetValue(composition.TargetObjectId, out var modelOccurrence))
+                                continue;
+                            var modelHk = modelMatch.ResolvedByParentAndObject[root.Id][composition.TargetObjectId];
+                            if (!aggregateMatch.OccurrenceByParentAndObject.TryGetValue(modelHk.Id, out var aggregatesUnderModel)
+                                || !aggregatesUnderModel.TryGetValue(aggregateDto.AggregateId, out var aggregateOccurrence))
+                                continue;
+                            nodeParentRequirements.Add(
+                                (aggregateMatch.ResolvedByParentAndObject[modelHk.Id][aggregateDto.AggregateId],
+                                 aggregateOccurrence, NodesOf(aggregateDto)));
+                        }
                     }
                 }
 
@@ -975,7 +1066,7 @@ public class IndividualCardService
 
     private async Task<LevelMatch> MatchChildLevelAsync(
         IndividualCardObjectLevel expectedChildLevel,
-        IReadOnlyList<(HKCard Parent, IReadOnlyList<ChildRequirement> Requirements)> parentRequirements,
+        IReadOnlyList<(HKCard Parent, Guid ParentOccurrenceId, IReadOnlyList<ChildRequirement> Requirements)> parentRequirements,
         Guid branchId,
         List<IndividualCardPreflightHKSourceDto> hkSources,
         List<IndividualCardNormativeGapDto> gaps,
@@ -988,11 +1079,12 @@ public class IndividualCardService
         var parentIds = parentRequirements.Select(p => p.Parent.Id).Distinct().ToList();
         var edges = await LoadComponentEdgesAsync(parentIds, ct);
 
-        foreach (var (parent, requirements) in parentRequirements)
+        foreach (var (parent, parentOccurrenceId, requirements) in parentRequirements)
         {
             var parentEdges = edges
                 .Where(e => e.Component.ParentHKCardId == parent.Id)
                 .ToList();
+            var resolvedForParent = match.ResolvedByParentAndObject[parent.Id] = new Dictionary<Guid, HKCard>();
 
             foreach (var requirement in requirements)
             {
@@ -1059,9 +1151,19 @@ public class IndividualCardService
                     continue;
                 }
 
-                if (match.ResolvedByObject.TryAdd(requirement.ObjectId, approved.Child))
+                if (resolvedForParent.TryAdd(requirement.ObjectId, approved.Child))
                 {
+                    // A tree position: every resolved source gets a fresh
+                    // occurrence id, so the same source HKCardId under another
+                    // parent — or even under the same parent in another
+                    // parentRequirements entry — stays a distinct tree position.
+                    var childOccurrenceId = Guid.NewGuid();
+                    if (!match.OccurrenceByParentAndObject.TryGetValue(parent.Id, out var underParent))
+                        underParent = match.OccurrenceByParentAndObject[parent.Id] = new Dictionary<Guid, Guid>();
+                    underParent[requirement.ObjectId] = childOccurrenceId;
+
                     match.Sources.Add(ToSourceDto(
+                        childOccurrenceId, parentOccurrenceId,
                         approved.Child, parent.Id, expectedChildLevel,
                         requirement.ObjectId, requirement.Code, requirement.Name,
                         approved.Component.SortOrder, isComplete: true));
@@ -1078,7 +1180,7 @@ public class IndividualCardService
             {
                 var extra = edge.Child;
                 var (extraCode, extraName) = GetHKObjectDisplay(extra, expectedChildLevel);
-                var allResolved = requirements.All(r => match.ResolvedByObject.ContainsKey(r.ObjectId));
+                var allResolved = resolvedForParent.Count == requirements.Count;
                 match.Gaps.Add(new IndividualCardNormativeGapDto(
                     allResolved
                         ? IndividualCardNormativeGapKind.InconsistentNormativeChain
@@ -1256,14 +1358,17 @@ public class IndividualCardService
             draft.CompositionSnapshots.Add(compositionSnapshot);
         }
 
-        // HK source chain: parents map only inside the same preflight tree.
-        var snapshotByHKCardId = new Dictionary<Guid, IndividualCardHKSourceSnapshot>();
+        // HK source chain: the same source HKCardId may appear in several
+        // branches, so parent mapping uses preflight occurrence identity —
+        // never the source HKCardId.
+        var snapshotByOccurrenceId = new Dictionary<Guid, IndividualCardHKSourceSnapshot>();
         foreach (var source in preflight.HKSources)
         {
             var snapshot = new IndividualCardHKSourceSnapshot
             {
                 Id = Guid.NewGuid(),
                 IndividualCardId = draft.Id,
+                PreflightOccurrenceId = source.PreflightOccurrenceId,
                 SourceHKCardId = source.HKCardId,
                 ObjectLevel = source.ObjectLevel,
                 SourceObjectId = source.ObjectId,
@@ -1277,21 +1382,22 @@ public class IndividualCardService
                 HKCardExpirationDate = source.ExpirationDate,
                 SortOrder = source.SortOrder,
                 CapturedAt = now,
+                IsComplete = source.IsComplete,
             };
-            snapshotByHKCardId[source.HKCardId] = snapshot;
+            snapshotByOccurrenceId[source.PreflightOccurrenceId] = snapshot;
             newSnapshots.Add(snapshot);
         }
 
         foreach (var source in preflight.HKSources)
         {
-            if (source.ParentHKCardId.HasValue
-                && snapshotByHKCardId.TryGetValue(source.ParentHKCardId.Value, out var parentSnapshot))
+            if (source.ParentPreflightOccurrenceId.HasValue
+                && snapshotByOccurrenceId.TryGetValue(source.ParentPreflightOccurrenceId.Value, out var parentSnapshot))
             {
-                snapshotByHKCardId[source.HKCardId].ParentHKSourceSnapshotId = parentSnapshot.Id;
+                snapshotByOccurrenceId[source.PreflightOccurrenceId].ParentHKSourceSnapshotId = parentSnapshot.Id;
             }
         }
 
-        foreach (var snapshot in snapshotByHKCardId.Values)
+        foreach (var snapshot in snapshotByOccurrenceId.Values)
             draft.HKSourceSnapshots.Add(snapshot);
 
         // Normative gaps: historical explanation of a partial Draft.
@@ -1422,7 +1528,7 @@ public class IndividualCardService
                     HKCardExpirationDate = s.HKCardExpirationDate,
                     SortOrder = s.SortOrder,
                     CapturedAt = s.CapturedAt,
-                    IsComplete = s.ParentHKSourceSnapshotId != null || s.SortOrder == 0,
+                    IsComplete = s.IsComplete,
                 }).ToList(),
             NormativeGaps = draft.NormativeGapSnapshots
                 .OrderBy(g => g.SortOrder)
@@ -1453,7 +1559,8 @@ public class IndividualCardService
 
         // Preflight is the only source of the allowed normative chain.
         var preflight = await BuildPreflightAsync(
-            new IndividualCardPreflightRequest(request.ObjectLevel, request.ObjectId, request.RootHKCardId), ct);
+            new IndividualCardPreflightRequest(request.ObjectLevel, request.ObjectId, request.RootHKCardId),
+            demandCreateDraftPermission: true, ct);
 
         if (preflight.SelectedRoot is null)
         {
@@ -1545,7 +1652,8 @@ public class IndividualCardService
     public async Task<IndividualCardDraftDto> RefreshDraftSourcesAsync(
         RefreshIndividualCardDraftSourcesRequest request, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
+        // Refresh is allowed to the Draft author or any IndividualCard.EditDraft
+        // holder (with branch scope); IndividualCard.CreateDraft is NOT required.
         var scope = await ResolveActorScopeAsync(ct);
 
         var draft = await _db.IndividualCards
@@ -1567,7 +1675,8 @@ public class IndividualCardService
 
         // Explicit command: a new preflight against current sources.
         var preflight = await BuildPreflightAsync(
-            new IndividualCardPreflightRequest(draft.ObjectLevel, objectId, request.RootHKCardId), ct);
+            new IndividualCardPreflightRequest(draft.ObjectLevel, objectId, request.RootHKCardId),
+            demandCreateDraftPermission: false, ct);
 
         // Rejects retain all previous snapshots unchanged.
         if (preflight.SelectedRoot is null)
@@ -1590,60 +1699,74 @@ public class IndividualCardService
             .Select(s => s.SourceHKCardId)
             .FirstOrDefault();
 
-        // Replace, never merge: delete the whole previous snapshot set with
-        // deterministic bulk deletes (children first), then detach the stale
-        // tracked graph so relationship fixup cannot interfere with the new set.
-        var oldCompositionIds = draft.CompositionSnapshots.Select(c => c.Id).ToList();
-        var oldAggregateIds = draft.CompositionSnapshots
-            .SelectMany(c => c.Aggregates)
-            .Select(a => a.Id)
-            .ToList();
+        // The whole replace workflow is atomic: validation happened above,
+        // so a failure after the first snapshot delete rolls everything back
+        // and the previous snapshot set is fully restored.
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            // Replace, never merge: delete the whole previous snapshot set with
+            // deterministic bulk deletes (children first), then detach the stale
+            // tracked graph so relationship fixup cannot interfere with the new set.
+            var oldCompositionIds = draft.CompositionSnapshots.Select(c => c.Id).ToList();
+            var oldAggregateIds = draft.CompositionSnapshots
+                .SelectMany(c => c.Aggregates)
+                .Select(a => a.Id)
+                .ToList();
 
-        await _db.IndividualCardNodeSnapshots
-            .Where(n => oldAggregateIds.Contains(n.IndividualCardAggregateSnapshotId))
-            .ExecuteDeleteAsync(ct);
-        await _db.IndividualCardAggregateSnapshots
-            .Where(a => oldCompositionIds.Contains(a.IndividualCardCompositionSnapshotId))
-            .ExecuteDeleteAsync(ct);
-        await _db.IndividualCardCompositionSnapshots
-            .Where(c => c.IndividualCardId == draft.Id)
-            .ExecuteDeleteAsync(ct);
-        await _db.IndividualCardHKSourceSnapshots
-            .Where(s => s.IndividualCardId == draft.Id)
-            .ExecuteDeleteAsync(ct);
-        await _db.IndividualCardNormativeGapSnapshots
-            .Where(s => s.IndividualCardId == draft.Id)
-            .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardNodeSnapshots
+                .Where(n => oldAggregateIds.Contains(n.IndividualCardAggregateSnapshotId))
+                .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardAggregateSnapshots
+                .Where(a => oldCompositionIds.Contains(a.IndividualCardCompositionSnapshotId))
+                .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardCompositionSnapshots
+                .Where(c => c.IndividualCardId == draft.Id)
+                .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardHKSourceSnapshots
+                .Where(s => s.IndividualCardId == draft.Id)
+                .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardNormativeGapSnapshots
+                .Where(s => s.IndividualCardId == draft.Id)
+                .ExecuteDeleteAsync(ct);
 
-        var staleSnapshots = new List<object>();
-        staleSnapshots.AddRange(draft.CompositionSnapshots.SelectMany(c => c.Aggregates).SelectMany(a => a.Nodes));
-        staleSnapshots.AddRange(draft.CompositionSnapshots.SelectMany(c => c.Aggregates));
-        staleSnapshots.AddRange(draft.CompositionSnapshots);
-        staleSnapshots.AddRange(draft.HKSourceSnapshots);
-        staleSnapshots.AddRange(draft.NormativeGapSnapshots);
-        foreach (var stale in staleSnapshots)
-            _db.Entry(stale).State = EntityState.Detached;
-        draft.CompositionSnapshots.Clear();
-        draft.HKSourceSnapshots.Clear();
-        draft.NormativeGapSnapshots.Clear();
+            var staleSnapshots = new List<object>();
+            staleSnapshots.AddRange(draft.CompositionSnapshots.SelectMany(c => c.Aggregates).SelectMany(a => a.Nodes));
+            staleSnapshots.AddRange(draft.CompositionSnapshots.SelectMany(c => c.Aggregates));
+            staleSnapshots.AddRange(draft.CompositionSnapshots);
+            staleSnapshots.AddRange(draft.HKSourceSnapshots);
+            staleSnapshots.AddRange(draft.NormativeGapSnapshots);
+            foreach (var stale in staleSnapshots)
+                _db.Entry(stale).State = EntityState.Detached;
+            draft.CompositionSnapshots.Clear();
+            draft.HKSourceSnapshots.Clear();
+            draft.NormativeGapSnapshots.Clear();
 
-        var now = _time.GetUtcNow().UtcDateTime;
-        CopyDraftSnapshots(draft, preflight, now);
+            var now = _time.GetUtcNow().UtcDateTime;
+            CopyDraftSnapshots(draft, preflight, now);
 
-        var actorId = _currentUser.GetRequiredUserId();
-        await _audit.CreateLogAsync(new AuditWriteRequest(
-            "IndividualCard", draft.Id.ToString(), "IndividualCard.SourcesRefreshed",
-            actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
-            Details: $"OldRootHKCardId={oldRootHKCardId}; NewRootHKCardId={preflight.SelectedRoot.HKCardId}; OldCompositionCount={oldCompositionCount}; NewCompositionCount={preflight.Compositions.Count}; OldHKSourceCount={oldHKSourceCount}; NewHKSourceCount={preflight.HKSources.Count}; OldNormativeGapCount={oldGapCount}; NewNormativeGapCount={preflight.NormativeGaps.Count}"), ct);
+            var actorId = _currentUser.GetRequiredUserId();
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "IndividualCard", draft.Id.ToString(), "IndividualCard.SourcesRefreshed",
+                actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
+                Details: $"OldRootHKCardId={oldRootHKCardId}; NewRootHKCardId={preflight.SelectedRoot.HKCardId}; OldCompositionCount={oldCompositionCount}; NewCompositionCount={preflight.Compositions.Count}; OldHKSourceCount={oldHKSourceCount}; NewHKSourceCount={preflight.HKSources.Count}; OldNormativeGapCount={oldGapCount}; NewNormativeGapCount={preflight.NormativeGaps.Count}"), ct);
 
-        await _db.SaveChangesAsync(ct);
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
 
         return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
     }
 
     public async Task DeleteDraftAsync(Guid individualCardId, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
+        // Deletion is allowed to the Draft author or any IndividualCard.EditDraft
+        // holder (with branch scope); IndividualCard.CreateDraft is NOT required.
         var scope = await ResolveActorScopeAsync(ct);
 
         var draft = await _db.IndividualCards

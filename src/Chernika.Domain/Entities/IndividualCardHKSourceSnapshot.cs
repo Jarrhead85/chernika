@@ -8,6 +8,10 @@ public class IndividualCardHKSourceSnapshot
     public Guid IndividualCardId { get; set; }
     public IndividualCard IndividualCard { get; set; } = null!;
 
+    /// <summary>Position identity in the resolved preflight tree; repeats of the
+    /// same SourceHKCardId in different branches are distinct occurrences.</summary>
+    public Guid PreflightOccurrenceId { get; set; }
+
     public Guid? ParentHKSourceSnapshotId { get; set; }
     public IndividualCardHKSourceSnapshot? Parent { get; set; }
     public ICollection<IndividualCardHKSourceSnapshot> Children { get; set; }
@@ -31,4 +35,7 @@ public class IndividualCardHKSourceSnapshot
 
     public int SortOrder { get; set; }
     public DateTime CapturedAt { get; set; }
+
+    /// <summary>Historical completeness flag captured from the preflight source.</summary>
+    public bool IsComplete { get; set; }
 }

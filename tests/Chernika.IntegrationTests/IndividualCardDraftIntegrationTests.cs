@@ -781,11 +781,11 @@ public class IndividualCardDraftIntegrationTests
         var dto = await s.IndividualCards.CreateDraftAsync(
             new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Node, nodeId));
 
-        // Fresh same-branch user with the EditDraft override (no leakage onto
-        // shared fixture users).
+        // Fresh same-branch user: EditDraft granted and CreateDraft explicitly
+        // denied — refresh must not require IndividualCard.CreateDraft.
         var editor = await CreateUserAsync(s, nameof(UserRole.HeadOfDepartment), _fixture.BranchA);
         SetUser(s, editor);
-        await GrantAsync(s, editor, PermissionCodes.IndividualCardCreateDraft);
+        await DenyAsync(s, editor, PermissionCodes.IndividualCardCreateDraft);
         await GrantAsync(s, editor, PermissionCodes.IndividualCardEditDraft);
 
         var refreshed = await s.IndividualCards.RefreshDraftSourcesAsync(
@@ -1064,7 +1064,7 @@ public class IndividualCardDraftIntegrationTests
 
         var editor = await CreateUserAsync(s, nameof(UserRole.HeadOfDepartment), _fixture.BranchA);
         SetUser(s, editor);
-        await GrantAsync(s, editor, PermissionCodes.IndividualCardCreateDraft);
+        await DenyAsync(s, editor, PermissionCodes.IndividualCardCreateDraft);
         await GrantAsync(s, editor, PermissionCodes.IndividualCardEditDraft);
 
         await s.IndividualCards.DeleteDraftAsync(dto.Id);
@@ -1144,5 +1144,180 @@ public class IndividualCardDraftIntegrationTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             s.IndividualCards.DeleteDraftAsync(dto.Id));
         Assert.Contains("Удалить можно только черновик", ex.Message);
+    }
+
+    // ── Corrective D3: occurrence identity, completeness, rollback ────────
+
+    [Fact]
+    public async Task CreateDraft_Complex_RepeatedAggregateUnderTwoModels_TwoOccurrences()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var complexId = await CreateComplexAsync(s);
+        var (modelAId, _) = await CreateEquipmentAsync(s);
+        var modelB = new EquipmentModel { Id = Guid.NewGuid(), Index = "EM-" + Suffix(), Name = "Изделие " + Suffix(), IsDeleted = false };
+        s.Db.EquipmentModels.Add(modelB);
+        await s.Db.SaveChangesAsync();
+        var sharedAggregate = await CreateAggregateAsync(s);
+        var node = await CreateNodeAsync(s);
+
+        // The complex holds two Изделия; both models require the SAME aggregate.
+        await CreateComplexCompositionAsync(s, complexId, (modelAId, 1), (modelB.Id, 2));
+        await CreateProductCompositionAsync(s, modelAId, (sharedAggregate, 1));
+        await CreateProductCompositionAsync(s, modelB.Id, (sharedAggregate, 1));
+        await CreateAggregateCompositionAsync(s, sharedAggregate, (node, 3));
+
+        var complexHK = await CreateHKAsync(s, IndividualCardObjectLevel.Complex, complexId, _fixture.BranchA);
+        var modelAHK = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelAId, _fixture.BranchA);
+        var modelBHK = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelB.Id, _fixture.BranchA);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, sharedAggregate, _fixture.BranchA);
+        var nodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, node, _fixture.BranchA);
+        await AddComponentAsync(s, complexHK, modelAHK);
+        await AddComponentAsync(s, complexHK, modelBHK);
+        await AddComponentAsync(s, modelAHK, aggregateHK);
+        await AddComponentAsync(s, modelBHK, aggregateHK);
+        await AddComponentAsync(s, aggregateHK, nodeHK);
+
+        var dto = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Complex, complexId));
+
+        Assert.False(dto.HasNormativeGaps);
+        // Root + 2 Изделия + 2 повторных агрегата + 2 повторных узла.
+        Assert.Equal(7, dto.HKSources.Count);
+
+        var modelSources = dto.HKSources.Where(h => h.ObjectLevel == IndividualCardObjectLevel.EquipmentModel).ToList();
+        Assert.Equal(2, modelSources.Count);
+        var aggregateSources = dto.HKSources.Where(h => h.SourceHKCardId == aggregateHK.Id).ToList();
+        Assert.Equal(2, aggregateSources.Count);
+        // Each repeated aggregate is a distinct tree position under its own Изделие.
+        Assert.NotEqual(aggregateSources[0].Id, aggregateSources[1].Id);
+        Assert.Equal(
+            new HashSet<Guid?>(modelSources.Select(m => (Guid?)m.Id)),
+            new HashSet<Guid?>(aggregateSources.Select(a => a.ParentHKSourceSnapshotId)));
+
+        var nodeSources = dto.HKSources.Where(h => h.SourceHKCardId == nodeHK.Id).ToList();
+        Assert.Equal(2, nodeSources.Count);
+        // Each repeated node is a distinct tree position under its own aggregate occurrence.
+        Assert.Equal(
+            new HashSet<Guid?>(aggregateSources.Select(a => (Guid?)a.Id)),
+            new HashSet<Guid?>(nodeSources.Select(n => n.ParentHKSourceSnapshotId)));
+
+        // Compositions: one per Изделие, with the complex-level Quantity.
+        var compositionB = dto.Compositions.Single(c => c.TargetObjectId == modelB.Id);
+        Assert.Equal(2, compositionB.Quantity);
+        Assert.Single(compositionB.Aggregates);
+        Assert.Equal(3, compositionB.Aggregates.Single().Nodes.Single().Quantity);
+        // Every source of a complete chain is complete.
+        Assert.All(dto.HKSources, h => Assert.True(h.IsComplete));
+    }
+
+    [Fact]
+    public async Task CreateDraft_PartialChain_SourceCompletenessPropagation()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (modelId, _) = await CreateEquipmentAsync(s);
+        var aggregate = await CreateAggregateAsync(s);
+        var node = await CreateNodeAsync(s);
+        await CreateProductCompositionAsync(s, modelId, (aggregate, 1));
+        await CreateAggregateCompositionAsync(s, aggregate, (node, 1));
+        var root = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregate, _fixture.BranchA);
+        await AddComponentAsync(s, root, aggregateHK);
+        // Node HK link missing → the chain is partial.
+
+        var dto = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+
+        Assert.True(dto.HasNormativeGaps);
+        // The aggregate position is broken (its child is missing) and the root
+        // inherits incompleteness from it.
+        var rootSource = dto.HKSources.Single(h => h.SourceHKCardId == root.Id);
+        var aggregateSource = dto.HKSources.Single(h => h.SourceHKCardId == aggregateHK.Id);
+        Assert.False(aggregateSource.IsComplete);
+        Assert.False(rootSource.IsComplete);
+    }
+
+    [Fact]
+    public async Task Refresh_IsComplete_PartialToCompletePropagation()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (modelId, _) = await CreateEquipmentAsync(s);
+        var aggregate = await CreateAggregateAsync(s);
+        var node = await CreateNodeAsync(s);
+        await CreateProductCompositionAsync(s, modelId, (aggregate, 1));
+        await CreateAggregateCompositionAsync(s, aggregate, (node, 1));
+        var root = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregate, _fixture.BranchA);
+        await AddComponentAsync(s, root, aggregateHK);
+        // No node link → partial Draft.
+
+        var dto = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+        Assert.True(dto.HasNormativeGaps);
+
+        // Close the gap and refresh: every source becomes complete.
+        var nodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, node, _fixture.BranchA);
+        await AddComponentAsync(s, aggregateHK, nodeHK);
+
+        var refreshed = await s.IndividualCards.RefreshDraftSourcesAsync(
+            new RefreshIndividualCardDraftSourcesRequest(dto.Id));
+
+        Assert.False(refreshed.HasNormativeGaps);
+        Assert.Empty(refreshed.NormativeGaps);
+        Assert.All(refreshed.HKSources, h => Assert.True(h.IsComplete));
+    }
+
+    [Fact]
+    public async Task Refresh_InjectedFailureMidReplace_RollsBackAndRetainsOldSnapshots()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (modelId, _) = await CreateEquipmentAsync(s);
+        var aggregate = await CreateAggregateAsync(s);
+        var node = await CreateNodeAsync(s);
+        await CreateProductCompositionAsync(s, modelId, (aggregate, 1));
+        await CreateAggregateCompositionAsync(s, aggregate, (node, 1));
+        var root = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregate, _fixture.BranchA);
+        var nodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, node, _fixture.BranchA);
+        await AddComponentAsync(s, root, aggregateHK);
+        await AddComponentAsync(s, aggregateHK, nodeHK);
+
+        var dto = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+        Assert.Equal(3, dto.HKSources.Count);
+        Assert.Empty(dto.NormativeGaps);
+
+        // Change the sources, then make the composition-snapshot delete fail
+        // mid-replace: the whole refresh (including the earlier node/aggregate
+        // snapshot deletes) must roll back and keep the old snapshot set.
+        var secondNode = await CreateNodeAsync(s);
+        var secondNodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, secondNode, _fixture.BranchA);
+        await AddComponentAsync(s, aggregateHK, secondNodeHK);
+
+        try
+        {
+            FailingCommandInterceptor.ArmAt("IndividualCardCompositionSnapshots");
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                s.IndividualCards.RefreshDraftSourcesAsync(
+                    new RefreshIndividualCardDraftSourcesRequest(dto.Id)));
+            Assert.Contains("Injected test failure", ex.Message);
+            Assert.True(FailingCommandInterceptor.Fired, "Interceptor did not fire.");
+        }
+        finally
+        {
+            FailingCommandInterceptor.Disarm();
+        }
+
+        // The old snapshot set is fully restored: 3 HK sources and the original
+        // composition with exactly one node — the second node never appears.
+        var reloaded = await s.IndividualCards.GetDraftByIdAsync(dto.Id);
+        Assert.NotNull(reloaded);
+        Assert.Equal(3, reloaded!.HKSources.Count);
+        Assert.DoesNotContain(reloaded.HKSources, h => h.SourceHKCardId == secondNodeHK.Id);
+        Assert.Equal(1, reloaded.Compositions.Single().Aggregates.Single().Nodes.Count);
+        Assert.Equal(0, await CountAuditsAsync(s, dto.Id, "IndividualCard.SourcesRefreshed"));
     }
 }
