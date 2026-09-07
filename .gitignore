@@ -1,7 +1,11 @@
 # Temporary & log files
+logs/
+TestResults/
 run_err*.txt
 *stderr.txt
 *stdout.txt
+devapp.out
+devapp.err
 start_app.cmd
 test_run.ps1
 *.docx

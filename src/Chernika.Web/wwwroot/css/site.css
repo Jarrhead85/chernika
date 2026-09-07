@@ -81,7 +81,7 @@ body{
 .searchTop{width:min(560px,48vw);position:relative}
 .searchTopInner{
   display:flex;background:rgba(12,23,48,.55);
-  border:1px solid var(--line);border-radius:999px;overflow:hidden;box-shadow:0 12px 24px rgba(0,0,0,.18);
+  border:1px solid var(--line);border-radius:999px;overflow:hidden;
 }
 [data-theme="light"] .searchTopInner{background:rgba(255,255,255,.90)}
 .searchTop input{

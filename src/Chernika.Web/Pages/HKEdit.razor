@@ -22,8 +22,13 @@
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
-            <h2>@(IsNew ? "Создание новой ХК" : "Редактирование ХК")</h2>
+            <h2>@(IsNew ? "Создание новой ХК" : (canEdit ? "Редактирование ХК" : "Просмотр ХК"))</h2>
+            <div class="hint mono">@card.Code</div>
             <div class="hint">@card.Version</div>
+            @if (!IsNew)
+            {
+                <StatusBadge Status="@card.Status" />
+            }
         </div>
         <div class="panelBody">
             @if (_loading)
@@ -44,7 +49,7 @@
                             }
                             else
                             {
-                                <span>@(card.RequestOrganization ?? "")</span>
+                                <div class="readonlyValue">@(card.RequestOrganization ?? "")</div>
                             }
                         </div>
                         <div class="field">
@@ -55,7 +60,7 @@
                             }
                             else
                             {
-                                <span>@(card.RequestSenderFullName ?? "")</span>
+                                <div class="readonlyValue">@(card.RequestSenderFullName ?? "")</div>
                             }
                         </div>
                         <div class="field">
@@ -66,12 +71,12 @@
                             }
                             else
                             {
-                                <span>@card.RequestReceivedDate?.ToString("dd.MM.yyyy")</span>
+                                <div class="readonlyValue">@(card.RequestReceivedDate?.ToString("dd.MM.yyyy") ?? "")</div>
                             }
                         </div>
                         <div class="field hk-letter-numbers-field">
-                            <label>Номер письма</label>
-                            <div class="hk-letter-numbers" role="group" aria-label="Номера входящего и исходящего писем">
+                            <label>Номер документа</label>
+                            <div class="hk-letter-numbers" role="group" aria-label="Номера входящего и исходящего документов">
                                 <div class="hk-letter-number-part">
                                     <label class="sr-only" for="hk-incoming-letter">Входящий номер</label>
                                     @if (canEdit)
@@ -80,7 +85,7 @@
                                     }
                                     else
                                     {
-                                        <span>@(card.IncomingLetterNumber ?? "")</span>
+                                        <div class="readonlyValue">@(card.IncomingLetterNumber ?? "")</div>
                                     }
                                 </div>
                                 <div class="hk-letter-number-part">
@@ -91,7 +96,7 @@
                                     }
                                     else
                                     {
-                                        <span>@(card.OutgoingLetterNumber ?? "")</span>
+                                        <div class="readonlyValue">@(card.OutgoingLetterNumber ?? "")</div>
                                     }
                                 </div>
                             </div>
@@ -116,6 +121,10 @@
                                         }
                                     }
                                 </div>
+                            }
+                            else if (!canEdit)
+                            {
+                                <div class="readonlyValue"></div>
                             }
                             @if (canEdit)
                             {
@@ -156,6 +165,10 @@
                                             <button type="button" class="btn primary" disabled="@(_pendingFile == null || _uploading)" @onclick="() => UploadAttachment()">@(_uploading ? "Загрузка..." : "Загрузить")</button>
                                         }
                                     </div>
+                                }
+                                else if (!canEdit)
+                                {
+                                    <div class="readonlyValue"></div>
                                 }
                             }
                             else
@@ -202,7 +215,7 @@
                             }
                             else
                             {
-                                <p style="margin:4px 0 0">@card.RequestDetails</p>
+                                <div class="readonlyValue readonlyValueMultiline">@(card.RequestDetails ?? "")</div>
                             }
                         </div>
                         <div class="field">
@@ -265,7 +278,7 @@
                             }
                             else
                             {
-                                <span class="field-select" style="cursor:default;display:block;opacity:.7">@(objectEntity ?? "")</span>
+                                <div class="readonlyValue">@(objectEntity ?? "")</div>
                             }
                             @if (!string.IsNullOrEmpty(_activeCardWarning) && _existingActiveCard != null)
                             {
@@ -283,7 +296,7 @@
                             }
                             else
                             {
-                                <span>@(string.IsNullOrEmpty(card.Code) ? "—" : card.Code)</span>
+                                <div class="readonlyValue">@(card.Code ?? "")</div>
                             }
                         </div>
                     </div>
@@ -291,22 +304,50 @@
                     <div class="hk-form-row hk-form-row--description">
                         <div class="field">
                             <label>Назначение ХК</label>
-                            <InputTextArea @bind-Value="card.Purpose" class="fieldInput hk-resizable-textarea" />
+                            @if (canEdit)
+                            {
+                                <InputTextArea @bind-Value="card.Purpose" class="fieldInput hk-resizable-textarea" />
+                            }
+                            else
+                            {
+                                <div class="readonlyValue readonlyValueMultiline">@(card.Purpose ?? "")</div>
+                            }
                         </div>
                         <div class="field">
                             <label>Примечание</label>
-                            <InputTextArea @bind-Value="card.Notes" class="fieldInput hk-resizable-textarea" />
+                            @if (canEdit)
+                            {
+                                <InputTextArea @bind-Value="card.Notes" class="fieldInput hk-resizable-textarea" />
+                            }
+                            else
+                            {
+                                <div class="readonlyValue readonlyValueMultiline">@(card.Notes ?? "")</div>
+                            }
                         </div>
                     </div>
 
                     <div class="hk-form-row hk-form-row--dates">
                         <div class="field">
                             <label>Дата начала действия</label>
-                            <InputDate @bind-Value="card.EffectiveDate" class="fieldInput" />
+                            @if (canEdit)
+                            {
+                                <InputDate @bind-Value="card.EffectiveDate" class="fieldInput" />
+                            }
+                            else
+                            {
+                                <div class="readonlyValue">@(card.EffectiveDate?.ToString("dd.MM.yyyy") ?? "")</div>
+                            }
                         </div>
                         <div class="field">
                             <label>Дата окончания действия</label>
-                            <InputDate @bind-Value="card.ExpirationDate" AdditionalAttributes="@ExpirationDateAttributes()" />
+                            @if (canEdit)
+                            {
+                                <InputDate @bind-Value="card.ExpirationDate" AdditionalAttributes="@ExpirationDateAttributes()" />
+                            }
+                            else
+                            {
+                                <div class="readonlyValue">@(card.ExpirationDate?.ToString("dd.MM.yyyy") ?? "")</div>
+                            }
                         </div>
                     </div>
 
@@ -656,8 +697,11 @@
                             }
                         </div>
                         <div class="hk-form-actions-buttons">
-                            <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
-                            <button type="submit" class="btn primary" disabled="@(!canEdit && !IsNew)">@(IsNew ? "Сохранить черновик" : "Сохранить")</button>
+                            @if (canEdit || IsNew)
+                            {
+                                <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
+                                <button type="submit" class="btn primary" disabled="@(!canEdit && !IsNew)">@(IsNew ? "Сохранить черновик" : "Сохранить")</button>
+                            }
                         </div>
                     </div>
 

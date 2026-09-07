@@ -52,12 +52,15 @@
     min-width: 0;
 }
 
-.hk-request-details-field .fieldInput {
+/* ::deep: textarea рендерится компонентом InputTextArea и не получает
+   scope-атрибут; без него правило не применяется и глобальный
+   .field textarea (min-height: 92px) делает поле выше соседей. */
+.hk-request-details-field ::deep .fieldInput {
     height: var(--hk-control-height);
     min-height: var(--hk-control-height);
-    max-height: var(--hk-control-height);
+    max-height: 220px;
     line-height: 1.2;
-    resize: none;
+    resize: vertical;
     overflow-y: auto;
     padding-top: 8px;
     padding-bottom: 8px;
@@ -657,4 +660,37 @@
     .hk-form-actions-buttons {
         margin-left: 0;
     }
+}
+
+/* ---- Read-only просмотр ХК ---- */
+
+.readonlyValue {
+    box-sizing: border-box;
+    min-height: var(--hk-control-height, 38px);
+    display: flex;
+    align-items: center;
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    background: var(--panel2);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.4;
+    cursor: default;
+    overflow-wrap: anywhere;
+}
+
+.readonlyValueMultiline {
+    min-height: 74px;
+    align-items: flex-start;
+    white-space: pre-wrap;
+}
+
+/* «Реквизиты» в режиме просмотра: базовая высота как у остальных
+   полей строки (и как в режиме редактирования), ручка сохранена. */
+.hk-request-details-field .readonlyValue {
+    min-height: var(--hk-control-height);
+    max-height: 220px;
+    resize: vertical;
+    overflow-y: auto;
 }
