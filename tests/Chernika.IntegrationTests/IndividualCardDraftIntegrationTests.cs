@@ -1320,4 +1320,147 @@ public class IndividualCardDraftIntegrationTests
         Assert.Equal(1, reloaded.Compositions.Single().Aggregates.Single().Nodes.Count);
         Assert.Equal(0, await CountAuditsAsync(s, dto.Id, "IndividualCard.SourcesRefreshed"));
     }
+
+    // ── Micro-fix D3: author rights and migration backfill ────────────────
+
+    [Fact]
+    public async Task Refresh_AuthorAfterCreateDraftRevoked_Succeeds()
+    {
+        await using var s = Scope();
+        // Fresh author: the NormAdmin role template includes CreateDraft, but
+        // it is explicitly revoked after creation — an author must keep
+        // refresh access to their own Draft without CreateDraft or EditDraft.
+        var author = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchA);
+        SetUser(s, author);
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKAsync(s, IndividualCardObjectLevel.Node, nodeId, _fixture.BranchA);
+
+        var dto = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Node, nodeId));
+
+        await DenyAsync(s, author, PermissionCodes.IndividualCardCreateDraft);
+
+        var refreshed = await s.IndividualCards.RefreshDraftSourcesAsync(
+            new RefreshIndividualCardDraftSourcesRequest(dto.Id));
+
+        Assert.Equal(dto.Id, refreshed.Id);
+        Assert.Equal(1, await CountAuditsAsync(s, dto.Id, "IndividualCard.SourcesRefreshed"));
+    }
+
+    [Fact]
+    public async Task DeleteDraft_AuthorAfterCreateDraftRevoked_Succeeds()
+    {
+        await using var s = Scope();
+        var author = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchA);
+        SetUser(s, author);
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKAsync(s, IndividualCardObjectLevel.Node, nodeId, _fixture.BranchA);
+
+        var dto = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Node, nodeId));
+
+        await DenyAsync(s, author, PermissionCodes.IndividualCardCreateDraft);
+
+        await s.IndividualCards.DeleteDraftAsync(dto.Id);
+
+        Assert.Equal(0, await s.Db.IndividualCards.CountAsync(c => c.Id == dto.Id));
+        Assert.Equal(1, await CountAuditsAsync(s, dto.Id, "IndividualCard.DraftDeleted"));
+    }
+
+    [Fact]
+    public async Task MigrationBackfill_OccurrenceAndCompletenessRules()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+
+        // Complete Draft: full chain, no normative gaps.
+        var (modelId, _) = await CreateEquipmentAsync(s);
+        var aggregate = await CreateAggregateAsync(s);
+        var node = await CreateNodeAsync(s);
+        await CreateProductCompositionAsync(s, modelId, (aggregate, 1));
+        await CreateAggregateCompositionAsync(s, aggregate, (node, 1));
+        var root = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregate, _fixture.BranchA);
+        var nodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, node, _fixture.BranchA);
+        await AddComponentAsync(s, root, aggregateHK);
+        await AddComponentAsync(s, aggregateHK, nodeHK);
+        var completeDraft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+        Assert.False(completeDraft.HasNormativeGaps);
+
+        // Partial Draft: the aggregate composition exists, but its node HK link
+        // is missing → a normative gap snapshot is attached to the aggregate HK
+        // and the chain snapshots are marked incomplete.
+        var (model2Id, _) = await CreateEquipmentAsync(s);
+        var aggregate2 = await CreateAggregateAsync(s);
+        var node2 = await CreateNodeAsync(s);
+        await CreateProductCompositionAsync(s, model2Id, (aggregate2, 1));
+        await CreateAggregateCompositionAsync(s, aggregate2, (node2, 1));
+        var root2 = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, model2Id, _fixture.BranchA);
+        var aggregate2HK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregate2, _fixture.BranchA);
+        await AddComponentAsync(s, root2, aggregate2HK);
+        var partialDraft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, model2Id));
+        Assert.True(partialDraft.HasNormativeGaps);
+        Assert.Equal(1, await s.Db.IndividualCardNormativeGapSnapshots.CountAsync(g => g.IndividualCardId == partialDraft.Id));
+        Assert.False(partialDraft.HKSources.Single(h => h.SourceHKCardId == aggregate2HK.Id).IsComplete);
+
+        // Simulate legacy pre-corrective rows: zero occurrence ids and
+        // IsComplete = false (the flag was not materialised before).
+        foreach (var draftId in new[] { completeDraft.Id, partialDraft.Id })
+        {
+            await s.Db.IndividualCardHKSourceSnapshots
+                .Where(x => x.IndividualCardId == draftId)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(x => x.PreflightOccurrenceId, x => Guid.Empty)
+                    .SetProperty(x => x.IsComplete, x => false));
+        }
+
+        // Run the exact SQL of the corrective D3 migration (its migration path).
+        await s.Db.Database.ExecuteSqlRawAsync("""
+            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+            UPDATE "IndividualCardHKSourceSnapshots"
+            SET "PreflightOccurrenceId" = gen_random_uuid()
+            WHERE "PreflightOccurrenceId" = '00000000-0000-0000-0000-000000000000';
+            """);
+        await s.Db.Database.ExecuteSqlRawAsync("""
+            UPDATE "IndividualCardHKSourceSnapshots" s
+            SET "IsComplete" = true
+            WHERE s."IsComplete" = false
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM "IndividualCardNormativeGapSnapshots" g
+                  WHERE g."IndividualCardId" = s."IndividualCardId"
+              );
+            """);
+
+        // Complete Draft (no gaps): occurrences are unique and non-zero;
+        // historical sources are considered complete. AsNoTracking: assertions
+        // must reflect the actual DB state produced by the migration SQL, not
+        // the change-tracker's stale snapshots.
+        var completeSnapshots = await s.Db.IndividualCardHKSourceSnapshots
+            .AsNoTracking()
+            .Where(x => x.IndividualCardId == completeDraft.Id)
+            .ToListAsync();
+        Assert.NotEmpty(completeSnapshots);
+        Assert.All(completeSnapshots, x => Assert.NotEqual(Guid.Empty, x.PreflightOccurrenceId));
+        Assert.Equal(
+            completeSnapshots.Count,
+            completeSnapshots.Select(x => x.PreflightOccurrenceId).Distinct().Count());
+        Assert.All(completeSnapshots, x => Assert.True(x.IsComplete));
+
+        // Partial Draft (with gaps): occurrences are non-zero and unique, but
+        // IsComplete stays false — the broken position is not recovered.
+        var partialSnapshots = await s.Db.IndividualCardHKSourceSnapshots
+            .AsNoTracking()
+            .Where(x => x.IndividualCardId == partialDraft.Id)
+            .ToListAsync();
+        Assert.NotEmpty(partialSnapshots);
+        Assert.All(partialSnapshots, x => Assert.NotEqual(Guid.Empty, x.PreflightOccurrenceId));
+        Assert.Equal(
+            partialSnapshots.Count,
+            partialSnapshots.Select(x => x.PreflightOccurrenceId).Distinct().Count());
+        Assert.All(partialSnapshots, x => Assert.False(x.IsComplete));
+    }
 }

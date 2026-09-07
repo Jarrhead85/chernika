@@ -25,14 +25,25 @@ public sealed class FailingCommandInterceptor : DbCommandInterceptor
     }
 
     private static readonly AsyncLocal<ArmedState?> Armed = new();
+    private static readonly AsyncLocal<bool> WasFired = new();
 
-    /// <summary>True after the interceptor injected its failure (per test).</summary>
-    public static bool Fired => Armed.Value?.Fired ?? false;
+    /// <summary>True after the interceptor injected its failure (per test).
+    /// Reads the armed state first: an AsyncLocal mutation made inside the
+    /// awaited service call does not flow back into the test continuation,
+    /// while the shared ArmedState object does.</summary>
+    public static bool Fired => Armed.Value?.Fired ?? WasFired.Value;
 
-    public static void ArmAt(string sqlContains, int occurrence = 1) =>
+    public static void ArmAt(string sqlContains, int occurrence = 1)
+    {
+        WasFired.Value = false;
         Armed.Value = new ArmedState { SqlContains = sqlContains, FailAtOccurrence = occurrence };
+    }
 
-    public static void Disarm() => Armed.Value = null;
+    public static void Disarm()
+    {
+        Armed.Value = null;
+        WasFired.Value = false;
+    }
 
     private void MaybeFail(DbCommand command)
     {
@@ -42,7 +53,9 @@ public sealed class FailingCommandInterceptor : DbCommandInterceptor
         if (++armed.SeenMatches < armed.FailAtOccurrence)
             return;
         armed.Fired = true;
-        Armed.Value = null;
+        WasFired.Value = true;
+        // Deliberately NOT nulling Armed here: the rollback test must still be
+        // able to read Fired after the exception unwinds; Disarm() clears it.
         throw new InvalidOperationException("Injected test failure.");
     }
 
