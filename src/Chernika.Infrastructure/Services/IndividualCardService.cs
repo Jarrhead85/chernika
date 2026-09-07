@@ -2075,6 +2075,371 @@ public class IndividualCardService
         return BuildCalculationDto(draft);
     }
 
+    // ── D5: new version, comparison, archive ───────────────────────────────
+
+    private async Task<IndividualCard?> LoadIndividualCardWithSnapshotsAsync(Guid id, CancellationToken ct) =>
+        await _db.IndividualCards.AsNoTracking()
+            .Include(d => d.Complex)
+            .Include(d => d.EquipmentModel)
+            .Include(d => d.Aggregate)
+            .Include(d => d.Node)
+            .Include(d => d.EquipmentInstance)
+            .Include(d => d.CompositionSnapshots).ThenInclude(cs => cs.Aggregates)
+            .Include(d => d.CompositionSnapshots).ThenInclude(cs => cs.Aggregates).ThenInclude(a => a.Nodes)
+            .Include(d => d.HKSourceSnapshots)
+            .Include(d => d.NormativeGapSnapshots)
+            .Include(d => d.Items).ThenInclude(i => i.MaterialSnapshots)
+            .Include(d => d.CoefficientSnapshots)
+            .Include(d => d.CalculationProblemSnapshots)
+            .FirstOrDefaultAsync(d => d.Id == id, ct);
+
+    private async Task<IndividualCard> LoadFormedSourceAsync(Guid id, ActorScope scope, CancellationToken ct)
+    {
+        var source = await LoadIndividualCardWithSnapshotsAsync(id, ct)
+            ?? throw new InvalidOperationException("ИК не найдена.");
+
+        if (source.Status != IndividualCardStatus.Formed)
+            throw new InvalidOperationException("Новая версия создаётся только для сформированной ИК.");
+
+        if (!scope.IsSystemAdmin && source.BranchId != scope.BranchId)
+            throw new UnauthorizedAccessException("Нет доступа к ИК другого филиала.");
+
+        return source;
+    }
+
+    public async Task<IndividualCardVersionComparisonDto> BuildNewVersionComparisonAsync(
+        IndividualCardVersionPreflightRequest request, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateVersion, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var source = await LoadFormedSourceAsync(request.SourceIndividualCardId, scope, ct);
+        var objectId = GetTargetObjectId(source)
+            ?? throw new InvalidOperationException("ИК повреждена: не указан объект цели.");
+
+        // Fresh preflight of CURRENT sources — the source card's own snapshots
+        // are the "was" side, live sources are the "now" side.
+        var preflight = await BuildPreflightAsync(
+            new IndividualCardPreflightRequest(source.ObjectLevel, objectId, request.RootHKCardId),
+            demandCreateDraftPermission: false, ct);
+
+        var compositionChanges = BuildCompositionDiff(source, preflight);
+        var hkChanges = BuildHKSourceDiff(source, preflight);
+
+        var previousTotals = source.Items
+            .SelectMany(i => i.MaterialSnapshots.Where(m => m.Category == GsmCategory.Primary)
+                .Select(m => (Item: i, Material: m)))
+            .GroupBy(x => (x.Material.MaterialName, x.Material.Gost, x.Material.UnitOfMeasure))
+            .OrderBy(g => g.Key.MaterialName)
+            .Select(g => new IndividualCardPrimaryTotalComparisonDto(
+                g.Key.MaterialName,
+                g.Key.Gost ?? string.Empty,
+                g.Key.UnitOfMeasure,
+                g.Sum(x => x.Item.CalculatedVolume)))
+            .ToList();
+
+        return new IndividualCardVersionComparisonDto(
+            source.Id,
+            source.Code,
+            source.Version,
+            IndividualCardDisplay.ObjectLevel(source.ObjectLevel),
+            IndividualCardDisplaySourceObjectName(source),
+            source.BranchId,
+            preflight.RootState,
+            preflight.RootCandidates,
+            preflight.SelectedRoot,
+            preflight.SelectedRoot is not null && preflight.SelectedRoot.BranchId == source.BranchId,
+            preflight.NormativeGaps,
+            compositionChanges,
+            hkChanges,
+            source.CoefficientSnapshots.OrderBy(s => s.SortOrder)
+                .Select(s => new IndividualCardCoefficientSnapshotDto(
+                    s.Id, s.SourceCoefficientId, s.SourceCoefficientTypeId, s.CoefficientTypeName,
+                    s.CoefficientName, s.Value, s.ConditionDescription, s.NormativeBasis, s.SortOrder))
+                .ToList(),
+            source.Items.Any(),
+            previousTotals);
+    }
+
+    private static string IndividualCardDisplaySourceObjectName(IndividualCard card) => card.ObjectLevel switch
+    {
+        IndividualCardObjectLevel.Complex => card.Complex?.Name ?? string.Empty,
+        IndividualCardObjectLevel.EquipmentModel => card.EquipmentModel?.Name ?? string.Empty,
+        IndividualCardObjectLevel.Aggregate => card.Aggregate?.Name ?? string.Empty,
+        IndividualCardObjectLevel.Node => card.Node?.Name ?? string.Empty,
+        IndividualCardObjectLevel.EquipmentInstance => card.EquipmentInstance?.Name ?? string.Empty,
+        _ => string.Empty,
+    };
+
+    private static string CompositionWhatForLevel(IndividualCardObjectLevel level) => level switch
+    {
+        IndividualCardObjectLevel.Complex => "Изделие",
+        IndividualCardObjectLevel.EquipmentModel => "Агрегат",
+        IndividualCardObjectLevel.Aggregate => "Узел",
+        _ => "Состав",
+    };
+
+    private static string DescribeComposition(IndividualCardCompositionSnapshot cs) =>
+        $"состав {cs.SourceCompositionVersion} ×{cs.Quantity}, агрегатов: {cs.Aggregates.Count}";
+
+    private static string DescribePreflightComposition(IndividualCardPreflightCompositionDto dto) =>
+        $"состав {dto.CompositionVersion} ×{dto.Quantity}, агрегатов: {dto.Aggregates.Count}";
+
+    private static List<IndividualCardDiffEntryDto> BuildCompositionDiff(
+        IndividualCard source, IndividualCardPreflightResult preflight)
+    {
+        var changes = new List<IndividualCardDiffEntryDto>();
+
+        var beforeByTarget = source.CompositionSnapshots
+            .GroupBy(cs => cs.TargetObjectId)
+            .ToDictionary(g => g.Key, g => g.First());
+        var afterByTarget = preflight.Compositions
+            .GroupBy(c => c.TargetObjectId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        foreach (var targetId in beforeByTarget.Keys.Union(afterByTarget.Keys))
+        {
+            var before = beforeByTarget.GetValueOrDefault(targetId);
+            var after = afterByTarget.GetValueOrDefault(targetId);
+            var what = before is not null ? CompositionWhatForLevel(before.SourceLevel) : CompositionWhatForLevel(after!.SourceLevel);
+            var name = before?.TargetObjectCode ?? after!.TargetObjectCode;
+
+            if (before is null)
+            {
+                changes.Add(new IndividualCardDiffEntryDto("Added", what, name, null, DescribePreflightComposition(after!)));
+                continue;
+            }
+            if (after is null)
+            {
+                changes.Add(new IndividualCardDiffEntryDto("Removed", what, name, DescribeComposition(before), null));
+                continue;
+            }
+
+            changes.Add(new IndividualCardDiffEntryDto(
+                before.SourceCompositionId == after.CompositionId
+                    && before.SourceCompositionVersion == after.CompositionVersion
+                    && before.Quantity == after.Quantity
+                    ? "Unchanged" : "Changed",
+                what, name, DescribeComposition(before), DescribePreflightComposition(after)));
+
+            // Aggregate quantities (было / стало).
+            var beforeAggregates = before.Aggregates.GroupBy(a => a.AggregateId).ToDictionary(g => g.Key, g => g.First());
+            var afterAggregates = after.Aggregates.GroupBy(a => a.AggregateId).ToDictionary(g => g.Key, g => g.First());
+            foreach (var aggregateId in beforeAggregates.Keys.Union(afterAggregates.Keys))
+            {
+                var b = beforeAggregates.GetValueOrDefault(aggregateId);
+                var a = afterAggregates.GetValueOrDefault(aggregateId);
+                var aggregateName = b?.AggregateCode ?? a!.Code;
+                if (b is null)
+                    changes.Add(new IndividualCardDiffEntryDto("Added", "Агрегат", aggregateName, null, $"×{a!.Quantity}"));
+                else if (a is null)
+                    changes.Add(new IndividualCardDiffEntryDto("Removed", "Агрегат", aggregateName, $"×{b.Quantity}", null));
+                else
+                    changes.Add(new IndividualCardDiffEntryDto(
+                        b.Quantity == a.Quantity ? "Unchanged" : "Changed",
+                        "Агрегат", aggregateName, $"×{b.Quantity}", $"×{a.Quantity}"));
+
+                // Node quantities under the aggregate occurrence path.
+                var beforeNodes = (b?.Nodes ?? Enumerable.Empty<IndividualCardNodeSnapshot>())
+                    .GroupBy(n => n.NodeId).ToDictionary(g => g.Key, g => g.First());
+                var afterNodes = (a?.Nodes ?? Enumerable.Empty<IndividualCardPreflightNodeDto>())
+                    .GroupBy(n => n.NodeId).ToDictionary(g => g.Key, g => g.First());
+                foreach (var nodeId in beforeNodes.Keys.Union(afterNodes.Keys))
+                {
+                    var bn = beforeNodes.GetValueOrDefault(nodeId);
+                    var an = afterNodes.GetValueOrDefault(nodeId);
+                    var nodeName = bn?.NodeCode ?? an!.Code;
+                    if (bn is null)
+                        changes.Add(new IndividualCardDiffEntryDto("Added", "Узел", nodeName, null, $"×{an!.Quantity}"));
+                    else if (an is null)
+                        changes.Add(new IndividualCardDiffEntryDto("Removed", "Узел", nodeName, $"×{bn.Quantity}", null));
+                    else
+                        changes.Add(new IndividualCardDiffEntryDto(
+                            bn.Quantity == an.Quantity ? "Unchanged" : "Changed",
+                            "Узел", nodeName, $"×{bn.Quantity}", $"×{an.Quantity}"));
+                }
+            }
+        }
+
+        return changes;
+    }
+
+    /// <summary>HK source diff keyed by the tree position (ObjectId path),
+    /// so the same source HKCardId in different branches is compared per
+    /// occurrence context.</summary>
+    private static List<IndividualCardDiffEntryDto> BuildHKSourceDiff(
+        IndividualCard source, IndividualCardPreflightResult preflight)
+    {
+        var changes = new List<IndividualCardDiffEntryDto>();
+
+        var sourceBySnapshotId = source.HKSourceSnapshots.ToDictionary(s => s.Id);
+        string SourceKey(IndividualCardHKSourceSnapshot s)
+        {
+            var parts = new List<string> { $"{(int)s.ObjectLevel}:{s.SourceObjectId}" };
+            var cursor = s.ParentHKSourceSnapshotId;
+            while (cursor.HasValue && sourceBySnapshotId.TryGetValue(cursor.Value, out var parent))
+            {
+                parts.Insert(0, $"{(int)parent.ObjectLevel}:{parent.SourceObjectId}");
+                cursor = parent.ParentHKSourceSnapshotId;
+            }
+            return string.Join(">", parts);
+        }
+
+        var preflightByOccurrence = preflight.HKSources.ToDictionary(s => s.PreflightOccurrenceId);
+        string AfterKey(IndividualCardPreflightHKSourceDto s)
+        {
+            var parts = new List<string> { $"{(int)s.ObjectLevel}:{s.ObjectId}" };
+            var cursor = s.ParentPreflightOccurrenceId;
+            while (cursor.HasValue && preflightByOccurrence.TryGetValue(cursor.Value, out var parent))
+            {
+                parts.Insert(0, $"{(int)parent.ObjectLevel}:{parent.ObjectId}");
+                cursor = parent.ParentPreflightOccurrenceId;
+            }
+            return string.Join(">", parts);
+        }
+
+        var before = source.HKSourceSnapshots.ToDictionary(SourceKey);
+        var after = preflight.HKSources.ToDictionary(AfterKey);
+
+        foreach (var key in before.Keys.Union(after.Keys))
+        {
+            var b = before.GetValueOrDefault(key);
+            var a = after.GetValueOrDefault(key);
+            var what = IndividualCardDisplay.ObjectLevel(b?.ObjectLevel ?? a!.ObjectLevel);
+            var name = b?.SourceObjectName ?? a!.ObjectName;
+
+            if (b is null)
+                changes.Add(new IndividualCardDiffEntryDto("Added", what, name, null, $"{a!.HKCardCode} {a.HKCardVersion}"));
+            else if (a is null)
+                changes.Add(new IndividualCardDiffEntryDto("Removed", what, name, $"{b.HKCardCode} {b.HKCardVersion}", null));
+            else
+                changes.Add(new IndividualCardDiffEntryDto(
+                    b.HKCardCode == a.HKCardCode && b.HKCardVersion == a.HKCardVersion ? "Unchanged" : "Changed",
+                    what, name, $"{b.HKCardCode} {b.HKCardVersion}", $"{a.HKCardCode} {a.HKCardVersion}"));
+        }
+
+        return changes;
+    }
+
+    public async Task<IndividualCardDraftDto> CreateNewVersionAsync(
+        CreateIndividualCardVersionRequest request, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateVersion, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var source = await LoadFormedSourceAsync(request.SourceIndividualCardId, scope, ct);
+        var objectId = GetTargetObjectId(source)
+            ?? throw new InvalidOperationException("ИК повреждена: не указан объект цели.");
+
+        // Fresh preflight; no latest/newest fallback, no legacy links.
+        var preflight = await BuildPreflightAsync(
+            new IndividualCardPreflightRequest(source.ObjectLevel, objectId, request.RootHKCardId),
+            demandCreateDraftPermission: false, ct);
+
+        if (preflight.SelectedRoot is null)
+        {
+            throw new InvalidOperationException(preflight.RootState == IndividualCardPreflightRootState.SelectionRequired
+                ? "Для создания новой версии ИК выберите утверждённую ХК вручную."
+                : "Невозможно создать новую версию ИК: не найдена утверждённая ХК верхнего уровня.");
+        }
+
+        // A new version must live in the same branch as the source, even for a
+        // SystemAdmin.
+        if (preflight.SelectedRoot.BranchId != source.BranchId)
+            throw new InvalidOperationException("Нельзя создать новую версию ИК по ХК другого филиала.");
+
+        var successorExists = await _db.IndividualCards.AsNoTracking()
+            .AnyAsync(c => c.SupersedesIndividualCardId == source.Id, ct);
+        if (successorExists)
+            throw new InvalidOperationException($"Для ИК «{source.Code} {source.Version}» новая версия уже создана.");
+
+        var actorId = _currentUser.GetRequiredUserId();
+        var now = _time.GetUtcNow().UtcDateTime;
+        var newRevision = source.RevisionNumber + 1;
+
+        // Deliberately NOT via public CreateDraftAsync: it rejects an existing
+        // Code, while a new version intentionally reuses the source Code.
+        var draft = new IndividualCard
+        {
+            Id = Guid.NewGuid(),
+            Code = source.Code,
+            Version = $"v{now:MMyy}.{newRevision}",
+            RevisionNumber = newRevision,
+            ObjectLevel = source.ObjectLevel,
+            Status = IndividualCardStatus.Draft,
+            BranchId = source.BranchId,
+            CreatedByUserId = actorId.ToString(),
+            CreatedAt = now,
+            SupersedesIndividualCardId = source.Id,
+        };
+        ApplyTargetFk(draft, source.ObjectLevel, objectId);
+
+        // Fresh composition/HK/gap snapshots only; no calculation rows,
+        // materials, coefficient snapshots or TotalNorm are copied.
+        CopyDraftSnapshots(draft, preflight, now);
+
+        _db.IndividualCards.Add(draft);
+        // The audit is written against the SOURCE card: the action performed
+        // is "create a successor version of this Formed card".
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "IndividualCard", source.Id.ToString(), "IndividualCard.NewVersionCreated",
+            actorId, EntityDisplayName: $"{source.Code} {source.Version}",
+            Details: $"SourceIndividualCardId={source.Id}; SourceVersion={source.Version}; NewIndividualCardId={draft.Id}; NewVersion={draft.Version}; NewRevision={newRevision}; BranchId={draft.BranchId}; RootHKCardId={preflight.SelectedRoot.HKCardId}; CompositionCount={preflight.Compositions.Count}; HKSourceCount={preflight.HKSources.Count}; NormativeGapCount={preflight.NormativeGaps.Count}"), ct);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (
+            ex.InnerException?.Message.Contains("UX_IndividualCards_SupersedesIndividualCardId") == true
+            || ex.Message.Contains("UX_IndividualCards_SupersedesIndividualCardId"))
+        {
+            throw new InvalidOperationException($"Для ИК «{source.Code} {source.Version}» новая версия уже создана.");
+        }
+
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
+    }
+
+    public async Task ArchiveIndividualCardAsync(Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardArchive, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var card = await _db.IndividualCards
+            .FirstOrDefaultAsync(d => d.Id == individualCardId, ct)
+            ?? throw new InvalidOperationException("ИК не найдена.");
+
+        if (card.Status != IndividualCardStatus.Formed)
+            throw new InvalidOperationException("Архивировать можно только сформированную ИК.");
+
+        if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
+            throw new UnauthorizedAccessException("Нет доступа к ИК другого филиала.");
+
+        var actorId = _currentUser.GetRequiredUserId();
+        var now = _time.GetUtcNow().UtcDateTime;
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            card.Status = IndividualCardStatus.Archived;
+            card.ArchivedAt = now;
+            card.ArchivedByUserId = actorId.ToString();
+
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "IndividualCard", card.Id.ToString(), "IndividualCard.Archived",
+                actorId, EntityDisplayName: $"{card.Code} {card.Version}",
+                Details: $"ObjectLevel={card.ObjectLevel}; ObjectId={GetTargetObjectId(card)}; BranchId={card.BranchId}; Code={card.Code}; Version={card.Version}; RevisionNumber={card.RevisionNumber}"), ct);
+
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
+    }
+
     private async Task<IndividualCard?> LoadDraftForCalculationAsync(
         Guid individualCardId, bool tracked = false, CancellationToken ct = default)
     {

@@ -171,6 +171,60 @@ public class IndividualCardsController : ControllerBase
         }
     }
 
+    // ── D5: new version, comparison, archive ──────────────────────────────
+
+    [HttpPost("{id:guid}/new-version/preflight")]
+    public async Task<ActionResult<IndividualCardVersionComparisonDto>> NewVersionPreflight(
+        Guid id, [FromBody] IndividualCardVersionPreflightRequest request, CancellationToken ct)
+    {
+        if (id != request.SourceIndividualCardId)
+            return BadRequest(new { message = "Идентификатор в маршруте не совпадает с телом запроса." });
+
+        try
+        {
+            return Ok(await _cards.BuildNewVersionComparisonAsync(request, ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("{id:guid}/new-version")]
+    public async Task<ActionResult<IndividualCardDraftDto>> CreateNewVersion(
+        Guid id, [FromBody] CreateIndividualCardVersionRequest request, CancellationToken ct)
+    {
+        if (id != request.SourceIndividualCardId)
+            return BadRequest(new { message = "Идентификатор в маршруте не совпадает с телом запроса." });
+
+        try
+        {
+            var created = await _cards.CreateNewVersionAsync(request, ct);
+            return CreatedAtAction(nameof(GetDraftById), new { id = created.Id }, created);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("{id:guid}/archive")]
+    public async Task<ActionResult> Archive(Guid id, [FromBody] ArchiveIndividualCardRequest request, CancellationToken ct)
+    {
+        if (id != request.IndividualCardId)
+            return BadRequest(new { message = "Идентификатор в маршруте не совпадает с телом запроса." });
+
+        try
+        {
+            await _cards.ArchiveIndividualCardAsync(id, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("generate/{instanceId}")]
     [Authorize(Policy = "CreateIndividualCard")]
     public async Task<ActionResult<List<IndividualCardDetailDto>>> GenerateForInstance(

@@ -21,9 +21,41 @@
     }
     else if (_draft is null)
     {
-        <section class="panel">
-            <div class="panelBody"><div class="note">Черновик ИК не найден.</div></div>
-        </section>
+        @if (_comparison is not null)
+        {
+            <section class="panel">
+                <div class="panelHeader">
+                    <h2>ИК @_comparison.SourceCode @_comparison.SourceVersion</h2>
+                    <div class="hint">@_comparison.SourceObjectLevelDisplay: @_comparison.SourceObjectName</div>
+                    <span class="tag ok">Сформирована</span>
+                </div>
+                <div class="panelBody">
+                    @if (_canCreateVersion || _canArchive)
+                    {
+                        <div class="formActions">
+                            @if (_canCreateVersion)
+                            {
+                                <button type="button" class="btn primary" @onclick="() => _showVersionModal = true">Создать новую версию ИК</button>
+                            }
+                            @if (_canArchive)
+                            {
+                                <button type="button" class="btn ghost" @onclick="() => _showArchiveConfirm = true">В архив</button>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="note">Недостаточно прав для работы с ИК.</div>
+                    }
+                </div>
+            </section>
+        }
+        else
+        {
+            <section class="panel">
+                <div class="panelBody"><div class="note">@(string.IsNullOrEmpty(_error) ? "ИК не найдена." : _error)</div></div>
+            </section>
+        }
     }
     else
     {
@@ -212,6 +244,121 @@
     }
 </div>
 
+@if (_showVersionModal && _comparison is not null)
+{
+    <div class="modalOverlay" @onclick="() => _showVersionModal = false">
+        <div class="modal hkv-modal" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3>Создать новую версию ИК</h3>
+                <button type="button" class="linkBtn" @onclick="() => _showVersionModal = false">✕</button>
+            </div>
+            <div class="modalBody">
+                <div class="hkv-row"><span class="hkv-label">Источник:</span> ИК @_comparison.SourceCode @_comparison.SourceVersion</div>
+                <div class="hkv-row"><span class="hkv-label">Новая версия:</span> будет Draft @_comparison.SourceCode с новым номером ревизии</div>
+
+                @if (_comparison.RootState == IndividualCardPreflightRootState.SelectionRequired)
+                {
+                    <div class="field">
+                        <label>ХК верхнего уровня (несколько кандидатов)</label>
+                        @foreach (var candidate in _comparison.RootCandidates)
+                        {
+                            <label class="hkc-item">
+                                <input type="radio" name="version-root" checked="@(_selectedRootHKCardId == candidate.HKCardId)"
+                                       @onchange="() => _selectedRootHKCardId = candidate.HKCardId" />
+                                <span class="hkc-item-name">@candidate.Code @candidate.Version — @candidate.ObjectName</span>
+                            </label>
+                        }
+                    </div>
+                }
+
+                <h4 class="hkc-subtitle">Состав: было / стало</h4>
+                @foreach (var change in _comparison.CompositionChanges)
+                {
+                    <div class="hkv-diff-row">
+                        <span class="tag @(DiffTagClass(change.State))">@DiffName(change.State)</span>
+                        <span>@change.What: @change.Display</span>
+                        <span class="hkv-wasstalo">@change.Before → @change.After</span>
+                    </div>
+                }
+
+                <h4 class="hkc-subtitle">ХК: было / стало</h4>
+                @foreach (var change in _comparison.HKChanges)
+                {
+                    <div class="hkv-diff-row">
+                        <span class="tag @(DiffTagClass(change.State))">@DiffName(change.State)</span>
+                        <span>@change.What: @change.Display</span>
+                        <span class="hkv-wasstalo">@change.Before → @change.After</span>
+                    </div>
+                }
+
+                <div class="hkv-row"><span class="hkv-label">Коэффициенты:</span> будут выбраны заново в новой Draft</div>
+                @if (_comparison.PreviousCoefficients.Count > 0)
+                {
+                    <div class="hkv-muted">
+                        @foreach (var coefficient in _comparison.PreviousCoefficients)
+                        {
+                            <div>@coefficient.CoefficientTypeName / @coefficient.CoefficientName — <span class="mono">@FormatF6(coefficient.Value)</span></div>
+                        }
+                    </div>
+                }
+
+                <div class="hkv-row"><span class="hkv-label">Расчёт:</span> будет выполнен в новой Draft</div>
+                @if (_comparison.HasCalculation && _comparison.PreviousPrimaryTotals.Count > 0)
+                {
+                    <div class="hkv-muted">
+                        <div>Основные марки ГСМ в источнике (альтернативы, не суммируются):</div>
+                        @foreach (var total in _comparison.PreviousPrimaryTotals)
+                        {
+                            <div>@total.MaterialName — <span class="mono">@FormatF6(total.TotalVolume) @total.UnitOfMeasure</span></div>
+                        }
+                        <div>Итоги новой версии: будут доступны после пересчёта новой версии.</div>
+                    </div>
+                }
+
+                <div class="hkv-row"><span class="hkv-label">Нормативные пробелы:</span>
+                    @if (_comparison.NormativeGaps.Count == 0)
+                    {
+                        <span>нет</span>
+                    }
+                    else
+                    {
+                        <span>@_comparison.NormativeGaps.Count (новая Draft будет частичной)</span>
+                    }
+                </div>
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="() => _showVersionModal = false">Отмена</button>
+                <button type="button" class="btn primary" disabled="@(!_comparison.IsReadyToCreateDraft || _creatingVersion)"
+                        @onclick="CreateNewVersion">
+                    @(_creatingVersion ? "Создание…" : "Создать черновик новой версии")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showArchiveConfirm && _comparison is not null)
+{
+    <div class="modalOverlay" @onclick="() => _showArchiveConfirm = false">
+        <div class="modal" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3>Архивировать ИК</h3>
+                <button type="button" class="linkBtn" @onclick="() => _showArchiveConfirm = false">✕</button>
+            </div>
+            <div class="modalBody">
+                <div>Архивировать ИК «@_comparison.SourceCode @_comparison.SourceVersion»?</div>
+                <div class="hkv-muted">Архивная ИК останется доступна для просмотра и истории, но не может быть изменена или сформирована повторно.</div>
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="() => _showArchiveConfirm = false">Отмена</button>
+                <button type="button" class="btn primary" disabled="@_archiving" @onclick="Archive">
+                    @(_archiving ? "Архивирование…" : "Архивировать")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter] public Guid Id { get; set; }
 
@@ -231,6 +378,15 @@
     private bool _recalculating;
     private bool _forming;
 
+    private bool _canCreateVersion;
+    private bool _canArchive;
+    private IndividualCardVersionComparisonDto? _comparison;
+    private bool _showVersionModal;
+    private bool _showArchiveConfirm;
+    private Guid _selectedRootHKCardId;
+    private bool _creatingVersion;
+    private bool _archiving;
+
     protected override async Task OnInitializedAsync()
     {
         await using (await DbLock.WaitAsync())
@@ -245,7 +401,30 @@
         _error = null;
         _draft = await IndCardService.GetDraftByIdAsync(Id);
         if (_draft is null)
+        {
+            // Formed (or foreign) card: try the D5 comparison entry — it is the
+            // minimal read available without a full D6 card.
+            try
+            {
+                _comparison = await IndCardService.BuildNewVersionComparisonAsync(
+                    new IndividualCardVersionPreflightRequest(Id));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+            {
+                _comparison = null;
+                _error = ex.Message;
+            }
+
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var authUserId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            _canCreateVersion = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateVersion);
+            _canArchive = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardArchive);
+            if (_comparison is not null)
+            {
+                _canCreateVersion &= _comparison.IsReadyToCreateDraft || _comparison.RootState == IndividualCardPreflightRootState.SelectionRequired;
+            }
             return;
+        }
 
         _savedCalculation = await IndCardService.GetDraftCalculationAsync(Id);
 
@@ -359,6 +538,72 @@
             _forming = false;
         }
     }
+
+    private async Task CreateNewVersion()
+    {
+        _error = null;
+        _creatingVersion = true;
+        try
+        {
+            Guid newDraftId;
+            await using (await DbLock.WaitAsync())
+            {
+                var created = await IndCardService.CreateNewVersionAsync(
+                    new CreateIndividualCardVersionRequest(Id, _selectedRootHKCardId));
+                newDraftId = created.Id;
+            }
+            Nav.NavigateTo($"/инд-карты/черновик/{newDraftId}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+            _showVersionModal = false;
+        }
+        finally
+        {
+            _creatingVersion = false;
+        }
+    }
+
+    private async Task Archive()
+    {
+        _error = null;
+        _archiving = true;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                await IndCardService.ArchiveIndividualCardAsync(Id);
+            }
+            _showArchiveConfirm = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+            _showArchiveConfirm = false;
+        }
+        finally
+        {
+            _archiving = false;
+        }
+    }
+
+    private static string DiffName(string state) => state switch
+    {
+        "Added" => "Добавлено",
+        "Removed" => "Удалено",
+        "Changed" => "Изменено",
+        _ => "Без изменений",
+    };
+
+    private static string DiffTagClass(string state) => state switch
+    {
+        "Added" => "ok",
+        "Removed" => "bad",
+        "Changed" => "warn",
+        _ => "",
+    };
 
     private void GoBack() => Nav.NavigateTo("/инд-карты");
 

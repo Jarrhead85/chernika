@@ -433,6 +433,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_IndividualCards_CreatedAt");
             e.HasIndex(x => x.FormedAt).HasDatabaseName("IX_IndividualCards_FormedAt");
             e.HasIndex(x => x.SupersedesIndividualCardId).HasDatabaseName("IX_IndividualCards_SupersedesIndividualCardId");
+            // Concurrency guard for D5: exactly one successor version per Formed
+            // source card, enforced by the database.
+            e.HasIndex(x => x.SupersedesIndividualCardId)
+                .IsUnique()
+                .HasFilter("\"SupersedesIndividualCardId\" IS NOT NULL")
+                .HasDatabaseName("UX_IndividualCards_SupersedesIndividualCardId");
             e.HasIndex(x => x.ComplexId).HasDatabaseName("IX_IndividualCards_ComplexId");
             e.HasIndex(x => x.EquipmentModelId).HasDatabaseName("IX_IndividualCards_EquipmentModelId");
             e.HasIndex(x => x.AggregateId).HasDatabaseName("IX_IndividualCards_AggregateId");
