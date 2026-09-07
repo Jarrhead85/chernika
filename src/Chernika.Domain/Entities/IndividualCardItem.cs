@@ -15,6 +15,15 @@ public class IndividualCardItem
     // with the card and a restrictive FK could break cascade ordering.
     public Guid? NodeSnapshotId { get; set; }
 
+    // Immutable D4 source identity, populated from the exact node HK
+    // occurrence snapshot and HKCardItem during recalculation. Live HKCard
+    // renames must never change what a historical row says about its source.
+    public Guid SourceHKSourceSnapshotId { get; set; }
+    public Guid SourceHKCardId { get; set; }
+    public string SourceHKCardCode { get; set; } = string.Empty;
+    public string SourceHKCardVersion { get; set; } = string.Empty;
+    public Guid SourceHKCardItemId { get; set; }
+
     public string AssemblyUnitCode { get; set; } = string.Empty;
     public string AssemblyUnitName { get; set; } = string.Empty;
     public int AssemblyUnitQuantity { get; set; }

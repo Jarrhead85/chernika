@@ -63,6 +63,8 @@ public class IndividualCard
         = new List<IndividualCardCoefficientSnapshot>();
     public ICollection<IndividualCardNormativeGapSnapshot> NormativeGapSnapshots { get; set; }
         = new List<IndividualCardNormativeGapSnapshot>();
+    public ICollection<IndividualCardCalculationProblemSnapshot> CalculationProblemSnapshots { get; set; }
+        = new List<IndividualCardCalculationProblemSnapshot>();
 
     public ICollection<Coefficient> AppliedCoefficients { get; set; } = new List<Coefficient>();
 }

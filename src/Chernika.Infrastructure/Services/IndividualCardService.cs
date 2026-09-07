@@ -1811,15 +1811,15 @@ public class IndividualCardService
     public async Task<IReadOnlyList<CoefficientListItemDto>> GetWorkingCoefficientsForDraftSelectAsync(
         Guid individualCardId, string? searchText = null, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardEditDraft, ct);
         var scope = await ResolveActorScopeAsync(ct);
 
         var draft = await _db.IndividualCards.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == individualCardId && d.Status == IndividualCardStatus.Draft, ct)
             ?? throw new InvalidOperationException("Черновик ИК не найден.");
 
-        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другого филиала.");
+        // Draft author OR IndividualCard.EditDraft with branch scope; same rule
+        // as refresh/delete. IndividualCard.CreateDraft is NOT required.
+        await EnsureDraftEditorAsync(draft, scope, "Недостаточно прав для работы с черновиком ИК.", ct);
 
         var query = _db.Coefficients.AsNoTracking()
             .Where(c => !c.IsDeleted && !c.CoefficientType.IsDeleted);
@@ -1865,6 +1865,7 @@ public class IndividualCardService
             .Include(d => d.NormativeGapSnapshots)
             .Include(d => d.Items).ThenInclude(i => i.MaterialSnapshots)
             .Include(d => d.CoefficientSnapshots)
+            .Include(d => d.CalculationProblemSnapshots)
             .FirstOrDefaultAsync(d => d.Id == request.IndividualCardId, ct)
             ?? throw new InvalidOperationException("Черновик ИК не найден.");
 
@@ -1904,7 +1905,7 @@ public class IndividualCardService
         foreach (var coefficient in coefficients.OrderBy(c => c.CoefficientType.SortOrder).ThenBy(c => c.SortOrder))
             totalCoefficient *= coefficient.Value;
 
-        var (items, problems, totalNorm, primaryMaterialCount, primaryTotal) =
+        var (items, problems, totalNorm, primaryMaterialCount, _) =
             await CalculateDraftRowsAsync(draft, totalCoefficient, ct);
 
         var now = _time.GetUtcNow().UtcDateTime;
@@ -1923,14 +1924,19 @@ public class IndividualCardService
             await _db.IndividualCardCoefficientSnapshots
                 .Where(s => s.IndividualCardId == draft.Id)
                 .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardCalculationProblemSnapshots
+                .Where(p => p.IndividualCardId == draft.Id)
+                .ExecuteDeleteAsync(ct);
 
             // Detach the stale tracked graph so relationship fixup cannot
             // interfere with the replaced calculation set.
             foreach (var stale in draft.Items.SelectMany(i => i.MaterialSnapshots).Cast<object>()
-                         .Concat(draft.Items).Concat(draft.CoefficientSnapshots))
+                         .Concat(draft.Items).Concat(draft.CoefficientSnapshots)
+                         .Concat(draft.CalculationProblemSnapshots))
                 _db.Entry(stale).State = EntityState.Detached;
             draft.Items.Clear();
             draft.CoefficientSnapshots.Clear();
+            draft.CalculationProblemSnapshots.Clear();
 
             var newRows = new List<object>();
             var sortOrder = 0;
@@ -1961,6 +1967,27 @@ public class IndividualCardService
                 draft.Items.Add(item);
             }
 
+            // ALL validation problems become immutable snapshots — they must
+            // survive reloads and block Form until the next recalculation.
+            var problemSortOrder = 0;
+            foreach (var problem in problems)
+            {
+                var problemSnapshot = new IndividualCardCalculationProblemSnapshot
+                {
+                    Id = Guid.NewGuid(),
+                    IndividualCardId = draft.Id,
+                    Code = problem.Code,
+                    Message = problem.Message,
+                    HKCardId = problem.HKCardId,
+                    HKCardItemId = problem.HKCardItemId,
+                    NodeSnapshotId = problem.NodeSnapshotId,
+                    SortOrder = problemSortOrder++,
+                    CapturedAt = now,
+                };
+                newRows.Add(problemSnapshot);
+                draft.CalculationProblemSnapshots.Add(problemSnapshot);
+            }
+
             if (newRows.Count > 0)
                 _db.AddRange(newRows);
 
@@ -1969,7 +1996,7 @@ public class IndividualCardService
             await _audit.CreateLogAsync(new AuditWriteRequest(
                 "IndividualCard", draft.Id.ToString(), "IndividualCard.Recalculated",
                 actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
-                Details: $"CoefficientCount={coefficients.Count}; TotalCoefficient={totalCoefficient.ToString("F6", CultureInfo.InvariantCulture)}; CalculationItemCount={items.Count}; PrimaryMaterialCount={primaryMaterialCount}; PrimaryTotalGrams={primaryTotal.ToString("F6", CultureInfo.InvariantCulture)}; CalculationProblemCount={problems.Count}"), ct);
+                Details: $"CoefficientCount={coefficients.Count}; TotalCoefficient={totalCoefficient.ToString("F6", CultureInfo.InvariantCulture)}; CalculationItemCount={items.Count}; PrimaryMaterialSnapshotCount={primaryMaterialCount}; CalculationProblemCount={problems.Count}"), ct);
 
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -1999,43 +2026,24 @@ public class IndividualCardService
         if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
             throw new UnauthorizedAccessException("Нет доступа к черновику ИК другого филиала.");
 
-        var problems = new List<IndividualCardCalculationProblemDto>();
+        // Form is blocked by D3 normative gaps or by ANY persisted calculation
+        // problem snapshot; per-item validation happens at recalculation time
+        // and its results are stored immutably.
+        var blockers = new List<string>();
 
         if (draft.NormativeGapSnapshots.Count > 0)
-            problems.Add(new IndividualCardCalculationProblemDto(
-                "IncompleteNormativeChain", "Черновик ИК содержит нормативные разрывы цепочки.",
-                null, null, null, problems.Count));
+            blockers.Add("Черновик ИК содержит нормативные разрывы цепочки.");
 
         if (draft.Items.Count == 0)
-            problems.Add(new IndividualCardCalculationProblemDto(
-                "MissingCalculation", "Расчёт не выполнялся: строки расчёта отсутствуют.",
-                null, null, null, problems.Count));
+            blockers.Add("Расчёт не выполнялся: строки расчёта отсутствуют.");
 
-        foreach (var item in draft.Items)
-        {
-            var hkCardId = item.HKCardItem?.HKCardId;
-            if (string.IsNullOrWhiteSpace(item.UnitOfMeasure)
-                || !item.UnitOfMeasure.Trim().Equals("г", StringComparison.OrdinalIgnoreCase))
-            {
-                problems.Add(new IndividualCardCalculationProblemDto(
-                    "InvalidUnitOfMeasure",
-                    $"Строка «{item.AssemblyUnitName}» имеет единицу измерения «{item.UnitOfMeasure}», формирование разрешено только в граммах.",
-                    hkCardId, item.HKCardItemId, item.NodeSnapshotId, problems.Count));
-            }
+        foreach (var problem in draft.CalculationProblemSnapshots.OrderBy(p => p.SortOrder))
+            blockers.Add(problem.Message);
 
-            if (!item.MaterialSnapshots.Any(m => m.Category == GsmCategory.Primary))
-            {
-                problems.Add(new IndividualCardCalculationProblemDto(
-                    "MissingPrimaryMaterial",
-                    $"Строка «{item.AssemblyUnitName}» не имеет основного материала ГСМ.",
-                    hkCardId, item.HKCardItemId, item.NodeSnapshotId, problems.Count));
-            }
-        }
-
-        if (problems.Count > 0)
+        if (blockers.Count > 0)
         {
             throw new InvalidOperationException(
-                "Формирование ИК заблокировано: " + string.Join(" ", problems.Select(p => p.Message)));
+                "Формирование ИК заблокировано: " + string.Join(" ", blockers));
         }
 
         var actorId = _currentUser.GetRequiredUserId();
@@ -2051,7 +2059,7 @@ public class IndividualCardService
             await _audit.CreateLogAsync(new AuditWriteRequest(
                 "IndividualCard", draft.Id.ToString(), "IndividualCard.Formed",
                 actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
-                Details: $"ObjectLevel={draft.ObjectLevel}; ObjectId={GetTargetObjectId(draft)}; BranchId={draft.BranchId}; CoefficientCount={draft.CoefficientSnapshots.Count}; TotalCoefficient={BuildTotalCoefficient(draft.CoefficientSnapshots).ToString("F6", CultureInfo.InvariantCulture)}; CalculationItemCount={draft.Items.Count}; PrimaryTotalGrams={draft.TotalNorm.ToString("F6", CultureInfo.InvariantCulture)}"), ct);
+                Details: $"ObjectLevel={draft.ObjectLevel}; ObjectId={GetTargetObjectId(draft)}; BranchId={draft.BranchId}; CoefficientCount={draft.CoefficientSnapshots.Count}; TotalCoefficient={BuildTotalCoefficient(draft.CoefficientSnapshots).ToString("F6", CultureInfo.InvariantCulture)}; CalculationItemCount={draft.Items.Count}; PrimaryMaterialSnapshotCount={draft.Items.Sum(i => i.MaterialSnapshots.Count(m => m.Category == GsmCategory.Primary))}"), ct);
 
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -2066,12 +2074,6 @@ public class IndividualCardService
         // loaded graph (items, coefficient snapshots, source identities).
         return BuildCalculationDto(draft);
     }
-
-    private async Task<Guid?> ResolveHKCardIdByItemIdAsync(Guid itemId, CancellationToken ct) =>
-        await _db.IndividualCardItems.AsNoTracking()
-            .Where(i => i.Id == itemId)
-            .Select(i => i.HKCardItem != null ? (Guid?)i.HKCardItem.HKCardId : null)
-            .FirstOrDefaultAsync(ct);
 
     private async Task<IndividualCard?> LoadDraftForCalculationAsync(
         Guid individualCardId, bool tracked = false, CancellationToken ct = default)
@@ -2090,8 +2092,8 @@ public class IndividualCardService
             .Include(d => d.HKSourceSnapshots)
             .Include(d => d.NormativeGapSnapshots)
             .Include(d => d.Items).ThenInclude(i => i.MaterialSnapshots)
-            .Include(d => d.Items).ThenInclude(i => i.HKCardItem).ThenInclude(h => h.HKCard)
             .Include(d => d.CoefficientSnapshots)
+            .Include(d => d.CalculationProblemSnapshots)
             .FirstOrDefaultAsync(d => d.Id == individualCardId && d.Status == IndividualCardStatus.Draft, ct);
     }
 
@@ -2280,6 +2282,11 @@ public class IndividualCardService
                     Id = Guid.NewGuid(),
                     HKCardItemId = hkItem.Id,
                     NodeSnapshotId = nodeSnapshot?.Id,
+                    SourceHKSourceSnapshotId = nodeOcc.Id,
+                    SourceHKCardId = nodeOcc.SourceHKCardId,
+                    SourceHKCardCode = nodeOcc.HKCardCode,
+                    SourceHKCardVersion = nodeOcc.HKCardVersion,
+                    SourceHKCardItemId = hkItem.Id,
                     AssemblyUnitCode = hkItem.AssemblyUnit.Code,
                     AssemblyUnitName = hkItem.AssemblyUnit.Name,
                     AssemblyUnitQuantity = hkItem.Quantity,
@@ -2354,35 +2361,24 @@ public class IndividualCardService
         var totalCoefficient = BuildTotalCoefficient(coefficientSnapshots);
 
         var problems = new List<IndividualCardCalculationProblemDto>();
+
+        // Problems are read from immutable recalculation snapshots; the D3
+        // normative gap state is added live (gap-free refresh clears it).
+        foreach (var snapshot in draft.CalculationProblemSnapshots
+                     .Where(p => p.Code != "IncompleteNormativeChain")
+                     .OrderBy(p => p.SortOrder))
+        {
+            problems.Add(new IndividualCardCalculationProblemDto(
+                snapshot.Code, snapshot.Message,
+                snapshot.HKCardId, snapshot.HKCardItemId, snapshot.NodeSnapshotId, snapshot.SortOrder));
+        }
+
         if (draft.NormativeGapSnapshots.Count > 0)
         {
             problems.Add(new IndividualCardCalculationProblemDto(
                 "IncompleteNormativeChain", "Черновик ИК содержит нормативные разрывы цепочки.",
                 null, null, null, 0));
         }
-
-        var itemProblems = new List<IndividualCardCalculationProblemDto>();
-        foreach (var item in draft.Items.OrderBy(i => i.SortOrder))
-        {
-            if (string.IsNullOrWhiteSpace(item.UnitOfMeasure)
-                || !item.UnitOfMeasure.Trim().Equals("г", StringComparison.OrdinalIgnoreCase))
-            {
-                itemProblems.Add(new IndividualCardCalculationProblemDto(
-                    "InvalidUnitOfMeasure",
-                    $"Строка «{item.AssemblyUnitName}» имеет единицу измерения «{item.UnitOfMeasure}», формирование разрешено только в граммах.",
-                    item.HKCardItemId, item.HKCardItemId, item.NodeSnapshotId, item.SortOrder));
-            }
-
-            if (!item.MaterialSnapshots.Any(m => m.Category == GsmCategory.Primary))
-            {
-                itemProblems.Add(new IndividualCardCalculationProblemDto(
-                    "MissingPrimaryMaterial",
-                    $"Строка «{item.AssemblyUnitName}» не имеет основного материала ГСМ.",
-                    item.HKCardItemId, item.HKCardItemId, item.NodeSnapshotId, item.SortOrder));
-            }
-        }
-
-        problems.AddRange(itemProblems);
 
         var rows = draft.Items.OrderBy(i => i.SortOrder)
             .Select(i =>
@@ -2415,9 +2411,9 @@ public class IndividualCardService
                 return new IndividualCardCalculationRowDto(
                     i.Id,
                     i.NodeSnapshotId ?? Guid.Empty,
-                    i.HKCardItem?.HKCardId ?? Guid.Empty,
-                    i.HKCardItem?.HKCard?.Code ?? string.Empty,
-                    i.HKCardItem?.HKCard?.Version ?? string.Empty,
+                    i.SourceHKCardId,
+                    i.SourceHKCardCode,
+                    i.SourceHKCardVersion,
                     i.AssemblyUnitCode,
                     i.AssemblyUnitName,
                     i.AssemblyUnitQuantity,

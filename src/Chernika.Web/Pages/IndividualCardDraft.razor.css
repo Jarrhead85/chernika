@@ -77,6 +77,12 @@
     margin-bottom: 12px;
 }
 
+.hkc-error {
+    margin-bottom: 10px;
+    color: var(--bad);
+    font-size: 13px;
+}
+
 .hkc-subtitle {
     font-size: 13px;
     font-weight: 600;

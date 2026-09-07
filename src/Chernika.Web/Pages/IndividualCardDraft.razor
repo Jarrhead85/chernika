@@ -36,7 +36,7 @@
             <div class="panelBody">
                 @if (!string.IsNullOrEmpty(_error))
                 {
-                    <div class="error" style="margin-bottom:10px;color:var(--bad);font-size:13px">@_error</div>
+                    <div class="hkc-error">@_error</div>
                 }
 
                 @if (_draft.Status == IndividualCardStatus.Draft && _canSelectCoefficients)
@@ -97,7 +97,6 @@
                 <div class="panelHeader">
                     <h2>Расчёт</h2>
                     <div class="hint">Общий коэффициент: <span class="mono">@FormatF6(_savedCalculation.TotalCoefficient)</span></div>
-                    <div class="hint">Итого: <span class="mono">@FormatF6(_savedCalculation.TotalNorm) г</span></div>
                 </div>
                 <div class="panelBody">
                     @if (_savedCalculation.Problems.Count > 0)
@@ -170,7 +169,7 @@
 
                     @if (_savedCalculation.PrimaryTotals.Count > 0)
                     {
-                        <h3 class="hkc-subtitle">Итоги по основным маркам ГСМ</h3>
+                        <h3 class="hkc-subtitle">Основные марки ГСМ (альтернативы, не суммируются)</h3>
                         <table class="hk-items-table">
                             <thead>
                                 <tr>

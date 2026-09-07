@@ -995,6 +995,156 @@ public class IndividualCardCalculationIntegrationTests
         Assert.Equal(1, await CountAuditsAsync(s, draft.Id, "IndividualCard.Formed"));
     }
 
+    // ── Corrective D4 ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CalculationProblems_PersistAsSnapshots_SurviveReload()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (modelId, aggregateId, _, _, _) = await CreateModelChainAsync(s, "г", 100m, 1);
+
+        // A second REQUIRED node source occurrence whose node HK has no
+        // HKCardItem rows: the chain is complete, so the recalculation must
+        // reach it and produce MissingHKCardItem, persisted as a snapshot.
+        var emptyNodeId = await CreateNodeAsync(s);
+        var emptyNodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, emptyNodeId, _fixture.BranchA);
+        var aggregateHK = await s.Db.HKCards.AsNoTracking().FirstAsync(h => h.AggregateId == aggregateId);
+        await AddComponentAsync(s, aggregateHK, emptyNodeHK);
+        var trackedAggregateComposition = await s.Db.AggregateCompositions
+            .FirstAsync(ac => ac.AggregateId == aggregateId);
+        s.Db.AggregateCompositionNodes.Add(new AggregateCompositionNode
+        {
+            Id = Guid.NewGuid(),
+            AggregateCompositionId = trackedAggregateComposition.Id,
+            NodeId = emptyNodeId,
+            Quantity = 1,
+            SortOrder = 2,
+        });
+        await s.Db.SaveChangesAsync();
+
+        var draft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+        Assert.False(draft.HasNormativeGaps);
+        var calculation = await s.IndividualCards.RecalculateDraftAsync(
+            new RecalculateIndividualCardDraftRequest(draft.Id, Array.Empty<Guid>()));
+
+        Assert.Contains(calculation.Problems, p => p.Code == "MissingHKCardItem");
+        Assert.False(calculation.IsReadyToForm);
+        Assert.Equal(1, await s.Db.IndividualCardCalculationProblemSnapshots
+            .CountAsync(p => p.IndividualCardId == draft.Id && p.Code == "MissingHKCardItem"));
+
+        // The problem survives a reload from the immutable snapshot.
+        var reloaded = await s.IndividualCards.GetDraftCalculationAsync(draft.Id);
+        Assert.NotNull(reloaded);
+        Assert.Contains(reloaded!.Problems, p => p.Code == "MissingHKCardItem");
+        Assert.False(reloaded.IsReadyToForm);
+
+        // Form is blocked by the persisted problem snapshot.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            s.IndividualCards.FormDraftAsync(new FormIndividualCardRequest(draft.Id)));
+        Assert.Contains("заблокировано", ex.Message);
+        Assert.Equal(0, await CountAuditsAsync(s, draft.Id, "IndividualCard.Formed"));
+    }
+
+    [Fact]
+    public async Task RowSource_IsImmutable_AfterLiveHKCardRename()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (modelId, _, _, _, _) = await CreateModelChainAsync(s, "г", 100m, 1);
+        var draft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+        var before = await s.IndividualCards.RecalculateDraftAsync(
+            new RecalculateIndividualCardDraftRequest(draft.Id, Array.Empty<Guid>()));
+
+        var rowBefore = Assert.Single(before.Rows);
+        Assert.NotEqual(Guid.Empty, rowBefore.HKCardId);
+        Assert.False(string.IsNullOrWhiteSpace(rowBefore.HKCardCode));
+        Assert.NotEqual(Guid.Empty, rowBefore.NodeSnapshotId);
+
+        // Rename the live HKCard code and version.
+        var liveHK = await s.Db.HKCards.FirstAsync(h => h.Id == rowBefore.HKCardId);
+        liveHK.Code = "HK-RENAMED-" + Suffix();
+        liveHK.Version = "vRENAMED";
+        await s.Db.SaveChangesAsync();
+
+        var after = await s.IndividualCards.GetDraftCalculationAsync(draft.Id);
+        var rowAfter = Assert.Single(after!.Rows);
+        Assert.Equal(rowBefore.HKCardId, rowAfter.HKCardId);
+        Assert.Equal(rowBefore.HKCardCode, rowAfter.HKCardCode);
+        Assert.Equal(rowBefore.HKCardVersion, rowAfter.HKCardVersion);
+        Assert.NotEqual("HK-RENAMED", rowAfter.HKCardCode);
+    }
+
+    [Fact]
+    public async Task Selector_AuthorWithoutEditDraft_CanLoadCoefficients()
+    {
+        await using var s = Scope();
+        var author = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchA);
+        SetUser(s, author);
+        var (modelId, _, _, _, _) = await CreateModelChainAsync(s, "г", 100m, 1);
+        var draft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+
+        var typeId = await CreateCoefficientTypeAsync(s, "Сезонный-" + Suffix());
+        var workingId = await CreateCoefficientAsync(s, typeId, "Зимняя", 1.1m, null);
+
+        // Author: CreateDraft and RecalculateDraft remain, EditDraft is denied.
+        await DenyAsync(s, author, PermissionCodes.IndividualCardEditDraft);
+
+        var list = await s.IndividualCards.GetWorkingCoefficientsForDraftSelectAsync(draft.Id);
+        Assert.Contains(workingId, list.Select(c => c.Id).ToList());
+
+        // Recalculation continues to work for the author.
+        var calculation = await s.IndividualCards.RecalculateDraftAsync(
+            new RecalculateIndividualCardDraftRequest(draft.Id, new[] { workingId }));
+        Assert.Single(calculation.Rows);
+
+        // Outsider (neither author nor EditDraft holder) is denied.
+        var outsider = await CreateUserAsync(s, nameof(UserRole.HeadOfDepartment), _fixture.BranchA);
+        SetUser(s, outsider);
+        await DenyAsync(s, outsider, PermissionCodes.IndividualCardEditDraft);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            s.IndividualCards.GetWorkingCoefficientsForDraftSelectAsync(draft.Id));
+    }
+
+    [Fact]
+    public async Task MultiplePrimaryMaterials_NonAdditiveAlternatives_FormAllowed()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var primaryA = await CreateGsmMaterialAsync(s, "Масло А", "ГОСТ-А");
+        var primaryB = await CreateGsmMaterialAsync(s, "Масло Б", "ГОСТ-Б");
+        var duplicate = await CreateGsmMaterialAsync(s, "Масло В", "ГОСТ-В");
+        var (modelId, _, _, _, _) = await CreateModelChainAsync(
+            s, "г", 100m, 1, pcAggregateQuantity: 1, acNodeQuantity: 1,
+            (primaryA, GsmCategory.Primary),
+            (primaryB, GsmCategory.Primary),
+            (duplicate, GsmCategory.Duplicate));
+
+        var draft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+        var calculation = await s.IndividualCards.RecalculateDraftAsync(
+            new RecalculateIndividualCardDraftRequest(draft.Id, Array.Empty<Guid>()));
+
+        var row = Assert.Single(calculation.Rows);
+        Assert.Equal(100m, row.CalculatedVolume);
+        Assert.Equal(3, row.Materials.Count);
+        Assert.All(row.Materials, m => Assert.Equal(100m, m.CalculatedVolume));
+
+        // Each Primary brand shows its own informational value (100 г each);
+        // they are alternatives and never add up to 200 г.
+        Assert.Equal(2, calculation.PrimaryTotals.Count);
+        Assert.Contains(calculation.PrimaryTotals, t => t.MaterialName == "Масло А" && t.TotalVolume == 100m);
+        Assert.Contains(calculation.PrimaryTotals, t => t.MaterialName == "Масло Б" && t.TotalVolume == 100m);
+        Assert.Equal(100m, calculation.TotalNorm);
+
+        // Form is allowed: several Primary materials are not a problem.
+        var formed = await s.IndividualCards.FormDraftAsync(new FormIndividualCardRequest(draft.Id));
+        Assert.Equal(IndividualCardStatus.Formed, formed.Status);
+    }
+
     // ── coefficient helpers ───────────────────────────────────────────────
 
     private async Task<Guid> CreateCoefficientTypeAsync(TestScope s, string name)

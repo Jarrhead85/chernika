@@ -41,6 +41,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<IndividualCardItemMaterialSnapshot> IndividualCardItemMaterialSnapshots => Set<IndividualCardItemMaterialSnapshot>();
     public DbSet<IndividualCardCoefficientSnapshot> IndividualCardCoefficientSnapshots => Set<IndividualCardCoefficientSnapshot>();
     public DbSet<IndividualCardNormativeGapSnapshot> IndividualCardNormativeGapSnapshots => Set<IndividualCardNormativeGapSnapshot>();
+    public DbSet<IndividualCardCalculationProblemSnapshot> IndividualCardCalculationProblemSnapshots => Set<IndividualCardCalculationProblemSnapshot>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<WorkTask> WorkTasks => Set<WorkTask>();
     public DbSet<WorkTaskGroup> WorkTaskGroups => Set<WorkTaskGroup>();
@@ -547,6 +548,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Message).HasMaxLength(2000).IsRequired();
             e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
                 .HasDatabaseName("IX_IndividualCardNormativeGapSnapshots_IndividualCardId_SortOrder");
+        });
+
+        modelBuilder.Entity<IndividualCardCalculationProblemSnapshot>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Message).HasMaxLength(2000).IsRequired();
+            e.HasOne(x => x.IndividualCard).WithMany(c => c.CalculationProblemSnapshots)
+                .HasForeignKey(x => x.IndividualCardId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
+                .HasDatabaseName("IX_IndividualCardCalculationProblemSnapshots_IndividualCardId_SortOrder");
         });
 
         modelBuilder.Entity<AuditLog>(e =>
