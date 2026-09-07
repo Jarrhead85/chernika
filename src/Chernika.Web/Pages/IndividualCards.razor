@@ -240,10 +240,10 @@
         _currentUserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
         _isSystemAdmin = auth.User.IsInRole("SystemAdmin");
 
-        _canCreateDraft = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateDraft);
-        _canCreateVersion = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateVersion);
-        _canArchive = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardArchive);
-        _canEditDraft = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardEditDraft);
+        _canCreateDraft = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.IndividualCardCreateDraft);
+        _canCreateVersion = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.IndividualCardCreateVersion);
+        _canArchive = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.IndividualCardArchive);
+        _canEditDraft = await Perms.HasPermissionAsync(_currentUserId, PermissionCodes.IndividualCardEditDraft);
 
         await using (await DbLock.WaitAsync())
         {

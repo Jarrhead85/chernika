@@ -683,9 +683,12 @@
             _comparison = null;
             _selectedRootHKCardId = Guid.Empty;
 
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var headerUserId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
+
             var isFormed = _actionHeader is { Status: IndividualCardStatus.Formed };
-            _canCreateVersion = isFormed && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateVersion);
-            _canArchive = isFormed && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardArchive);
+            _canCreateVersion = isFormed && await Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardCreateVersion);
+            _canArchive = isFormed && await Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardArchive);
 
             // Deep-link from the registry actions.
             var action = Microsoft.AspNetCore.WebUtilities.QueryHelpers
@@ -703,10 +706,11 @@
         var auth = await AuthState.GetAuthenticationStateAsync();
         var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         var isAuthor = userId != null && _draft.CreatedByUserId == userId;
+        var effectiveUserId = userId ?? string.Empty;
 
-        _canSelectCoefficients = isAuthor || await Perms.HasPermissionAsync(PermissionCodes.IndividualCardEditDraft);
-        _canRecalculate = _canSelectCoefficients && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardRecalculateDraft);
-        _canForm = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardForm);
+        _canSelectCoefficients = isAuthor || await Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardEditDraft);
+        _canRecalculate = _canSelectCoefficients && await Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardRecalculateDraft);
+        _canForm = await Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardForm);
 
         if (_draft.Status == IndividualCardStatus.Formed)
         {

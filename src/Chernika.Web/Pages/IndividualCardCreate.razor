@@ -8,6 +8,7 @@
 @inject IndividualCardService IndCardService
 @inject EquipmentService EquipService
 @inject IPermissionService Perms
+@inject AuthenticationStateProvider AuthState
 @inject CircuitDbLock DbLock
 @inject NavigationManager Nav
 
@@ -197,7 +198,9 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _canCreateDraft = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateDraft);
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
+        _canCreateDraft = await Perms.HasPermissionAsync(userId, PermissionCodes.IndividualCardCreateDraft);
     }
 
     private async Task SelectLevel(IndividualCardObjectLevel level)
