@@ -2077,6 +2077,38 @@ public class IndividualCardService
 
     // ── D5: new version, comparison, archive ───────────────────────────────
 
+    public async Task<IndividualCardActionHeaderDto?> GetIndividualCardActionHeaderAsync(
+        Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var card = await _db.IndividualCards.AsNoTracking()
+            .Include(d => d.Complex)
+            .Include(d => d.EquipmentModel)
+            .Include(d => d.Aggregate)
+            .Include(d => d.Node)
+            .Include(d => d.EquipmentInstance)
+            .FirstOrDefaultAsync(d => d.Id == individualCardId, ct);
+
+        if (card is null
+            || (card.Status != IndividualCardStatus.Formed && card.Status != IndividualCardStatus.Archived))
+            return null;
+
+        if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
+            return null;
+
+        return new IndividualCardActionHeaderDto(
+            card.Id,
+            card.Code,
+            card.Version,
+            card.ObjectLevel,
+            IndividualCardDisplay.ObjectLevel(card.ObjectLevel),
+            IndividualCardDisplaySourceObjectName(card),
+            card.BranchId,
+            card.Status);
+    }
+
     private async Task<IndividualCard?> LoadIndividualCardWithSnapshotsAsync(Guid id, CancellationToken ct) =>
         await _db.IndividualCards.AsNoTracking()
             .Include(d => d.Complex)

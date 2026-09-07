@@ -867,6 +867,107 @@ public class IndividualCardVersionAndArchiveIntegrationTests
         await s.IndividualCards.FormDraftAsync(new FormIndividualCardRequest(draft.Id));
         return (draft.Id, modelId, aggregateId, nodeId, nodeHK.Id, aggregateHK.Id);
     }
+
+    // ── Corrective D5 ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RepeatComparison_WithSelectedRoot_ExplicitlySelectedAndReady()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (draftId, modelId, _, _, _, _) = await CreateFormedCardAsync(s);
+
+        // Second approved root HK for the same Изделие → selection required.
+        var secondRootHK = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var initial = await s.IndividualCards.BuildNewVersionComparisonAsync(
+            new IndividualCardVersionPreflightRequest(draftId));
+        Assert.Equal(IndividualCardPreflightRootState.SelectionRequired, initial.RootState);
+        Assert.False(initial.IsReadyToCreateDraft);
+        Assert.Null(initial.SelectedRoot);
+
+        // Repeat preflight with the explicitly chosen root: service confirms
+        // admissibility, diff is rebuilt for that root, creation enabled.
+        var repeated = await s.IndividualCards.BuildNewVersionComparisonAsync(
+            new IndividualCardVersionPreflightRequest(draftId, secondRootHK.Id));
+        Assert.Equal(IndividualCardPreflightRootState.ExplicitlySelected, repeated.RootState);
+        Assert.NotNull(repeated.SelectedRoot);
+        Assert.Equal(secondRootHK.Id, repeated.SelectedRoot!.HKCardId);
+        Assert.True(repeated.IsReadyToCreateDraft);
+
+        var created = await s.IndividualCards.CreateNewVersionAsync(
+            new CreateIndividualCardVersionRequest(draftId, secondRootHK.Id));
+
+        // The new Draft's root occurrence uses the explicitly selected root HK.
+        var rootSource = created.HKSources.Single(h => h.ParentHKSourceSnapshotId == null);
+        Assert.Equal(secondRootHK.Id, rootSource.SourceHKCardId);
+    }
+
+    [Fact]
+    public async Task ActionHeader_ArchiveWithoutCreateVersion_WorksIndependently()
+    {
+        await using var s = Scope();
+        var user = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchA);
+        var (draftId, _, _, _, _, _) = await CreateFormedCardAsync(s);
+        SetUser(s, user);
+        await DenyAsync(s, user, PermissionCodes.IndividualCardCreateVersion);
+
+        var header = await s.IndividualCards.GetIndividualCardActionHeaderAsync(draftId);
+        Assert.NotNull(header);
+        Assert.Equal(IndividualCardStatus.Formed, header!.Status);
+        Assert.False(string.IsNullOrWhiteSpace(header.Code));
+
+        // Archive works; comparison remains denied.
+        await s.IndividualCards.ArchiveIndividualCardAsync(draftId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            s.IndividualCards.BuildNewVersionComparisonAsync(
+                new IndividualCardVersionPreflightRequest(draftId)));
+        Assert.Equal(1, await CountAuditsAsync(s, draftId, "IndividualCard.Archived"));
+    }
+
+    [Fact]
+    public async Task ActionHeader_NewVersionWithoutArchive_WorksIndependently()
+    {
+        await using var s = Scope();
+        var user = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchA);
+        var (draftId, _, _, _, _, _) = await CreateFormedCardAsync(s);
+        SetUser(s, user);
+        await DenyAsync(s, user, PermissionCodes.IndividualCardArchive);
+
+        var header = await s.IndividualCards.GetIndividualCardActionHeaderAsync(draftId);
+        Assert.NotNull(header);
+
+        // Comparison/new version works; archive is denied.
+        var comparison = await s.IndividualCards.BuildNewVersionComparisonAsync(
+            new IndividualCardVersionPreflightRequest(draftId));
+        Assert.True(comparison.IsReadyToCreateDraft);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            s.IndividualCards.ArchiveIndividualCardAsync(draftId));
+        Assert.Equal(0, await CountAuditsAsync(s, draftId, "IndividualCard.Archived"));
+    }
+
+    [Fact]
+    public async Task ActionHeader_ForeignBranch_ReturnsNull()
+    {
+        await using var s = Scope();
+        var foreign = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchB);
+        var (draftId, _, _, _, _, _) = await CreateFormedCardAsync(s);
+        SetUser(s, foreign);
+
+        Assert.Null(await s.IndividualCards.GetIndividualCardActionHeaderAsync(draftId));
+    }
+
+    [Fact]
+    public async Task ActionHeader_ArchivedCard_ReturnsArchivedStatus()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (draftId, _, _, _, _, _) = await CreateFormedCardAsync(s);
+        await s.IndividualCards.ArchiveIndividualCardAsync(draftId);
+
+        var header = await s.IndividualCards.GetIndividualCardActionHeaderAsync(draftId);
+        Assert.NotNull(header);
+        Assert.Equal(IndividualCardStatus.Archived, header!.Status);
+    }
 }
 
 /// <summary>Adapter: CreateIndividualCardVersionRequest record constructor kept

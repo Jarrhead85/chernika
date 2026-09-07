@@ -12,6 +12,18 @@ public sealed record CreateIndividualCardVersionRequest(
 
 public sealed record ArchiveIndividualCardRequest(Guid IndividualCardId);
 
+/// <summary>Lightweight View-only header of a Formed/Archived card for the
+/// D5 action panel: no CreateVersion/Archive requirement, no calculation data.</summary>
+public sealed record IndividualCardActionHeaderDto(
+    Guid Id,
+    string Code,
+    string Version,
+    IndividualCardObjectLevel ObjectLevel,
+    string ObjectLevelDisplay,
+    string ObjectName,
+    Guid BranchId,
+    IndividualCardStatus Status);
+
 /// <summary>Explicit diff entry state: Added / Removed / Changed / Unchanged.</summary>
 public sealed record IndividualCardDiffEntryDto(
     string State,

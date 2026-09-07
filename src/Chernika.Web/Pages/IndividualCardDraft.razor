@@ -21,21 +21,27 @@
     }
     else if (_draft is null)
     {
-        @if (_comparison is not null)
+        @if (_actionHeader is not null)
         {
             <section class="panel">
                 <div class="panelHeader">
-                    <h2>ИК @_comparison.SourceCode @_comparison.SourceVersion</h2>
-                    <div class="hint">@_comparison.SourceObjectLevelDisplay: @_comparison.SourceObjectName</div>
-                    <span class="tag ok">Сформирована</span>
+                    <h2>ИК @_actionHeader.Code @_actionHeader.Version</h2>
+                    <div class="hint">@_actionHeader.ObjectLevelDisplay: @_actionHeader.ObjectName</div>
+                    <span class="tag @(_actionHeader.Status == IndividualCardStatus.Formed ? "ok" : "")">@IndividualCardDisplay.Status(_actionHeader.Status)</span>
                 </div>
                 <div class="panelBody">
-                    @if (_canCreateVersion || _canArchive)
+                    @if (!_actionHeader.Status.ToString().Equals("Formed"))
+                    {
+                        <div class="note">Действия недоступны: ИК не сформирована.</div>
+                    }
+                    else if (_canCreateVersion || _canArchive)
                     {
                         <div class="formActions">
                             @if (_canCreateVersion)
                             {
-                                <button type="button" class="btn primary" @onclick="() => _showVersionModal = true">Создать новую версию ИК</button>
+                                <button type="button" class="btn primary" @onclick="OpenVersionModalAsync" disabled="@_comparisonLoading">
+                                    @(_comparisonLoading ? "Загрузка…" : "Создать новую версию ИК")
+                                </button>
                             }
                             @if (_canArchive)
                             {
@@ -262,9 +268,9 @@
                         <label>ХК верхнего уровня (несколько кандидатов)</label>
                         @foreach (var candidate in _comparison.RootCandidates)
                         {
-                            <label class="hkc-item">
+                            <label class="hkc-item @(_selectedRootHKCardId == candidate.HKCardId ? "selected" : "")">
                                 <input type="radio" name="version-root" checked="@(_selectedRootHKCardId == candidate.HKCardId)"
-                                       @onchange="() => _selectedRootHKCardId = candidate.HKCardId" />
+                                       @onchange="() => SelectVersionRootAsync(candidate.HKCardId)" />
                                 <span class="hkc-item-name">@candidate.Code @candidate.Version — @candidate.ObjectName</span>
                             </label>
                         }
@@ -337,7 +343,7 @@
     </div>
 }
 
-@if (_showArchiveConfirm && _comparison is not null)
+@if (_showArchiveConfirm && _actionHeader is not null)
 {
     <div class="modalOverlay" @onclick="() => _showArchiveConfirm = false">
         <div class="modal" @onclick:stopPropagation>
@@ -346,7 +352,7 @@
                 <button type="button" class="linkBtn" @onclick="() => _showArchiveConfirm = false">✕</button>
             </div>
             <div class="modalBody">
-                <div>Архивировать ИК «@_comparison.SourceCode @_comparison.SourceVersion»?</div>
+                <div>Архивировать ИК «@_actionHeader.Code @_actionHeader.Version»?</div>
                 <div class="hkv-muted">Архивная ИК останется доступна для просмотра и истории, но не может быть изменена или сформирована повторно.</div>
             </div>
             <div class="modalFooter">
@@ -380,7 +386,9 @@
 
     private bool _canCreateVersion;
     private bool _canArchive;
+    private IndividualCardActionHeaderDto? _actionHeader;
     private IndividualCardVersionComparisonDto? _comparison;
+    private bool _comparisonLoading;
     private bool _showVersionModal;
     private bool _showArchiveConfirm;
     private Guid _selectedRootHKCardId;
@@ -402,27 +410,17 @@
         _draft = await IndCardService.GetDraftByIdAsync(Id);
         if (_draft is null)
         {
-            // Formed (or foreign) card: try the D5 comparison entry — it is the
-            // minimal read available without a full D6 card.
-            try
-            {
-                _comparison = await IndCardService.BuildNewVersionComparisonAsync(
-                    new IndividualCardVersionPreflightRequest(Id));
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
-            {
-                _comparison = null;
-                _error = ex.Message;
-            }
+            // Non-Draft card: a lightweight View-only header. New-version and
+            // archive actions are permission-gated independently of each other;
+            // the comparison is loaded only when the user opens the modal.
+            _actionHeader = await IndCardService.GetIndividualCardActionHeaderAsync(Id);
+            _comparison = null;
+            _selectedRootHKCardId = Guid.Empty;
 
-            var authState = await AuthState.GetAuthenticationStateAsync();
-            var authUserId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            _canCreateVersion = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateVersion);
-            _canArchive = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardArchive);
-            if (_comparison is not null)
-            {
-                _canCreateVersion &= _comparison.IsReadyToCreateDraft || _comparison.RootState == IndividualCardPreflightRootState.SelectionRequired;
-            }
+            _canCreateVersion = _actionHeader is { Status: IndividualCardStatus.Formed }
+                && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardCreateVersion);
+            _canArchive = _actionHeader is { Status: IndividualCardStatus.Formed }
+                && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardArchive);
             return;
         }
 
@@ -536,6 +534,51 @@
         finally
         {
             _forming = false;
+        }
+    }
+
+    private async Task OpenVersionModalAsync()
+    {
+        _error = null;
+        _comparisonLoading = true;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                _comparison = await IndCardService.BuildNewVersionComparisonAsync(
+                    new IndividualCardVersionPreflightRequest(Id));
+            }
+            _selectedRootHKCardId = Guid.Empty;
+            _showVersionModal = true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _comparisonLoading = false;
+        }
+    }
+
+    private async Task SelectVersionRootAsync(Guid rootHKCardId)
+    {
+        _selectedRootHKCardId = rootHKCardId;
+        _error = null;
+
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                // Repeat preflight with the explicitly chosen root: the service
+                // must confirm admissibility before creation is enabled.
+                _comparison = await IndCardService.BuildNewVersionComparisonAsync(
+                    new IndividualCardVersionPreflightRequest(Id, rootHKCardId));
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
         }
     }
 

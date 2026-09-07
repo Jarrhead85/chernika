@@ -173,6 +173,14 @@ public class IndividualCardsController : ControllerBase
 
     // ── D5: new version, comparison, archive ──────────────────────────────
 
+    [HttpGet("{id:guid}/action-header")]
+    public async Task<ActionResult<IndividualCardActionHeaderDto>> GetActionHeader(Guid id, CancellationToken ct)
+    {
+        var header = await _cards.GetIndividualCardActionHeaderAsync(id, ct);
+        if (header is null) return NotFound();
+        return Ok(header);
+    }
+
     [HttpPost("{id:guid}/new-version/preflight")]
     public async Task<ActionResult<IndividualCardVersionComparisonDto>> NewVersionPreflight(
         Guid id, [FromBody] IndividualCardVersionPreflightRequest request, CancellationToken ct)
