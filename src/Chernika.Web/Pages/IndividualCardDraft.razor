@@ -1,0 +1,384 @@
+@page "/инд-карты/черновик/{Id:guid}"
+@using Chernika.Domain
+@using Chernika.Domain.Entities
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@using Chernika.Infrastructure.Services
+@using System.Globalization
+@using Chernika.Web.Services
+@inject IndividualCardService IndCardService
+@inject IPermissionService Perms
+@inject AuthenticationStateProvider AuthState
+@inject CircuitDbLock DbLock
+@inject NavigationManager Nav
+
+<div class="stack">
+    @if (_loading)
+    {
+        <section class="panel">
+            <div class="panelBody"><div class="loading-state">Загрузка...</div></div>
+        </section>
+    }
+    else if (_draft is null)
+    {
+        <section class="panel">
+            <div class="panelBody"><div class="note">Черновик ИК не найден.</div></div>
+        </section>
+    }
+    else
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>Черновик ИК @_draft.Code @_draft.Version</h2>
+                <div class="hint">@_draft.ObjectLevelDisplay: @_draft.ObjectCode @_draft.ObjectName</div>
+                <span class="tag @(_draft.Status == IndividualCardStatus.Formed ? "ok" : "")">@IndividualCardDisplay.Status(_draft.Status)</span>
+            </div>
+            <div class="panelBody">
+                @if (!string.IsNullOrEmpty(_error))
+                {
+                    <div class="error" style="margin-bottom:10px;color:var(--bad);font-size:13px">@_error</div>
+                }
+
+                @if (_draft.Status == IndividualCardStatus.Draft && _canSelectCoefficients)
+                {
+                    <div class="field">
+                        <label>Коэффициенты</label>
+                        <input class="fieldInput" placeholder="Поиск по типу, наименованию, условию, основанию…"
+                               value="@_coefficientSearch" @oninput="OnCoefficientSearchChanged" />
+                    </div>
+
+                    @foreach (var group in _coefficientGroups)
+                    {
+                        <div class="hkc-group">
+                            <div class="hkc-group-title">@group.TypeName</div>
+                            @foreach (var coefficient in group.Items)
+                            {
+                                var selected = _selectedCoefficientIds.Contains(coefficient.Id);
+                                <label class="hkc-item @(selected ? "selected" : "")">
+                                    <input type="radio" name="@($"coef-{group.TypeId}")" checked="@selected"
+                                           @onchange="() => ToggleCoefficient(group, coefficient)" />
+                                    <span class="hkc-item-name">@coefficient.Name</span>
+                                    <span class="mono hkc-item-value">@FormatF6(coefficient.Value)</span>
+                                    @if (!string.IsNullOrWhiteSpace(coefficient.ConditionDescription))
+                                    {
+                                        <span class="hkc-item-desc">@coefficient.ConditionDescription</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(coefficient.NormativeBasis))
+                                    {
+                                        <span class="hkc-item-desc">@coefficient.NormativeBasis</span>
+                                    }
+                                </label>
+                            }
+                        </div>
+                    }
+
+                    <div class="hkc-summary">
+                        <span>Выбрано: @_selectedCoefficientIds.Count @(Plural(_selectedCoefficientIds.Count))</span>
+                        <span>Общий коэффициент: <span class="mono">@FormatF6(_savedCalculation?.TotalCoefficient ?? 1m)</span></span>
+                        @if (_canRecalculate)
+                        {
+                            <button type="button" class="btn primary" disabled="@(_recalculating)"
+                                    @onclick="Recalculate">
+                                @(_recalculating ? "Пересчёт…" : "Пересчитать")
+                            </button>
+                        }
+                    </div>
+                }
+                else if (_draft.Status == IndividualCardStatus.Draft)
+                {
+                    <div class="note">Выбор коэффициентов недоступен: недостаточно прав.</div>
+                }
+            </div>
+        </section>
+
+        @if (_savedCalculation is not null)
+        {
+            <section class="panel">
+                <div class="panelHeader">
+                    <h2>Расчёт</h2>
+                    <div class="hint">Общий коэффициент: <span class="mono">@FormatF6(_savedCalculation.TotalCoefficient)</span></div>
+                    <div class="hint">Итого: <span class="mono">@FormatF6(_savedCalculation.TotalNorm) г</span></div>
+                </div>
+                <div class="panelBody">
+                    @if (_savedCalculation.Problems.Count > 0)
+                    {
+                        <div class="hkc-problems">
+                            @foreach (var problem in _savedCalculation.Problems)
+                            {
+                                <div class="note">⚠ @problem.Message</div>
+                            }
+                        </div>
+                    }
+
+                    @if (_savedCalculation.Rows.Count > 0)
+                    {
+                        <div class="hk-items-table-wrapper">
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th>№</th>
+                                    <th>ХК узла</th>
+                                    <th>Сборочная единица</th>
+                                    <th>Кол-во СЕ</th>
+                                    <th>Кол-во узлов</th>
+                                    <th>Кол-во агрегатов</th>
+                                    <th>Кол-во изделий</th>
+                                    <th>Норма ХК</th>
+                                    <th>Базовая норма</th>
+                                    <th>Расчётная норма, г</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in _savedCalculation.Rows)
+                                {
+                                    <tr>
+                                        <td>@(row.SortOrder + 1)</td>
+                                        <td class="mono">@row.HKCardCode @row.HKCardVersion</td>
+                                        <td>@row.AssemblyUnitName</td>
+                                        <td>@row.AssemblyUnitQuantity</td>
+                                        <td>@row.NodeQuantity</td>
+                                        <td>@row.AggregateQuantity</td>
+                                        <td>@row.ProductQuantity</td>
+                                        <td class="mono">@FormatF6(row.SourceVolume)</td>
+                                        <td class="mono">@FormatF6(row.BaseVolume)</td>
+                                        <td class="mono">@FormatF6(row.CalculatedVolume)</td>
+                                    </tr>
+                                    @foreach (var material in row.Materials)
+                                    {
+                                        <tr class="hkc-material-row">
+                                            <td></td>
+                                            <td colspan="9">
+                                                <span class="tag @(material.Category == GsmCategory.Primary ? "ok" : "")">@CategoryName(material.Category)</span>
+                                                @material.MaterialName
+                                                @if (!string.IsNullOrWhiteSpace(material.Gost))
+                                                {
+                                                    <span class="hkc-gost">ГОСТ/ТУ: @material.Gost</span>
+                                                }
+                                                — <span class="mono">@FormatF6(material.CalculatedVolume) @material.UnitOfMeasure</span>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="note">Расчёт не выполнялся.</div>
+                    }
+
+                    @if (_savedCalculation.PrimaryTotals.Count > 0)
+                    {
+                        <h3 class="hkc-subtitle">Итоги по основным маркам ГСМ</h3>
+                        <table class="hk-items-table">
+                            <thead>
+                                <tr>
+                                    <th>Марка ГСМ</th>
+                                    <th>ГОСТ/ТУ</th>
+                                    <th>Ед. изм.</th>
+                                    <th>Количество строк</th>
+                                    <th>Итого</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var total in _savedCalculation.PrimaryTotals)
+                                {
+                                    <tr>
+                                        <td>@total.MaterialName</td>
+                                        <td>@total.Gost</td>
+                                        <td>@total.UnitOfMeasure</td>
+                                        <td>@total.ItemCount</td>
+                                        <td class="mono">@FormatF6(total.TotalVolume) @total.UnitOfMeasure</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+
+                    <div class="formActions">
+                        @if (_draft.Status == IndividualCardStatus.Draft && _canForm)
+                        {
+                            <button type="button" class="btn primary" disabled="@(!_savedCalculation.IsReadyToForm || _forming)"
+                                    title="@(_savedCalculation.IsReadyToForm ? "" : "Устраните проблемы расчёта перед формированием")"
+                                    @onclick="Form">
+                                @(_forming ? "Формирование…" : "Сформировать ИК")
+                            </button>
+                        }
+                        <button type="button" class="btn ghost" @onclick="GoBack">Назад</button>
+                    </div>
+                </div>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool _loading = true;
+    private string? _error;
+    private IndividualCardDraftDto? _draft;
+    private IndividualCardCalculationDto? _savedCalculation;
+
+    private bool _canSelectCoefficients;
+    private bool _canRecalculate;
+    private bool _canForm;
+
+    private string _coefficientSearch = string.Empty;
+    private List<CoefficientListItemDto> _coefficients = new();
+    private List<(Guid TypeId, string TypeName, List<CoefficientListItemDto> Items)> _coefficientGroups = new();
+    private HashSet<Guid> _selectedCoefficientIds = new();
+    private bool _recalculating;
+    private bool _forming;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using (await DbLock.WaitAsync())
+        {
+            await LoadAsync();
+        }
+        _loading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+        _draft = await IndCardService.GetDraftByIdAsync(Id);
+        if (_draft is null)
+            return;
+
+        _savedCalculation = await IndCardService.GetDraftCalculationAsync(Id);
+
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var isAuthor = userId != null && _draft.CreatedByUserId == userId;
+
+        _canSelectCoefficients = isAuthor || await Perms.HasPermissionAsync(PermissionCodes.IndividualCardEditDraft);
+        _canRecalculate = _canSelectCoefficients && await Perms.HasPermissionAsync(PermissionCodes.IndividualCardRecalculateDraft);
+        _canForm = await Perms.HasPermissionAsync(PermissionCodes.IndividualCardForm);
+
+        if (_draft.Status == IndividualCardStatus.Formed)
+        {
+            _selectedCoefficientIds = new HashSet<Guid>(
+                _savedCalculation?.Coefficients.Select(c => c.SourceCoefficientId) ?? Enumerable.Empty<Guid>());
+        }
+
+        if (_draft.Status == IndividualCardStatus.Draft && _canSelectCoefficients)
+        {
+            await LoadCoefficientsAsync();
+            _selectedCoefficientIds = new HashSet<Guid>(
+                _savedCalculation?.Coefficients.Select(c => c.SourceCoefficientId) ?? Enumerable.Empty<Guid>());
+        }
+    }
+
+    private async Task LoadCoefficientsAsync()
+    {
+        try
+        {
+            _coefficients = (await IndCardService.GetWorkingCoefficientsForDraftSelectAsync(Id, _coefficientSearch))?.ToList() ?? new();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _coefficients = new();
+        }
+        _coefficientGroups = _coefficients
+            .GroupBy(c => c.CoefficientTypeId)
+            .Select(g => (g.First().CoefficientTypeId, g.First().CoefficientTypeName, g.ToList()))
+            .ToList();
+    }
+
+    private async Task OnCoefficientSearchChanged(ChangeEventArgs args)
+    {
+        _coefficientSearch = args.Value?.ToString() ?? string.Empty;
+        await using (await DbLock.WaitAsync())
+        {
+            await LoadCoefficientsAsync();
+        }
+        StateHasChanged();
+    }
+
+    private async Task ToggleCoefficient(
+        (Guid TypeId, string TypeName, List<CoefficientListItemDto> Items) group,
+        CoefficientListItemDto coefficient)
+    {
+        // Radio semantics: choosing a value within one type replaces only that
+        // type's choice; other types keep their selections.
+        if (_selectedCoefficientIds.Contains(coefficient.Id))
+        {
+            _selectedCoefficientIds.Remove(coefficient.Id);
+        }
+        else
+        {
+            foreach (var other in group.Items.Select(i => i.Id))
+                _selectedCoefficientIds.Remove(other);
+            _selectedCoefficientIds.Add(coefficient.Id);
+        }
+        await Task.CompletedTask;
+    }
+
+    private async Task Recalculate()
+    {
+        _error = null;
+        _recalculating = true;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                _savedCalculation = await IndCardService.RecalculateDraftAsync(
+                    new RecalculateIndividualCardDraftRequest(Id, _selectedCoefficientIds.ToList()));
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _recalculating = false;
+        }
+    }
+
+    private async Task Form()
+    {
+        _error = null;
+        _forming = true;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                _savedCalculation = await IndCardService.FormDraftAsync(new FormIndividualCardRequest(Id));
+                await LoadAsync();
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _forming = false;
+        }
+    }
+
+    private void GoBack() => Nav.NavigateTo("/инд-карты");
+
+    private static string FormatF6(decimal value) => value.ToString("F6", CultureInfo.InvariantCulture);
+
+    private static string CategoryName(GsmCategory category) => category switch
+    {
+        GsmCategory.Primary => "Основное",
+        GsmCategory.Duplicate => "Дублирующее",
+        GsmCategory.Reserve => "Резервное",
+        GsmCategory.Foreign => "Зарубежное",
+        _ => category.ToString(),
+    };
+
+    private static string Plural(int count) => count switch
+    {
+        1 => "коэффициент",
+        var n when n % 10 == 2 && n % 100 != 12 => "коэффициента",
+        var n when n % 10 is >= 3 and <= 4 && (n % 100 < 10 || n % 100 >= 20) => "коэффициента",
+        _ => "коэффициентов",
+    };
+}

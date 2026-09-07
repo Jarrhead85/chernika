@@ -113,6 +113,64 @@ public class IndividualCardsController : ControllerBase
         }
     }
 
+    // ── D4: coefficients, calculation, Form ───────────────────────────────
+
+    [HttpGet("drafts/{id:guid}/calculation")]
+    public async Task<ActionResult<IndividualCardCalculationDto>> GetDraftCalculation(Guid id, CancellationToken ct)
+    {
+        var calculation = await _cards.GetDraftCalculationAsync(id, ct);
+        if (calculation is null) return NotFound();
+        return Ok(calculation);
+    }
+
+    [HttpGet("drafts/{id:guid}/coefficients")]
+    public async Task<ActionResult<IReadOnlyList<CoefficientListItemDto>>> GetDraftCoefficients(
+        Guid id, [FromQuery] string? searchText, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _cards.GetWorkingCoefficientsForDraftSelectAsync(id, searchText, ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("drafts/{id:guid}/recalculate")]
+    public async Task<ActionResult<IndividualCardCalculationDto>> RecalculateDraft(
+        Guid id, [FromBody] RecalculateIndividualCardDraftRequest request, CancellationToken ct)
+    {
+        if (id != request.IndividualCardId)
+            return BadRequest(new { message = "Идентификатор в маршруте не совпадает с телом запроса." });
+
+        try
+        {
+            return Ok(await _cards.RecalculateDraftAsync(request, ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("drafts/{id:guid}/form")]
+    public async Task<ActionResult<IndividualCardCalculationDto>> FormDraft(
+        Guid id, [FromBody] FormIndividualCardRequest request, CancellationToken ct)
+    {
+        if (id != request.IndividualCardId)
+            return BadRequest(new { message = "Идентификатор в маршруте не совпадает с телом запроса." });
+
+        try
+        {
+            return Ok(await _cards.FormDraftAsync(request, ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("generate/{instanceId}")]
     [Authorize(Policy = "CreateIndividualCard")]
     public async Task<ActionResult<List<IndividualCardDetailDto>>> GenerateForInstance(

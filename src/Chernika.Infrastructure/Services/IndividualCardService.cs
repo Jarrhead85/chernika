@@ -5,6 +5,7 @@ using Chernika.Domain.Models;
 using Chernika.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 
 namespace Chernika.Infrastructure.Services;
 
@@ -1788,5 +1789,689 @@ public class IndividualCardService
         // Cascade removes all snapshots; the audit row is independent and survives.
         _db.IndividualCards.Remove(draft);
         await _db.SaveChangesAsync(ct);
+    }
+
+    // ── D4: coefficients, calculation, Form ────────────────────────────────
+
+    public async Task<IndividualCardCalculationDto?> GetDraftCalculationAsync(
+        Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var draft = await LoadDraftForCalculationAsync(individualCardId, ct: ct);
+        if (draft is null)
+            return null;
+        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
+            return null;
+
+        return BuildCalculationDto(draft);
+    }
+
+    public async Task<IReadOnlyList<CoefficientListItemDto>> GetWorkingCoefficientsForDraftSelectAsync(
+        Guid individualCardId, string? searchText = null, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardEditDraft, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var draft = await _db.IndividualCards.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == individualCardId && d.Status == IndividualCardStatus.Draft, ct)
+            ?? throw new InvalidOperationException("Черновик ИК не найден.");
+
+        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
+            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другого филиала.");
+
+        var query = _db.Coefficients.AsNoTracking()
+            .Where(c => !c.IsDeleted && !c.CoefficientType.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var pattern = $"%{searchText.Trim()}%";
+            query = query.Where(c =>
+                EF.Functions.ILike(c.CoefficientType.Name, pattern) ||
+                EF.Functions.ILike(c.Name, pattern) ||
+                (c.ConditionDescription != null && EF.Functions.ILike(c.ConditionDescription, pattern)) ||
+                (c.NormativeBasis != null && EF.Functions.ILike(c.NormativeBasis, pattern)));
+        }
+
+        return await query
+            .OrderBy(c => c.CoefficientType.SortOrder).ThenBy(c => c.CoefficientType.Name).ThenBy(c => c.SortOrder).ThenBy(c => c.Name)
+            .Select(c => new CoefficientListItemDto
+            {
+                Id = c.Id,
+                CoefficientTypeId = c.CoefficientTypeId,
+                CoefficientTypeName = c.CoefficientType.Name,
+                Name = c.Name,
+                Value = c.Value,
+                ConditionDescription = c.ConditionDescription,
+                NormativeBasis = c.NormativeBasis,
+                SortOrder = c.SortOrder,
+                IsDeleted = c.IsDeleted,
+                CreatedAt = c.CreatedAt,
+                UpdatedAt = c.UpdatedAt,
+                DeletedAt = c.DeletedAt,
+            }).ToListAsync(ct);
+    }
+
+    public async Task<IndividualCardCalculationDto> RecalculateDraftAsync(
+        RecalculateIndividualCardDraftRequest request, CancellationToken ct = default)
+    {
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var draft = await _db.IndividualCards
+            .Include(d => d.CompositionSnapshots).ThenInclude(cs => cs.Aggregates)
+            .Include(d => d.CompositionSnapshots).ThenInclude(cs => cs.Aggregates).ThenInclude(a => a.Nodes)
+            .Include(d => d.HKSourceSnapshots)
+            .Include(d => d.NormativeGapSnapshots)
+            .Include(d => d.Items).ThenInclude(i => i.MaterialSnapshots)
+            .Include(d => d.CoefficientSnapshots)
+            .FirstOrDefaultAsync(d => d.Id == request.IndividualCardId, ct)
+            ?? throw new InvalidOperationException("Черновик ИК не найден.");
+
+        if (draft.Status != IndividualCardStatus.Draft)
+            throw new InvalidOperationException("Пересчитать можно только черновик ИК.");
+
+        // Author OR IndividualCard.EditDraft with branch scope, plus the
+        // dedicated IndividualCard.RecalculateDraft right; hidden UI is not
+        // security, so every required right is checked server-side.
+        await EnsureDraftEditorAsync(draft, scope, "Недостаточно прав для изменения черновика ИК.", ct);
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardRecalculateDraft, ct);
+
+        // Coefficient selection validation.
+        var requestedIds = request.CoefficientIds ?? new List<Guid>();
+        if (requestedIds.Distinct().Count() != requestedIds.Count)
+            throw new InvalidOperationException("Коэффициенты выбраны с повторами.");
+
+        var coefficients = await _db.Coefficients.AsNoTracking()
+            .Include(c => c.CoefficientType)
+            .Where(c => requestedIds.Contains(c.Id))
+            .ToListAsync(ct);
+
+        if (coefficients.Count != requestedIds.Count)
+            throw new InvalidOperationException("Один или несколько выбранных коэффициентов не найдены.");
+
+        var archived = coefficients.FirstOrDefault(c => c.IsDeleted || c.CoefficientType.IsDeleted);
+        if (archived is not null)
+            throw new InvalidOperationException(
+                $"Коэффициент «{archived.Name}» или его тип архивирован и не может применяться.");
+
+        var duplicateType = coefficients.GroupBy(c => c.CoefficientTypeId).FirstOrDefault(g => g.Count() > 1);
+        if (duplicateType is not null)
+            throw new InvalidOperationException(
+                $"Для типа коэффициентов «{duplicateType.First().CoefficientType.Name}» выбрано несколько коэффициентов.");
+
+        decimal totalCoefficient = 1m;
+        foreach (var coefficient in coefficients.OrderBy(c => c.CoefficientType.SortOrder).ThenBy(c => c.SortOrder))
+            totalCoefficient *= coefficient.Value;
+
+        var (items, problems, totalNorm, primaryMaterialCount, primaryTotal) =
+            await CalculateDraftRowsAsync(draft, totalCoefficient, ct);
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        var actorId = _currentUser.GetRequiredUserId();
+        var oldItemIds = draft.Items.Select(i => i.Id).ToList();
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            await _db.IndividualCardItemMaterialSnapshots
+                .Where(m => oldItemIds.Contains(m.IndividualCardItemId))
+                .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardItems
+                .Where(i => i.IndividualCardId == draft.Id)
+                .ExecuteDeleteAsync(ct);
+            await _db.IndividualCardCoefficientSnapshots
+                .Where(s => s.IndividualCardId == draft.Id)
+                .ExecuteDeleteAsync(ct);
+
+            // Detach the stale tracked graph so relationship fixup cannot
+            // interfere with the replaced calculation set.
+            foreach (var stale in draft.Items.SelectMany(i => i.MaterialSnapshots).Cast<object>()
+                         .Concat(draft.Items).Concat(draft.CoefficientSnapshots))
+                _db.Entry(stale).State = EntityState.Detached;
+            draft.Items.Clear();
+            draft.CoefficientSnapshots.Clear();
+
+            var newRows = new List<object>();
+            var sortOrder = 0;
+            foreach (var coefficient in coefficients.OrderBy(c => c.CoefficientType.SortOrder).ThenBy(c => c.SortOrder))
+            {
+                var snapshot = new IndividualCardCoefficientSnapshot
+                {
+                    Id = Guid.NewGuid(),
+                    IndividualCardId = draft.Id,
+                    SourceCoefficientId = coefficient.Id,
+                    SourceCoefficientTypeId = coefficient.CoefficientTypeId,
+                    CoefficientTypeName = coefficient.CoefficientType.Name,
+                    CoefficientName = coefficient.Name,
+                    Value = coefficient.Value,
+                    ConditionDescription = coefficient.ConditionDescription,
+                    NormativeBasis = coefficient.NormativeBasis,
+                    SortOrder = sortOrder++,
+                    CapturedAt = now,
+                };
+                newRows.Add(snapshot);
+                draft.CoefficientSnapshots.Add(snapshot);
+            }
+
+            foreach (var item in items)
+            {
+                item.IndividualCardId = draft.Id;
+                newRows.Add(item);
+                draft.Items.Add(item);
+            }
+
+            if (newRows.Count > 0)
+                _db.AddRange(newRows);
+
+            draft.TotalNorm = totalNorm;
+
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "IndividualCard", draft.Id.ToString(), "IndividualCard.Recalculated",
+                actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
+                Details: $"CoefficientCount={coefficients.Count}; TotalCoefficient={totalCoefficient.ToString("F6", CultureInfo.InvariantCulture)}; CalculationItemCount={items.Count}; PrimaryMaterialCount={primaryMaterialCount}; PrimaryTotalGrams={primaryTotal.ToString("F6", CultureInfo.InvariantCulture)}; CalculationProblemCount={problems.Count}"), ct);
+
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
+
+        var reloaded = await LoadDraftForCalculationAsync(draft.Id, ct: ct);
+        return BuildCalculationDto(reloaded!);
+    }
+
+    public async Task<IndividualCardCalculationDto> FormDraftAsync(
+        FormIndividualCardRequest request, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardForm, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var draft = await LoadDraftForCalculationAsync(request.IndividualCardId, tracked: true, ct: ct)
+            ?? throw new InvalidOperationException("Черновик ИК не найден.");
+
+        if (draft.Status != IndividualCardStatus.Draft)
+            throw new InvalidOperationException("Сформировать можно только черновик ИК.");
+
+        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
+            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другого филиала.");
+
+        var problems = new List<IndividualCardCalculationProblemDto>();
+
+        if (draft.NormativeGapSnapshots.Count > 0)
+            problems.Add(new IndividualCardCalculationProblemDto(
+                "IncompleteNormativeChain", "Черновик ИК содержит нормативные разрывы цепочки.",
+                null, null, null, problems.Count));
+
+        if (draft.Items.Count == 0)
+            problems.Add(new IndividualCardCalculationProblemDto(
+                "MissingCalculation", "Расчёт не выполнялся: строки расчёта отсутствуют.",
+                null, null, null, problems.Count));
+
+        foreach (var item in draft.Items)
+        {
+            var hkCardId = item.HKCardItem?.HKCardId;
+            if (string.IsNullOrWhiteSpace(item.UnitOfMeasure)
+                || !item.UnitOfMeasure.Trim().Equals("г", StringComparison.OrdinalIgnoreCase))
+            {
+                problems.Add(new IndividualCardCalculationProblemDto(
+                    "InvalidUnitOfMeasure",
+                    $"Строка «{item.AssemblyUnitName}» имеет единицу измерения «{item.UnitOfMeasure}», формирование разрешено только в граммах.",
+                    hkCardId, item.HKCardItemId, item.NodeSnapshotId, problems.Count));
+            }
+
+            if (!item.MaterialSnapshots.Any(m => m.Category == GsmCategory.Primary))
+            {
+                problems.Add(new IndividualCardCalculationProblemDto(
+                    "MissingPrimaryMaterial",
+                    $"Строка «{item.AssemblyUnitName}» не имеет основного материала ГСМ.",
+                    hkCardId, item.HKCardItemId, item.NodeSnapshotId, problems.Count));
+            }
+        }
+
+        if (problems.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Формирование ИК заблокировано: " + string.Join(" ", problems.Select(p => p.Message)));
+        }
+
+        var actorId = _currentUser.GetRequiredUserId();
+        var now = _time.GetUtcNow().UtcDateTime;
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            draft.Status = IndividualCardStatus.Formed;
+            draft.FormedAt = now;
+            draft.FormedByUserId = actorId.ToString();
+
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "IndividualCard", draft.Id.ToString(), "IndividualCard.Formed",
+                actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
+                Details: $"ObjectLevel={draft.ObjectLevel}; ObjectId={GetTargetObjectId(draft)}; BranchId={draft.BranchId}; CoefficientCount={draft.CoefficientSnapshots.Count}; TotalCoefficient={BuildTotalCoefficient(draft.CoefficientSnapshots).ToString("F6", CultureInfo.InvariantCulture)}; CalculationItemCount={draft.Items.Count}; PrimaryTotalGrams={draft.TotalNorm.ToString("F6", CultureInfo.InvariantCulture)}"), ct);
+
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
+
+        // The card is Formed now; the in-memory draft already carries the full
+        // loaded graph (items, coefficient snapshots, source identities).
+        return BuildCalculationDto(draft);
+    }
+
+    private async Task<Guid?> ResolveHKCardIdByItemIdAsync(Guid itemId, CancellationToken ct) =>
+        await _db.IndividualCardItems.AsNoTracking()
+            .Where(i => i.Id == itemId)
+            .Select(i => i.HKCardItem != null ? (Guid?)i.HKCardItem.HKCardId : null)
+            .FirstOrDefaultAsync(ct);
+
+    private async Task<IndividualCard?> LoadDraftForCalculationAsync(
+        Guid individualCardId, bool tracked = false, CancellationToken ct = default)
+    {
+        IQueryable<IndividualCard> query = _db.IndividualCards;
+        if (!tracked)
+            query = query.AsNoTracking();
+        return await query
+            .Include(d => d.Complex)
+            .Include(d => d.EquipmentModel)
+            .Include(d => d.Aggregate)
+            .Include(d => d.Node)
+            .Include(d => d.EquipmentInstance)
+            .Include(d => d.CompositionSnapshots).ThenInclude(cs => cs.Aggregates)
+            .Include(d => d.CompositionSnapshots).ThenInclude(cs => cs.Aggregates).ThenInclude(a => a.Nodes)
+            .Include(d => d.HKSourceSnapshots)
+            .Include(d => d.NormativeGapSnapshots)
+            .Include(d => d.Items).ThenInclude(i => i.MaterialSnapshots)
+            .Include(d => d.Items).ThenInclude(i => i.HKCardItem).ThenInclude(h => h.HKCard)
+            .Include(d => d.CoefficientSnapshots)
+            .FirstOrDefaultAsync(d => d.Id == individualCardId && d.Status == IndividualCardStatus.Draft, ct);
+    }
+
+    /// <summary>Occurrence-aware leaf traversal of the snapshot HK tree.
+    /// Every node occurrence reachable through a chain without normative gaps
+    /// produces its own calculation rows with factors resolved through the
+    /// actual parent occurrence path — never by global source object ids.</summary>
+    private async Task<(List<IndividualCardItem> Items, List<IndividualCardCalculationProblemDto> Problems,
+        decimal TotalNorm, int PrimaryMaterialCount, decimal PrimaryTotal)>
+        CalculateDraftRowsAsync(IndividualCard draft, decimal totalCoefficient, CancellationToken ct)
+    {
+        var problems = new List<IndividualCardCalculationProblemDto>();
+
+        if (draft.NormativeGapSnapshots.Count > 0)
+        {
+            problems.Add(new IndividualCardCalculationProblemDto(
+                "IncompleteNormativeChain",
+                "Черновик ИК содержит нормативные разрывы цепочки; рассчитаны только полные ветки.",
+                null, null, null, 0));
+        }
+
+        var brokenHkIds = draft.NormativeGapSnapshots
+            .Where(g => g.RelatedHKCardId.HasValue)
+            .Select(g => g.RelatedHKCardId!.Value)
+            .ToHashSet();
+
+        // Parent links store snapshot ids (ParentHKSourceSnapshotId), so the
+        // occurrence walk is keyed by snapshot identity.
+        var sourceBySnapshotId = draft.HKSourceSnapshots.ToDictionary(s => s.Id);
+
+        // Node-level leaf occurrences with a complete ancestor chain (the root
+        // reflects whole-card completeness and is not part of the chain check).
+        var nodeOccurrences = new List<IndividualCardHKSourceSnapshot>();
+        foreach (var source in draft.HKSourceSnapshots.Where(s => s.ObjectLevel == IndividualCardObjectLevel.Node))
+        {
+            var chainBroken = false;
+            var cursor = source.ParentHKSourceSnapshotId;
+            while (cursor.HasValue && sourceBySnapshotId.TryGetValue(cursor.Value, out var parent))
+            {
+                if (brokenHkIds.Contains(parent.SourceHKCardId))
+                {
+                    chainBroken = true;
+                    break;
+                }
+                cursor = parent.ParentHKSourceSnapshotId;
+            }
+
+            if (!chainBroken)
+                nodeOccurrences.Add(source);
+        }
+
+        // Snapshot quantity maps: composition by target object, aggregate by
+        // (composition, aggregate source), node by (aggregate snapshot, node source).
+        var compositionByTarget = draft.CompositionSnapshots
+            .GroupBy(cs => cs.TargetObjectId)
+            .ToDictionary(g => g.Key, g => g.First());
+        var aggregateByCompositionAndSource = draft.CompositionSnapshots
+            .SelectMany(cs => cs.Aggregates.Select(a => (cs, a)))
+            .GroupBy(x => (x.cs.Id, x.a.AggregateId))
+            .ToDictionary(g => g.Key, g => g.First().a);
+        var nodeByAggregateAndSource = draft.CompositionSnapshots
+            .SelectMany(cs => cs.Aggregates)
+            .SelectMany(a => a.Nodes.Select(n => (a, n)))
+            .GroupBy(x => (x.a.Id, x.n.NodeId))
+            .ToDictionary(g => g.Key, g => g.First().n);
+
+        // HKCardItem rows of the node source HK cards, one bounded query.
+        var nodeHkIds = nodeOccurrences.Select(o => o.SourceHKCardId).Distinct().ToList();
+        var hkItems = await _db.HKCardItems.AsNoTracking()
+            .Include(i => i.Materials).ThenInclude(m => m.GsmMaterial)
+            .Include(i => i.AssemblyUnit)
+            .Where(i => nodeHkIds.Contains(i.HKCardId))
+            .ToListAsync(ct);
+        var itemsByHK = hkItems.ToLookup(i => i.HKCardId);
+
+        var items = new List<IndividualCardItem>();
+        var sortOrder = 0;
+
+        foreach (var nodeOcc in nodeOccurrences.OrderBy(o => o.SortOrder))
+        {
+            // Structural multipliers through the actual occurrence path.
+            var nodeQuantity = 1;
+            var aggregateQuantity = 1;
+            var productQuantity = 1;
+
+            var aggregateOcc = nodeOcc.ParentHKSourceSnapshotId.HasValue
+                && sourceBySnapshotId.TryGetValue(nodeOcc.ParentHKSourceSnapshotId.Value, out var p1)
+                && p1.ObjectLevel == IndividualCardObjectLevel.Aggregate
+                    ? p1
+                    : null;
+
+            IndividualCardCompositionSnapshot? composition = null;
+            IndividualCardAggregateSnapshot? aggregateSnapshot = null;
+            IndividualCardNodeSnapshot? nodeSnapshot = null;
+
+            if (aggregateOcc is not null)
+            {
+                var productOcc = aggregateOcc.ParentHKSourceSnapshotId.HasValue
+                    && sourceBySnapshotId.TryGetValue(aggregateOcc.ParentHKSourceSnapshotId.Value, out var p2)
+                    && p2.ObjectLevel == IndividualCardObjectLevel.EquipmentModel
+                        ? p2
+                        : null;
+
+                // Product occurrence: the model occurrence in a Complex tree or
+                // the root itself for an Изделие target. Aggregate target: the
+                // aggregate occurrence is the root and the composition matches it.
+                var productObjectId = productOcc?.SourceObjectId ?? aggregateOcc.SourceObjectId;
+                composition = compositionByTarget.GetValueOrDefault(productObjectId);
+
+                if (composition is null)
+                {
+                    problems.Add(new IndividualCardCalculationProblemDto(
+                        "MissingNodeHKSource",
+                        $"Для узла «{nodeOcc.SourceObjectName}» не найден снимок состава в ветке расчёта.",
+                        nodeOcc.SourceHKCardId, null, null, sortOrder));
+                    continue;
+                }
+
+                aggregateSnapshot = aggregateByCompositionAndSource.GetValueOrDefault((composition.Id, aggregateOcc.SourceObjectId));
+                if (aggregateSnapshot is null)
+                {
+                    problems.Add(new IndividualCardCalculationProblemDto(
+                        "MissingNodeHKSource",
+                        $"Для узла «{nodeOcc.SourceObjectName}» не найден снимок агрегата в ветке расчёта.",
+                        nodeOcc.SourceHKCardId, null, null, sortOrder));
+                    continue;
+                }
+
+                nodeSnapshot = nodeByAggregateAndSource.GetValueOrDefault((aggregateSnapshot.Id, nodeOcc.SourceObjectId));
+                if (nodeSnapshot is null)
+                {
+                    problems.Add(new IndividualCardCalculationProblemDto(
+                        "MissingNodeHKSource",
+                        $"Для узла «{nodeOcc.SourceObjectName}» не найден снимок узла в ветке расчёта.",
+                        nodeOcc.SourceHKCardId, null, null, sortOrder));
+                    continue;
+                }
+
+                nodeQuantity = nodeSnapshot.Quantity;
+                aggregateQuantity = aggregateSnapshot.Quantity;
+                productQuantity = draft.ObjectLevel == IndividualCardObjectLevel.Complex
+                    ? composition.Quantity
+                    : 1;
+            }
+
+            var cardItems = itemsByHK[nodeOcc.SourceHKCardId].ToList();
+            if (cardItems.Count == 0)
+            {
+                problems.Add(new IndividualCardCalculationProblemDto(
+                    "MissingHKCardItem",
+                    $"Узловая ХК «{nodeOcc.HKCardCode}», {nodeOcc.HKCardVersion} не содержит строк ГСМ.",
+                    nodeOcc.SourceHKCardId, null, nodeSnapshot?.Id, sortOrder++));
+                continue;
+            }
+
+            foreach (var hkItem in cardItems.OrderBy(i => i.SortOrder))
+            {
+                var unit = hkItem.UnitOfMeasure?.Trim() ?? string.Empty;
+                var validUnit = unit.Equals("г", StringComparison.OrdinalIgnoreCase);
+                var primaryMaterials = hkItem.Materials.Where(m => m.Category == GsmCategory.Primary).ToList();
+
+                if (!validUnit)
+                {
+                    problems.Add(new IndividualCardCalculationProblemDto(
+                        "InvalidUnitOfMeasure",
+                        $"Строка «{hkItem.AssemblyUnit.Name}» ХК «{nodeOcc.HKCardCode}» имеет единицу измерения «{hkItem.UnitOfMeasure}»; формирование разрешено только в граммах.",
+                        nodeOcc.SourceHKCardId, hkItem.Id, nodeSnapshot?.Id, sortOrder));
+                }
+
+                if (primaryMaterials.Count == 0)
+                {
+                    problems.Add(new IndividualCardCalculationProblemDto(
+                        "MissingPrimaryMaterial",
+                        $"Строка «{hkItem.AssemblyUnit.Name}» ХК «{nodeOcc.HKCardCode}» не имеет основного материала ГСМ.",
+                        nodeOcc.SourceHKCardId, hkItem.Id, nodeSnapshot?.Id, sortOrder));
+                }
+
+                // BaseVolume = HKCardItem.Volume × HKCardItem.Quantity × Qnode ×
+                // Qaggregate × Qproduct, decimal, no intermediate rounding.
+                var baseVolume = hkItem.Volume * hkItem.Quantity
+                    * nodeQuantity * aggregateQuantity * productQuantity;
+                var calculatedVolume = decimal.Ceiling(baseVolume * totalCoefficient);
+
+                var item = new IndividualCardItem
+                {
+                    Id = Guid.NewGuid(),
+                    HKCardItemId = hkItem.Id,
+                    NodeSnapshotId = nodeSnapshot?.Id,
+                    AssemblyUnitCode = hkItem.AssemblyUnit.Code,
+                    AssemblyUnitName = hkItem.AssemblyUnit.Name,
+                    AssemblyUnitQuantity = hkItem.Quantity,
+                    UnitOfMeasure = unit,
+                    Periodicity = hkItem.Periodicity,
+                    Notes = hkItem.Notes,
+                    SourceVolume = hkItem.Volume,
+                    BaseVolume = baseVolume,
+                    CalculatedVolume = calculatedVolume,
+                    SortOrder = sortOrder++,
+                };
+
+                var materialSortOrder = 0;
+                foreach (var material in hkItem.Materials
+                             .OrderBy(m => m.Category).ThenBy(m => m.GsmMaterial.Name))
+                {
+                    item.MaterialSnapshots.Add(new IndividualCardItemMaterialSnapshot
+                    {
+                        Id = Guid.NewGuid(),
+                        IndividualCardItemId = item.Id,
+                        SourceGsmMaterialId = material.GsmMaterialId,
+                        MaterialName = material.GsmMaterial.Name,
+                        MaterialType = material.GsmMaterial.Type,
+                        Gost = material.GsmMaterial.Gost,
+                        Category = material.Category,
+                        CalculatedVolume = calculatedVolume,
+                        UnitOfMeasure = unit,
+                        SortOrder = materialSortOrder++,
+                    });
+                }
+
+                items.Add(item);
+            }
+        }
+
+        // Primary totals: only Primary materials participate; each parent row
+        // contributes exactly once per material group.
+        var primaryTotals = items
+            .SelectMany(i => i.MaterialSnapshots.Where(m => m.Category == GsmCategory.Primary)
+                .Select(m => (Item: i, Material: m)))
+            .GroupBy(x => (x.Material.MaterialName, x.Material.Gost, x.Material.UnitOfMeasure))
+            .OrderBy(g => g.Key.MaterialName)
+            .Select(g => new
+            {
+                g.Key,
+                TotalVolume = g.Sum(x => x.Item.CalculatedVolume),
+                ItemCount = g.Select(x => x.Item.Id).Distinct().Count(),
+            })
+            .ToList();
+
+        var totalNorm = items
+            .Where(i => i.MaterialSnapshots.Any(m => m.Category == GsmCategory.Primary))
+            .Sum(i => i.CalculatedVolume);
+        var primaryMaterialCount = items.Sum(i => i.MaterialSnapshots.Count(m => m.Category == GsmCategory.Primary));
+
+        return (items, problems, totalNorm, primaryMaterialCount, totalNorm);
+    }
+
+    private static decimal BuildTotalCoefficient(IEnumerable<IndividualCardCoefficientSnapshot> snapshots)
+    {
+        decimal total = 1m;
+        foreach (var snapshot in snapshots)
+            total *= snapshot.Value;
+        return total;
+    }
+
+    private IndividualCardCalculationDto BuildCalculationDto(IndividualCard draft)
+    {
+        var coefficientSnapshots = draft.CoefficientSnapshots
+            .OrderBy(s => s.SortOrder)
+            .ToList();
+        var totalCoefficient = BuildTotalCoefficient(coefficientSnapshots);
+
+        var problems = new List<IndividualCardCalculationProblemDto>();
+        if (draft.NormativeGapSnapshots.Count > 0)
+        {
+            problems.Add(new IndividualCardCalculationProblemDto(
+                "IncompleteNormativeChain", "Черновик ИК содержит нормативные разрывы цепочки.",
+                null, null, null, 0));
+        }
+
+        var itemProblems = new List<IndividualCardCalculationProblemDto>();
+        foreach (var item in draft.Items.OrderBy(i => i.SortOrder))
+        {
+            if (string.IsNullOrWhiteSpace(item.UnitOfMeasure)
+                || !item.UnitOfMeasure.Trim().Equals("г", StringComparison.OrdinalIgnoreCase))
+            {
+                itemProblems.Add(new IndividualCardCalculationProblemDto(
+                    "InvalidUnitOfMeasure",
+                    $"Строка «{item.AssemblyUnitName}» имеет единицу измерения «{item.UnitOfMeasure}», формирование разрешено только в граммах.",
+                    item.HKCardItemId, item.HKCardItemId, item.NodeSnapshotId, item.SortOrder));
+            }
+
+            if (!item.MaterialSnapshots.Any(m => m.Category == GsmCategory.Primary))
+            {
+                itemProblems.Add(new IndividualCardCalculationProblemDto(
+                    "MissingPrimaryMaterial",
+                    $"Строка «{item.AssemblyUnitName}» не имеет основного материала ГСМ.",
+                    item.HKCardItemId, item.HKCardItemId, item.NodeSnapshotId, item.SortOrder));
+            }
+        }
+
+        problems.AddRange(itemProblems);
+
+        var rows = draft.Items.OrderBy(i => i.SortOrder)
+            .Select(i =>
+            {
+                // Row factors resolved through the branch's node snapshot —
+                // repeated node sources under different parents carry distinct
+                // node snapshot ids, so factors stay per-branch.
+                var nodeQuantity = 0;
+                var aggregateQuantity = 0;
+                var productQuantity = 0;
+                if (i.NodeSnapshotId.HasValue)
+                {
+                    var nodeSnapshot = draft.CompositionSnapshots
+                        .SelectMany(cs => cs.Aggregates)
+                        .SelectMany(a => a.Nodes.Select(n => (a, n)))
+                        .FirstOrDefault(x => x.n.Id == i.NodeSnapshotId.Value);
+                    if (nodeSnapshot.n is not null && nodeSnapshot.a is not null)
+                    {
+                        var aggregateSnapshot = nodeSnapshot.a;
+                        var composition = draft.CompositionSnapshots
+                            .FirstOrDefault(cs => cs.Id == aggregateSnapshot.IndividualCardCompositionSnapshotId);
+                        nodeQuantity = nodeSnapshot.n.Quantity;
+                        aggregateQuantity = aggregateSnapshot.Quantity;
+                        productQuantity = draft.ObjectLevel == IndividualCardObjectLevel.Complex
+                            ? composition?.Quantity ?? 0
+                            : 1;
+                    }
+                }
+
+                return new IndividualCardCalculationRowDto(
+                    i.Id,
+                    i.NodeSnapshotId ?? Guid.Empty,
+                    i.HKCardItem?.HKCardId ?? Guid.Empty,
+                    i.HKCardItem?.HKCard?.Code ?? string.Empty,
+                    i.HKCardItem?.HKCard?.Version ?? string.Empty,
+                    i.AssemblyUnitCode,
+                    i.AssemblyUnitName,
+                    i.AssemblyUnitQuantity,
+                    nodeQuantity,
+                    aggregateQuantity,
+                    productQuantity,
+                    i.SourceVolume,
+                    i.BaseVolume,
+                    i.CalculatedVolume,
+                    i.UnitOfMeasure,
+                    i.SortOrder,
+                    Materials: i.MaterialSnapshots.OrderBy(m => m.SortOrder)
+                        .Select(m => new IndividualCardCalculationMaterialDto(
+                            m.Id, m.SourceGsmMaterialId, m.MaterialName, m.MaterialType,
+                            m.Gost, m.Category, m.CalculatedVolume, m.UnitOfMeasure, m.SortOrder))
+                        .ToList());
+            })
+            .ToList();
+
+        var primaryTotals = draft.Items
+            .SelectMany(i => i.MaterialSnapshots.Where(m => m.Category == GsmCategory.Primary)
+                .Select(m => (Item: i, Material: m)))
+            .GroupBy(x => (x.Material.MaterialName, x.Material.Gost, x.Material.UnitOfMeasure))
+            .OrderBy(g => g.Key.MaterialName)
+            .Select(g => new IndividualCardPrimaryTotalDto(
+                g.Key.MaterialName,
+                g.Key.Gost ?? string.Empty,
+                g.Key.UnitOfMeasure,
+                g.Sum(x => x.Item.CalculatedVolume),
+                g.Select(x => x.Item.Id).Distinct().Count()))
+            .ToList();
+
+        var isReadyToForm = draft.Status == IndividualCardStatus.Draft
+            && draft.NormativeGapSnapshots.Count == 0
+            && problems.Count == 0
+            && draft.Items.Count > 0
+            && IndividualCardStatusTransitions.IsAllowed(draft.Status, IndividualCardStatus.Formed);
+
+        return new IndividualCardCalculationDto(
+            draft.Id,
+            draft.Code,
+            draft.Version,
+            draft.ObjectLevel,
+            IndividualCardDisplay.ObjectLevel(draft.ObjectLevel),
+            draft.Status,
+            draft.BranchId,
+            coefficientSnapshots.Select(s => new IndividualCardCoefficientSnapshotDto(
+                s.Id, s.SourceCoefficientId, s.SourceCoefficientTypeId, s.CoefficientTypeName,
+                s.CoefficientName, s.Value, s.ConditionDescription, s.NormativeBasis, s.SortOrder)).ToList(),
+            totalCoefficient,
+            draft.TotalNorm,
+            rows,
+            primaryTotals,
+            problems,
+            isReadyToForm);
     }
 }

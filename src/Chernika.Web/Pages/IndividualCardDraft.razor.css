@@ -1,0 +1,95 @@
+/* ---- D4: выбор коэффициентов и расчёт черновика ИК ---- */
+
+.hkc-group {
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    background: var(--panel2);
+    padding: 10px 12px;
+    margin-bottom: 10px;
+}
+
+.hkc-group-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+
+.hkc-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--radius2, 10px);
+    cursor: pointer;
+    flex-wrap: wrap;
+}
+
+.hkc-item:hover {
+    background: rgba(79, 140, 255, .08);
+}
+
+.hkc-item.selected {
+    background: rgba(79, 140, 255, .16);
+}
+
+.hkc-item input[type="radio"] {
+    accent-color: var(--accent);
+    flex-shrink: 0;
+}
+
+.hkc-item-name {
+    font-size: 13px;
+    color: var(--text);
+}
+
+.hkc-item-value {
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: auto;
+}
+
+.hkc-item-desc {
+    flex-basis: 100%;
+    font-size: 11px;
+    color: var(--muted);
+    padding-left: 24px;
+}
+
+.hkc-summary {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text);
+    margin-top: 4px;
+}
+
+.hkc-summary .btn {
+    margin-left: auto;
+}
+
+.hkc-problems {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.hkc-subtitle {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 14px 0 8px;
+}
+
+.hkc-material-row td {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.hkc-gost {
+    color: var(--muted);
+    font-size: 11px;
+    margin-left: 8px;
+}
