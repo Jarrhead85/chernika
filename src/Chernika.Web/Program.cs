@@ -2,6 +2,7 @@ using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Infrastructure;
 using Chernika.Infrastructure.Data;
+using Chernika.Infrastructure.Reports;
 using Chernika.Infrastructure.Services;
 using Chernika.Web.Auth;
 using Chernika.Web.Services;
@@ -9,6 +10,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -114,6 +116,38 @@ app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
+
+// E1: inline PDF-бланк ИК (Web-хост не монтирует MVC-контроллеры, поэтому
+// маршрут /api/individualcards/{id}/pdf обслуживается здесь; право
+// IndividualCard.View и филиал проверяет GetExportAsync).
+app.MapGet("/api/individualcards/{id:guid}/pdf",
+    async (Guid id, ReportService reports, HttpContext http, CancellationToken ct) =>
+    {
+        IndividualCardPdfFile? file;
+        try
+        {
+            file = await reports.GenerateIndividualCardPdfAsync(id, ct);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Results.Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new { message = ex.Message });
+        }
+
+        if (file is null)
+            return Results.NotFound();
+
+        http.Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("inline")
+        {
+            FileNameStar = file.FileName,
+        }.ToString();
+        return Results.File(file.Content, "application/pdf");
+    })
+    .RequireAuthorization();
+
 app.MapRazorPages();
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
