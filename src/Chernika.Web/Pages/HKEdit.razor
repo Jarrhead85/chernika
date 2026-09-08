@@ -218,6 +218,19 @@
                                 <div class="readonlyValue readonlyValueMultiline">@(card.RequestDetails ?? "")</div>
                             }
                         </div>
+                        @if (isSystemAdmin && IsNew)
+                        {
+                            <div class="field hk-branch-field">
+                                <label>Филиал</label>
+                                <select class="field-select" @bind="_adminBranchId">
+                                    <option value="">Выберите филиал…</option>
+                                    @foreach (var b in allBranches)
+                                    {
+                                        <option value="@b.Id">@b.Name</option>
+                                    }
+                                </select>
+                            </div>
+                        }
                         <div class="field">
                             <label>Уровень объекта</label>
                             <div class="hk-level-segmented" role="tablist" aria-label="Уровень объекта">
@@ -435,7 +448,8 @@
                                         <td>
                                             @if (canEdit)
                                             {
-                                                <input type="number" @bind="item.Quantity" class="hki-td-input" />
+                                                <input type="number" @bind:get="item.Quantity == 0 ? null : (int?)item.Quantity"
+                                                       @bind:set="@(v => item.Quantity = v ?? 0)" class="hki-td-input" />
                                             }
                                             else
                                             {
@@ -500,7 +514,8 @@
                                         <td>
                                             @if (canEdit)
                                             {
-                                                <input type="number" @bind="item.Volume" step="0.001" class="hki-td-input" />
+                                                <input type="number" @bind:get="item.Volume == 0m ? null : (decimal?)item.Volume"
+                                                       @bind:set="@(v => item.Volume = v ?? 0m)" step="0.001" class="hki-td-input" />
                                             }
                                             else
                                             {
@@ -934,6 +949,9 @@
     private bool canCreateEquipmentModel;
     private bool canCreateComplex;
     private string currentUserId = "";
+    private bool isSystemAdmin;
+    private List<Branch> allBranches = new();
+    private string _adminBranchId = "";
     private string? errorMessage;
     private bool showReturnModal;
     private string returnComment = string.Empty;
@@ -1039,6 +1057,11 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+        isSystemAdmin = user.IsInRole("SystemAdmin");
+        if (isSystemAdmin)
+        {
+            allBranches = await HKCardService.GetAllBranchesAsync();
+        }
         canSendToApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeSubmit)
             || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateSubmit)
             || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentSubmit)
@@ -1159,9 +1182,9 @@
                 Id = Guid.NewGuid(),
                 HKCardId = card.Id,
                 AssemblyUnitId = Guid.Empty,
-                Quantity = 1,
-                Volume = 1.000m,
-                UnitOfMeasure = "кг",
+                Quantity = 0,
+                Volume = 0m,
+                UnitOfMeasure = "г",
                 SortOrder = 1
             });
         }
@@ -1218,9 +1241,9 @@
                     Id = Guid.NewGuid(),
                     HKCardId = card.Id,
                     AssemblyUnitId = Guid.Empty,
-                    Quantity = 1,
-                    Volume = 1.000m,
-                    UnitOfMeasure = "кг",
+                    Quantity = 0,
+                    Volume = 0m,
+                    UnitOfMeasure = "г",
                     SortOrder = 1
                 });
             }
@@ -1322,9 +1345,9 @@
             Id = Guid.NewGuid(),
             HKCardId = card.Id,
             AssemblyUnitId = Guid.Empty,
-            Quantity = 1,
-            Volume = 1.000m,
-            UnitOfMeasure = "кг",
+            Quantity = 0,
+            Volume = 0m,
+            UnitOfMeasure = "г",
             SortOrder = maxOrder + 1
         };
         card.Items.Add(item);
@@ -1496,25 +1519,27 @@
 
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (!string.IsNullOrEmpty(userId))
+        if (isSystemAdmin && IsNew)
+        {
+            if (!Guid.TryParse(_adminBranchId, out var adminBranchId) || adminBranchId == Guid.Empty)
+            {
+                errorMessage = "Укажите филиал для создания ХК.";
+                return;
+            }
+            card.BranchId = adminBranchId;
+        }
+        else if (!string.IsNullOrEmpty(userId))
         {
             var user = await UserManager.FindByIdAsync(userId);
             if (user?.BranchId != null)
                 card.BranchId = user.BranchId.Value;
         }
 
-        if (card.BranchId == Guid.Empty)
-        {
-            var branches = await EquipmentService.GetBranchesAsync();
-            var branch = branches.FirstOrDefault();
-            card.BranchId = branch?.Id ?? Guid.Empty;
-        }
-
         if (selectedLevel == HKObjectLevel.Node)
         {
             foreach (var item in card.Items)
             {
-                if (string.IsNullOrEmpty(item.UnitOfMeasure)) item.UnitOfMeasure = "кг";
+                if (string.IsNullOrEmpty(item.UnitOfMeasure)) item.UnitOfMeasure = "г";
             }
 
             var emptyAu = card.Items.FirstOrDefault(i => i.AssemblyUnitId == Guid.Empty);
@@ -1810,9 +1835,9 @@
                     Id = Guid.NewGuid(),
                     HKCardId = card.Id,
                     AssemblyUnitId = Guid.Empty,
-                    Quantity = 1,
-                    Volume = 1.000m,
-                    UnitOfMeasure = "кг",
+                    Quantity = 0,
+                    Volume = 0m,
+                    UnitOfMeasure = "г",
                     SortOrder = 1
                 });
                 InitItemDicts();

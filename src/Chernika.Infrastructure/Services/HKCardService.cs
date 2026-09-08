@@ -905,6 +905,11 @@ public class HKCardService
         _ => "Объект"
     };
 
+    /// <summary>Системный администратор определяется по реальной роли,
+    /// а не по разрешению: филиальные проверки ему не применяются.</summary>
+    private async Task<bool> IsSystemAdminAsync(ApplicationUser actor) =>
+        await _userManager.IsInRoleAsync(actor, Domain.Enums.UserRole.SystemAdmin.ToString());
+
     private async Task EnsureNoActiveDuplicateAsync(HKCard card, CancellationToken ct = default)
     {
         var activeStatuses = new[] { HKCardStatus.Draft, HKCardStatus.OnReview, HKCardStatus.RevisionRequired };
@@ -987,8 +992,21 @@ public class HKCardService
         if (!await _permissions.HasPermissionAsync(actorId.ToString(), createPerm))
             throw new UnauthorizedAccessException("Недостаточно прав для создания ХК.");
 
-        if (actor.BranchId == null || actor.BranchId.Value == Guid.Empty)
+        var isSystemAdmin = await IsSystemAdminAsync(actor);
+        if (isSystemAdmin)
+        {
+            // Системный администратор выбирает филиал явно на форме создания.
+            if (card.BranchId == Guid.Empty)
+                throw new InvalidOperationException("Укажите филиал для создания ХК.");
+            var branchExists = await _db.Branches.AsNoTracking()
+                .AnyAsync(b => b.Id == card.BranchId, ct);
+            if (!branchExists)
+                throw new InvalidOperationException("Указанный филиал не найден.");
+        }
+        else if (actor.BranchId == null || actor.BranchId.Value == Guid.Empty)
+        {
             throw new InvalidOperationException("У пользователя не указан филиал. Создание ХК невозможно.");
+        }
 
         var validation = await _hkValidation.ValidateDraftAsync(card, ct);
         if (!validation.IsValid)
@@ -1005,7 +1023,7 @@ public class HKCardService
         card.UpdatedAt = now;
         card.Status = HKCardStatus.Draft;
         card.AuthorId = actorId;
-        card.BranchId = actor.BranchId.Value;
+        card.BranchId = isSystemAdmin ? card.BranchId : actor.BranchId!.Value;
 
         foreach (var item in card.Items)
         {
@@ -1083,7 +1101,7 @@ public class HKCardService
             .FirstOrDefaultAsync(x => x.Id == card.Id, ct)
             ?? throw new ArgumentException("ХК не найдена.");
 
-        if (actor.BranchId != existing.BranchId)
+        if (actor.BranchId != existing.BranchId && !await IsSystemAdminAsync(actor))
             throw new UnauthorizedAccessException("Нет доступа к карточке другого филиала.");
 
         if (existing.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
@@ -1212,7 +1230,9 @@ public class HKCardService
         if (card == null)
             return (false, "Карточка не найдена");
 
-        if (actor.BranchId != card.BranchId && !await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig))
+        if (actor.BranchId != card.BranchId
+            && !await IsSystemAdminAsync(actor)
+            && !await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig))
             return (false, "Нет прав для изменения карточки другого филиала");
 
         var permError = await CheckStatusChangePermissionAsync(card, newStatus);

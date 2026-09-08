@@ -75,9 +75,6 @@ public sealed class HKCardValidationService
             return draft;
 
         var errors = new List<HKValidationError>();
-        errors.AddRange(ValidateRequestRules(card));
-        if (errors.Count > 0)
-            return HKValidationResult.Fail(errors);
 
         if (card.ObjectLevel == HKObjectLevel.Node)
         {
@@ -89,15 +86,9 @@ public sealed class HKCardValidationService
             errors.AddRange(await ValidateAggregateLevelForReviewAsync(card, now, ct));
         }
 
-        if (!string.IsNullOrEmpty(card.IncomingLetterNumber))
-        {
-            var hasAttachment = await _db.HKCardAttachments.AnyAsync(a => a.HKCardId == card.Id, ct);
-            if (!hasAttachment)
-                errors.Add(new HKValidationError(
-                    "Attachment",
-                    "PDF-скан исходной ХК: загрузите скан поступившего обращения.",
-                    "attachment-required"));
-        }
+        // Блок «Обращение» (организация, входящий номер, PDF-скан) полностью
+        // независим: ни черновик, ни отправка на проверку, ни утверждение
+        // не требуют его заполнения.
 
         return new HKValidationResult(errors.Count == 0, errors);
     }
@@ -429,40 +420,6 @@ public sealed class HKCardValidationService
         card.RequestDetails = card.RequestDetails?.Trim();
         card.IncomingLetterNumber = card.IncomingLetterNumber?.Trim();
         card.OutgoingLetterNumber = card.OutgoingLetterNumber?.Trim();
-
-        return errors;
-    }
-
-    private static List<HKValidationError> ValidateRequestRules(HKCard card)
-    {
-        var errors = new List<HKValidationError>();
-
-        if (!string.IsNullOrEmpty(card.IncomingLetterNumber))
-        {
-            if (string.IsNullOrEmpty(card.RequestOrganization))
-                errors.Add(new HKValidationError(
-                    "RequestOrganization",
-                    "При указании входящего номера письма обязательна «Организация».",
-                    "incoming-letter-requires-organization"));
-
-            if (!card.RequestReceivedDate.HasValue)
-                errors.Add(new HKValidationError(
-                    "RequestReceivedDate",
-                    "При указании входящего номера письма обязательна «Дата поступления».",
-                    "incoming-letter-requires-date"));
-        }
-
-        var hasAnyRequestField = !string.IsNullOrEmpty(card.RequestOrganization)
-            || !string.IsNullOrEmpty(card.RequestSenderFullName)
-            || card.RequestReceivedDate.HasValue
-            || !string.IsNullOrEmpty(card.IncomingLetterNumber)
-            || !string.IsNullOrEmpty(card.OutgoingLetterNumber);
-
-        if (hasAnyRequestField && string.IsNullOrEmpty(card.RequestDetails))
-            errors.Add(new HKValidationError(
-                "RequestDetails",
-                "При заполнении реквизитов обращения обязательно поле «Реквизиты / основание».",
-                "request-details-required"));
 
         return errors;
     }
