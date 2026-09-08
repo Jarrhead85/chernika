@@ -26,6 +26,7 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
     [Parameter] public string QuickCreateLabel { get; set; } = "Добавить новый";
     [Parameter] public RenderFragment? QuickCreateFormTemplate { get; set; }
     [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<string> OnSearchInput { get; set; }
 
     [Inject] private IJSRuntime JS { get; set; } = null!;
     [Inject] private NavigationManager Nav { get; set; } = null!;
@@ -135,12 +136,15 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
     [JSInvokable]
     public Task CloseFromOutsideClick() => CloseAsync(restoreFocus: false);
 
-    private Task OnInputAsync(ChangeEventArgs e)
+    private async Task OnInputAsync(ChangeEventArgs e)
     {
         _searchText = e.Value?.ToString() ?? string.Empty;
         _displayText = _searchText;
         _highlightedIndex = -1;
-        return _isOpen ? Task.CompletedTask : OpenAsync();
+        var openTask = _isOpen ? Task.CompletedTask : OpenAsync();
+        if (OnSearchInput.HasDelegate)
+            await OnSearchInput.InvokeAsync(_searchText);
+        await openTask;
     }
 
     private async Task OnKeyDownAsync(KeyboardEventArgs e)

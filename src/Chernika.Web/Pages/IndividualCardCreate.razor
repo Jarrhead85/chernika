@@ -5,6 +5,7 @@
 @using Chernika.Domain.Models
 @using Chernika.Infrastructure.Services
 @using Chernika.Web.Services
+@using Chernika.Web.Shared
 @inject IndividualCardService IndCardService
 @inject EquipmentService EquipService
 @inject IPermissionService Perms
@@ -12,7 +13,7 @@
 @inject CircuitDbLock DbLock
 @inject NavigationManager Nav
 
-<div class="stack">
+<div class="stack wiz-wrap">
     <section class="panel">
         <div class="panelHeader">
             <h2>Создание черновика ИК</h2>
@@ -32,13 +33,13 @@
             {
                 <div class="field">
                     <label>Цель ИК</label>
-                    <div class="hkc-group">
+                    <div class="wiz-levels" role="radiogroup" aria-label="Цель ИК">
                         @foreach (var (level, label) in LevelOptions)
                         {
-                            <label class="hkc-item @(_level == level ? "selected" : "")">
+                            <label class="wiz-levelCard @(_level == level ? "selected" : "")">
                                 <input type="radio" name="ik-level" checked="@(_level == level)"
                                        @onchange="() => SelectLevel(level)" />
-                                <span class="hkc-item-name">@label</span>
+                                <span>@label</span>
                             </label>
                         }
                     </div>
@@ -47,37 +48,31 @@
                 @if (_level is not null)
                 {
                     <div class="field">
-                        <label>Поиск и выбор объекта</label>
-                        <input class="fieldInput" placeholder="Поиск по коду или наименованию…"
-                               value="@_objectSearch" @oninput="OnObjectSearchChanged" />
-                    </div>
-
-                    <div class="hkc-group">
-                        @if (_loadingObjects)
-                        {
-                            <div class="note">Загрузка…</div>
-                        }
-                        else if (_objects.Count == 0)
-                        {
-                            <div class="note">Ничего не найдено.</div>
-                        }
-                        else
-                        {
-                            @foreach (var obj in _objects)
+                        <label>Объект</label>
+                        <div class="wiz-objectRow">
+                            <SearchablePopoverSelect TItem="ObjectOption"
+                                                     Items="_objects"
+                                                     Selected="_selectedObject"
+                                                     DisplayTextSelector="@(o => o.DisplayName)"
+                                                     SearchPredicate="ObjectMatchesSearch"
+                                                     Placeholder="Поиск по коду или наименованию…"
+                                                     EmptyText="Ничего не найдено"
+                                                     OnSearchInput="OnObjectSearchInputAsync"
+                                                     OnSelected="SelectObject">
+                                <ItemTemplate Context="obj">@obj.DisplayName</ItemTemplate>
+                            </SearchablePopoverSelect>
+                            @if (_selectedObject is not null)
                             {
-                                <label class="hkc-item @(_objectId == obj.Id ? "selected" : "")">
-                                    <input type="radio" name="ik-object" checked="@(_objectId == obj.Id)"
-                                           @onchange="() => SelectObject(obj)" />
-                                    <span class="hkc-item-name">@(obj.Code == obj.Name ? obj.Code : $"{obj.Code} — {obj.Name}")</span>
-                                </label>
+                                <button type="button" class="wiz-clearBtn" aria-label="Очистить выбор объекта"
+                                        title="Очистить" @onclick="ClearObject">×</button>
                             }
-                        }
+                        </div>
                     </div>
                 }
 
                 <div class="formActions">
                     <button type="button" class="btn primary" disabled="@(_level is null || _objectId == Guid.Empty)"
-                            @onclick="GoToPreflight">Далее: нормативный анализ</button>
+                            @onclick="GoToPreflight">Далее</button>
                 </div>
             }
             else if (Step == 2)
@@ -93,13 +88,13 @@
                     @if (_preflight.RootState == IndividualCardPreflightRootState.SelectionRequired)
                     {
                         <div class="field">
-                            <label>ХК верхнего уровня (несколько кандидатов)</label>
+                            <label>Выберите ХК верхнего уровня</label>
                             @foreach (var candidate in _preflight.RootCandidates)
                             {
-                                <label class="hkc-item @(_rootHKCardId == candidate.HKCardId ? "selected" : "")">
+                                <label class="wiz-levelCard @(_rootHKCardId == candidate.HKCardId ? "selected" : "")">
                                     <input type="radio" name="ik-root" checked="@(_rootHKCardId == candidate.HKCardId)"
                                            @onchange="() => SelectRoot(candidate)" />
-                                    <span class="hkc-item-name">@candidate.Code @candidate.Version — @candidate.ObjectName</span>
+                                    <span>@candidate.Code @candidate.Version — @candidate.ObjectName</span>
                                 </label>
                             }
                         </div>
@@ -108,11 +103,11 @@
                     {
                         <div class="hkv-row"><span class="hkv-label">ХК верхнего уровня:</span>
                             @_preflight.SelectedRoot.Code @_preflight.SelectedRoot.Version — @_preflight.SelectedRoot.ObjectName
-                            (выбрана автоматически)
+                            <span class="hkv-muted">ХК выбрана автоматически</span>
                         </div>
                     }
 
-                    <h4 class="hkc-subtitle">Состав и источники</h4>
+                    <h4 class="hkc-subtitle">Нормативные источники</h4>
                     <div class="hkv-muted">
                         <div>Строк состава: @_preflight.Compositions.Count</div>
                         <div>Источников ХК: @_preflight.HKSources.Count</div>
@@ -136,7 +131,7 @@
                         <button type="button" class="btn ghost" @onclick="() => Step = 1">Назад</button>
                         <button type="button" class="btn primary"
                                 disabled="@(_preflight.SelectedRoot is null && _rootHKCardId == Guid.Empty)"
-                                @onclick="() => Step = 3">Далее: подтверждение</button>
+                                @onclick="() => Step = 3">Далее</button>
                     </div>
                 }
             }
@@ -147,7 +142,6 @@
                     @(_preflight?.SelectedRoot?.Code) @(_preflight?.SelectedRoot?.Version)
                 </div>
                 <div class="hkv-row"><span class="hkv-label">@GapLabel</span></div>
-                <div class="hkv-row"><span class="hkv-label">Расчёт:</span> будет выполнен в черновике после выбора коэффициентов.</div>
 
                 <div class="formActions">
                     <button type="button" class="btn ghost" @onclick="() => Step = 2">Назад</button>
@@ -162,7 +156,7 @@
 
 @code {
     private int Step = 1;
-    private string StepTitle => Step switch { 1 => "цель", 2 => "нормативный анализ", _ => "подтверждение" };
+    private string StepTitle => Step switch { 1 => "Цель", 2 => "Нормативные источники", _ => "Подтверждение" };
 
     private string? _error;
     private bool _canCreateDraft;
@@ -172,13 +166,18 @@
     private string _objectCode = string.Empty;
     private string _objectName = string.Empty;
 
-    private string _objectSearch = string.Empty;
-    private List<(Guid Id, string Code, string Name)> _objects = new();
-    private bool _loadingObjects;
+    private List<ObjectOption> _objects = new();
+    private ObjectOption? _selectedObject;
+    private CancellationTokenSource? _searchCts;
 
     private IndividualCardPreflightResult? _preflight;
     private Guid _rootHKCardId;
     private bool _creating;
+
+    private sealed record ObjectOption(Guid Id, string Code, string Name)
+    {
+        public string DisplayName => Code == Name ? Code : $"{Code} — {Name}";
+    }
 
     private static readonly List<(IndividualCardObjectLevel Level, string Label)> LevelOptions = new()
     {
@@ -193,8 +192,12 @@
         .FirstOrDefault(o => o.Level == level).Label ?? string.Empty;
 
     private string GapLabel => _preflight is { NormativeGaps.Count: > 0 }
-        ? "Будет создана частичная Draft ИК (нормативные пробелы сохранятся в снапшотах)"
+        ? $"Найдены нормативные пробелы: {_preflight.NormativeGaps.Count}"
         : "Нормативная готовность";
+
+    private static bool ObjectMatchesSearch(ObjectOption obj, string search) =>
+        obj.Code.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+        obj.Name.Contains(search, StringComparison.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -208,68 +211,81 @@
         _level = level;
         _objectId = Guid.Empty;
         _objectCode = _objectName = string.Empty;
-        _objectSearch = string.Empty;
+        _selectedObject = null;
         _preflight = null;
-        await ReloadObjectsAsync();
+        await ReloadObjectsAsync(null);
     }
 
-    private async Task OnObjectSearchChanged(ChangeEventArgs args)
+    private async Task OnObjectSearchInputAsync(string? search)
     {
-        _objectSearch = args.Value?.ToString() ?? string.Empty;
-        await ReloadObjectsAsync();
-    }
-
-    private async Task ReloadObjectsAsync()
-    {
-        _loadingObjects = true;
+        _searchCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
         try
         {
-            var search = string.IsNullOrWhiteSpace(_objectSearch) ? null : _objectSearch.Trim();
-            switch (_level)
-            {
-                case IndividualCardObjectLevel.Complex:
-                {
-                    var page = await EquipService.GetComplexesPagedAsync(new ComplexQuery { Page = 1, PageSize = 30, Search = search });
-                    _objects = page.Items.Select(o => (o.Id, o.Code, o.Name)).ToList();
-                    break;
-                }
-                case IndividualCardObjectLevel.EquipmentModel:
-                {
-                    var page = await EquipService.GetModelsPagedAsync(new EquipmentModelQuery { Page = 1, PageSize = 30, Search = search });
-                    _objects = page.Items.Select(o => (o.Id, o.Index, o.Name)).ToList();
-                    break;
-                }
-                case IndividualCardObjectLevel.Aggregate:
-                {
-                    var page = await EquipService.GetAggregatesPagedAsync(new AggregateQuery { Page = 1, PageSize = 30, Search = search });
-                    _objects = page.Items.Select(o => (o.Id, o.Code, o.Name)).ToList();
-                    break;
-                }
-                case IndividualCardObjectLevel.Node:
-                {
-                    var page = await EquipService.GetNodesPagedAsync(new NodeQuery { Page = 1, PageSize = 30, Search = search });
-                    _objects = page.Items.Select(o => (o.Id, o.Code, o.Name)).ToList();
-                    break;
-                }
-                case IndividualCardObjectLevel.EquipmentInstance:
-                {
-                    var page = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery { Page = 1, PageSize = 30, Search = search });
-                    _objects = page.Items.Select(o => (o.Id, o.SerialNumber, o.Name)).ToList();
-                    break;
-                }
-            }
+            await Task.Delay(300, cts.Token);
         }
-        finally
+        catch (TaskCanceledException)
         {
-            _loadingObjects = false;
+            return;
+        }
+
+        await ReloadObjectsAsync(string.IsNullOrWhiteSpace(search) ? null : search.Trim());
+    }
+
+    private async Task ReloadObjectsAsync(string? search)
+    {
+        switch (_level)
+        {
+            case IndividualCardObjectLevel.Complex:
+            {
+                var page = await EquipService.GetComplexesPagedAsync(new ComplexQuery { Page = 1, PageSize = 30, Search = search });
+                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name)).ToList();
+                break;
+            }
+            case IndividualCardObjectLevel.EquipmentModel:
+            {
+                var page = await EquipService.GetModelsPagedAsync(new EquipmentModelQuery { Page = 1, PageSize = 30, Search = search });
+                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Index, o.Name)).ToList();
+                break;
+            }
+            case IndividualCardObjectLevel.Aggregate:
+            {
+                var page = await EquipService.GetAggregatesPagedAsync(new AggregateQuery { Page = 1, PageSize = 30, Search = search });
+                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name)).ToList();
+                break;
+            }
+            case IndividualCardObjectLevel.Node:
+            {
+                var page = await EquipService.GetNodesPagedAsync(new NodeQuery { Page = 1, PageSize = 30, Search = search });
+                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name)).ToList();
+                break;
+            }
+            case IndividualCardObjectLevel.EquipmentInstance:
+            {
+                var page = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery { Page = 1, PageSize = 30, Search = search });
+                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.SerialNumber, o.Name)).ToList();
+                break;
+            }
+            default:
+                _objects = new List<ObjectOption>();
+                break;
         }
     }
 
-    private void SelectObject((Guid Id, string Code, string Name) obj)
+    private void SelectObject(ObjectOption obj)
     {
         _objectId = obj.Id;
         _objectCode = obj.Code;
         _objectName = obj.Name;
+        _selectedObject = obj;
+    }
+
+    private void ClearObject()
+    {
+        _objectId = Guid.Empty;
+        _objectCode = _objectName = string.Empty;
+        _selectedObject = null;
     }
 
     private async Task GoToPreflight()
@@ -316,9 +332,6 @@
         try
         {
             Guid newId;
-            // Pass the explicitly selected root whenever it is set, regardless
-            // of RootState: after a successful repeat preflight the state is
-            // ExplicitlySelected with SelectedRoot confirmed by the service.
             var rootHKCardId = _rootHKCardId == Guid.Empty
                 ? (Guid?)null
                 : _rootHKCardId;

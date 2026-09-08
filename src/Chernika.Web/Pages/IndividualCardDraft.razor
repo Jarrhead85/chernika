@@ -299,7 +299,7 @@
                     </div>
                 }
 
-                <div class="hkv-row"><span class="hkv-label">Коэффициенты:</span> будут выбраны заново в новой Draft</div>
+                <div class="hkv-row"><span class="hkv-label">Коэффициенты:</span> не переносятся в новую версию</div>
                 @if (_comparison.PreviousCoefficients.Count > 0)
                 {
                     <div class="hkv-muted">
@@ -310,7 +310,6 @@
                     </div>
                 }
 
-                <div class="hkv-row"><span class="hkv-label">Расчёт:</span> будет выполнен в новой Draft</div>
                 @if (_comparison.HasCalculation && _comparison.PreviousPrimaryTotals.Count > 0)
                 {
                     <div class="hkv-muted">
@@ -319,7 +318,6 @@
                         {
                             <div>@total.MaterialName — <span class="mono">@FormatF6(total.TotalVolume) @total.UnitOfMeasure</span></div>
                         }
-                        <div>Итоги новой версии: будут доступны после пересчёта новой версии.</div>
                     </div>
                 }
 
@@ -330,7 +328,7 @@
                     }
                     else
                     {
-                        <span>@_comparison.NormativeGaps.Count (новая Draft будет частичной)</span>
+                        <span>@_comparison.NormativeGaps.Count</span>
                     }
                 </div>
             </div>
