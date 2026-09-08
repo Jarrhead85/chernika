@@ -1,11 +1,42 @@
-/* ---- D6: мастер создания черновика ИК (компактный layout) ---- */
+/* ---- D6: мастер создания черновика ИК (полная ширина, паттерн «Составы техники») ---- */
 
-.wiz-wrap {
-    max-width: 920px;
-    width: 100%;
+/* Шаг 1: цели ИК — как вкладки на «Составах техники» (btnRow + btn primary/ghost) */
+.ikTargetSegmented {
+    margin-bottom: 16px;
+    flex-wrap: wrap;
 }
 
-/* Локальное поле (без .field, чтобы глобальные стили input не задевали радио) */
+/* Шаг 1: поиск объекта */
+.ikObjectSearch input {
+    max-width: 420px;
+}
+
+/* Шаг 1: выбранная строка таблицы */
+.ikObjectRowSelected td {
+    background: rgba(79, 140, 255, .12);
+}
+
+.ikObjectRowSelected td:first-child {
+    border-left: 2px solid var(--accent);
+}
+
+/* Итог выбора объекта */
+.ikSelectedRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 12px 0 4px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.hkv-label {
+    color: var(--muted);
+    font-weight: 600;
+}
+
+/* Шаг 2: выбор root ХК (локальное поле, вне глобального .field) */
 .wiz-field {
     margin-bottom: 14px;
 }
@@ -15,14 +46,6 @@
     font-size: 12px;
     color: var(--muted);
     margin-bottom: 6px;
-}
-
-/* Шаг 1: цели ИК */
-.wiz-levels {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-    max-width: 560px;
 }
 
 .wiz-levelCard {
@@ -65,40 +88,6 @@
     cursor: pointer;
 }
 
-/* Шаг 1: выбор объекта */
-.wiz-objectRow {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.wiz-objectRow .popoverAnchor {
-    flex: 1;
-    min-width: 0;
-}
-
-.wiz-objectRow .popoverAnchor input {
-    width: 100%;
-}
-
-.wiz-clearBtn {
-    border: 1px solid var(--line);
-    background: var(--panel2);
-    color: var(--muted);
-    border-radius: var(--radius2, 10px);
-    width: 32px;
-    height: 32px;
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-    flex-shrink: 0;
-}
-
-.wiz-clearBtn:hover {
-    color: var(--bad);
-    border-color: var(--bad);
-}
-
 /* Общие подписи */
 .hkc-subtitle {
     font-size: 13px;
@@ -118,11 +107,6 @@
     margin: 6px 0;
 }
 
-.hkv-label {
-    color: var(--muted);
-    font-weight: 600;
-}
-
 .hkv-muted {
     font-size: 12px;
     color: var(--muted);
@@ -130,20 +114,13 @@
 }
 
 /* Адаптив */
-@media (max-width: 960px) {
-    .wiz-wrap {
+@media (max-width: 560px) {
+    .ikObjectSearch input {
         max-width: 100%;
     }
-}
 
-@media (max-width: 768px) {
-    .wiz-levels {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (max-width: 560px) {
-    .wiz-levels {
-        grid-template-columns: 1fr;
+    .wiz-levelCard {
+        min-height: 40px;
+        padding: 4px 10px;
     }
 }

@@ -5,7 +5,6 @@
 @using Chernika.Domain.Models
 @using Chernika.Infrastructure.Services
 @using Chernika.Web.Services
-@using Chernika.Web.Shared
 @inject IndividualCardService IndCardService
 @inject EquipmentService EquipService
 @inject IPermissionService Perms
@@ -13,7 +12,7 @@
 @inject CircuitDbLock DbLock
 @inject NavigationManager Nav
 
-<div class="stack wiz-wrap">
+<div class="stack">
     <section class="panel">
         <div class="panelHeader">
             <h2>Создание черновика ИК</h2>
@@ -31,49 +30,97 @@
             }
             else if (Step == 1)
             {
-                <div class="wiz-field">
-                    <span class="wiz-fieldLabel">Цель ИК</span>
-                    <div class="wiz-levels" role="radiogroup" aria-label="Цель ИК">
-                        @foreach (var (level, label) in LevelOptions)
-                        {
-                            <label class="wiz-levelCard @(_level == level ? "selected" : "")">
-                                <input type="radio" name="ik-level" checked="@(_level == level)"
-                                       @onchange="() => SelectLevel(level)" />
-                                <span>@label</span>
-                            </label>
-                        }
-                    </div>
+                <div class="btnRow ikTargetSegmented" role="group" aria-label="Цель ИК">
+                    @foreach (var (level, label) in LevelOptions)
+                    {
+                        <button type="button" aria-pressed="@(_level == level)"
+                                class="btn @(_level == level ? "primary" : "ghost")"
+                                @onclick="() => SelectLevel(level)">@label</button>
+                    }
                 </div>
 
                 @if (_level is not null)
                 {
-                    <div class="field">
+                    <div class="field ikObjectSearch">
                         <label>Объект</label>
-                        <div class="wiz-objectRow">
-                            <SearchablePopoverSelect TItem="ObjectOption"
-                                                     Items="_objects"
-                                                     Selected="_selectedObject"
-                                                     DisplayTextSelector="@(o => o.DisplayName)"
-                                                     SearchPredicate="ObjectMatchesSearch"
-                                                     Placeholder="Поиск по коду или наименованию…"
-                                                     EmptyText="Ничего не найдено"
-                                                     OnSearchInput="OnObjectSearchInputAsync"
-                                                     OnSelected="SelectObject">
-                                <ItemTemplate Context="obj">@obj.DisplayName</ItemTemplate>
-                            </SearchablePopoverSelect>
-                            @if (_selectedObject is not null)
-                            {
-                                <button type="button" class="wiz-clearBtn" aria-label="Очистить выбор объекта"
-                                        title="Очистить" @onclick="ClearObject">×</button>
-                            }
+                        <input placeholder="Поиск по коду или наименованию…"
+                               value="@_objectSearch" @oninput="OnObjectSearchChanged" />
+                    </div>
+
+                    @if (_loadingObjects)
+                    {
+                        <div class="loading-state">Загрузка…</div>
+                    }
+                    else if (_objects.Count == 0)
+                    {
+                        <div class="empty-state">Ничего не найдено.</div>
+                    }
+                    else
+                    {
+                        <div class="tableWrap" data-scroll="contained">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>@CodeColumnHeader</th>
+                                        <th>Наименование</th>
+                                        @if (_level == IndividualCardObjectLevel.EquipmentInstance)
+                                        {
+                                            <th>Изделие</th>
+                                        }
+                                        <th>Действие</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var obj in _objects)
+                                    {
+                                        var isSelected = _objectId == obj.Id;
+                                        <tr class="@(isSelected ? "ikObjectRowSelected" : null)">
+                                            <td class="mono">@obj.Code</td>
+                                            <td>@obj.Name</td>
+                                            @if (_level == IndividualCardObjectLevel.EquipmentInstance)
+                                            {
+                                                <td>@obj.ModelDisplay</td>
+                                            }
+                                            <td>
+                                                @if (isSelected)
+                                                {
+                                                    <span class="tag">Выбран</span>
+                                                }
+                                                else
+                                                {
+                                                    <button class="linkBtn" @onclick="() => SelectObject(obj)">Выбрать</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
                         </div>
+
+                        @if (_totalObjects > ObjectPageSize)
+                        {
+                            <div class="pager">
+                                <button class="btn ghost" disabled="@(_objectPage <= 1)" @onclick="PrevObjectPage">← Назад</button>
+                                <span class="hint">Страница @_objectPage из @((int)Math.Ceiling(_totalObjects / (double)ObjectPageSize))</span>
+                                <button class="btn ghost" disabled="@(_objectPage * ObjectPageSize >= _totalObjects)" @onclick="NextObjectPage">Вперёд →</button>
+                            </div>
+                        }
+                    }
+
+                    @if (_objectId != Guid.Empty)
+                    {
+                        <div class="ikSelectedRow">
+                            <span class="hkv-label">Выбрано:</span>
+                            @(_objectCode == _objectName ? _objectCode : $"{_objectCode} — {_objectName}")
+                            <button type="button" class="linkBtn" @onclick="ClearObject">Изменить выбор</button>
+                        </div>
+                    }
+
+                    <div class="formActions">
+                        <button type="button" class="btn primary" disabled="@(_objectId == Guid.Empty)"
+                                @onclick="GoToPreflight">Далее: нормативный анализ</button>
                     </div>
                 }
-
-                <div class="formActions">
-                    <button type="button" class="btn primary" disabled="@(_level is null || _objectId == Guid.Empty)"
-                            @onclick="GoToPreflight">Далее</button>
-                </div>
             }
             else if (Step == 2)
             {
@@ -166,18 +213,19 @@
     private string _objectCode = string.Empty;
     private string _objectName = string.Empty;
 
+    private const int ObjectPageSize = 50;
+    private string _objectSearch = string.Empty;
+    private int _objectPage = 1;
+    private int _totalObjects;
+    private bool _loadingObjects;
     private List<ObjectOption> _objects = new();
-    private ObjectOption? _selectedObject;
     private CancellationTokenSource? _searchCts;
 
     private IndividualCardPreflightResult? _preflight;
     private Guid _rootHKCardId;
     private bool _creating;
 
-    private sealed record ObjectOption(Guid Id, string Code, string Name)
-    {
-        public string DisplayName => Code == Name ? Code : $"{Code} — {Name}";
-    }
+    private sealed record ObjectOption(Guid Id, string Code, string Name, string ModelDisplay);
 
     private static readonly List<(IndividualCardObjectLevel Level, string Label)> LevelOptions = new()
     {
@@ -191,13 +239,16 @@
     private static string LevelName(IndividualCardObjectLevel? level) => LevelOptions
         .FirstOrDefault(o => o.Level == level).Label ?? string.Empty;
 
+    private string CodeColumnHeader => _level switch
+    {
+        IndividualCardObjectLevel.EquipmentModel => "Индекс",
+        IndividualCardObjectLevel.EquipmentInstance => "Серийный номер",
+        _ => "Код",
+    };
+
     private string GapLabel => _preflight is { NormativeGaps.Count: > 0 }
         ? $"Найдены нормативные пробелы: {_preflight.NormativeGaps.Count}"
         : "Нормативная готовность";
-
-    private static bool ObjectMatchesSearch(ObjectOption obj, string search) =>
-        obj.Code.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-        obj.Name.Contains(search, StringComparison.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -211,13 +262,17 @@
         _level = level;
         _objectId = Guid.Empty;
         _objectCode = _objectName = string.Empty;
-        _selectedObject = null;
+        _objectSearch = string.Empty;
+        _objectPage = 1;
+        _totalObjects = 0;
+        _objects = new List<ObjectOption>();
         _preflight = null;
         await ReloadObjectsAsync(null);
     }
 
-    private async Task OnObjectSearchInputAsync(string? search)
+    private async Task OnObjectSearchChanged(ChangeEventArgs args)
     {
+        _objectSearch = args.Value?.ToString() ?? string.Empty;
         _searchCts?.Cancel();
         var cts = new CancellationTokenSource();
         _searchCts = cts;
@@ -230,46 +285,81 @@
             return;
         }
 
-        await ReloadObjectsAsync(string.IsNullOrWhiteSpace(search) ? null : search.Trim());
+        _objectPage = 1;
+        await ReloadObjectsAsync(string.IsNullOrWhiteSpace(_objectSearch) ? null : _objectSearch.Trim());
+    }
+
+    private async Task PrevObjectPage()
+    {
+        if (_objectPage > 1)
+        {
+            _objectPage--;
+            await ReloadObjectsAsync(string.IsNullOrWhiteSpace(_objectSearch) ? null : _objectSearch.Trim());
+        }
+    }
+
+    private async Task NextObjectPage()
+    {
+        if (_objectPage * ObjectPageSize < _totalObjects)
+        {
+            _objectPage++;
+            await ReloadObjectsAsync(string.IsNullOrWhiteSpace(_objectSearch) ? null : _objectSearch.Trim());
+        }
     }
 
     private async Task ReloadObjectsAsync(string? search)
     {
-        switch (_level)
+        _loadingObjects = true;
+        try
         {
-            case IndividualCardObjectLevel.Complex:
+            switch (_level)
             {
-                var page = await EquipService.GetComplexesPagedAsync(new ComplexQuery { Page = 1, PageSize = 30, Search = search });
-                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name)).ToList();
-                break;
+                case IndividualCardObjectLevel.Complex:
+                {
+                    var page = await EquipService.GetComplexesPagedAsync(new ComplexQuery { Page = _objectPage, PageSize = ObjectPageSize, Search = search });
+                    _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name, string.Empty)).ToList();
+                    _totalObjects = page.TotalCount;
+                    break;
+                }
+                case IndividualCardObjectLevel.EquipmentModel:
+                {
+                    var page = await EquipService.GetModelsPagedAsync(new EquipmentModelQuery { Page = _objectPage, PageSize = ObjectPageSize, Search = search });
+                    _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Index, o.Name, string.Empty)).ToList();
+                    _totalObjects = page.TotalCount;
+                    break;
+                }
+                case IndividualCardObjectLevel.Aggregate:
+                {
+                    var page = await EquipService.GetAggregatesPagedAsync(new AggregateQuery { Page = _objectPage, PageSize = ObjectPageSize, Search = search });
+                    _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name, string.Empty)).ToList();
+                    _totalObjects = page.TotalCount;
+                    break;
+                }
+                case IndividualCardObjectLevel.Node:
+                {
+                    var page = await EquipService.GetNodesPagedAsync(new NodeQuery { Page = _objectPage, PageSize = ObjectPageSize, Search = search });
+                    _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name, string.Empty)).ToList();
+                    _totalObjects = page.TotalCount;
+                    break;
+                }
+                case IndividualCardObjectLevel.EquipmentInstance:
+                {
+                    var page = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery { Page = _objectPage, PageSize = ObjectPageSize, Search = search });
+                    _objects = page.Items.Select(o => new ObjectOption(
+                        o.Id, o.SerialNumber, o.Name,
+                        o.EquipmentModel is null ? string.Empty : $"{o.EquipmentModel.Index} — {o.EquipmentModel.Name}")).ToList();
+                    _totalObjects = page.TotalCount;
+                    break;
+                }
+                default:
+                    _objects = new List<ObjectOption>();
+                    _totalObjects = 0;
+                    break;
             }
-            case IndividualCardObjectLevel.EquipmentModel:
-            {
-                var page = await EquipService.GetModelsPagedAsync(new EquipmentModelQuery { Page = 1, PageSize = 30, Search = search });
-                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Index, o.Name)).ToList();
-                break;
-            }
-            case IndividualCardObjectLevel.Aggregate:
-            {
-                var page = await EquipService.GetAggregatesPagedAsync(new AggregateQuery { Page = 1, PageSize = 30, Search = search });
-                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name)).ToList();
-                break;
-            }
-            case IndividualCardObjectLevel.Node:
-            {
-                var page = await EquipService.GetNodesPagedAsync(new NodeQuery { Page = 1, PageSize = 30, Search = search });
-                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.Code, o.Name)).ToList();
-                break;
-            }
-            case IndividualCardObjectLevel.EquipmentInstance:
-            {
-                var page = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery { Page = 1, PageSize = 30, Search = search });
-                _objects = page.Items.Select(o => new ObjectOption(o.Id, o.SerialNumber, o.Name)).ToList();
-                break;
-            }
-            default:
-                _objects = new List<ObjectOption>();
-                break;
+        }
+        finally
+        {
+            _loadingObjects = false;
         }
     }
 
@@ -278,14 +368,12 @@
         _objectId = obj.Id;
         _objectCode = obj.Code;
         _objectName = obj.Name;
-        _selectedObject = obj;
     }
 
     private void ClearObject()
     {
         _objectId = Guid.Empty;
         _objectCode = _objectName = string.Empty;
-        _selectedObject = null;
     }
 
     private async Task GoToPreflight()
