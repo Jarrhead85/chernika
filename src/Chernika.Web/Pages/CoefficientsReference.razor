@@ -134,7 +134,7 @@
                                 <tr class="@(canEdit && !c.IsDeleted ? "clickableRow" : "")" tabindex="@(canEdit && !c.IsDeleted ? "0" : "-1")" @ondblclick="() => OnRowDblClick(c)" @onkeydown="(ev) => OnRowKeyDown(ev, c)">
                                     <td>@c.CoefficientTypeName</td>
                                     <td>@c.Name</td>
-                                    <td class="mono">@c.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)</td>
+                                    <td class="mono">@c.Value.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)</td>
                                     <td>@c.ConditionDescription</td>
                                     <td>@(string.IsNullOrEmpty(c.NormativeBasis) ? "—" : c.NormativeBasis)</td>
                                     <td><span class="tag @(c.IsDeleted ? "" : "ok")">@(c.IsDeleted ? "Архивный" : "Рабочий")</span></td>

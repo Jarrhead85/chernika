@@ -94,7 +94,7 @@
                                     <tr>
                                         <td>@item.AssemblyUnit?.Name</td>
                                         <td>@item.Quantity</td>
-                                        <td>@item.Volume.ToString("F3")</td>
+                                        <td>@item.Volume.ToString("F0")</td>
                                         <td>@(item.UnitOfMeasure ?? "кг")</td>
                                         <td>@(item.Periodicity ?? "—")</td>
                                     </tr>
@@ -129,7 +129,7 @@
                                         <tr>
                                             <td class="mono">@row.SourceCardCode</td>
                                             <td>@row.AssemblyUnitName</td>
-                                            <td>@row.Volume.ToString("F3")</td>
+                                            <td>@row.Volume.ToString("F0")</td>
                                             <td>@(row.UnitOfMeasure ?? "кг")</td>
                                             <td>@row.GsmMaterialName</td>
                                             <td class="mono">@row.Gost</td>

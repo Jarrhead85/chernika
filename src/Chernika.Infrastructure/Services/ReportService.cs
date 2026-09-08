@@ -108,7 +108,7 @@ public class ReportService
                         {
                             table.Cell().Border(1).Padding(5).Text(item.AssemblyUnit?.Name ?? "—");
                             table.Cell().Border(1).Padding(5).Text(item.Quantity.ToString());
-                            table.Cell().Border(1).Padding(5).Text(item.Volume.ToString("F3"));
+                            table.Cell().Border(1).Padding(5).Text(item.Volume.ToString("F0"));
                             table.Cell().Border(1).Padding(5).Text(item.UnitOfMeasure ?? "кг");
                             table.Cell().Border(1).Padding(5).Text(item.Periodicity ?? "—");
                         }

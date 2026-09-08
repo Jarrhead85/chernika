@@ -96,7 +96,7 @@
                                     <input type="radio" name="@($"coef-{group.TypeId}")" checked="@selected"
                                            @onchange="() => ToggleCoefficient(group, coefficient)" />
                                     <span class="hkc-item-name">@coefficient.Name</span>
-                                    <span class="mono hkc-item-value">@FormatF6(coefficient.Value)</span>
+                                    <span class="mono hkc-item-value">@FormatCoefficient(coefficient.Value)</span>
                                     @if (!string.IsNullOrWhiteSpace(coefficient.ConditionDescription))
                                     {
                                         <span class="hkc-item-desc">@coefficient.ConditionDescription</span>
@@ -112,7 +112,7 @@
 
                     <div class="hkc-summary">
                         <span>Выбрано: @_selectedCoefficientIds.Count @(Plural(_selectedCoefficientIds.Count))</span>
-                        <span>Общий коэффициент: <span class="mono">@FormatF6(_savedCalculation?.TotalCoefficient ?? 1m)</span></span>
+                        <span>Общий коэффициент: <span class="mono">@FormatCoefficient(_savedCalculation?.TotalCoefficient ?? 1m)</span></span>
                         @if (_canRecalculate)
                         {
                             <button type="button" class="btn primary" disabled="@(_recalculating)"
@@ -134,7 +134,7 @@
             <section class="panel">
                 <div class="panelHeader">
                     <h2>Расчёт</h2>
-                    <div class="hint">Общий коэффициент: <span class="mono">@FormatF6(_savedCalculation.TotalCoefficient)</span></div>
+                    <div class="hint">Общий коэффициент: <span class="mono">@FormatCoefficient(_savedCalculation.TotalCoefficient)</span></div>
                 </div>
                 <div class="panelBody">
                     @if (_savedCalculation.Problems.Count > 0)
@@ -176,9 +176,9 @@
                                         <td>@row.NodeQuantity</td>
                                         <td>@row.AggregateQuantity</td>
                                         <td>@row.ProductQuantity</td>
-                                        <td class="mono">@FormatF6(row.SourceVolume)</td>
-                                        <td class="mono">@FormatF6(row.BaseVolume)</td>
-                                        <td class="mono">@FormatF6(row.CalculatedVolume)</td>
+                                        <td class="mono">@FormatGram(row.SourceVolume)</td>
+                                        <td class="mono">@FormatGram(row.BaseVolume)</td>
+                                        <td class="mono">@FormatGram(row.CalculatedVolume)</td>
                                     </tr>
                                     @foreach (var material in row.Materials)
                                     {
@@ -191,7 +191,7 @@
                                                 {
                                                     <span class="hkc-gost">ГОСТ/ТУ: @material.Gost</span>
                                                 }
-                                                — <span class="mono">@FormatF6(material.CalculatedVolume) @material.UnitOfMeasure</span>
+                                                — <span class="mono">@FormatGram(material.CalculatedVolume) @material.UnitOfMeasure</span>
                                             </td>
                                         </tr>
                                     }
@@ -226,7 +226,7 @@
                                         <td>@total.Gost</td>
                                         <td>@total.UnitOfMeasure</td>
                                         <td>@total.ItemCount</td>
-                                        <td class="mono">@FormatF6(total.TotalVolume) @total.UnitOfMeasure</td>
+                                        <td class="mono">@FormatGram(total.TotalVolume) @total.UnitOfMeasure</td>
                                     </tr>
                                 }
                             </tbody>
@@ -305,7 +305,7 @@
                     <div class="hkv-muted">
                         @foreach (var coefficient in _comparison.PreviousCoefficients)
                         {
-                            <div>@coefficient.CoefficientTypeName / @coefficient.CoefficientName — <span class="mono">@FormatF6(coefficient.Value)</span></div>
+                            <div>@coefficient.CoefficientTypeName / @coefficient.CoefficientName — <span class="mono">@FormatCoefficient(coefficient.Value)</span></div>
                         }
                     </div>
                 }
@@ -316,7 +316,7 @@
                         <div>Основные марки ГСМ в источнике (альтернативы, не суммируются):</div>
                         @foreach (var total in _comparison.PreviousPrimaryTotals)
                         {
-                            <div>@total.MaterialName — <span class="mono">@FormatF6(total.TotalVolume) @total.UnitOfMeasure</span></div>
+                            <div>@total.MaterialName — <span class="mono">@FormatGram(total.TotalVolume) @total.UnitOfMeasure</span></div>
                         }
                     </div>
                 }
@@ -667,7 +667,9 @@
 
     private void GoBack() => Nav.NavigateTo("/инд-карты");
 
-    private static string FormatF6(decimal value) => value.ToString("F6", CultureInfo.InvariantCulture);
+    private static string FormatGram(decimal value) => value.ToString("F0", CultureInfo.InvariantCulture);
+
+    private static string FormatCoefficient(decimal value) => value.ToString("F2", CultureInfo.InvariantCulture);
 
     private static string CategoryName(GsmCategory category) => category switch
     {

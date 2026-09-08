@@ -316,14 +316,14 @@ public static class IndividualCardPdfComposer
                 {
                     table.Cell().Border(0.5f).Padding(3).Text(coefficient.TypeName).FontSize(8);
                     table.Cell().Border(0.5f).Padding(3).Text(coefficient.Name).FontSize(8);
-                    table.Cell().Border(0.5f).Padding(3).Text(F6(coefficient.Value)).FontSize(8);
+                    table.Cell().Border(0.5f).Padding(3).Text(F2(coefficient.Value)).FontSize(8);
                     table.Cell().Border(0.5f).Padding(3).Text(coefficient.ConditionDescription ?? string.Empty).FontSize(8);
                     table.Cell().Border(0.5f).Padding(3).Text(coefficient.NormativeBasis ?? string.Empty).FontSize(8);
                 }
             });
         }
 
-        col.Item().PaddingTop(4).Text($"Общий коэффициент: {F6(dto.TotalCoefficient)}").FontSize(9).Bold();
+        col.Item().PaddingTop(4).Text($"Общий коэффициент: {F2(dto.TotalCoefficient)}").FontSize(9).Bold();
     }
 
     // ── 4.6. Нормы расхода ГСМ ────────────────────────────────────────────
@@ -385,8 +385,8 @@ public static class IndividualCardPdfComposer
                 table.Cell().Border(0.5f).Padding(3).MaterialCell(row.ReserveMaterials);
                 table.Cell().Border(0.5f).Padding(3).MaterialCell(row.ForeignMaterials);
                 table.Cell().Border(0.5f).Padding(3).Text($"{row.SourceHKCardCode} {row.SourceHKCardVersion}").FontSize(7.5f);
-                table.Cell().Border(0.5f).Padding(3).Text(F6(row.BaseVolume)).FontSize(7.5f);
-                table.Cell().Border(0.5f).Padding(3).Text(F6(dto.TotalCoefficient)).FontSize(7.5f);
+                table.Cell().Border(0.5f).Padding(3).Text(Gram(row.BaseVolume)).FontSize(7.5f);
+                table.Cell().Border(0.5f).Padding(3).Text(F2(dto.TotalCoefficient)).FontSize(7.5f);
                 table.Cell().Border(0.5f).Padding(3).Text(row.CalculatedVolume.ToString("F0", CultureInfo.InvariantCulture)).FontSize(7.5f);
                 table.Cell().Border(0.5f).Padding(3).Text(row.UnitOfMeasure).FontSize(7.5f);
                 table.Cell().Border(0.5f).Padding(3).Text(row.Periodicity ?? string.Empty).FontSize(7.5f);
@@ -395,7 +395,7 @@ public static class IndividualCardPdfComposer
                     if (!string.IsNullOrEmpty(row.Notes))
                         notes.Item().Text(row.Notes).FontSize(7);
                     notes.Item().Text(
-                        $"Норма ХК: {F6(row.SourceVolume)}; узлы ×{row.NodeQuantity}; агрегаты ×{row.AggregateQuantity}; изделия ×{row.ProductQuantity}")
+                        $"Норма ХК: {Gram(row.SourceVolume)}; узлы ×{row.NodeQuantity}; агрегаты ×{row.AggregateQuantity}; изделия ×{row.ProductQuantity}")
                         .FontSize(6.5f).FontColor(Colors.Grey.Darken2);
                 });
             }
@@ -452,7 +452,7 @@ public static class IndividualCardPdfComposer
                 table.Cell().Border(0.5f).Padding(3).Text(primary.Gost ?? string.Empty).FontSize(8);
                 table.Cell().Border(0.5f).Padding(3).Text(primary.UnitOfMeasure).FontSize(8);
                 table.Cell().Border(0.5f).Padding(3).Text(primary.RowCount.ToString(CultureInfo.InvariantCulture)).FontSize(8);
-                table.Cell().Border(0.5f).Padding(3).Text(F6(primary.Value)).FontSize(8);
+                table.Cell().Border(0.5f).Padding(3).Text(Gram(primary.Value)).FontSize(8);
             }
         });
     }
@@ -514,7 +514,9 @@ public static class IndividualCardPdfComposer
     private static void HeaderCell(TableCellDescriptor header, string title) =>
         header.Cell().Border(0.5f).Background(Colors.Grey.Lighten2).Padding(3).Text(title).FontSize(7.5f).Bold();
 
-    private static string F6(decimal value) => value.ToString("F6", CultureInfo.InvariantCulture);
+    private static string F2(decimal value) => value.ToString("F2", CultureInfo.InvariantCulture);
+
+    private static string Gram(decimal value) => value.ToString("F0", CultureInfo.InvariantCulture);
 
     private static string Date(DateTime? value) => value?.ToString("dd.MM.yyyy") ?? string.Empty;
 
