@@ -51,7 +51,9 @@ public sealed class HKCardValidationService
                 "invalid-date-range"));
 
         errors.AddRange(ValidateTextFields(card));
-        errors.AddRange(ValidateRequestRules(card));
+        // Условные правила блока «Обращение» (входящий номер → организация/дата,
+        // реквизиты основания) проверяются только при отправке на проверку —
+        // черновик сохраняется свободно, поля обращения независимы.
 
         var now = _time.GetUtcNow().UtcDateTime;
         if (card.RequestReceivedDate.HasValue && card.RequestReceivedDate.Value > now.AddDays(1))
@@ -73,6 +75,9 @@ public sealed class HKCardValidationService
             return draft;
 
         var errors = new List<HKValidationError>();
+        errors.AddRange(ValidateRequestRules(card));
+        if (errors.Count > 0)
+            return HKValidationResult.Fail(errors);
 
         if (card.ObjectLevel == HKObjectLevel.Node)
         {

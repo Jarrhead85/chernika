@@ -1570,6 +1570,12 @@
             return;
         }
 
+        if (IsNew && selectedMilitaryBranchIds.Count > 0 && card.Id != Guid.Empty)
+        {
+            // CreateAsync не сохраняет военные ветки — фиксируем выбор после создания.
+            await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+        }
+
         if (IsNew && _pendingFile != null && card.Id != Guid.Empty)
         {
             await UploadAttachment();
