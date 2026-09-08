@@ -476,6 +476,15 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 8px;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.hki-mb-tag {
+    white-space: normal;
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .hki-mb-select {

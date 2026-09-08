@@ -111,8 +111,8 @@
                                         var mb = allMilitaryBranches.FirstOrDefault(b => b.Id == mbId);
                                         if (mb != null)
                                         {
-                                            <span class="hki-mat-tag">
-                                                <span>@mb.ArmedForcesType — @mb.Name</span>
+                                            <span class="hki-mat-tag hki-mb-tag">
+                                                <span>@mb.Name</span>
                                                 @if (canEdit)
                                                 {
                                                     <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
