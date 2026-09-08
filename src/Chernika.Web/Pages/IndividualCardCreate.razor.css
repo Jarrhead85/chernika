@@ -1,42 +1,100 @@
-/* ---- D6: мастер создания черновика ИК (полная ширина, паттерн «Составы техники») ---- */
+/* ---- D6: единая страница «Создать ИК» (полная ширина, паттерн «Составы техники») ---- */
 
-/* Шаг 1: цели ИК — как вкладки на «Составах техники» (btnRow + btn primary/ghost) */
+/* Цели ИК — как вкладки на «Составах техники» (btnRow + btn primary/ghost) */
 .ikTargetSegmented {
     margin-bottom: 16px;
     flex-wrap: wrap;
 }
 
-/* Шаг 1: поиск объекта */
+/* Поиск объекта */
 .ikObjectSearch input {
     max-width: 420px;
 }
 
-/* Шаг 1: выбранная строка таблицы */
-.ikObjectRowSelected td {
+/* Строки таблицы объектов: выбор кликом по строке */
+.ikObjectRow {
+    cursor: pointer;
+    user-select: none;
+}
+
+.ikObjectRow:hover td {
+    background: rgba(79, 140, 255, .07);
+}
+
+.ikObjectRow:focus {
+    outline: none;
+}
+
+.ikObjectRow:focus td {
+    box-shadow: inset 0 0 0 2px rgba(79, 140, 255, .35);
+}
+
+.ikObjectRow.selected td {
     background: rgba(79, 140, 255, .12);
 }
 
-.ikObjectRowSelected td:first-child {
+.ikObjectRow.selected td:first-child {
     border-left: 2px solid var(--accent);
 }
 
-/* Итог выбора объекта */
-.ikSelectedRow {
+/* Блок «Выбранный объект / Нормативная готовность» */
+.ikReadyBlock {
+    margin-top: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 10px);
+    background: var(--panel2);
+}
+
+.ikReadyHeader {
     display: flex;
     align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin: 12px 0 4px;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.ikReadyTitle {
     font-size: 13px;
+    font-weight: 600;
     color: var(--text);
 }
 
-.hkv-label {
-    color: var(--muted);
-    font-weight: 600;
+.ikReadyValue {
+    font-size: 13px;
+    color: var(--text);
+    margin-top: 4px;
 }
 
-/* Шаг 2: выбор root ХК (локальное поле, вне глобального .field) */
+.ikTagOk {
+    color: var(--ok);
+    border-color: var(--ok);
+}
+
+.ikTagBad {
+    color: var(--bad);
+    border-color: var(--bad);
+}
+
+/* Список проблем — компактные буллеты без «полей» */
+.ikGapList {
+    margin: 4px 0 4px 14px;
+}
+
+.ikGapItem {
+    position: relative;
+    font-size: 13px;
+    color: var(--text);
+    padding: 3px 0 3px 14px;
+}
+
+.ikGapItem::before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    color: var(--bad);
+}
+
+/* Шаг выбора root ХК (локальное поле, вне глобального .field) */
 .wiz-field {
     margin-bottom: 14px;
 }
@@ -52,12 +110,11 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    min-height: 44px;
-    max-height: 48px;
-    padding: 6px 14px;
+    min-height: 40px;
+    padding: 5px 12px;
     border: 1px solid var(--line);
     border-radius: var(--radius2, 10px);
-    background: var(--panel2);
+    background: var(--panel);
     cursor: pointer;
     font-size: 13px;
     color: var(--text);
@@ -89,12 +146,6 @@
 }
 
 /* Общие подписи */
-.hkc-subtitle {
-    font-size: 13px;
-    font-weight: 600;
-    margin: 14px 0 8px;
-}
-
 .hkc-error {
     margin-bottom: 10px;
     color: var(--bad);
@@ -105,6 +156,11 @@
     font-size: 13px;
     color: var(--text);
     margin: 6px 0;
+}
+
+.hkv-label {
+    color: var(--muted);
+    font-weight: 600;
 }
 
 .hkv-muted {
@@ -120,7 +176,7 @@
     }
 
     .wiz-levelCard {
-        min-height: 40px;
+        min-height: 38px;
         padding: 4px 10px;
     }
 }
