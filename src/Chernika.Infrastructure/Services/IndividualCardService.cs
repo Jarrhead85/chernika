@@ -2913,6 +2913,253 @@ public class IndividualCardService
             audit);
     }
 
+    /// <summary>
+    /// E0: единая immutable export-модель ИК для будущих PDF (E1) и XLSX (E2).
+    /// Только snapshot-данные; live-чтения — Branch.Name и имя автора.
+    /// Не выполняет preflight, пересчёт или любые операции записи; аудит не пишет.
+    /// </summary>
+    public async Task<IndividualCardExportDto?> GetExportAsync(
+        Guid individualCardId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var card = await LoadIndividualCardWithSnapshotsAsync(individualCardId, ct);
+        if (card is null)
+            return null;
+        if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
+            return null;
+
+        var branchName = await _db.Branches.AsNoTracking()
+            .Where(b => b.Id == card.BranchId)
+            .Select(b => (string?)b.Name)
+            .FirstOrDefaultAsync(ct) ?? string.Empty;
+        var createdByName = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == card.CreatedByUserId)
+            .Select(u => (string?)(u.FullName ?? u.UserName))
+            .FirstOrDefaultAsync(ct);
+
+        var history = await _db.IndividualCards.AsNoTracking()
+            .Where(c => c.Code == card.Code && c.BranchId == card.BranchId)
+            .OrderBy(c => c.RevisionNumber)
+            .Select(c => new IndividualCardVersionChainItemDto(
+                c.Id, c.Code, c.Version, c.RevisionNumber, c.Status,
+                c.CreatedAt, c.FormedAt, c.ArchivedAt, c.CreatedByUserId,
+                c.SupersedesIndividualCardId))
+            .ToListAsync(ct);
+
+        var exportRows = card.Items.OrderBy(i => i.SortOrder)
+            .Select(i =>
+            {
+                var nodeQuantity = 0;
+                var aggregateQuantity = 0;
+                var productQuantity = 0;
+                if (i.NodeSnapshotId.HasValue)
+                {
+                    var nodeSnapshot = card.CompositionSnapshots
+                        .SelectMany(cs => cs.Aggregates)
+                        .SelectMany(a => a.Nodes.Select(n => (a, n)))
+                        .FirstOrDefault(x => x.n.Id == i.NodeSnapshotId.Value);
+                    if (nodeSnapshot.n is not null && nodeSnapshot.a is not null)
+                    {
+                        var aggregateSnapshot = nodeSnapshot.a;
+                        var composition = card.CompositionSnapshots
+                            .FirstOrDefault(cs => cs.Id == aggregateSnapshot.IndividualCardCompositionSnapshotId);
+                        nodeQuantity = nodeSnapshot.n.Quantity;
+                        aggregateQuantity = aggregateSnapshot.Quantity;
+                        productQuantity = card.ObjectLevel == IndividualCardObjectLevel.Complex
+                            ? composition?.Quantity ?? 0
+                            : 1;
+                    }
+                }
+
+                var materials = i.MaterialSnapshots
+                    .OrderBy(m => m.SortOrder)
+                    .Select(m => (Entity: m, Dto: new IndividualCardExportMaterialDto(
+                        m.MaterialName, m.MaterialType, m.Gost,
+                        m.CalculatedVolume, m.UnitOfMeasure, m.SortOrder)))
+                    .ToList();
+
+                return new IndividualCardExportRowDto(
+                    i.SortOrder,
+                    i.SourceHKSourceSnapshotId,
+                    i.SourceHKCardId,
+                    i.SourceHKCardCode,
+                    i.SourceHKCardVersion,
+                    i.AssemblyUnitCode,
+                    i.AssemblyUnitName,
+                    i.AssemblyUnitQuantity,
+                    i.SourceVolume,
+                    i.BaseVolume,
+                    i.CalculatedVolume,
+                    i.UnitOfMeasure,
+                    i.Periodicity,
+                    i.Notes,
+                    nodeQuantity,
+                    aggregateQuantity,
+                    productQuantity,
+                    materials.Where(x => x.Entity.Category == GsmCategory.Primary).Select(x => x.Dto).ToList(),
+                    materials.Where(x => x.Entity.Category == GsmCategory.Duplicate).Select(x => x.Dto).ToList(),
+                    materials.Where(x => x.Entity.Category == GsmCategory.Reserve).Select(x => x.Dto).ToList(),
+                    materials.Where(x => x.Entity.Category == GsmCategory.Foreign).Select(x => x.Dto).ToList());
+            })
+            .ToList();
+
+        var primaryMaterials = card.Items
+            .SelectMany(i => i.MaterialSnapshots.Where(m => m.Category == GsmCategory.Primary)
+                .Select(m => (Item: i, Material: m)))
+            .GroupBy(x => (x.Material.MaterialName, x.Material.Gost, x.Material.UnitOfMeasure))
+            .OrderBy(g => g.Key.MaterialName)
+            .Select(g => new IndividualCardExportPrimaryMaterialDto(
+                g.Key.MaterialName,
+                g.Key.Gost,
+                g.Key.UnitOfMeasure,
+                g.Sum(x => x.Item.CalculatedVolume),
+                g.Select(x => x.Item.Id).Distinct().Count()))
+            .ToList();
+
+        return new IndividualCardExportDto(
+            card.Id,
+            card.Code,
+            card.Version,
+            card.RevisionNumber,
+            card.Status,
+            IndividualCardDisplay.Status(card.Status),
+            card.ObjectLevel,
+            IndividualCardDisplay.ObjectLevel(card.ObjectLevel),
+            card.TargetObjectCodeSnapshot,
+            card.TargetObjectNameSnapshot,
+            card.TargetContextSnapshot,
+            card.BranchId,
+            branchName,
+            card.CreatedByUserId,
+            createdByName,
+            card.CreatedAt,
+            card.FormedAt,
+            card.ArchivedAt,
+            BuildExportWarnings(card),
+            card.CompositionSnapshots
+                .OrderBy(cs => cs.CapturedAt).ThenBy(cs => cs.TargetObjectCode)
+                .Select(cs => new IndividualCardExportCompositionDto(
+                    cs.Id,
+                    cs.SourceLevel,
+                    cs.SourceCompositionId,
+                    cs.SourceCompositionVersion,
+                    cs.SourceApprovedAt,
+                    cs.TargetObjectId,
+                    cs.TargetObjectCode,
+                    cs.TargetObjectName,
+                    cs.Quantity,
+                    cs.CapturedAt,
+                    cs.Aggregates
+                        .OrderBy(a => a.SortOrder)
+                        .Select(a => new IndividualCardExportAggregateDto(
+                            a.Id,
+                            a.AggregateId,
+                            a.AggregateCode,
+                            a.AggregateName,
+                            a.Quantity,
+                            a.SortOrder,
+                            a.Nodes
+                                .OrderBy(n => n.SortOrder)
+                                .Select(n => new IndividualCardExportNodeDto(
+                                    n.Id, n.NodeId, n.NodeCode, n.NodeName, n.Quantity, n.SortOrder))
+                                .ToList()))
+                        .ToList()))
+                .ToList(),
+            card.HKSourceSnapshots
+                .OrderBy(s => s.SortOrder)
+                .Select(s => new IndividualCardExportHKSourceDto(
+                    s.Id,
+                    s.PreflightOccurrenceId,
+                    s.ParentHKSourceSnapshotId,
+                    s.SourceHKCardId,
+                    s.ObjectLevel,
+                    IndividualCardDisplay.ObjectLevel(s.ObjectLevel),
+                    s.SourceObjectCode,
+                    s.SourceObjectName,
+                    s.HKCardCode,
+                    s.HKCardVersion,
+                    s.HKCardApprovedAt,
+                    s.HKCardEffectiveDate,
+                    s.HKCardExpirationDate,
+                    s.IsComplete,
+                    s.SortOrder,
+                    s.CapturedAt))
+                .ToList(),
+            card.CoefficientSnapshots
+                .OrderBy(s => s.SortOrder)
+                .Select(s => new IndividualCardExportCoefficientDto(
+                    s.CoefficientTypeName,
+                    s.CoefficientName,
+                    s.Value,
+                    s.ConditionDescription,
+                    s.NormativeBasis,
+                    s.SortOrder))
+                .ToList(),
+            BuildTotalCoefficient(card.CoefficientSnapshots),
+            exportRows,
+            primaryMaterials,
+            history);
+    }
+
+    private static List<IndividualCardExportWarningDto> BuildExportWarnings(IndividualCard card)
+    {
+        var warnings = new List<IndividualCardExportWarningDto>();
+        if (card.Status == IndividualCardStatus.Draft)
+        {
+            warnings.Add(new IndividualCardExportWarningDto(
+                "DraftNotice", "ЧЕРНОВИК. Данные могут быть изменены.", 0));
+        }
+
+        foreach (var gap in card.NormativeGapSnapshots.OrderBy(g => g.SortOrder))
+            warnings.Add(new IndividualCardExportWarningDto(gap.Kind.ToString(), gap.Message, gap.SortOrder));
+
+        foreach (var problem in card.CalculationProblemSnapshots.OrderBy(p => p.SortOrder))
+            warnings.Add(new IndividualCardExportWarningDto(problem.Code, problem.Message, 1000 + problem.SortOrder));
+
+        if (card.Status != IndividualCardStatus.Draft &&
+            (card.NormativeGapSnapshots.Count > 0 || card.CalculationProblemSnapshots.Count > 0))
+        {
+            warnings.Insert(0, new IndividualCardExportWarningDto(
+                "HistoricalNotice",
+                "В документе зафиксированы нормативные пробелы или проблемы расчёта.",
+                0));
+        }
+
+        return warnings;
+    }
+
+    /// <summary>E0: аудит успешного экспорта ИК в PDF. Вызывается E1 только
+    /// после успешной генерации байтов файла; не мутирует ИК и снимки.</summary>
+    public async Task RecordPdfExportAsync(Guid individualCardId, CancellationToken ct = default) =>
+        await RecordExportAuditAsync(individualCardId, "IndividualCard.PdfExported", "PDF", ct);
+
+    /// <summary>E0: аудит успешного экспорта ИК в XLSX. Вызывается E2 только
+    /// после успешной генерации байтов файла; не мутирует ИК и снимки.</summary>
+    public async Task RecordXlsxExportAsync(Guid individualCardId, CancellationToken ct = default) =>
+        await RecordExportAuditAsync(individualCardId, "IndividualCard.XlsxExported", "XLSX", ct);
+
+    private async Task RecordExportAuditAsync(
+        Guid individualCardId, string action, string format, CancellationToken ct)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
+        var scope = await ResolveActorScopeAsync(ct);
+
+        var card = await _db.IndividualCards.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == individualCardId, ct);
+        if (card is null)
+            return;
+        if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
+            return;
+
+        await _audit.LogAsync(new AuditWriteRequest(
+            "IndividualCard", card.Id.ToString(), action,
+            _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{card.Code} {card.Version}",
+            Details: $"Code={card.Code}; Version={card.Version}; Status={card.Status}; ExportFormat={format}"), ct);
+    }
+
     private async Task<IndividualCard?> LoadDraftForCalculationAsync(
         Guid individualCardId, bool tracked = false, CancellationToken ct = default)
     {

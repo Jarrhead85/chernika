@@ -97,6 +97,8 @@ public static class AuditDisplayCatalog
         ["IndividualCard.NewVersionCreated"] = new("Создание новой версии ИК", AuditSeverity.Success),
         ["IndividualCard.Archived"] = new("Архивирование ИК", AuditSeverity.Neutral),
         ["IndividualCard.DraftDeleted"] = new("Удаление черновика ИК", AuditSeverity.Danger),
+        ["IndividualCard.PdfExported"] = new("Экспорт ИК в PDF", AuditSeverity.Success),
+        ["IndividualCard.XlsxExported"] = new("Экспорт ИК в XLSX", AuditSeverity.Success),
 
         ["WorkTaskGroup.Completed"] = new("Групповая задача выполнена", AuditSeverity.Success),
     };
