@@ -1,8 +1,13 @@
 using Chernika.Api.Contracts;
+using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
+using Chernika.Infrastructure.Reports;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Net.Http.Headers;
+
+using DomainIndividualCardDetailDto = Chernika.Domain.Models.IndividualCardDetailDto;
 
 namespace Chernika.Api.Controllers;
 
@@ -12,8 +17,13 @@ namespace Chernika.Api.Controllers;
 public class IndividualCardsController : ControllerBase
 {
     private readonly IndividualCardService _cards;
+    private readonly ReportService _reports;
 
-    public IndividualCardsController(IndividualCardService cards) => _cards = cards;
+    public IndividualCardsController(IndividualCardService cards, ReportService reports)
+    {
+        _cards = cards;
+        _reports = reports;
+    }
 
     [HttpGet]
     public async Task<ActionResult<PagedResponse<IndividualCardListItemDto>>> GetAll(
@@ -28,8 +38,35 @@ public class IndividualCardsController : ControllerBase
             result.TotalCount, result.Page, result.PageSize, result.TotalPages));
     }
 
+    [HttpGet("{id:guid}/pdf")]
+    public async Task<IActionResult> GetPdf(Guid id, CancellationToken ct)
+    {
+        IndividualCardPdfFile? file;
+        try
+        {
+            file = await _reports.GenerateIndividualCardPdfAsync(id, ct);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+
+        if (file is null)
+            return NotFound();
+
+        Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("inline")
+        {
+            FileNameStar = file.FileName,
+        }.ToString();
+        return File(file.Content, "application/pdf");
+    }
+
     [HttpGet("{id}")]
-    public async Task<ActionResult<IndividualCardDetailDto>> GetById(Guid id)
+    public async Task<ActionResult<Chernika.Api.Contracts.IndividualCardDetailDto>> GetById(Guid id)
     {
         var card = await _cards.GetCardAsync(id);
         if (card == null) return NotFound();
@@ -51,7 +88,7 @@ public class IndividualCardsController : ControllerBase
     {
         try
         {
-            return Ok(await _cards.BuildPreflightAsync(request, ct));
+            return Ok(await _cards.BuildPreflightAsync(request, ct: ct));
         }
         catch (InvalidOperationException ex)
         {
@@ -207,7 +244,7 @@ public class IndividualCardsController : ControllerBase
     }
 
     [HttpGet("{id:guid}/detail")]
-    public async Task<ActionResult<IndividualCardDetailDto>> GetDetail(Guid id, CancellationToken ct)
+    public async Task<ActionResult<DomainIndividualCardDetailDto>> GetDetail(Guid id, CancellationToken ct)
     {
         var detail = await _cards.GetDetailAsync(id, ct);
         if (detail is null) return NotFound();
@@ -274,7 +311,7 @@ public class IndividualCardsController : ControllerBase
 
     [HttpPost("generate/{instanceId}")]
     [Authorize(Policy = "CreateIndividualCard")]
-    public async Task<ActionResult<List<IndividualCardDetailDto>>> GenerateForInstance(
+    public async Task<ActionResult<List<Chernika.Api.Contracts.IndividualCardDetailDto>>> GenerateForInstance(
         Guid instanceId,
         [FromBody] GenerateIndividualCardsRequest request)
     {

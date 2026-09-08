@@ -254,12 +254,14 @@ else
 
 <h3 class="hkc-subtitle">Экспорт</h3>
 <div class="formActions">
-    <button type="button" class="btn" disabled>PDF</button>
+    <a class="btn" href="@PdfUrl" target="_blank" rel="noopener">PDF</a>
     <button type="button" class="btn" disabled>XLSX</button>
 </div>
 
 @code {
     [Parameter] public IndividualCardDetailDto Detail { get; set; } = null!;
+
+    private string PdfUrl => $"/api/individualcards/{Detail.Id}/pdf";
 
     private void OpenVersionCard(Guid id) => Nav.NavigateTo($"/инд-карты/{id}");
 

@@ -1,4 +1,5 @@
 using Chernika.Domain.Entities;
+using Chernika.Infrastructure.Reports;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using QuestPDF.Fluent;
@@ -9,6 +10,31 @@ namespace Chernika.Infrastructure.Services;
 
 public class ReportService
 {
+    private readonly IndividualCardService _individualCards;
+
+    public ReportService(IndividualCardService individualCards) => _individualCards = individualCards;
+
+    /// <summary>
+    /// E1: печатный PDF-бланк ИК. Данные — только E0 export-read-model
+    /// (GetExportAsync: право + филиал). Аудит PdfExported пишется только
+    /// после успешной генерации байтов; при ошибке рендера аудит не пишется.
+    /// Недоступная/несуществующая ИК → null.
+    /// </summary>
+    public async Task<IndividualCardPdfFile?> GenerateIndividualCardPdfAsync(
+        Guid individualCardId, CancellationToken ct = default)
+    {
+        QuestPDF.Settings.License = LicenseType.Community;
+
+        var export = await _individualCards.GetExportAsync(individualCardId, ct);
+        if (export is null)
+            return null;
+
+        var file = IndividualCardPdfComposer.Compose(export);
+
+        await _individualCards.RecordPdfExportAsync(individualCardId, ct);
+        return file;
+    }
+
     public byte[] GenerateHKCardPdf(HKCard card)
     {
         QuestPDF.Settings.License = LicenseType.Community;
