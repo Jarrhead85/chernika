@@ -393,6 +393,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.ArchivedByUserId).HasMaxLength(450);
             e.Property(x => x.TotalNorm).HasPrecision(18, 6);
             e.Property(x => x.Notes).HasMaxLength(4000);
+            e.Property(x => x.TargetObjectCodeSnapshot).HasMaxLength(100).IsRequired();
+            e.Property(x => x.TargetObjectNameSnapshot).HasMaxLength(500).IsRequired();
+            e.Property(x => x.TargetContextSnapshot).HasMaxLength(500);
 
             e.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId)
                 .OnDelete(DeleteBehavior.Restrict);

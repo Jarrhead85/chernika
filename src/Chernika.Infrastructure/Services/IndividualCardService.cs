@@ -284,6 +284,33 @@ public class IndividualCardService
         string RootObjectCode, string RootObjectName,
         Guid? LinkedEquipmentModelId);
 
+    /// <summary>Immutable target identity captured at Draft creation: live
+    /// renames of Complex/EquipmentModel/Aggregate/Node/EquipmentInstance must
+    /// never change how a historical card displays its target. Context is set
+    /// only where the preflight already resolved it from snapshots.</summary>
+    private static (string Code, string Name, string? Context) BuildTargetSnapshots(
+        IndividualCardObjectLevel level, TargetInfo target, IndividualCardPreflightResult preflight)
+    {
+        string? context = level switch
+        {
+            IndividualCardObjectLevel.EquipmentInstance =>
+                string.IsNullOrEmpty(target.RootObjectCode) ? null : $"Изделие {target.RootObjectCode}",
+            IndividualCardObjectLevel.Complex => BuildComplexContext(preflight),
+            _ => null,
+        };
+        return (target.Code, target.Name, context);
+    }
+
+    private static string? BuildComplexContext(IndividualCardPreflightResult preflight)
+    {
+        var items = preflight.Compositions
+            .Select(c => $"Изделие {c.TargetObjectCode}")
+            .Distinct()
+            .Take(3)
+            .ToList();
+        return items.Count == 0 ? null : string.Join(" • ", items) + (items.Count == 3 ? " • …" : string.Empty);
+    }
+
     private sealed record ComponentEdge(HKCardComponent Component, HKCard Child);
 
     private sealed class LevelMatch
@@ -1602,6 +1629,10 @@ public class IndividualCardService
             CreatedAt = now,
             Notes = request.Notes,
         };
+        var targetSnapshots = BuildTargetSnapshots(request.ObjectLevel, target, preflight);
+        draft.TargetObjectCodeSnapshot = targetSnapshots.Code;
+        draft.TargetObjectNameSnapshot = targetSnapshots.Name;
+        draft.TargetContextSnapshot = targetSnapshots.Context;
         ApplyTargetFk(draft, request.ObjectLevel, request.ObjectId);
 
         CopyDraftSnapshots(draft, preflight, now);
@@ -2404,6 +2435,22 @@ public class IndividualCardService
             CreatedAt = now,
             SupersedesIndividualCardId = source.Id,
         };
+        var versionTarget = await ResolveTargetAsync(source.ObjectLevel, objectId, ct);
+        if (versionTarget is not null)
+        {
+            var targetSnapshots = BuildTargetSnapshots(source.ObjectLevel, versionTarget, preflight);
+            draft.TargetObjectCodeSnapshot = targetSnapshots.Code;
+            draft.TargetObjectNameSnapshot = targetSnapshots.Name;
+            draft.TargetContextSnapshot = targetSnapshots.Context;
+        }
+        else
+        {
+            // Fallback: inherit the source snapshot identity (resolved target
+            // disappeared between preflight and creation).
+            draft.TargetObjectCodeSnapshot = source.TargetObjectCodeSnapshot;
+            draft.TargetObjectNameSnapshot = source.TargetObjectNameSnapshot;
+            draft.TargetContextSnapshot = source.TargetContextSnapshot;
+        }
         ApplyTargetFk(draft, source.ObjectLevel, objectId);
 
         // Fresh composition/HK/gap snapshots only; no calculation rows,
@@ -2512,6 +2559,8 @@ public class IndividualCardService
             rows = rows.Where(c =>
                 EF.Functions.ILike(c.Code, pattern) ||
                 EF.Functions.ILike(c.Version, pattern) ||
+                EF.Functions.ILike(c.TargetObjectCodeSnapshot, pattern) ||
+                EF.Functions.ILike(c.TargetObjectNameSnapshot, pattern) ||
                 c.HKSourceSnapshots.Where(s => s.ParentHKSourceSnapshotId == null).Any(s =>
                     EF.Functions.ILike(s.SourceObjectCode, pattern) ||
                     EF.Functions.ILike(s.SourceObjectName, pattern)) ||
@@ -2570,66 +2619,26 @@ public class IndividualCardService
                     .Where(u => u.Id == c.CreatedByUserId)
                     .Select(u => u.FullName ?? u.UserName)
                     .FirstOrDefault(),
-                ObjectCode = c.HKSourceSnapshots
-                    .Where(s => s.ParentHKSourceSnapshotId == null)
-                    .OrderBy(s => s.SortOrder)
-                    .Select(s => s.SourceObjectCode)
-                    .FirstOrDefault() ?? string.Empty,
-                ObjectName = c.HKSourceSnapshots
-                    .Where(s => s.ParentHKSourceSnapshotId == null)
-                    .OrderBy(s => s.SortOrder)
-                    .Select(s => s.SourceObjectName)
-                    .FirstOrDefault() ?? string.Empty,
+                c.TargetObjectCodeSnapshot,
+                c.TargetObjectNameSnapshot,
+                c.TargetContextSnapshot,
                 HKSourceCount = c.HKSourceSnapshots.Count(),
                 HasNormativeGaps = c.NormativeGapSnapshots.Any(),
                 CalculationProblemCount = c.CalculationProblemSnapshots.Count(),
                 c.SupersedesIndividualCardId,
                 HasSuccessor = c.SupersededBy.Any(),
-                InstanceSerial = c.EquipmentInstance != null ? c.EquipmentInstance.SerialNumber : null,
-                InstanceName = c.EquipmentInstance != null ? c.EquipmentInstance.Name : null,
-                InstanceModelIndex = c.EquipmentInstance != null ? c.EquipmentInstance.Index : null,
             })
             .ToListAsync(ct);
 
-        // Bounded composition context for the page rows only.
-        var pageIds = pageItems.Select(x => x.Id).ToList();
-        var compositions = await _db.IndividualCardCompositionSnapshots.AsNoTracking()
-            .Where(cs => pageIds.Contains(cs.IndividualCardId))
-            .Select(cs => new { cs.IndividualCardId, cs.SourceLevel, cs.TargetObjectCode })
-            .ToListAsync(ct);
-
-        var items = pageItems.Select(x =>
-        {
-            // Instance cards: identity from the instance row, context from the
-            // model index copy (the root snapshot holds the model HK instead).
-            var isInstance = x.ObjectLevel == IndividualCardObjectLevel.EquipmentInstance;
-            var objectCode = isInstance ? x.InstanceSerial ?? string.Empty : x.ObjectCode;
-            var objectName = isInstance ? x.InstanceName ?? string.Empty : x.ObjectName;
-
-            string? contextText = null;
-            if (isInstance && !string.IsNullOrEmpty(x.InstanceModelIndex))
-                contextText = $"Изделие {x.InstanceModelIndex}";
-            else if (x.ObjectLevel == IndividualCardObjectLevel.Complex)
-            {
-                var contextItems = compositions
-                    .Where(cs => cs.IndividualCardId == x.Id && cs.SourceLevel == IndividualCardObjectLevel.EquipmentModel)
-                    .Select(cs => $"Изделие {cs.TargetObjectCode}")
-                    .Distinct()
-                    .Take(3)
-                    .ToList();
-                if (contextItems.Count > 0)
-                    contextText = string.Join(" • ", contextItems) + (contextItems.Count == 3 ? " • …" : string.Empty);
-            }
-
-            return new IndividualCardRegistryItemDto(
+        var items = pageItems.Select(x => new IndividualCardRegistryItemDto(
                 x.Id, x.Code, x.Version, x.ObjectLevel,
                 IndividualCardDisplay.ObjectLevel(x.ObjectLevel),
-                objectCode, objectName, contextText,
+                x.TargetObjectCodeSnapshot, x.TargetObjectNameSnapshot, x.TargetContextSnapshot,
                 x.Status, x.BranchId, x.BranchName,
                 x.CreatedAt, x.FormedAt, x.CreatedByUserId, x.AuthorName,
                 x.HasNormativeGaps, x.HKSourceCount, x.CalculationProblemCount,
-                x.SupersedesIndividualCardId, x.HasSuccessor);
-        }).ToList();
+                x.SupersedesIndividualCardId, x.HasSuccessor))
+            .ToList();
 
         return new PagedResult<IndividualCardRegistryItemDto>
         {
@@ -2677,34 +2686,10 @@ public class IndividualCardService
         if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
             return null;
 
-        // Snapshot-derived object identity; instance identity from the
-        // instance row (structural legacy FK), context from the model index copy.
-        var isInstance = card.ObjectLevel == IndividualCardObjectLevel.EquipmentInstance;
-        var rootSnapshot = card.HKSourceSnapshots
-            .Where(s => s.ParentHKSourceSnapshotId == null)
-            .OrderBy(s => s.SortOrder)
-            .FirstOrDefault();
-        var objectCode = isInstance
-            ? card.EquipmentInstance?.SerialNumber ?? string.Empty
-            : rootSnapshot?.SourceObjectCode ?? string.Empty;
-        var objectName = isInstance
-            ? card.EquipmentInstance?.Name ?? string.Empty
-            : rootSnapshot?.SourceObjectName ?? string.Empty;
-
-        string? contextText = null;
-        if (isInstance && !string.IsNullOrEmpty(card.EquipmentInstance?.Index))
-            contextText = $"Изделие {card.EquipmentInstance!.Index}";
-        else if (card.ObjectLevel == IndividualCardObjectLevel.Complex)
-        {
-            var contextItems = card.CompositionSnapshots
-                .Where(cs => cs.SourceLevel == IndividualCardObjectLevel.EquipmentModel)
-                .Select(cs => $"Изделие {cs.TargetObjectCode}")
-                .Distinct()
-                .Take(3)
-                .ToList();
-            if (contextItems.Count > 0)
-                contextText = string.Join(" • ", contextItems) + (contextItems.Count == 3 ? " • …" : string.Empty);
-        }
+        // Target identity is immutable snapshot data captured at creation.
+        var objectCode = card.TargetObjectCodeSnapshot;
+        var objectName = card.TargetObjectNameSnapshot;
+        var contextText = card.TargetContextSnapshot;
 
         var history = await _db.IndividualCards.AsNoTracking()
             .Where(c => c.Code == card.Code && c.BranchId == card.BranchId)

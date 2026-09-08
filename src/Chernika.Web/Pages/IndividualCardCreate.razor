@@ -316,13 +316,16 @@
         try
         {
             Guid newId;
+            // Pass the explicitly selected root whenever it is set, regardless
+            // of RootState: after a successful repeat preflight the state is
+            // ExplicitlySelected with SelectedRoot confirmed by the service.
+            var rootHKCardId = _rootHKCardId == Guid.Empty
+                ? (Guid?)null
+                : _rootHKCardId;
             await using (await DbLock.WaitAsync())
             {
                 var created = await IndCardService.CreateDraftAsync(new CreateIndividualCardDraftRequest(
-                    _level!.Value, _objectId,
-                    _preflight?.RootState == IndividualCardPreflightRootState.SelectionRequired
-                        ? _rootHKCardId
-                        : null));
+                    _level!.Value, _objectId, rootHKCardId));
                 newId = created.Id;
             }
             Nav.NavigateTo($"/инд-карты/{newId}");

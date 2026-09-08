@@ -55,8 +55,8 @@
                     </select>
                 }
 
-                <input type="date" class="fieldInput hkr-date" value="@_createdFrom" @onchange="OnPeriodChanged" />
-                <input type="date" class="fieldInput hkr-date" value="@_createdTo" @onchange="OnPeriodChanged" />
+                <input type="date" class="fieldInput hkr-date" value="@_createdFrom" @onchange="OnCreatedFromChanged" />
+                <input type="date" class="fieldInput hkr-date" value="@_createdTo" @onchange="OnCreatedToChanged" />
 
                 <label class="hkr-check">
                     <input type="checkbox" checked="@_onlyMine" @onchange="OnOnlyMineChanged" /> Только мои
@@ -302,7 +302,21 @@
     private Task OnLevelChanged(ChangeEventArgs args) { _levelFilter = args.Value?.ToString() ?? string.Empty; return ReloadFromFirstPage(); }
     private Task OnStatusChanged(ChangeEventArgs args) { _statusFilter = args.Value?.ToString() ?? string.Empty; return ReloadFromFirstPage(); }
     private Task OnBranchChanged(ChangeEventArgs args) { _branchFilter = args.Value?.ToString() ?? string.Empty; return ReloadFromFirstPage(); }
-    private Task OnPeriodChanged(ChangeEventArgs args) => ReloadFromFirstPage();
+
+    // Date inputs give start-of-local-day values; the service applies
+    // CreatedFrom inclusive and CreatedTo as the next-day exclusive bound
+    // (the +1 day is added when building the query).
+    private async Task OnCreatedFromChanged(ChangeEventArgs args)
+    {
+        _createdFrom = args.Value?.ToString() ?? string.Empty;
+        await ReloadFromFirstPage();
+    }
+
+    private async Task OnCreatedToChanged(ChangeEventArgs args)
+    {
+        _createdTo = args.Value?.ToString() ?? string.Empty;
+        await ReloadFromFirstPage();
+    }
     private Task OnOnlyMineChanged(ChangeEventArgs args) { _onlyMine = args.Value is true; return ReloadFromFirstPage(); }
     private Task OnOnlyGapsChanged(ChangeEventArgs args) { _onlyGaps = args.Value is true; return ReloadFromFirstPage(); }
     private Task OnSortChanged(ChangeEventArgs args) { _sortBy = args.Value?.ToString() ?? "CreatedAt"; return ReloadFromFirstPage(); }

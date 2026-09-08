@@ -674,4 +674,210 @@ public class IndividualCardRegistryIntegrationTests
         Assert.Contains(detail.History, v => v.Id == draftId);
         Assert.Contains(detail.History, v => v.Id == successor.Id);
     }
+
+    // ── Corrective D6 ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task WizardRoot_RepeatPreflightThenCreate_UsesSelectedRoot()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var modelId = await CreateEquipmentAsync(s);
+        var aggregateId = await CreateAggregateAsync(s);
+        var nodeId = await CreateNodeAsync(s);
+        var auId = await CreateAssemblyUnitAsync(s);
+        var primary = await CreateGsmMaterialAsync(s, gost: "ГОСТ-" + Suffix());
+        await CreateProductCompositionAsync(s, modelId, (aggregateId, 1));
+        await CreateAggregateCompositionAsync(s, aggregateId, (nodeId, 1));
+        var rootA = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var rootB = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregateId, _fixture.BranchA);
+        var nodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, nodeId, _fixture.BranchA);
+        await AddComponentAsync(s, rootA.Id, aggregateHK.Id);
+        await AddComponentAsync(s, rootB.Id, aggregateHK.Id);
+        await AddComponentAsync(s, aggregateHK.Id, nodeHK.Id);
+        await AddNodeItemsAsync(s, nodeHK.Id, (auId, 1, 100m, "г", new[] { (primary, GsmCategory.Primary) }));
+
+        // Wizard: initial preflight → SelectionRequired; choosing a root →
+        // repeat preflight with that root → ExplicitlySelected.
+        var initial = await s.IndividualCards.BuildPreflightAsync(
+            new IndividualCardPreflightRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+        Assert.Equal(IndividualCardPreflightRootState.SelectionRequired, initial.RootState);
+
+        var repeated = await s.IndividualCards.BuildPreflightAsync(
+            new IndividualCardPreflightRequest(IndividualCardObjectLevel.EquipmentModel, modelId, rootB.Id));
+        Assert.Equal(IndividualCardPreflightRootState.ExplicitlySelected, repeated.RootState);
+        Assert.NotNull(repeated.SelectedRoot);
+        Assert.Equal(rootB.Id, repeated.SelectedRoot!.HKCardId);
+
+        // Create with the selected root: root snapshot points to it.
+        var created = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(
+                IndividualCardObjectLevel.EquipmentModel, modelId, rootB.Id));
+        var rootSource = created.HKSources.Single(h => h.ParentHKSourceSnapshotId == null);
+        Assert.Equal(rootB.Id, rootSource.SourceHKCardId);
+    }
+
+    [Fact]
+    public async Task Registry_PeriodFilter_InclusiveBounds()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var uniqueIndex = "EM-" + Suffix();
+        var (draftId, _, _, _, _, _) = await CreateCardAsync(s, calculated: false, formed: false, modelIndex: uniqueIndex);
+
+        // CreatedFrom in the future excludes the card.
+        var future = await s.IndividualCards.GetRegistryAsync(new IndividualCardRegistryQuery(
+            SearchText: uniqueIndex, CreatedFrom: DateTime.UtcNow.AddDays(1)));
+        Assert.Empty(future.Items);
+
+        // CreatedTo yesterday excludes the card.
+        var past = await s.IndividualCards.GetRegistryAsync(new IndividualCardRegistryQuery(
+            SearchText: uniqueIndex, CreatedTo: DateTime.UtcNow.AddDays(-1)));
+        Assert.Empty(past.Items);
+
+        // Same From/To day (next-day exclusive bound) includes the card.
+        var today = await s.IndividualCards.GetRegistryAsync(new IndividualCardRegistryQuery(
+            SearchText: uniqueIndex,
+            CreatedFrom: DateTime.UtcNow.Date,
+            CreatedTo: DateTime.UtcNow.Date.AddDays(1)));
+        Assert.Contains(today.Items, i => i.Id == draftId);
+    }
+
+    [Fact]
+    public async Task TargetSnapshots_InstanceCard_ImmutableAfterLiveRename()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var modelId = await CreateEquipmentAsync(s, "EM-" + Suffix());
+        var model = await s.Db.EquipmentModels.AsNoTracking().FirstAsync(m => m.Id == modelId);
+        var instance = new EquipmentInstance
+        {
+            Id = Guid.NewGuid(),
+            SerialNumber = "SN-" + Suffix(),
+            Index = model.Index,
+            Name = "Экземпляр " + Suffix(),
+            EquipmentModelId = modelId,
+            IsDeleted = false,
+        };
+        s.Db.EquipmentInstances.Add(instance);
+        await s.Db.SaveChangesAsync();
+        var aggregateId = await CreateAggregateAsync(s);
+        var nodeId = await CreateNodeAsync(s);
+        var auId = await CreateAssemblyUnitAsync(s);
+        var primary = await CreateGsmMaterialAsync(s, gost: "ГОСТ-" + Suffix());
+        await CreateProductCompositionAsync(s, modelId, (aggregateId, 1));
+        await CreateAggregateCompositionAsync(s, aggregateId, (nodeId, 1));
+        var modelHK = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregateId, _fixture.BranchA);
+        var nodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, nodeId, _fixture.BranchA);
+        await AddComponentAsync(s, modelHK.Id, aggregateHK.Id);
+        await AddComponentAsync(s, aggregateHK.Id, nodeHK.Id);
+        await AddNodeItemsAsync(s, nodeHK.Id, (auId, 1, 100m, "г", new[] { (primary, GsmCategory.Primary) }));
+
+        var draft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentInstance, instance.Id));
+
+        var registryBefore = await s.IndividualCards.GetRegistryAsync(
+            new IndividualCardRegistryQuery(SearchText: instance.SerialNumber));
+        var row = Assert.Single(registryBefore.Items);
+        Assert.Equal(instance.SerialNumber, row.ObjectCode);
+        Assert.Equal($"Изделие {model.Index}", row.ContextText);
+
+        var detailBefore = await s.IndividualCards.GetDetailAsync(draft.Id);
+        Assert.Equal(instance.SerialNumber, detailBefore!.ObjectCode);
+
+        // Rename the live instance: snapshot display must not change.
+        var originalSerial = instance.SerialNumber;
+        var originalContext = row.ContextText;
+        var liveInstance = await s.Db.EquipmentInstances.FirstAsync(i => i.Id == instance.Id);
+        liveInstance.SerialNumber = "SN-RENAMED-" + Suffix();
+        liveInstance.Name = "Экземпляр Переименованный";
+        liveInstance.Index = "EM-RENAMED-" + Suffix();
+        await s.Db.SaveChangesAsync();
+
+        var registryAfter = await s.IndividualCards.GetRegistryAsync(
+            new IndividualCardRegistryQuery(SearchText: originalSerial));
+        var rowAfter = Assert.Single(registryAfter.Items);
+        Assert.Equal(row.ObjectCode, rowAfter.ObjectCode);
+        Assert.Equal(row.ObjectName, rowAfter.ObjectName);
+        Assert.Equal(originalContext, rowAfter.ContextText);
+
+        var detailAfter = await s.IndividualCards.GetDetailAsync(draft.Id);
+        Assert.Equal(detailBefore!.ObjectCode, detailAfter!.ObjectCode);
+        Assert.Equal(detailBefore.ObjectName, detailAfter.ObjectName);
+        Assert.Equal(detailBefore.ContextText, detailAfter.ContextText);
+    }
+
+    [Fact]
+    public async Task TargetSnapshots_AllLevels_ImmutableAfterLiveRename()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+
+        // Node-level card.
+        var nodeId = await CreateNodeAsync(s);
+        var nodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, nodeId, _fixture.BranchA);
+        var nodeDraft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Node, nodeId));
+
+        // Aggregate-level card.
+        var aggregateId = await CreateAggregateAsync(s);
+        var aggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, aggregateId, _fixture.BranchA);
+        var aggregateDraft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Aggregate, aggregateId));
+
+        // Model-level card.
+        var modelId = await CreateEquipmentAsync(s);
+        var modelHK = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var modelDraft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.EquipmentModel, modelId));
+
+        // Complex-level card with a model item (context from preflight).
+        var complexId = await CreateComplexAsync(s);
+        await CreateComplexCompositionAsync(s, complexId, (modelId, 1));
+        // The model needs a resolvable composition for the complex preflight.
+        var modelAggregate = await CreateAggregateAsync(s);
+        var modelNode = await CreateNodeAsync(s);
+        await CreateProductCompositionAsync(s, modelId, (modelAggregate, 1));
+        await CreateAggregateCompositionAsync(s, modelAggregate, (modelNode, 1));
+        var complexHK = await CreateHKAsync(s, IndividualCardObjectLevel.Complex, complexId, _fixture.BranchA);
+        var modelHKForComplex = await CreateHKAsync(s, IndividualCardObjectLevel.EquipmentModel, modelId, _fixture.BranchA);
+        var modelAggregateHK = await CreateHKAsync(s, IndividualCardObjectLevel.Aggregate, modelAggregate, _fixture.BranchA);
+        var modelNodeHK = await CreateHKAsync(s, IndividualCardObjectLevel.Node, modelNode, _fixture.BranchA);
+        await AddComponentAsync(s, complexHK.Id, modelHKForComplex.Id);
+        await AddComponentAsync(s, modelHKForComplex.Id, modelAggregateHK.Id);
+        await AddComponentAsync(s, modelAggregateHK.Id, modelNodeHK.Id);
+        var complexDraft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Complex, complexId));
+
+        // Rename all live target rows.
+        (await s.Db.Nodes.FirstAsync(n => n.Id == nodeId)).Name = "Узел Переименованный";
+        (await s.Db.Aggregates.FirstAsync(a => a.Id == aggregateId)).Name = "Агрегат Переименованный";
+        (await s.Db.Aggregates.FirstAsync(a => a.Id == aggregateId)).Code = "A-RENAMED-" + Suffix();
+        (await s.Db.EquipmentModels.FirstAsync(m => m.Id == modelId)).Name = "Изделие Переименованное";
+        (await s.Db.EquipmentModels.FirstAsync(m => m.Id == modelId)).Index = "EM-RENAMED-" + Suffix();
+        (await s.Db.Complexes.FirstAsync(x => x.Id == complexId)).Name = "Комплекс Переименованный";
+        await s.Db.SaveChangesAsync();
+
+        var nodeDetail = await s.IndividualCards.GetDetailAsync(nodeDraft.Id);
+        var nodeRow = (await s.IndividualCards.GetRegistryAsync(
+            new IndividualCardRegistryQuery(SearchText: nodeDraft.Code))).Items.Single(i => i.Id == nodeDraft.Id);
+        Assert.NotEqual("Узел Переименованный", nodeDetail!.ObjectName);
+        Assert.Equal(nodeDetail.ObjectName, nodeRow.ObjectName);
+
+        var aggregateDetail = await s.IndividualCards.GetDetailAsync(aggregateDraft.Id);
+        Assert.NotEqual("Агрегат Переименованный", aggregateDetail!.ObjectName);
+        Assert.NotEqual("Агрегат Переименованный", aggregateDetail.ObjectCode);
+
+        var modelDetail = await s.IndividualCards.GetDetailAsync(modelDraft.Id);
+        Assert.NotEqual("Изделие Переименованное", modelDetail!.ObjectName);
+        Assert.NotEqual("EM-RENAMED", modelDetail.ObjectCode[..Math.Min(10, modelDetail.ObjectCode.Length)]);
+
+        var complexDetail = await s.IndividualCards.GetDetailAsync(complexDraft.Id);
+        Assert.NotEqual("Комплекс Переименованный", complexDetail!.ObjectName);
+        // Complex context is an immutable snapshot ("Изделие {oldIndex}").
+        Assert.StartsWith("Изделие ", complexDetail.ContextText ?? string.Empty);
+        Assert.DoesNotContain("EM-RENAMED", complexDetail.ContextText ?? string.Empty);
+    }
 }

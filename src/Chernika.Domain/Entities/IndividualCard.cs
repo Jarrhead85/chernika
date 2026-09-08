@@ -31,6 +31,13 @@ public class IndividualCard
     public Guid BranchId { get; set; }
     public Branch Branch { get; set; } = null!;
 
+    // Immutable target identity captured at Draft creation (D3/D5). Live
+    // renames of Complex/EquipmentModel/Aggregate/Node/EquipmentInstance must
+    // never change how a historical card displays its target.
+    public string TargetObjectCodeSnapshot { get; set; } = string.Empty;
+    public string TargetObjectNameSnapshot { get; set; } = string.Empty;
+    public string? TargetContextSnapshot { get; set; }
+
     public Guid? SupersedesIndividualCardId { get; set; }
     public IndividualCard? SupersedesIndividualCard { get; set; }
     public ICollection<IndividualCard> SupersededBy { get; set; } = new List<IndividualCard>();
