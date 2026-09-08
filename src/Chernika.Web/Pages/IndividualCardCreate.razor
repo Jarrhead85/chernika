@@ -31,8 +31,8 @@
             }
             else if (Step == 1)
             {
-                <div class="field">
-                    <label>Цель ИК</label>
+                <div class="wiz-field">
+                    <span class="wiz-fieldLabel">Цель ИК</span>
                     <div class="wiz-levels" role="radiogroup" aria-label="Цель ИК">
                         @foreach (var (level, label) in LevelOptions)
                         {
@@ -87,8 +87,8 @@
 
                     @if (_preflight.RootState == IndividualCardPreflightRootState.SelectionRequired)
                     {
-                        <div class="field">
-                            <label>Выберите ХК верхнего уровня</label>
+                        <div class="wiz-field">
+                            <span class="wiz-fieldLabel">Выберите ХК верхнего уровня</span>
                             @foreach (var candidate in _preflight.RootCandidates)
                             {
                                 <label class="wiz-levelCard @(_rootHKCardId == candidate.HKCardId ? "selected" : "")">

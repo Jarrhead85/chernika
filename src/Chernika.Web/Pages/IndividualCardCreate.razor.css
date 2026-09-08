@@ -5,6 +5,18 @@
     width: 100%;
 }
 
+/* Локальное поле (без .field, чтобы глобальные стили input не задевали радио) */
+.wiz-field {
+    margin-bottom: 14px;
+}
+
+.wiz-fieldLabel {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+
 /* Шаг 1: цели ИК */
 .wiz-levels {
     display: grid;
@@ -16,10 +28,10 @@
 .wiz-levelCard {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     min-height: 44px;
     max-height: 48px;
-    padding: 6px 12px;
+    padding: 6px 14px;
     border: 1px solid var(--line);
     border-radius: var(--radius2, 10px);
     background: var(--panel2);
@@ -27,6 +39,7 @@
     font-size: 13px;
     color: var(--text);
     user-select: none;
+    overflow: hidden;
 }
 
 .wiz-levelCard:hover {
@@ -39,9 +52,17 @@
 }
 
 .wiz-levelCard input[type="radio"] {
-    accent-color: var(--accent);
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    flex: 0 0 auto;
     margin: 0;
-    flex-shrink: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+    accent-color: var(--accent);
+    cursor: pointer;
 }
 
 /* Шаг 1: выбор объекта */
