@@ -8,11 +8,22 @@ using Chernika.Web.Auth;
 using Chernika.Web.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Ключи DataProtection должны переживать рестарты приложения, иначе
+// все auth-cookie становятся невалидными при каждом перезапуске
+// (после Ctrl+F5 пользователь оказывается неаутентифицированным).
+var dataProtectionPath = Path.Combine(builder.Environment.ContentRootPath, ".dataprotection");
+Directory.CreateDirectory(dataProtectionPath);
+builder.Services
+    .AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath))
+    .SetApplicationName("Chernika");
 
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();

@@ -46,3 +46,4 @@ Thumbs.db
 # NuGet
 packages/
 *.nupkg
+.dataprotection/
