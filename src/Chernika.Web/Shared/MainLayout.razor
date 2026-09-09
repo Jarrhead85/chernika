@@ -298,6 +298,10 @@
         {
             // новый маршрут отменил устаревшее обновление
         }
+        catch (ObjectDisposedException)
+        {
+            // circuit завершается — игнорируем
+        }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Ошибка обновления индикаторов layout после навигации");
@@ -309,13 +313,20 @@
         if (!_authChecked) return;
         try
         {
-            unreadCount = await NotifSvc.GetUnreadCountAsync(ct);
-            if (showBellDropdown)
-                recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 5 }, ct)).Items;
+            await using (await DbLock.WaitAsync(ct))
+            {
+                unreadCount = await NotifSvc.GetUnreadCountAsync(ct);
+                if (showBellDropdown)
+                    recentNotifications = (await NotifSvc.GetMyNotificationsAsync(new NotificationQuery { PageSize = 5 }, ct)).Items;
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (ObjectDisposedException)
+        {
+            // circuit завершается — игнорируем
         }
         catch (Exception ex)
         {
@@ -478,8 +489,18 @@
             searchTotalCount = 0;
             return;
         }
-        searchResults = await SearchSvc.SearchAsync(searchQuery, 20);
-        searchTotalCount = searchResults.Count;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                searchResults = await SearchSvc.SearchAsync(searchQuery, 20);
+                searchTotalCount = searchResults.Count;
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // circuit завершается — игнорируем
+        }
     }
 
     void OnSearchFocus() { searchFocused = true; }
