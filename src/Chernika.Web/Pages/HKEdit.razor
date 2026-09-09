@@ -1203,6 +1203,26 @@
 
     private async Task LoadCardAsync(Guid cardId, CancellationToken ct)
     {
+        try
+        {
+            await LoadCardCoreAsync(cardId, ct);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            errorMessage = ex.Message;
+            canEdit = false;
+            canQuickCreate = false;
+            _existingActiveCard = null;
+            _activeCardWarning = null;
+            _attachment = null;
+            _components = new();
+            _aggregatedRows = new();
+            _loading = false;
+        }
+    }
+
+    private async Task LoadCardCoreAsync(Guid cardId, CancellationToken ct)
+    {
         await using (await DbLock.WaitAsync(ct))
         {
             var existing = await HKCardService.GetByIdAsync(cardId, ct);
