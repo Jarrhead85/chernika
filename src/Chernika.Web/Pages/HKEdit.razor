@@ -126,7 +126,7 @@
                             {
                                 <div class="readonlyValue"></div>
                             }
-                            @if (canEdit)
+                            @if (canEdit && !selectedMilitaryBranchIds.Any())
                             {
                                 var mbDropId = "mb-drop";
                                 var mbBtnId = "mb-btn";
@@ -218,19 +218,6 @@
                                 <div class="readonlyValue readonlyValueMultiline">@(card.RequestDetails ?? "")</div>
                             }
                         </div>
-                        @if (isSystemAdmin && IsNew)
-                        {
-                            <div class="field hk-branch-field">
-                                <label>Филиал</label>
-                                <select class="field-select" @bind="_adminBranchId">
-                                    <option value="">Выберите филиал…</option>
-                                    @foreach (var b in allBranches)
-                                    {
-                                        <option value="@b.Id">@b.Name</option>
-                                    }
-                                </select>
-                            </div>
-                        }
                         <div class="field">
                             <label>Уровень объекта</label>
                             <div class="hk-level-segmented" role="tablist" aria-label="Уровень объекта">
@@ -296,7 +283,7 @@
                             @if (!string.IsNullOrEmpty(_activeCardWarning) && _existingActiveCard != null)
                             {
                                 <div class="note" style="margin-top:6px;font-size:12px;color:var(--warn)">
-                                    ⚠ @_activeCardWarning
+                                    @_activeCardWarning
                                     <button type="button" class="linkBtn" @onclick="GoToExistingCard" style="text-decoration:underline;margin-left:4px;font-size:12px">Перейти к существующей ХК</button>
                                 </div>
                             }
@@ -689,11 +676,11 @@
                     <div class="formActions hk-form-actions-with-status">
                         <div class="hk-status-inline">
                             <StatusBadge Status="@card.Status" />
-                            @if (card.Status == HKCardStatus.Draft && canSendToApprove)
+                            @if (!IsNew && card.Status == HKCardStatus.Draft && canSendToApprove)
                             {
                                 <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
                             }
-                            @if (card.Status == HKCardStatus.RevisionRequired && canSendToApprove)
+                            @if (!IsNew && card.Status == HKCardStatus.RevisionRequired && canSendToApprove)
                             {
                                 <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
                             }
@@ -712,6 +699,16 @@
                             }
                         </div>
                         <div class="hk-form-actions-buttons">
+                            @if (isSystemAdmin && IsNew)
+                            {
+                                <select class="fieldInput hk-admin-branch-select" @bind="_adminBranchId" aria-label="Филиал">
+                                    <option value="">Филиал: выберите…</option>
+                                    @foreach (var b in allBranches)
+                                    {
+                                        <option value="@b.Id">@b.Name</option>
+                                    }
+                                </select>
+                            }
                             @if (canEdit || IsNew)
                             {
                                 <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
@@ -885,7 +882,7 @@
             </div>
             <div class="modalFooter">
                 <button type="button" class="btn ghost" @onclick="CloseArchiveModal">Отмена</button>
-                <button type="button" class="btn primary" @onclick="ConfirmArchiveAsync" disabled="@(string.IsNullOrWhiteSpace(_archiveReason) || _archiveReplacementCardId == Guid.Empty)">Архивировать</button>
+                <button type="button" class="btn primary" @onclick="ConfirmArchiveAsync" disabled="@(!isSystemAdmin && (string.IsNullOrWhiteSpace(_archiveReason) || _archiveReplacementCardId == Guid.Empty))">Архивировать</button>
             </div>
         </div>
     </div>
@@ -1376,6 +1373,11 @@
     private async Task SendToApprove()
     {
         errorMessage = null;
+        if (IsNew)
+        {
+            errorMessage = "Сначала сохраните черновик ХК.";
+            return;
+        }
         var (sent, error) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, "Отправлена на проверку");
         if (sent)
         {
@@ -1445,15 +1447,18 @@
     private async Task ConfirmArchiveAsync()
     {
         var reason = _archiveReason?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(reason))
+        if (!isSystemAdmin)
         {
-            _archiveError = "Укажите причину архивирования.";
-            return;
-        }
-        if (_archiveReplacementCardId == Guid.Empty)
-        {
-            _archiveError = "Выберите заменяющую утверждённую ХК.";
-            return;
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                _archiveError = "Укажите причину архивирования.";
+                return;
+            }
+            if (_archiveReplacementCardId == Guid.Empty)
+            {
+                _archiveError = "Выберите заменяющую утверждённую ХК.";
+                return;
+            }
         }
 
         var (archived, error) = await HKCardService.ArchiveAsync(card.Id, _archiveReplacementCardId, reason);

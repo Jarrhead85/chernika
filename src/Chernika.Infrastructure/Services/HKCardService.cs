@@ -984,7 +984,8 @@ public class HKCardService
             .Where(x =>
                 x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
                 x.NodeId == nodeId &&
-                (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired))
+                (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview ||
+                 x.Status == HKCardStatus.RevisionRequired || x.Status == HKCardStatus.Approved))
             .FirstOrDefaultAsync();
 
     public async Task<HKCard> CreateAsync(HKCard card, CancellationToken ct = default)
@@ -1081,7 +1082,10 @@ public class HKCardService
         catch (DbUpdateException ex)
         {
             _logger.LogError(ex, "Failed to create HK card (ObjectLevel={ObjectLevel})", card.ObjectLevel);
-            throw new InvalidOperationException("Не удалось сохранить ХК. Проверьте заполнение всех полей и повторите попытку.");
+            var detail = ex.InnerException?.Message ?? ex.Message;
+            throw new InvalidOperationException(
+                "Не удалось сохранить ХК. Проверьте заполнение полей и повторите попытку. " +
+                $"Причина: {detail}");
         }
 
         return card;
@@ -1231,6 +1235,14 @@ public class HKCardService
         catch (DbUpdateConcurrencyException)
         {
             throw new InvalidOperationException("Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogError(ex, "Failed to update HK card (Id={CardId})", card.Id);
+            var detail = ex.InnerException?.Message ?? ex.Message;
+            throw new InvalidOperationException(
+                "Не удалось сохранить ХК. Проверьте заполнение полей и повторите попытку. " +
+                $"Причина: {detail}");
         }
 
         return existing;
@@ -1600,11 +1612,6 @@ public class HKCardService
     public async Task<(bool Success, string? Error)> ArchiveAsync(Guid id, Guid replacementCardId, string reason, CancellationToken ct = default)
     {
         reason = reason?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(reason))
-            return (false, "Укажите причину архивирования.");
-
-        if (id == replacementCardId)
-            return (false, "Заменяющая ХК не может совпадать с архивируемой.");
 
         var actorId = _currentUser.GetRequiredUserId();
         await _permissions.DemandPermissionAsync(PermissionCodes.HKArchive, ct);
@@ -1613,6 +1620,14 @@ public class HKCardService
         if (actor == null)
             return (false, "Пользователь не найден.");
 
+        var isSystemAdmin = await IsSystemAdminAsync(actor);
+
+        if (!isSystemAdmin && string.IsNullOrWhiteSpace(reason))
+            return (false, "Укажите причину архивирования.");
+
+        if (id == replacementCardId)
+            return (false, "Заменяющая ХК не может совпадать с архивируемой.");
+
         var card = await _db.HKCards.FindAsync(id, ct);
         if (card == null || card.Status == HKCardStatus.Deleted)
             return (false, "ХК не найдена или удалена.");
@@ -1620,35 +1635,43 @@ public class HKCardService
         if (card.Status != HKCardStatus.Approved)
             return (false, "Ручное архивирование доступно только для утверждённой ХК.");
 
-        var isSystemAdmin = await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig);
         if (!isSystemAdmin && actor.BranchId != card.BranchId)
             return (false, "Нельзя архивировать ХК другого филиала.");
 
-        var replacement = await _db.HKCards.FindAsync(replacementCardId, ct);
-        if (replacement == null || replacement.Status == HKCardStatus.Deleted)
-            return (false, "Заменяющая ХК не найдена или удалена.");
-
-        if (replacement.Status != HKCardStatus.Approved)
-            return (false, "Заменяющая ХК должна быть утверждена.");
-
-        if (replacement.BranchId != card.BranchId)
-            return (false, "Заменяющая ХК должна принадлежать тому же филиалу.");
-
-        if (replacement.ObjectLevel != card.ObjectLevel ||
-            replacement.ComplexId != card.ComplexId ||
-            replacement.EquipmentModelId != card.EquipmentModelId ||
-            replacement.AggregateId != card.AggregateId ||
-            replacement.NodeId != card.NodeId)
+        HKCard? replacement = null;
+        if (replacementCardId != Guid.Empty)
         {
-            return (false, "Заменяющая ХК должна относиться к тому же нормативному объекту.");
+            replacement = await _db.HKCards.FindAsync(replacementCardId, ct);
+            if (replacement == null || replacement.Status == HKCardStatus.Deleted)
+                return (false, "Заменяющая ХК не найдена или удалена.");
+
+            if (replacement.Status != HKCardStatus.Approved)
+                return (false, "Заменяющая ХК должна быть утверждена.");
+
+            if (replacement.BranchId != card.BranchId)
+                return (false, "Заменяющая ХК должна принадлежать тому же филиалу.");
+
+            if (replacement.ObjectLevel != card.ObjectLevel ||
+                replacement.ComplexId != card.ComplexId ||
+                replacement.EquipmentModelId != card.EquipmentModelId ||
+                replacement.AggregateId != card.AggregateId ||
+                replacement.NodeId != card.NodeId)
+            {
+                return (false, "Заменяющая ХК должна относиться к тому же нормативному объекту.");
+            }
+
+            var now0 = _time.GetUtcNow().UtcDateTime;
+            if (replacement.EffectiveDate.HasValue && replacement.EffectiveDate.Value > now0)
+                return (false, "Заменяющая ХК ещё не вступила в силу.");
+            if (replacement.ExpirationDate.HasValue && replacement.ExpirationDate.Value < now0)
+                return (false, "Срок действия заменяющей ХК истёк.");
+        }
+        else if (!isSystemAdmin)
+        {
+            return (false, "Выберите заменяющую утверждённую ХК.");
         }
 
         var now = _time.GetUtcNow().UtcDateTime;
-        if (replacement.EffectiveDate.HasValue && replacement.EffectiveDate.Value > now)
-            return (false, "Заменяющая ХК ещё не вступила в силу.");
-        if (replacement.ExpirationDate.HasValue && replacement.ExpirationDate.Value < now)
-            return (false, "Срок действия заменяющей ХК истёк.");
-
         ArchiveCardInternal(card, replacement, actorId, reason, now);
 
         try
@@ -1687,7 +1710,7 @@ public class HKCardService
         return maxSuffix == 0 ? $"{baseVersion}.2" : $"{baseVersion}.{maxSuffix + 1}";
     }
 
-    private void ArchiveCardInternal(HKCard card, HKCard replacement, Guid actorUserId, string reason, DateTime now)
+    private void ArchiveCardInternal(HKCard card, HKCard? replacement, Guid actorUserId, string reason, DateTime now)
     {
         var oldStatus = card.Status;
         card.Status = HKCardStatus.Archived;
@@ -1704,6 +1727,9 @@ public class HKCardService
             ChangedAt = now
         });
 
+        var replacementNote = replacement is null
+            ? string.Empty
+            : $" Заменяющая карта: {replacement.Code} {replacement.Version}.";
         _db.AuditLogs.Add(new AuditLog
         {
             Id = Guid.NewGuid(),
@@ -1712,7 +1738,7 @@ public class HKCardService
             Action = $"Status:{HKCardStatus.Archived}",
             UserId = actorUserId,
             CreatedAt = now,
-            Details = $"{reason} Заменяющая карта: {replacement.Code} {replacement.Version}."
+            Details = $"{reason}{replacementNote}".Trim()
         });
     }
 
