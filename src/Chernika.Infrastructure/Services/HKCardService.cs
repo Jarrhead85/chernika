@@ -910,6 +910,18 @@ public class HKCardService
     private async Task<bool> IsSystemAdminAsync(ApplicationUser actor) =>
         await _userManager.IsInRoleAsync(actor, Domain.Enums.UserRole.SystemAdmin.ToString());
 
+    private static DateTime? NormalizeUtc(DateTime? value)
+    {
+        if (!value.HasValue)
+            return null;
+        return value.Value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.Value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc),
+        };
+    }
+
     private async Task EnsureNoActiveDuplicateAsync(HKCard card, CancellationToken ct = default)
     {
         var activeStatuses = new[] { HKCardStatus.Draft, HKCardStatus.OnReview, HKCardStatus.RevisionRequired };
@@ -1007,6 +1019,12 @@ public class HKCardService
         {
             throw new InvalidOperationException("У пользователя не указан филиал. Создание ХК невозможно.");
         }
+
+        // Даты из HTML date-input приходят с Kind=Unspecified; колонки —
+        // timestamptz, Npgsql отклоняет такие значения. Нормализуем к UTC.
+        card.RequestReceivedDate = NormalizeUtc(card.RequestReceivedDate);
+        card.EffectiveDate = NormalizeUtc(card.EffectiveDate);
+        card.ExpirationDate = NormalizeUtc(card.ExpirationDate);
 
         var validation = await _hkValidation.ValidateDraftAsync(card, ct);
         if (!validation.IsValid)
@@ -1115,12 +1133,12 @@ public class HKCardService
         existing.Notes = card.Notes;
         existing.RequestOrganization = card.RequestOrganization;
         existing.RequestSenderFullName = card.RequestSenderFullName;
-        existing.RequestReceivedDate = card.RequestReceivedDate;
+        existing.RequestReceivedDate = NormalizeUtc(card.RequestReceivedDate);
         existing.RequestDetails = card.RequestDetails;
         existing.IncomingLetterNumber = card.IncomingLetterNumber;
         existing.OutgoingLetterNumber = card.OutgoingLetterNumber;
-        existing.EffectiveDate = card.EffectiveDate;
-        existing.ExpirationDate = card.ExpirationDate;
+        existing.EffectiveDate = NormalizeUtc(card.EffectiveDate);
+        existing.ExpirationDate = NormalizeUtc(card.ExpirationDate);
         existing.UpdatedAt = DateTime.UtcNow;
 
         if (existing.ObjectLevel == Domain.Enums.HKObjectLevel.Node && existing.NodeId != card.NodeId)
