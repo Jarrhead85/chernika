@@ -6,6 +6,7 @@ using Chernika.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using System.Text.RegularExpressions;
 
@@ -23,6 +24,8 @@ public class HKCardService
     private readonly AuditService _audit;
     private readonly TimeProvider _time;
     private readonly ILogger<HKCardService> _logger;
+    private readonly IFileStorageService _fileStorage;
+    private readonly IOptions<FileStorageOptions> _fileOptions;
 
     public HKCardService(
         AppDbContext db,
@@ -34,7 +37,9 @@ public class HKCardService
         HKCardValidationService hkValidation,
         AuditService audit,
         TimeProvider time,
-        ILogger<HKCardService> logger)
+        ILogger<HKCardService> logger,
+        IFileStorageService fileStorage,
+        IOptions<FileStorageOptions> fileOptions)
     {
         _db = db;
         _tasks = tasks;
@@ -46,6 +51,8 @@ public class HKCardService
         _audit = audit;
         _time = time;
         _logger = logger;
+        _fileStorage = fileStorage;
+        _fileOptions = fileOptions;
     }
 
     private async Task<Guid?> GetAccessibleBranchIdAsync(Guid? requestedBranchId, CancellationToken ct = default)
@@ -506,6 +513,214 @@ public class HKCardService
             .Include(x => x.StatusLog.OrderByDescending(s => s.ChangedAt))
             .FirstOrDefaultAsync(x => x.Id == id, ct);
     }
+    // ── Вложения ХК (PDF-скан): бизнес-логика только здесь, не в UI/API ───
+
+    private async Task<(HKCard? Card, ApplicationUser? Actor, UnauthorizedAccessException? AuthError, InvalidOperationException? BusinessError)> EnsureAttachmentAccessAsync(
+        Guid hkCardId, bool requireEdit, CancellationToken ct)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var actor = await _userManager.FindByIdAsync(actorId.ToString());
+        if (actor is null)
+            return (null, null, new UnauthorizedAccessException("Пользователь не найден."), null);
+
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKView))
+            return (null, null, new UnauthorizedAccessException("Недостаточно прав для просмотра ХК."), null);
+
+        var card = await _db.HKCards.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == hkCardId, ct);
+        if (card is null || card.Status == HKCardStatus.Deleted)
+            return (null, null, null, new InvalidOperationException("ХК не найдена."));
+
+        if (!await IsSystemAdminAsync(actor) && actor.BranchId != card.BranchId)
+            return (null, null, new UnauthorizedAccessException("Нет доступа к ХК другого филиала."), null);
+
+        if (requireEdit)
+        {
+            if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKAttachmentEdit))
+                return (null, null, new UnauthorizedAccessException("Недостаточно прав для работы с вложением ХК."), null);
+            if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+                return (null, null, null, new InvalidOperationException("Вложение доступно только для черновика или карты на доработке."));
+        }
+
+        return (card, actor, null, null);
+    }
+
+    public async Task<HKCardAttachmentInfoDto?> GetAttachmentInfoAsync(
+        Guid hkCardId, CancellationToken ct = default)
+    {
+        var (card, _, _, _) = await EnsureAttachmentAccessAsync(hkCardId, requireEdit: false, ct);
+        if (card is null)
+            return null;
+        var attachment = await _db.HKCardAttachments.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
+        return attachment is null
+            ? null
+            : new HKCardAttachmentInfoDto(attachment.Id, attachment.OriginalFileName,
+                attachment.SizeBytes, attachment.UploadedByUserName, attachment.UploadedAt);
+    }
+
+    public async Task<HKCardAttachmentInfoDto> SaveAttachmentAsync(
+        Guid hkCardId,
+        Stream content,
+        string originalFileName,
+        string? contentType,
+        long declaredSize,
+        CancellationToken ct = default)
+    {
+        if (content is null)
+            throw new InvalidOperationException("Файл не выбран.");
+        if (string.IsNullOrWhiteSpace(originalFileName)
+            || !originalFileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Допускается только PDF-формат.");
+
+        var maxBytes = _fileOptions.Value.MaxPdfSizeBytes > 0
+            ? _fileOptions.Value.MaxPdfSizeBytes
+            : 20L * 1024 * 1024;
+        var sizeLimitText = $"{maxBytes / (1024.0 * 1024.0):F1} МБ";
+        if (declaredSize > maxBytes)
+            throw new InvalidOperationException($"Размер файла не должен превышать {sizeLimitText}.");
+        if (!string.IsNullOrEmpty(contentType) && !contentType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Недопустимый тип содержимого файла (ожидается PDF).");
+
+        var (card, actor, authError, businessError) = await EnsureAttachmentAccessAsync(hkCardId, requireEdit: true, ct);
+        if (card is null)
+        {
+            if (businessError is not null)
+                throw businessError;
+            throw authError ?? new UnauthorizedAccessException("Нет доступа к вложению ХК.");
+        }
+
+        // Поток может быть non-seekable (IBrowserFile): буферизуем с ограничением размера.
+        using var buffered = new MemoryStream();
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await content.ReadAsync(buffer, ct)) > 0)
+        {
+            total += read;
+            if (total > maxBytes)
+                throw new InvalidOperationException($"Размер файла не должен превышать {sizeLimitText}.");
+            await buffered.WriteAsync(buffer.AsMemory(0, read), ct);
+        }
+        if (total == 0)
+            throw new InvalidOperationException("Файл не выбран.");
+
+        if (total < 5 || buffered.GetBuffer()[0] != 0x25 || buffered.GetBuffer()[1] != 0x50
+            || buffered.GetBuffer()[2] != 0x44 || buffered.GetBuffer()[3] != 0x46 || buffered.GetBuffer()[4] != 0x2D)
+            throw new InvalidOperationException("Файл не является корректным PDF (неверная сигнатура).");
+        buffered.Position = 0;
+
+        var existing = await _db.HKCardAttachments
+            .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
+        var oldStorageKey = existing?.StorageKey;
+
+        var storageKey = $"hk/{hkCardId}/{Guid.NewGuid():N}.pdf";
+        var saved = await _fileStorage.SaveAsync(buffered, storageKey, ct);
+
+        if (existing is not null)
+            _db.HKCardAttachments.Remove(existing);
+        var attachment = new HKCardAttachment
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = hkCardId,
+            OriginalFileName = Path.GetFileName(originalFileName),
+            StorageKey = saved.StorageKey,
+            ContentType = "application/pdf",
+            SizeBytes = saved.SizeBytes,
+            Sha256 = saved.Sha256,
+            UploadedByUserId = actor.Id,
+            UploadedByUserName = actor.FullName ?? actor.UserName ?? string.Empty,
+            UploadedAt = DateTime.UtcNow,
+        };
+        _db.HKCardAttachments.Add(attachment);
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        if (existing is not null)
+        {
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "HKCardAttachment", existing.Id.ToString(), "Deleted",
+                _currentUser.GetRequiredUserId(),
+                EntityDisplayName: $"{card.Code} v{card.Version} — {existing.OriginalFileName}"), ct);
+        }
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "HKCardAttachment", attachment.Id.ToString(), "Created",
+            _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"), ct);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            try { await _fileStorage.DeleteAsync(saved.StorageKey, ct); } catch { /* уже залогировано выше при удалении */ }
+            throw;
+        }
+
+        if (!string.IsNullOrEmpty(oldStorageKey) && oldStorageKey != saved.StorageKey)
+        {
+            try
+            {
+                await _fileStorage.DeleteAsync(oldStorageKey, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Не удалось удалить предыдущий файл вложения {StorageKey}", oldStorageKey);
+            }
+        }
+
+        return new HKCardAttachmentInfoDto(attachment.Id, attachment.OriginalFileName,
+            attachment.SizeBytes, attachment.UploadedByUserName, attachment.UploadedAt);
+    }
+
+    public async Task DeleteAttachmentAsync(Guid hkCardId, CancellationToken ct = default)
+    {
+        var (card, _, authError, businessError) = await EnsureAttachmentAccessAsync(hkCardId, requireEdit: true, ct);
+        if (card is null)
+        {
+            if (businessError is not null)
+                throw businessError;
+            throw authError ?? new UnauthorizedAccessException("Нет доступа к вложению ХК.");
+        }
+        var attachment = await _db.HKCardAttachments
+            .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
+        if (attachment is null)
+            throw new InvalidOperationException("Вложение не найдено.");
+
+        var storageKey = attachment.StorageKey;
+        _db.HKCardAttachments.Remove(attachment);
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "HKCardAttachment", attachment.Id.ToString(), "Deleted",
+            _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"), ct);
+        await _db.SaveChangesAsync(ct);
+
+        try
+        {
+            await _fileStorage.DeleteAsync(storageKey, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Не удалось удалить файл вложения {StorageKey}", storageKey);
+        }
+    }
+
+    public async Task<HKCardAttachmentContentDto?> OpenAttachmentAsync(
+        Guid hkCardId, CancellationToken ct = default)
+    {
+        var (card, _, _, _) = await EnsureAttachmentAccessAsync(hkCardId, requireEdit: false, ct);
+        if (card is null)
+            return null;
+        var attachment = await _db.HKCardAttachments.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
+        if (attachment is null)
+            return null;
+        var stream = await _fileStorage.OpenReadAsync(attachment.StorageKey, ct);
+        return new HKCardAttachmentContentDto(attachment.OriginalFileName, attachment.ContentType, stream);
+    }
+
     public async Task<IReadOnlyList<HKCardVersionDto>> GetVersionsAsync(Guid id, CancellationToken ct = default)
     {
         var card = await _db.HKCards

@@ -5,8 +5,10 @@ using Chernika.Infrastructure.Data;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Chernika.IntegrationTests;
@@ -66,6 +68,18 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         services.AddScoped<CoefficientService>();
         services.AddScoped<GsmMaterialService>();
         services.AddScoped<IndividualCardService>();
+        services.AddSingleton<IOptions<FileStorageOptions>>(
+            new OptionsWrapper<FileStorageOptions>(
+                new FileStorageOptions { MaxPdfSizeBytes = 20L * 1024 * 1024 }));
+        var storageRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "chernika-tests-storage");
+        System.IO.Directory.CreateDirectory(storageRoot);
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FileStorage:RootPath"] = storageRoot,
+            })
+            .Build());
+        services.AddSingleton<IFileStorageService, LocalFileStorageService>();
         Services = services.BuildServiceProvider();
 
         await using var scope = Services.CreateAsyncScope();

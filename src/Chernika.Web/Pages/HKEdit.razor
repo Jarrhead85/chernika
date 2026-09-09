@@ -5,9 +5,6 @@
 @using Chernika.Domain
 @using Chernika.Domain.Models
 @using Chernika.Domain.Enums
-@using Chernika.Infrastructure.Data
-@using Chernika.Infrastructure.Services
-@using Microsoft.EntityFrameworkCore
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject EquipmentService EquipmentService
@@ -21,8 +18,6 @@
 @inject IOptions<FileStorageOptions> FileOptions
 @inject ILogger<HKEdit> Logger
 @inject CircuitDbLock DbLock
-@inject AppDbContext Db
-@inject IFileStorageService FileStorage
 
 <div class="stack">
     <section class="panel">
@@ -1206,6 +1201,7 @@
         try
         {
             await LoadCardCoreAsync(cardId, ct);
+            await LoadAttachmentAsync(cardId, ct);
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -1291,8 +1287,6 @@
                 if (ct.IsCancellationRequested) return;
                 selectedMilitaryBranchIds = cardBranches.Select(b => b.Id).ToList();
             }
-
-            await LoadAttachmentAsync(cardId, ct);
         }
     }
 
@@ -1300,22 +1294,27 @@
     {
         try
         {
-            await using (await DbLock.WaitAsync(ct))
-            {
-                var attachment = await Db.HKCardAttachments.AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.HKCardId == cardId, ct);
-                _attachment = attachment is null
-                    ? null
-                    : new AttachmentInfo(attachment.Id, attachment.OriginalFileName,
-                        attachment.SizeBytes, attachment.UploadedByUserName, attachment.UploadedAt);
-            }
+            var info = await HKCardService.GetAttachmentInfoAsync(cardId, ct);
+            _attachment = info is null
+                ? null
+                : new AttachmentInfo(info.Id, info.OriginalFileName, info.SizeBytes,
+                    info.UploadedByUserName, info.UploadedAt);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // маршрут уже изменился
         }
-        catch
+        catch (UnauthorizedAccessException)
         {
+            _attachment = null;
+        }
+        catch (InvalidOperationException)
+        {
+            _attachment = null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Не удалось загрузить вложение ХК {CardId}", cardId);
             _attachment = null;
         }
     }
@@ -2115,89 +2114,16 @@
 
         try
         {
-            if (!_pendingFile.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-            {
-                _attachmentError = "Допускается только PDF-формат.";
-                return;
-            }
-
-            var maxBytes = FileOptions.Value.MaxPdfSizeBytes > 0
-                ? FileOptions.Value.MaxPdfSizeBytes
-                : 20L * 1024 * 1024;
-            if (_pendingFile.Size > maxBytes)
-            {
-                _attachmentError = $"Размер файла не должен превышать {FormatSize(maxBytes)}.";
-                return;
-            }
-
-            if (!string.IsNullOrEmpty(_pendingFile.ContentType)
-                && !_pendingFile.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
-            {
-                _attachmentError = "Недопустимый тип содержимого файла (ожидается PDF).";
-                return;
-            }
-
-            var actor = await UserManager.FindByIdAsync(currentUserId);
-            var actorName = actor?.FullName ?? actor?.UserName ?? string.Empty;
-
             await using (await DbLock.WaitAsync())
             {
-                var existing = await Db.HKCardAttachments
-                    .FirstOrDefaultAsync(a => a.HKCardId == card.Id);
-                if (existing != null)
-                {
-                    await FileStorage.DeleteAsync(existing.StorageKey);
-                    Db.HKCardAttachments.Remove(existing);
-                    Db.AuditLogs.Add(new Chernika.Domain.Entities.AuditLog
-                    {
-                        Id = Guid.NewGuid(),
-                        EntityType = "HKCardAttachment",
-                        EntityId = existing.Id.ToString(),
-                        Action = "Deleted",
-                        UserId = Guid.Parse(currentUserId),
-                        CreatedAt = DateTime.UtcNow,
-                        EntityDisplayName = $"{card.Code} v{card.Version} — {existing.OriginalFileName}"
-                    });
-                }
-
-                var storageKey = $"hk/{card.Id}/{Guid.NewGuid():N}.pdf";
-                await using var stream = _pendingFile.OpenReadStream(maxAllowedSize: maxBytes);
-                var firstBytes = new byte[5];
-                var read = await stream.ReadAsync(firstBytes.AsMemory(0, 5));
-                stream.Position = 0;
-                if (read < 5 || firstBytes[0] != 0x25 || firstBytes[1] != 0x50
-                    || firstBytes[2] != 0x44 || firstBytes[3] != 0x46 || firstBytes[4] != 0x2D)
-                {
-                    _attachmentError = "Файл не является корректным PDF (неверная сигнатура).";
-                    return;
-                }
-
-                var result = await FileStorage.SaveAsync(stream, storageKey);
-                var attachment = new HKCardAttachment
-                {
-                    Id = Guid.NewGuid(),
-                    HKCardId = card.Id,
-                    OriginalFileName = Path.GetFileName(_pendingFile.Name),
-                    StorageKey = result.StorageKey,
-                    ContentType = "application/pdf",
-                    SizeBytes = result.SizeBytes,
-                    Sha256 = result.Sha256,
-                    UploadedByUserId = currentUserId,
-                    UploadedByUserName = actorName,
-                    UploadedAt = DateTime.UtcNow
-                };
-                Db.HKCardAttachments.Add(attachment);
-                Db.AuditLogs.Add(new Chernika.Domain.Entities.AuditLog
-                {
-                    Id = Guid.NewGuid(),
-                    EntityType = "HKCardAttachment",
-                    EntityId = attachment.Id.ToString(),
-                    Action = "Created",
-                    UserId = Guid.Parse(currentUserId),
-                    CreatedAt = DateTime.UtcNow,
-                    EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
-                });
-                await Db.SaveChangesAsync();
+                await using var stream = _pendingFile.OpenReadStream(
+                    maxAllowedSize: FileOptions.Value.MaxPdfSizeBytes > 0
+                        ? FileOptions.Value.MaxPdfSizeBytes
+                        : 20L * 1024 * 1024);
+                var info = await HKCardService.SaveAttachmentAsync(
+                    card.Id, stream, _pendingFile.Name, _pendingFile.ContentType, _pendingFile.Size);
+                _attachment = new AttachmentInfo(info.Id, info.OriginalFileName, info.SizeBytes,
+                    info.UploadedByUserName, info.UploadedAt);
             }
 
             _pendingFile = null;
@@ -2205,11 +2131,19 @@
             _previewPending = false;
             _previewOpen = false;
             await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
-            await LoadAttachmentAsync(card.Id, CancellationToken.None);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _attachmentError = ex.Message;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _attachmentError = ex.Message;
         }
         catch (Exception ex)
         {
-            _attachmentError = ex.Message;
+            Logger.LogError(ex, "Не удалось загрузить вложение ХК {CardId}", card.Id);
+            _attachmentError = "Не удалось выполнить операцию с вложением.";
         }
         finally
         {
@@ -2225,30 +2159,24 @@
         {
             await using (await DbLock.WaitAsync())
             {
-                var attachment = await Db.HKCardAttachments
-                    .FirstOrDefaultAsync(a => a.HKCardId == card.Id);
-                if (attachment != null)
-                {
-                    var storageKey = attachment.StorageKey;
-                    Db.HKCardAttachments.Remove(attachment);
-                    Db.AuditLogs.Add(new Chernika.Domain.Entities.AuditLog
-                    {
-                        Id = Guid.NewGuid(),
-                        EntityType = "HKCardAttachment",
-                        EntityId = attachment.Id.ToString(),
-                        Action = "Deleted",
-                        UserId = Guid.Parse(currentUserId),
-                        CreatedAt = DateTime.UtcNow,
-                        EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
-                    });
-                    await Db.SaveChangesAsync();
-                    await FileStorage.DeleteAsync(storageKey);
-                }
+                await HKCardService.DeleteAttachmentAsync(card.Id);
             }
             _attachment = null;
             _fileInputKey++;
         }
-        catch { }
+        catch (UnauthorizedAccessException ex)
+        {
+            _attachmentError = ex.Message;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _attachmentError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Не удалось удалить вложение ХК {CardId}", card.Id);
+            _attachmentError = "Не удалось выполнить операцию с вложением.";
+        }
         StateHasChanged();
     }
 

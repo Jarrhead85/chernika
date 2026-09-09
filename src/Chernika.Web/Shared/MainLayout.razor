@@ -181,9 +181,9 @@
             </div>
             <button class="modeBtn" @onclick="ToggleTheme" id="themeToggle">☀</button>
             <div class="user" title="Профиль пользователя">
-                <div class="avatar">@userInitial</div>
+                <div class="avatar">@(_authChecked ? userInitial : "?")</div>
                 <div class="meta">
-                    <div class="name">@userName</div>
+                    <div class="name">@(_authChecked ? userName : "Загрузка профиля…")</div>
                     <div class="role">@userRole</div>
                 </div>
                 <a href="/выход" class="linkBtn" style="margin-left:8px" title="Выйти">→</a>
@@ -193,7 +193,16 @@
 
     <main class="main">
         <div class="stack">
-            @Body
+            <ErrorBoundary>
+                <ChildContent>@Body</ChildContent>
+                <ErrorContent>
+                    <section class="panel">
+                        <div class="panelBody">
+                            <div class="note">Не удалось загрузить страницу. Повторите попытку.</div>
+                        </div>
+                    </section>
+                </ErrorContent>
+            </ErrorBoundary>
             <div class="footer" style="padding:10px 2px 0">
                 <div>Версия интерфейса: <span class="mono">1.0.0</span> • <span class="mono">2026.05</span></div>
                 <div>© АИС «ИСБ ГСМ»</div>

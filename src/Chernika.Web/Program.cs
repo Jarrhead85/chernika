@@ -159,29 +159,27 @@ app.MapGet("/api/individualcards/{id:guid}/pdf",
     })
     .RequireAuthorization();
 
-// Просмотр/скачок PDF-скана ХК из браузера (window.open с cookie).
+// Просмотр/скачивание PDF-скана ХК из браузера (window.open с cookie).
 app.MapGet("/api/hkcards/{id:guid}/attachment/content",
-    async (Guid id, bool? inline, AppDbContext db, IFileStorageService storage,
-        IPermissionService perms, ICurrentUserService currentUser, HttpContext http) =>
+    async (Guid id, bool? inline, HKCardService hkCards, IPermissionService perms,
+        ICurrentUserService currentUser, HttpContext http) =>
     {
         if (!await perms.HasPermissionAsync(currentUser.GetRequiredUserId().ToString(), PermissionCodes.HKView))
             return Results.Forbid();
 
-        var attachment = await db.HKCardAttachments.AsNoTracking()
-            .FirstOrDefaultAsync(a => a.HKCardId == id);
-        if (attachment is null)
+        var content = await hkCards.OpenAttachmentAsync(id);
+        if (content is null)
             return Results.NotFound();
 
-        var stream = await storage.OpenReadAsync(attachment.StorageKey);
         if (inline == true)
         {
             http.Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("inline")
             {
-                FileNameStar = attachment.OriginalFileName,
+                FileNameStar = content.OriginalFileName,
             }.ToString();
-            return Results.File(stream, attachment.ContentType, enableRangeProcessing: true);
+            return Results.File(content.Content, content.ContentType, enableRangeProcessing: true);
         }
-        return Results.File(stream, attachment.ContentType, fileDownloadName: attachment.OriginalFileName,
+        return Results.File(content.Content, content.ContentType, fileDownloadName: content.OriginalFileName,
             enableRangeProcessing: true);
     })
     .RequireAuthorization();

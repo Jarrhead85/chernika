@@ -26,11 +26,11 @@ public class LocalFileStorageService : IFileStorageService
 
         await using var fileStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
         using var sha256 = SHA256.Create();
-        var cryptoStream = new CryptoStream(fileStream, sha256, CryptoStreamMode.Write);
+        await using var cryptoStream = new CryptoStream(fileStream, sha256, CryptoStreamMode.Write);
         await content.CopyToAsync(cryptoStream, ct);
-        await cryptoStream.FlushAsync(ct);
-        await cryptoStream.DisposeAsync();
+        await cryptoStream.FlushFinalBlockAsync(ct);
         var hash = Convert.ToHexString(sha256.Hash!);
+        // Размер читается до закрытия fileStream (cryptoStream при dispose закрывает его).
         var size = fileStream.Length;
         return new FileStoreResult(storageKey, size, hash);
     }
