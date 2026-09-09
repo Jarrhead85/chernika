@@ -69,15 +69,8 @@ public static class IndividualCardPdfComposer
     }
 
     /// <summary>Имя файла из immutable Code/Version с заменой небезопасных символов.</summary>
-    public static string BuildFileName(string code, string version)
-    {
-        var raw = $"{code}_{version}";
-        var sb = new StringBuilder(raw.Length + 4);
-        foreach (var ch in raw)
-            sb.Append(char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' ? ch : '_');
-        sb.Append(".pdf");
-        return sb.ToString();
-    }
+    public static string BuildFileName(string code, string version) =>
+        ReportFileNameBuilder.Build(code, version, ".pdf");
 
     // ── 4.1. Заголовок и реквизиты ────────────────────────────────────────
 

@@ -65,6 +65,32 @@ public class IndividualCardsController : ControllerBase
         return File(file.Content, "application/pdf");
     }
 
+    [HttpGet("{id:guid}/xlsx")]
+    public async Task<IActionResult> GetXlsx(Guid id, CancellationToken ct)
+    {
+        IndividualCardXlsxFile? file;
+        try
+        {
+            file = await _reports.GenerateIndividualCardXlsxAsync(id, ct);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+
+        if (file is null)
+            return NotFound();
+
+        return File(
+            file.Content,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            fileDownloadName: file.FileName);
+    }
+
     [HttpGet("{id}")]
     public async Task<ActionResult<Chernika.Api.Contracts.IndividualCardDetailDto>> GetById(Guid id)
     {

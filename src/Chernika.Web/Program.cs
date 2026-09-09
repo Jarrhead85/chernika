@@ -159,6 +159,34 @@ app.MapGet("/api/individualcards/{id:guid}/pdf",
     })
     .RequireAuthorization();
 
+// E2: скачивание XLSX-бланка ИК (attachment).
+app.MapGet("/api/individualcards/{id:guid}/xlsx",
+    async (Guid id, ReportService reports, CancellationToken ct) =>
+    {
+        IndividualCardXlsxFile? file;
+        try
+        {
+            file = await reports.GenerateIndividualCardXlsxAsync(id, ct);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Results.Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new { message = ex.Message });
+        }
+
+        if (file is null)
+            return Results.NotFound();
+
+        return Results.File(
+            file.Content,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            fileDownloadName: file.FileName);
+    })
+    .RequireAuthorization();
+
 // Просмотр/скачивание PDF-скана ХК из браузера (window.open с cookie).
 app.MapGet("/api/hkcards/{id:guid}/attachment/content",
     async (Guid id, bool? inline, HKCardService hkCards, IPermissionService perms,

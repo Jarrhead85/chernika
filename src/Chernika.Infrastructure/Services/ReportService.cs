@@ -35,6 +35,25 @@ public class ReportService
         return file;
     }
 
+    /// <summary>
+    /// E2: XLSX-бланк ИК. Данные — только E0 export-read-model
+    /// (GetExportAsync: право + филиал). Аудит XlsxExported пишется только
+    /// после успешной генерации байтов; при ошибке генерации аудит не пишется.
+    /// Недоступная/несуществующая ИК → null.
+    /// </summary>
+    public async Task<IndividualCardXlsxFile?> GenerateIndividualCardXlsxAsync(
+        Guid individualCardId, CancellationToken ct = default)
+    {
+        var export = await _individualCards.GetExportAsync(individualCardId, ct);
+        if (export is null)
+            return null;
+
+        var file = IndividualCardXlsxComposer.Compose(export);
+
+        await _individualCards.RecordXlsxExportAsync(individualCardId, ct);
+        return file;
+    }
+
     public byte[] GenerateHKCardPdf(HKCard card)
     {
         QuestPDF.Settings.License = LicenseType.Community;
