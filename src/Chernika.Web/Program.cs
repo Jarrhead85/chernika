@@ -148,6 +148,33 @@ app.MapGet("/api/individualcards/{id:guid}/pdf",
     })
     .RequireAuthorization();
 
+// Просмотр/скачок PDF-скана ХК из браузера (window.open с cookie).
+app.MapGet("/api/hkcards/{id:guid}/attachment/content",
+    async (Guid id, bool? inline, AppDbContext db, IFileStorageService storage,
+        IPermissionService perms, ICurrentUserService currentUser, HttpContext http) =>
+    {
+        if (!await perms.HasPermissionAsync(currentUser.GetRequiredUserId().ToString(), PermissionCodes.HKView))
+            return Results.Forbid();
+
+        var attachment = await db.HKCardAttachments.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.HKCardId == id);
+        if (attachment is null)
+            return Results.NotFound();
+
+        var stream = await storage.OpenReadAsync(attachment.StorageKey);
+        if (inline == true)
+        {
+            http.Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("inline")
+            {
+                FileNameStar = attachment.OriginalFileName,
+            }.ToString();
+            return Results.File(stream, attachment.ContentType, enableRangeProcessing: true);
+        }
+        return Results.File(stream, attachment.ContentType, fileDownloadName: attachment.OriginalFileName,
+            enableRangeProcessing: true);
+    })
+    .RequireAuthorization();
+
 app.MapRazorPages();
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");

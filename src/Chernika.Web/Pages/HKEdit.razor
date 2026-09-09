@@ -5,6 +5,9 @@
 @using Chernika.Domain
 @using Chernika.Domain.Models
 @using Chernika.Domain.Enums
+@using Chernika.Infrastructure.Data
+@using Chernika.Infrastructure.Services
+@using Microsoft.EntityFrameworkCore
 @inject HKCardService HKCardService
 @inject NavigationManager Nav
 @inject EquipmentService EquipmentService
@@ -18,6 +21,8 @@
 @inject IOptions<FileStorageOptions> FileOptions
 @inject ILogger<HKEdit> Logger
 @inject CircuitDbLock DbLock
+@inject AppDbContext Db
+@inject IFileStorageService FileStorage
 
 <div class="stack">
     <section class="panel">
@@ -101,6 +106,8 @@
                                 </div>
                             </div>
                         </div>
+                        @if (selectedLevel == HKObjectLevel.EquipmentModel)
+                        {
                         <div class="field hk-mb-field">
                             <label>Род войск</label>
                             @if (selectedMilitaryBranchIds.Any())
@@ -204,6 +211,7 @@
                                 <div class="hki-field-error">@_attachmentError</div>
                             }
                         </div>
+                        }
                     </div>
 
                     <div class="hk-form-row hk-form-row--object">
@@ -835,7 +843,7 @@
             </div>
             <div class="modalBody">
                 <textarea @bind="returnComment"
-                          placeholder="Укажите причину возврата для автора..."
+                          placeholder="Причина возврата (необязательно)..."
                           rows="3"
                           style="width:100%;resize:vertical;padding:8px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:14px"></textarea>
                 @if (returnCommentError != null)
@@ -1268,18 +1276,14 @@
     {
         try
         {
-            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
-            var response = await http.GetAsync($"/api/HKCards/{cardId}/attachment", ct);
-            if (ct.IsCancellationRequested) return;
-            if (response.IsSuccessStatusCode)
+            await using (await DbLock.WaitAsync(ct))
             {
-                var json = await response.Content.ReadFromJsonAsync<AttachmentInfo>(cancellationToken: ct);
-                if (!ct.IsCancellationRequested)
-                    _attachment = json;
-            }
-            else
-            {
-                _attachment = null;
+                var attachment = await Db.HKCardAttachments.AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.HKCardId == cardId, ct);
+                _attachment = attachment is null
+                    ? null
+                    : new AttachmentInfo(attachment.Id, attachment.OriginalFileName,
+                        attachment.SizeBytes, attachment.UploadedByUserName, attachment.UploadedAt);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -1404,15 +1408,10 @@
 
     private async Task ConfirmReturn()
     {
-        if (string.IsNullOrWhiteSpace(returnComment))
-        {
-            returnCommentError = "Укажите причину возврата";
-            return;
-        }
-
         showReturnModal = false;
 
-        var (returned, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.RevisionRequired, returnComment.Trim());
+        var (returned, _) = await HKCardService.ChangeStatusAsync(
+            card.Id, HKCardStatus.RevisionRequired, string.IsNullOrWhiteSpace(returnComment) ? null : returnComment.Trim());
         if (returned)
         {
             card.Status = HKCardStatus.RevisionRequired;
@@ -1600,10 +1599,19 @@
             return;
         }
 
-        if (IsNew && selectedMilitaryBranchIds.Count > 0 && card.Id != Guid.Empty)
+        if (IsNew && selectedLevel == HKObjectLevel.EquipmentModel
+            && selectedMilitaryBranchIds.Count > 0 && card.Id != Guid.Empty)
         {
             // CreateAsync не сохраняет военные ветки — фиксируем выбор после создания.
-            await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+            try
+            {
+                await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+            }
+            catch (Exception ex)
+            {
+                errorMessage = "Черновик ХК сохранён, но род войск не удалось сохранить: " + ex.Message;
+                return;
+            }
         }
 
         if (IsNew && _pendingFile != null && card.Id != Guid.Empty)
@@ -2083,25 +2091,97 @@
 
         try
         {
-            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
-            using var content = new MultipartFormDataContent();
-            var stream = _pendingFile.OpenReadStream(maxAllowedSize: FileOptions.Value.MaxPdfSizeBytes);
-            content.Add(new StreamContent(stream), "file", _pendingFile.Name);
-            var response = await http.PostAsync($"/api/HKCards/{card.Id}/attachment", content);
-            if (!response.IsSuccessStatusCode)
+            if (!_pendingFile.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             {
-                var error = await response.Content.ReadAsStringAsync();
-                _attachmentError = error;
+                _attachmentError = "Допускается только PDF-формат.";
+                return;
             }
-            else
+
+            var maxBytes = FileOptions.Value.MaxPdfSizeBytes > 0
+                ? FileOptions.Value.MaxPdfSizeBytes
+                : 20L * 1024 * 1024;
+            if (_pendingFile.Size > maxBytes)
             {
-                _pendingFile = null;
-                _fileInputKey++;
-                _previewPending = false;
-                _previewOpen = false;
-                await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
-                await LoadAttachmentAsync(card.Id, CancellationToken.None);
+                _attachmentError = $"Размер файла не должен превышать {FormatSize(maxBytes)}.";
+                return;
             }
+
+            if (!string.IsNullOrEmpty(_pendingFile.ContentType)
+                && !_pendingFile.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                _attachmentError = "Недопустимый тип содержимого файла (ожидается PDF).";
+                return;
+            }
+
+            var actor = await UserManager.FindByIdAsync(currentUserId);
+            var actorName = actor?.FullName ?? actor?.UserName ?? string.Empty;
+
+            await using (await DbLock.WaitAsync())
+            {
+                var existing = await Db.HKCardAttachments
+                    .FirstOrDefaultAsync(a => a.HKCardId == card.Id);
+                if (existing != null)
+                {
+                    await FileStorage.DeleteAsync(existing.StorageKey);
+                    Db.HKCardAttachments.Remove(existing);
+                    Db.AuditLogs.Add(new Chernika.Domain.Entities.AuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        EntityType = "HKCardAttachment",
+                        EntityId = existing.Id.ToString(),
+                        Action = "Deleted",
+                        UserId = Guid.Parse(currentUserId),
+                        CreatedAt = DateTime.UtcNow,
+                        EntityDisplayName = $"{card.Code} v{card.Version} — {existing.OriginalFileName}"
+                    });
+                }
+
+                var storageKey = $"hk/{card.Id}/{Guid.NewGuid():N}.pdf";
+                await using var stream = _pendingFile.OpenReadStream(maxAllowedSize: maxBytes);
+                var firstBytes = new byte[5];
+                var read = await stream.ReadAsync(firstBytes.AsMemory(0, 5));
+                stream.Position = 0;
+                if (read < 5 || firstBytes[0] != 0x25 || firstBytes[1] != 0x50
+                    || firstBytes[2] != 0x44 || firstBytes[3] != 0x46 || firstBytes[4] != 0x2D)
+                {
+                    _attachmentError = "Файл не является корректным PDF (неверная сигнатура).";
+                    return;
+                }
+
+                var result = await FileStorage.SaveAsync(stream, storageKey);
+                var attachment = new HKCardAttachment
+                {
+                    Id = Guid.NewGuid(),
+                    HKCardId = card.Id,
+                    OriginalFileName = Path.GetFileName(_pendingFile.Name),
+                    StorageKey = result.StorageKey,
+                    ContentType = "application/pdf",
+                    SizeBytes = result.SizeBytes,
+                    Sha256 = result.Sha256,
+                    UploadedByUserId = currentUserId,
+                    UploadedByUserName = actorName,
+                    UploadedAt = DateTime.UtcNow
+                };
+                Db.HKCardAttachments.Add(attachment);
+                Db.AuditLogs.Add(new Chernika.Domain.Entities.AuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    EntityType = "HKCardAttachment",
+                    EntityId = attachment.Id.ToString(),
+                    Action = "Created",
+                    UserId = Guid.Parse(currentUserId),
+                    CreatedAt = DateTime.UtcNow,
+                    EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
+                });
+                await Db.SaveChangesAsync();
+            }
+
+            _pendingFile = null;
+            _fileInputKey++;
+            _previewPending = false;
+            _previewOpen = false;
+            await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
+            await LoadAttachmentAsync(card.Id, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -2119,13 +2199,30 @@
         if (_attachment == null) return;
         try
         {
-            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
-            var response = await http.DeleteAsync($"/api/HKCards/{card.Id}/attachment");
-            if (response.IsSuccessStatusCode)
+            await using (await DbLock.WaitAsync())
             {
-                _attachment = null;
-                _fileInputKey++;
+                var attachment = await Db.HKCardAttachments
+                    .FirstOrDefaultAsync(a => a.HKCardId == card.Id);
+                if (attachment != null)
+                {
+                    var storageKey = attachment.StorageKey;
+                    Db.HKCardAttachments.Remove(attachment);
+                    Db.AuditLogs.Add(new Chernika.Domain.Entities.AuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        EntityType = "HKCardAttachment",
+                        EntityId = attachment.Id.ToString(),
+                        Action = "Deleted",
+                        UserId = Guid.Parse(currentUserId),
+                        CreatedAt = DateTime.UtcNow,
+                        EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
+                    });
+                    await Db.SaveChangesAsync();
+                    await FileStorage.DeleteAsync(storageKey);
+                }
             }
+            _attachment = null;
+            _fileInputKey++;
         }
         catch { }
         StateHasChanged();
