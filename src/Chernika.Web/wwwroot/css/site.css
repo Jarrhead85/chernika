@@ -160,6 +160,13 @@ body{
 .sideHeader{display:flex;align-items:center;justify-content:space-between;padding:4px 6px 10px;border-bottom:1px dashed rgba(32,50,86,.75)}
 [data-theme="light"] .sideHeader{border-bottom:1px dashed rgba(104,129,170,.22)}
 .sideHeader .title{font-size:12px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.navSearchLink{
+  width:30px;height:30px;display:grid;place-items:center;flex:none;
+  border:1px solid var(--line);border-radius:10px;color:var(--muted);
+  background:transparent;text-decoration:none;transition:.15s ease;
+}
+.navSearchLink:hover{color:var(--accent);border-color:var(--accent);transform:translateY(-1px)}
+.navSearchLink:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,140,255,.12)}
 .nav{display:flex;flex-direction:column;gap:6px;padding:6px 4px}
 .nav a,.nav ::deep a{
   text-decoration:none;color:var(--text);display:flex;align-items:center;gap:10px;padding:10px 10px;

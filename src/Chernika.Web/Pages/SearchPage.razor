@@ -1,73 +1,209 @@
 @page "/поиск"
 @attribute [Authorize(Policy = "ViewHK")]
+@using Chernika.Domain
+@using Chernika.Domain.Entities
+@using Chernika.Domain.Enums
 @using Chernika.Domain.Models
+@using Chernika.Infrastructure.Data
+@using Chernika.Infrastructure.Services
+@using Chernika.Web.Services
+@using Microsoft.AspNetCore.Authorization
 @inject SearchService SearchSvc
 @inject NavigationManager Nav
 @inject CircuitDbLock DbLock
-@using Chernika.Web.Services
+@inject AuthenticationStateProvider AuthState
+@inject AppDbContext Db
 @implements IDisposable
 
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
-            <h2>Результаты поиска</h2>
-            <div class="hint">@results.Count совпадений</div>
+            <h2>Расширенный поиск</h2>
         </div>
         <div class="panelBody">
-            <div class="form" style="grid-template-columns:1fr auto">
+            <div class="form">
                 <div class="field">
-                    <input class="field-input" placeholder="Введите запрос..."
-                           value="@query" @oninput="OnQueryChange"
-                           @onkeydown="OnKeyDown" />
+                    <label class="field-label" for="searchText">Поиск</label>
+                    <input id="searchText" class="field-input" type="text"
+                           placeholder="Код, версия, объект, СЕ, марка ГСМ, ГОСТ/ТУ, реквизиты…"
+                           value="@_text" @oninput="OnTextChanged" />
                 </div>
-                <div class="field" style="display:flex;align-items:flex-end">
-                    <button class="btn primary" @onclick="DoSearch">Найти</button>
+                <div class="field">
+                    <label class="field-label" for="entityType">Тип сущности</label>
+                    <select id="entityType" class="field-select" value="@(_entityType ?? "")" @onchange="OnEntityTypeChanged">
+                        @foreach (var (value, label) in EntityTypeOptions)
+                        {
+                            <option value="@value" selected="@(value == (_entityType ?? ""))">@label</option>
+                        }
+                    </select>
                 </div>
+                <div class="field">
+                    <label class="field-label" for="createdFrom">Создано с</label>
+                    <input id="createdFrom" class="field-input" type="date"
+                           value="@_createdFrom?.ToString("yyyy-MM-dd")" @onchange="OnCreatedFromChanged" />
+                </div>
+                <div class="field">
+                    <label class="field-label" for="createdTo">Создано по</label>
+                    <input id="createdTo" class="field-input" type="date"
+                           value="@_createdTo?.ToString("yyyy-MM-dd")" @onchange="OnCreatedToChanged" />
+                </div>
+                @if (_isSystemAdmin)
+                {
+                    <div class="field">
+                        <label class="field-label" for="branch">Филиал</label>
+                        <select id="branch" class="field-select" value="@(_branchId?.ToString() ?? "")" @onchange="OnBranchChanged">
+                            <option value="">Все филиалы</option>
+                            @foreach (var branch in _branches)
+                            {
+                                <option value="@branch.Id" selected="@(branch.Id == _branchId)">@branch.Name</option>
+                            }
+                        </select>
+                    </div>
+                }
+                <div class="field">
+                    <label class="field-label" for="sortBy">Сортировка</label>
+                    <select id="sortBy" class="field-select" value="@_sortBy" @onchange="OnSortByChanged">
+                        <option value="Relevance" selected="@(_sortBy == "Relevance")">По релевантности</option>
+                        <option value="CreatedAt" selected="@(_sortBy == "CreatedAt")">Дата создания</option>
+                        <option value="ApprovedDate" selected="@(_sortBy == "ApprovedDate")">Дата утверждения</option>
+                        <option value="Title" selected="@(_sortBy == "Title")">Наименование</option>
+                        <option value="EntityType" selected="@(_sortBy == "EntityType")">Тип сущности</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="sortDescending">Направление</label>
+                    <select id="sortDescending" class="field-select" value="@(_sortDescending ? "true" : "false")" @onchange="OnSortDirectionChanged">
+                        <option value="true" selected="@_sortDescending">По убыванию</option>
+                        <option value="false" selected="@(!_sortDescending)">По возрастанию</option>
+                    </select>
+                </div>
+            </div>
+
+            <details open="@(HasContextFilters())">
+                <summary class="hint">Дополнительно</summary>
+                <div class="form">
+                    @if (_entityType is null || _entityType == "HKCard")
+                    {
+                        <div class="field">
+                            <label class="field-label" for="hkStatus">Статус ХК</label>
+                            <select id="hkStatus" class="field-select" value="@(_hkCardStatus?.ToString() ?? "")" @onchange="OnHKStatusChanged">
+                                <option value="">Любой</option>
+                                @foreach (var (value, label) in HKStatusOptions)
+                                {
+                                    <option value="@value" selected="@(value == (_hkCardStatus?.ToString() ?? ""))">@label</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="hkLevel">Уровень ХК</label>
+                            <select id="hkLevel" class="field-select" value="@(_hkObjectLevel?.ToString() ?? "")" @onchange="OnHKLevelChanged">
+                                <option value="">Любой</option>
+                                @foreach (var (value, label) in HKLevelOptions)
+                                {
+                                    <option value="@value" selected="@(value == (_hkObjectLevel?.ToString() ?? ""))">@label</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="hkValidity">Срок действия</label>
+                            <select id="hkValidity" class="field-select" value="@(_hkValidity?.ToString() ?? "")" @onchange="OnHKValidityChanged">
+                                <option value="">Любой</option>
+                                <option value="Active" selected="@(_hkValidity == HKValidityFilter.Active)">Действует</option>
+                                <option value="Expiring" selected="@(_hkValidity == HKValidityFilter.Expiring)">Истекает</option>
+                                <option value="Expired" selected="@(_hkValidity == HKValidityFilter.Expired)">Истёк</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="hasAttachment">PDF-вложение</label>
+                            <select id="hasAttachment" class="field-select" value="@(_hasAttachment?.ToString() ?? "")" @onchange="OnHasAttachmentChanged">
+                                <option value="">Любое</option>
+                                <option value="true" selected="@(_hasAttachment == true)">Есть</option>
+                                <option value="false" selected="@(_hasAttachment == false)">Нет</option>
+                            </select>
+                        </div>
+                    }
+                    @if (_entityType is null || _entityType == "WorkTask")
+                    {
+                        <div class="field">
+                            <label class="field-label" for="taskStatus">Статус задачи</label>
+                            <select id="taskStatus" class="field-select" value="@(_taskStatus?.ToString() ?? "")" @onchange="OnTaskStatusChanged">
+                                <option value="">Любой</option>
+                                @foreach (var (value, label) in TaskStatusOptions)
+                                {
+                                    <option value="@value" selected="@(value == (_taskStatus?.ToString() ?? ""))">@label</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="taskPriority">Приоритет задачи</label>
+                            <select id="taskPriority" class="field-select" value="@(_taskPriority?.ToString() ?? "")" @onchange="OnTaskPriorityChanged">
+                                <option value="">Любой</option>
+                                @foreach (var (value, label) in TaskPriorityOptions)
+                                {
+                                    <option value="@value" selected="@(value == (_taskPriority?.ToString() ?? ""))">@label</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                    <div class="field">
+                        <label class="field-check">
+                            <input type="checkbox" checked="@_onlyMy" @onchange="OnOnlyMyChanged" />
+                            <span>Только мои задачи</span>
+                        </label>
+                    </div>
+                    <div class="field">
+                        <label class="field-check">
+                            <input type="checkbox" checked="@_requiresMyAction" @onchange="OnRequiresMyActionChanged" />
+                            <span>Требуют моих действий</span>
+                        </label>
+                    </div>
+                </div>
+            </details>
+
+            <div class="btnRow">
+                <button class="btn" @onclick="Reset">Сбросить</button>
+                <button class="btn primary" @onclick="Apply">Применить</button>
             </div>
         </div>
     </section>
 
-    @if (string.IsNullOrEmpty(query))
-    {
-        <section class="panel">
-            <div class="panelBody">
-                <div class="empty-state">Введите поисковый запрос</div>
-            </div>
-        </section>
-    }
-    else if (loading)
-    {
-        <section class="panel">
-            <div class="panelBody">
-                <div class="loading-state">Поиск...</div>
-            </div>
-        </section>
-    }
-    else if (!results.Any())
-    {
-        <section class="panel">
-            <div class="panelBody">
-                <div class="empty-state">По запросу «@query» ничего не найдено</div>
-            </div>
-        </section>
-    }
-    else
-    {
-        <section class="panel">
-            <div class="panelHeader">
-                <h2>Все результаты</h2>
-                <div class="hint">@results.Count совпадений по запросу «@query»</div>
-            </div>
-            <div class="panelBody">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Результаты поиска</h2>
+            <div class="hint">@(_appliedOnce ? $"{_totalCount} совпадений" : "")</div>
+        </div>
+        <div class="panelBody">
+            @if (LoadError is not null)
+            {
+                <div class="note bad">@LoadError</div>
+            }
+            else if (!_appliedOnce)
+            {
+                <div class="empty-state">Введите запрос или настройте фильтры.</div>
+            }
+            else if (_items is null)
+            {
+                <div class="loading">Загрузка…</div>
+            }
+            else if (_items.Count == 0)
+            {
+                <div class="empty-state">Ничего не найдено. Измените текст запроса или параметры фильтрации.</div>
+            }
+            else
+            {
                 <div class="searchResultList">
-                    @foreach (var r in results)
+                    @foreach (var r in _items)
                     {
-                        <a href="@r.Url" class="searchResultCard" @onclick:preventDefault @onclick="() => NavigateTo(r.Url)">
+                        <a href="@r.NavigationUrl" class="searchResultCard">
                             <div class="searchResultTop">
-                                <span class="sdiType">@r.EntityTypeDisplay</span>
-                                @if (!string.IsNullOrEmpty(r.ContextInfo))
+                                <span class="tag">@r.EntityTypeDisplay</span>
+                                @if (!string.IsNullOrEmpty(r.StatusDisplay))
                                 {
-                                    <span class="searchResultCtx">@r.ContextInfo</span>
+                                    <span class="tag @StatusClass(r.EntityType, r.Status)">@r.StatusDisplay</span>
+                                }
+                                @if (!string.IsNullOrEmpty(r.MatchContext))
+                                {
+                                    <span class="searchResultCtx">@r.MatchContext</span>
                                 }
                             </div>
                             <div class="searchResultTitle">@r.Title</div>
@@ -81,60 +217,393 @@
                         </a>
                     }
                 </div>
-            </div>
-        </section>
-    }
+
+                <div class="btnRow pager">
+                    <button class="btn ghost" disabled="@(PageCurrent <= 1)" @onclick="() => GoToPage(PageCurrent - 1)">← Назад</button>
+                    <span class="hint">Страница @PageCurrent из @Math.Max(1, _totalPages)</span>
+                    <select class="field-select page-size" value="@_pageSize.ToString()" @onchange="OnPageSizeChanged">
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                    <button class="btn ghost" disabled="@(PageCurrent >= _totalPages)" @onclick="() => GoToPage(PageCurrent + 1)">Вперёд →</button>
+                </div>
+            }
+        </div>
+    </section>
 </div>
 
 @code {
-    private string query = "";
-    private List<SearchResultItem> results = [];
-    private bool loading = false;
-    private CancellationTokenSource? _loadCts;
+    private string _text = "";
+    private string? _entityType;
+    private DateTime? _createdFrom;
+    private DateTime? _createdTo;
+    private HKCardStatus? _hkCardStatus;
+    private HKObjectLevel? _hkObjectLevel;
+    private HKValidityFilter? _hkValidity;
+    private bool? _hasAttachment;
+    private bool _onlyMy;
+    private bool _requiresMyAction;
+    private WorkTaskStatus? _taskStatus;
+    private WorkTaskPriority? _taskPriority;
+    private Guid? _branchId;
+    private string _sortBy = "";
+    private bool _sortDescending = true;
+    private int _pageSize = 25;
+
+    private bool _isSystemAdmin;
+    private bool _appliedOnce;
+    private List<SearchResultDto> _items = [];
+    private int _totalCount;
+    private int _totalPages;
+    private string? LoadError;
+    private string _lastUrl = "";
+    private CancellationTokenSource? _cts;
+    private List<Branch> _branches = [];
+
+    // Параметры URL — единая точка истины состояния поиска.
+    [Parameter, SupplyParameterFromQuery(Name = "q")] public string? QQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "entityType")] public string? EntityTypeQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "createdFrom")] public string? CreatedFromQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "createdTo")] public string? CreatedToQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "hkCardStatus")] public string? HKCardStatusQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "hkObjectLevel")] public string? HKObjectLevelQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "hkValidity")] public string? HKValidityQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "hasAttachment")] public string? HasAttachmentQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "onlyMy")] public string? OnlyMyQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "requiresMyAction")] public string? RequiresMyActionQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "taskStatus")] public string? TaskStatusQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "taskPriority")] public string? TaskPriorityQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "branchId")] public string? BranchIdQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "sortBy")] public string? SortByQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "sortDescending")] public string? SortDescendingQuery { get; set; }
+    [Parameter, SupplyParameterFromQuery(Name = "pageSize")] public string? PageSizeQuery { get; set; }
+
+    [Parameter, SupplyParameterFromQuery(Name = "page")] public string? PageQuery { get; set; }
+
+    private int PageCurrent => TryParseInt(PageQuery) ?? 1;
+
+    /// <summary>Текущее вычисленное значение размера страницы (10..100, по умолчанию 25).</summary>
+    private int PageSizeValue
+    {
+        get
+        {
+            var v = TryParseInt(PageSizeQuery) ?? 25;
+            return Math.Clamp(v, 10, 100);
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
-        _loadCts = new CancellationTokenSource();
-        var uri = new Uri(Nav.Uri);
-        var q = System.Web.HttpUtility.ParseQueryString(uri.Query).Get("q");
-        if (!string.IsNullOrEmpty(q))
+        await UpdateIsSystemAdminAsync();
+        ParseFromUri();
+        await RunSearchAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await UpdateIsSystemAdminAsync();
+        if (Nav.Uri == _lastUrl)
+            return;
+        await RunSearchAsync();
+    }
+
+    private bool _roleLoaded;
+
+    private async Task UpdateIsSystemAdminAsync()
+    {
+        if (_roleLoaded)
+            return;
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        _isSystemAdmin = auth.User.IsInRole(UserRole.SystemAdmin.ToString());
+        if (_isSystemAdmin && _branches.Count == 0)
         {
-            query = q;
-            await DoSearch();
+            _branches = await Db.Branches.AsNoTracking()
+                .OrderBy(b => b.Name)
+                .ToListAsync();
         }
+        _roleLoaded = true;
     }
 
-    void OnQueryChange(ChangeEventArgs e)
+    private void ParseFromUri()
     {
-        query = e.Value?.ToString() ?? "";
+        _text = QQuery ?? "";
+        _entityType = EntityTypeQuery;
+        _createdFrom = TryParseDate(CreatedFromQuery);
+        _createdTo = TryParseDate(CreatedToQuery);
+        _hkCardStatus = TryParseEnum<HKCardStatus>(HKCardStatusQuery);
+        _hkObjectLevel = TryParseEnum<HKObjectLevel>(HKObjectLevelQuery);
+        _hkValidity = TryParseEnum<HKValidityFilter>(HKValidityQuery);
+        _hasAttachment = TryParseBool(HasAttachmentQuery);
+        _onlyMy = TryParseBool(OnlyMyQuery) ?? false;
+        _requiresMyAction = TryParseBool(RequiresMyActionQuery) ?? false;
+        _taskStatus = TryParseEnum<WorkTaskStatus>(TaskStatusQuery);
+        _taskPriority = TryParseEnum<WorkTaskPriority>(TaskPriorityQuery);
+        _branchId = TryParseGuid(BranchIdQuery);
+        _sortBy = SortByQuery ?? "";
+        _sortDescending = TryParseBool(SortDescendingQuery) ?? true;
+        _pageSize = PageSizeValue;
     }
 
-    async Task OnKeyDown(KeyboardEventArgs e)
+    private async Task RunSearchAsync()
     {
-        if (e.Key == "Enter")
-            await DoSearch();
-    }
-
-    async Task DoSearch()
-    {
-        if (string.IsNullOrWhiteSpace(query) || query.Length < 2) return;
-        var ct = _loadCts?.Token ?? default;
+        _appliedOnce = true;
+        _lastUrl = Nav.Uri;
+        _roleLoaded = true;
+        LoadError = null;
+        var request = BuildQuery(PageCurrent, PageSizeValue);
+        var ct = _cts?.Token ?? default;
         await using (await DbLock.WaitAsync(ct))
         {
-            loading = true;
-            results = await SearchSvc.SearchAsync(query.Trim(), 100);
-            loading = false;
+            try
+            {
+                var result = await SearchSvc.SearchAsync(request, ct);
+                _items = result.Items.ToList();
+                _totalCount = result.TotalCount;
+                _totalPages = result.TotalPages;
+            }
+            catch (ArgumentException ex)
+            {
+                LoadError = ex.Message;
+                _items = [];
+                _totalCount = 0;
+                _totalPages = 0;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                LoadError = ex.Message;
+                _items = [];
+                _totalCount = 0;
+                _totalPages = 0;
+            }
         }
+        StateHasChanged();
     }
 
-    void NavigateTo(string url)
+    private SearchQuery BuildQuery(int page, int pageSize) => new()
     {
-        Nav.NavigateTo(url);
+        Text = _text,
+        EntityType = _entityType,
+        CreatedFrom = _createdFrom,
+        CreatedTo = _createdTo,
+        HKCardStatus = _hkCardStatus,
+        HKObjectLevel = _hkObjectLevel,
+        HKValidity = _hkValidity,
+        HasAttachment = _hasAttachment,
+        OnlyMy = _onlyMy,
+        RequiresMyAction = _requiresMyAction,
+        TaskStatus = _taskStatus,
+        TaskPriority = _taskPriority,
+        BranchId = _isSystemAdmin ? _branchId : null,
+        SortBy = _sortBy,
+        SortDescending = _sortDescending,
+        Page = page,
+        PageSize = pageSize,
+    };
+
+    private void Apply()
+    {
+        var url = BuildUrl(BuildQuery(1, PageSizeValue));
+        if (url != Nav.Uri)
+            Nav.NavigateTo(url, forceLoad: true);
+        else
+            StateHasChanged();
     }
+
+    private void Reset()
+    {
+        _text = "";
+        _entityType = null;
+        _createdFrom = null;
+        _createdTo = null;
+        _hkCardStatus = null;
+        _hkObjectLevel = null;
+        _hkValidity = null;
+        _hasAttachment = null;
+        _onlyMy = false;
+        _requiresMyAction = false;
+        _taskStatus = null;
+        _taskPriority = null;
+        _branchId = null;
+        _sortBy = "";
+        _sortDescending = true;
+        _pageSize = 25;
+        Nav.NavigateTo("/поиск", forceLoad: true);
+    }
+
+    private void GoToPage(int newPage)
+    {
+        var url = BuildUrl(BuildQuery(newPage, PageSizeValue));
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+
+    private string BuildUrl(SearchQuery query)
+    {
+        var parts = new List<string>();
+        void AddParam(string name, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && value != "false" && value != "")
+                parts.Add($"{name}={Uri.EscapeDataString(value)}");
+        }
+
+        AddParam("q", query.Text);
+        AddParam("entityType", query.EntityType);
+        AddParam("createdFrom", query.CreatedFrom?.ToString("yyyy-MM-dd"));
+        AddParam("createdTo", query.CreatedTo?.ToString("yyyy-MM-dd"));
+        AddParam("hkCardStatus", query.HKCardStatus?.ToString());
+        AddParam("hkObjectLevel", query.HKObjectLevel?.ToString());
+        AddParam("hkValidity", query.HKValidity?.ToString());
+        AddParam("hasAttachment", query.HasAttachment?.ToString());
+        AddParam("onlyMy", query.OnlyMy ? "true" : null);
+        AddParam("requiresMyAction", query.RequiresMyAction ? "true" : null);
+        AddParam("taskStatus", query.TaskStatus?.ToString());
+        AddParam("taskPriority", query.TaskPriority?.ToString());
+        AddParam("branchId", query.BranchId?.ToString());
+        AddParam("sortBy", query.SortBy);
+        AddParam("sortDescending", query.SortDescending ? "true" : null);
+        AddParam("page", query.Page <= 1 ? null : query.Page.ToString());
+        AddParam("pageSize", query.PageSize == 25 ? null : query.PageSize.ToString());
+
+        return parts.Count == 0 ? "/поиск" : "/поиск?" + string.Join("&", parts);
+    }
+
+    private bool HasContextFilters() =>
+        _hkCardStatus is not null ||
+        _hkObjectLevel is not null ||
+        _hkValidity is not null ||
+        _hasAttachment is not null ||
+        _taskStatus is not null ||
+        _taskPriority is not null ||
+        _onlyMy ||
+        _requiresMyAction;
+
+    private static int? TryParseInt(string? value) =>
+        int.TryParse(value, out var parsed) ? parsed : null;
+
+    private static Guid? TryParseGuid(string? value)
+    {
+        var trimmed = value?.Trim();
+        return Guid.TryParse(trimmed, out var parsed) && parsed != Guid.Empty ? parsed : null;
+    }
+
+    private static DateTime? TryParseDate(string? value) =>
+        DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var parsed) ? parsed : null;
+
+    private static bool? TryParseBool(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return null;
+        if (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value == "true")
+            return true;
+        if (value.Equals("false", StringComparison.OrdinalIgnoreCase) || value == "false")
+            return false;
+        return null;
+    }
+
+    private static T? TryParseEnum<T>(string? value) where T : struct, Enum =>
+        string.IsNullOrEmpty(value) ? null : Enum.TryParse<T>(value, true, out var parsed) ? parsed : null;
+
+    private static string StatusClass(string entityType, string statusKey) => entityType switch
+    {
+        "HKCard" => statusKey switch
+        {
+            nameof(HKCardStatus.Approved) => "ok",
+            nameof(HKCardStatus.Archived) => "muted",
+            _ => "warn",
+        },
+        "IndividualCard" => statusKey switch
+        {
+            nameof(IndividualCardStatus.Formed) => "ok",
+            nameof(IndividualCardStatus.Archived) => "muted",
+            _ => "warn",
+        },
+        "WorkTask" => statusKey switch
+        {
+            nameof(WorkTaskStatus.Completed) => "ok",
+            nameof(WorkTaskStatus.Cancelled) => "muted",
+            nameof(WorkTaskStatus.Overdue) => "bad",
+            _ => "warn",
+        },
+        _ => "muted",
+    };
+
+    private static IReadOnlyList<(string Value, string Label)> EntityTypeOptions =>
+    [
+        ("", "Все"),
+        ("HKCard", "Химмотологическая карта"),
+        ("IndividualCard", "Индивидуальная карта"),
+        ("Complex", "Комплекс"),
+        ("EquipmentModel", "Изделие"),
+        ("Aggregate", "Агрегат"),
+        ("Node", "Узел"),
+        ("AssemblyUnit", "Сборочная единица"),
+        ("EquipmentInstance", "Экземпляр техники"),
+        ("GsmMaterial", "Марка ГСМ"),
+        ("Coefficient", "Коэффициент"),
+        ("WorkTask", "Задача"),
+    ];
+
+    private static IReadOnlyList<(string Value, string Label)> HKStatusOptions =>
+    [
+        (nameof(HKCardStatus.Draft), "Черновик"),
+        (nameof(HKCardStatus.OnReview), "На рассмотрении"),
+        (nameof(HKCardStatus.RevisionRequired), "Требует доработки"),
+        (nameof(HKCardStatus.Approved), "Утверждена"),
+        (nameof(HKCardStatus.Archived), "Архив"),
+    ];
+
+    private static IReadOnlyList<(string Value, string Label)> HKLevelOptions =>
+    [
+        (nameof(HKObjectLevel.Complex), "Комплекс"),
+        (nameof(HKObjectLevel.EquipmentModel), "Изделие"),
+        (nameof(HKObjectLevel.Aggregate), "Агрегат"),
+        (nameof(HKObjectLevel.Node), "Узел"),
+    ];
+
+    private static IReadOnlyList<(string Value, string Label)> TaskStatusOptions =>
+    [
+        (nameof(WorkTaskStatus.Open), "Открыта"),
+        (nameof(WorkTaskStatus.InProgress), "В работе"),
+        (nameof(WorkTaskStatus.Completed), "Завершена"),
+        (nameof(WorkTaskStatus.Cancelled), "Отменена"),
+        (nameof(WorkTaskStatus.Overdue), "Просрочена"),
+    ];
+
+    private static IReadOnlyList<(string Value, string Label)> TaskPriorityOptions =>
+    [
+        (nameof(WorkTaskPriority.Low), "Низкий"),
+        (nameof(WorkTaskPriority.Normal), "Обычный"),
+        (nameof(WorkTaskPriority.High), "Высокий"),
+        (nameof(WorkTaskPriority.Critical), "Критический"),
+    ];
+
+    // ── change events (state + immediate extend for non-text fields) ──────
+
+    // ── change events (state; применяются кнопкой «Применить») ────────────
+
+    private void OnTextChanged(ChangeEventArgs e) => _text = e.Value?.ToString() ?? "";
+    private void OnEntityTypeChanged(ChangeEventArgs e) => _entityType = e.Value?.ToString() is { Length: > 0 } v ? v : null;
+    private void OnCreatedFromChanged(ChangeEventArgs e) => _createdFrom = TryParseDate(e.Value?.ToString());
+    private void OnCreatedToChanged(ChangeEventArgs e) => _createdTo = TryParseDate(e.Value?.ToString());
+    private void OnBranchChanged(ChangeEventArgs e) => _branchId = TryParseGuid(e.Value?.ToString());
+    private void OnSortByChanged(ChangeEventArgs e) => _sortBy = e.Value?.ToString() ?? "";
+    private void OnSortDirectionChanged(ChangeEventArgs e) => _sortDescending = TryParseBool(e.Value?.ToString()) ?? true;
+    private void OnHKStatusChanged(ChangeEventArgs e) => _hkCardStatus = TryParseEnum<HKCardStatus>(e.Value?.ToString());
+    private void OnHKLevelChanged(ChangeEventArgs e) => _hkObjectLevel = TryParseEnum<HKObjectLevel>(e.Value?.ToString());
+    private void OnHKValidityChanged(ChangeEventArgs e) => _hkValidity = TryParseEnum<HKValidityFilter>(e.Value?.ToString());
+    private void OnHasAttachmentChanged(ChangeEventArgs e) => _hasAttachment = TryParseBool(e.Value?.ToString());
+    private void OnTaskStatusChanged(ChangeEventArgs e) => _taskStatus = TryParseEnum<WorkTaskStatus>(e.Value?.ToString());
+    private void OnTaskPriorityChanged(ChangeEventArgs e) => _taskPriority = TryParseEnum<WorkTaskPriority>(e.Value?.ToString());
+    private void OnOnlyMyChanged(ChangeEventArgs e) => _onlyMy = e.Value is bool b && b;
+    private void OnRequiresMyActionChanged(ChangeEventArgs e) => _requiresMyAction = e.Value is bool required && required;
+    private void OnPageSizeChanged(ChangeEventArgs e) => _pageSize = Math.Clamp(TryParseInt(e.Value?.ToString()) ?? 25, 10, 100);
 
     public void Dispose()
     {
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
+        // Всё состояние поискового запроса постоянно хранится в URL страницы.
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
     }
 }
