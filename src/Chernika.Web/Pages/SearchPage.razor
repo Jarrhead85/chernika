@@ -13,6 +13,7 @@
 @inject CircuitDbLock DbLock
 @inject AuthenticationStateProvider AuthState
 @inject AppDbContext Db
+@inject ILogger<SearchPage> Logger
 @implements IDisposable
 
 <div class="stack">
@@ -226,7 +227,7 @@
                     {
                         <div class="field searchRelatedScope">
                             <select class="field-select" value="@(_relatedScope is null ? "" : _relatedScope.Value.ToString())" @onchange="OnRelatedScopeChanged">
-                                @foreach (var (value, label) in RelatedScopeOptions)
+                                @foreach (var (value, label) in RelatedScopeOptionsFor(_entityType))
                                 {
                                     <option value="@value" selected="@(value == (_relatedScope is null ? "" : _relatedScope.Value.ToString()))">@label</option>
                                 }
@@ -357,8 +358,8 @@
     private int _totalPages;
     private string? _error;
     private string _lastUrl = "";
-    private CancellationTokenSource? _debounceCts;
-    private CancellationTokenSource? _requestCts;
+    private CancellationTokenSource? _searchCts;
+    
 
     private const int PageSize = 50;
 
@@ -400,16 +401,16 @@
         ParseFromUri();
         if (HasAnyFilterActive())
             _filtersOpen = true;
-        await RunSearchAsync();
+        await QueueSearchAsync(0, PageCurrent);
     }
 
     protected override async Task OnParametersSetAsync()
     {
         if (Nav.Uri == _lastUrl)
-            return;
+            return; // навигация выполнена самой QueueSearchAsync — не запускаем второй поиск
         await LoadRoleAndBranchesAsync();
         ParseFromUri();
-        await RunSearchAsync();
+        await QueueSearchAsync(0, PageCurrent);
     }
 
     private async Task LoadRoleAndBranchesAsync()
@@ -452,21 +453,61 @@
         _lastUrl = Nav.Uri;
     }
 
-    // ── Поиск с нормализацией URL (one query per debounce) ────────────────
+    // ── Поиск: единая точка входа QueueSearchAsync после debounce ─────────
 
-    private async Task RunSearchAsync()
+    private long _searchVersion;
+
+    /// <summary>
+    /// Единая точка выполнения автоматического поиска: каждый новый запрос
+    /// отменяет предыдущий; результаты применяются только если версия запроса
+    /// актуальна; исключения логируются через ILogger.
+    /// </summary>
+    private async Task QueueSearchAsync(int delayMs, int page)
     {
-        _lastUrl = Nav.Uri;
-        _loading = true;
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        var ct = _searchCts.Token;
+        var version = ++_searchVersion;
+
+        if (delayMs > 0)
+        {
+            try
+            {
+                await Task.Delay(delayMs, ct);
+            }
+            catch (TaskCanceledException)
+            {
+                _searchCts?.Dispose();
+                return;
+            }
+        }
+
+        if (ct.IsCancellationRequested || version != _searchVersion)
+            return;
+
+        var textOK = _text.Trim().Length >= 3;
+        if (!textOK && !HasAnyFilterActive())
+            return;
+
+        var query = BuildQuery(page, PageSize);
+        var url = BuildUrl(query);
+        if (Nav.Uri != url)
+        {
+            _lastUrl = url;
+            Nav.NavigateTo(url, new NavigationOptions { ReplaceHistoryEntry = true });
+        }
+
+        _loading = _loaded;
         _error = null;
         StateHasChanged();
-        _requestCts?.Cancel();
-        _requestCts = new CancellationTokenSource();
-        var request = BuildQuery(PageCurrent, PageSize);
 
         try
         {
-            var result = await SearchSvc.SearchAsync(request, _requestCts.Token);
+            var result = await SearchSvc.SearchAsync(query, ct);
+            if (ct.IsCancellationRequested || version != _searchVersion)
+                return;
+
             _items = result.Items.ToList();
             _totalCount = result.TotalCount;
             _totalPages = result.TotalPages;
@@ -474,20 +515,35 @@
         }
         catch (ArgumentException ex)
         {
+            if (version != _searchVersion || ct.IsCancellationRequested)
+                return;
+            _loading = false;
             _error = ex.Message;
             _items = [];
             _totalCount = 0;
             _totalPages = 0;
             _loaded = true;
+            StateHasChanged();
         }
         catch (UnauthorizedAccessException ex)
         {
-            _error = ex.Message;
-        }
-        catch (OperationCanceledException) { /* заменён более свежим запросом */ }
-        finally
-        {
+            if (version != _searchVersion || ct.IsCancellationRequested)
+                return;
             _loading = false;
+            _error = ex.Message;
+            StateHasChanged();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // запрос отменён более свежим; ничего не применяем
+        }
+        catch (Exception ex)
+        {
+            if (version != _searchVersion || ct.IsCancellationRequested)
+                return;
+            _loading = false;
+            Logger.LogError(ex, "Расширенный поиск: ошибка выполнения запроса");
+            _error = "Не удалось выполнить поиск. Повторите попытку.";
             StateHasChanged();
         }
     }
@@ -521,7 +577,7 @@
     private void OnTextKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter")
-            _ = TextScheduleNow();
+            _ = QueueSearchAsync(0, 1);
     }
 
     private void OnTextChanged(ChangeEventArgs e)
@@ -529,7 +585,7 @@
         _text = e.Value?.ToString() ?? "";
         // Не сбрасывать текст при смене фильтров; автопоиск по debounce.
         if (_text.Trim().Length >= 3)
-            ScheduleSearch(400);
+            QueueSearchAsync(400, 1);
     }
 
     private void ToggleFilters() => _filtersOpen = !_filtersOpen;
@@ -556,107 +612,105 @@
             _taskStatus = null;
             _taskPriority = null;
         }
-        if (_entityType is null or "All" or "")
-        {
-            _relatedScope = null;
-        }
-        ScheduleSearch(200);
+        // Смена типа сбрасывает устаревшую область связанных данных.
+        _relatedScope = null;
+        QueueSearchAsync(200, 1);
     }
 
     private void OnCreatedFromChanged(ChangeEventArgs e)
     {
         _createdFrom = ParseDate(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnCreatedToChanged(ChangeEventArgs e)
     {
         _createdTo = ParseDate(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnBranchChanged(ChangeEventArgs e)
     {
         _branchId = ParseGuid(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnSortByChanged(ChangeEventArgs e)
     {
         _sortBy = e.Value?.ToString() ?? "Relevance";
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnSortDirectionChanged(ChangeEventArgs e)
     {
         _sortDescending = ParseBool(e.Value?.ToString()) ?? true;
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnHKStatusChanged(ChangeEventArgs e)
     {
         _hkCardStatus = ParseEnum<HKCardStatus>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnHKLevelChanged(ChangeEventArgs e)
     {
         _hkObjectLevel = ParseEnum<HKObjectLevel>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnHKValidityChanged(ChangeEventArgs e)
     {
         _hkValidity = ParseEnum<HKValidityFilter>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnHasAttachmentChanged(ChangeEventArgs e)
     {
         _hasAttachment = ParseBool(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnICStatusChanged(ChangeEventArgs e)
     {
         _icStatus = ParseEnum<IndividualCardStatus>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnICLevelChanged(ChangeEventArgs e)
     {
         _icObjectLevel = ParseEnum<IndividualCardObjectLevel>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnICFormedChanged(ChangeEventArgs e)
     {
         _icIsFormed = ParseBool(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnICCoefficientsChanged(ChangeEventArgs e)
     {
         _icHasCoefficients = ParseBool(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnRelatedScopeChanged(ChangeEventArgs e)
     {
         _relatedScope = ParseEnum<RelatedResultsScope>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnTaskStatusChanged(ChangeEventArgs e)
     {
         _taskStatus = ParseEnum<WorkTaskStatus>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void OnTaskPriorityChanged(ChangeEventArgs e)
     {
         _taskPriority = ParseEnum<WorkTaskPriority>(e.Value?.ToString());
-        ScheduleSearch(200);
+        QueueSearchAsync(200, 1);
     }
 
     private void Reset()
@@ -686,39 +740,7 @@
         Nav.NavigateTo("/поиск", new NavigationOptions { ReplaceHistoryEntry = true });
     }
 
-    private void GoToPage(int newPage)
-    {
-        var url = BuildUrl(BuildQuery(newPage, PageSize));
-        Nav.NavigateTo(url, new NavigationOptions { ReplaceHistoryEntry = false });
-    }
-
-    // ── Debounce plumbing ─────────────────────────────────────────────────
-
-    private async Task TextScheduleNow()
-    {
-        if (_text.Trim().Length < 3 && !HasAnyFilterActive())
-            return;
-        _debounceCts?.Cancel();
-        await SearchNowAsync();
-    }
-
-    private void ScheduleSearch(int delayMs)
-    {
-        _debounceCts?.Cancel();
-        _debounceCts = new CancellationTokenSource();
-        var token = _debounceCts.Token;
-        _ = DebounceAsync(delayMs, token);
-    }
-
-    private async Task DebounceAsync(int delayMs, CancellationToken token)
-    {
-        try
-        {
-            await Task.Delay(delayMs, token);
-            await SearchNowAsync();
-        }
-        catch (TaskCanceledException) { }
-    }
+    private void GoToPage(int newPage) => _ = QueueSearchAsync(0, newPage);
 
     private bool HasAnyFilterActive() =>
         _entityType is not null ||
@@ -756,20 +778,6 @@
         if (_taskPriority is not null) count++;
         if (_isSystemAdmin && _branchId is not null) count++;
         return count;
-    }
-
-    private async Task SearchNowAsync()
-    {
-        var textOK = _text.Trim().Length >= 3;
-        var filtersOK = HasAnyFilterActive();
-        if (!textOK && !filtersOK)
-            return;
-        if (Nav.Uri != BuildUrl(BuildQuery(1, PageSize)))
-        {
-            var url = BuildUrl(BuildQuery(1, PageSize));
-            Nav.NavigateTo(url, new NavigationOptions { ReplaceHistoryEntry = true });
-        }
-        await RunSearchAsync();
     }
 
     // ── helpers ───────────────────────────────────────────────────────────
@@ -847,13 +855,29 @@
         ("WorkTask", "Задача"),
     ];
 
-    private static IReadOnlyList<(string Value, string Label)> RelatedScopeOptions =>
-    [
-        ("", "Показать во всех связанных данных"),
-        ("ReferenceOnly", "Показать только в справочнике ГСМ"),
-        ("HKOnly", "Показать только в ХК"),
-        ("ICOnly", "Показать только в ИК"),
-    ];
+    private static IReadOnlyList<(string Value, string Label)> RelatedScopeOptionsFor(string? entityType) => entityType switch
+    {
+        "GsmMaterial" =>
+        [
+            ("", "Показать во всех связанных данных"),
+            ("ReferenceOnly", "Показать только в справочнике ГСМ"),
+            ("HKOnly", "Показать только в ХК"),
+            ("ICOnly", "Показать только в ИК"),
+        ],
+        "Coefficient" =>
+        [
+            ("", "Показать во всех связанных данных"),
+            ("ReferenceOnly", "Показать только коэффициенты"),
+            ("ICOnly", "Показать только в ИК"),
+        ],
+        _ =>
+        [
+            ("", "Показать во всех связанных данных"),
+            ("ReferenceOnly", "Показать только в справочнике"),
+            ("HKOnly", "Показать только в ХК"),
+            ("ICOnly", "Показать только в ИК"),
+        ],
+    };
 
     private static IReadOnlyList<(string Value, string Label)> HKStatusOptions =>
     [
@@ -927,9 +951,7 @@
 
     public void Dispose()
     {
-        _debounceCts?.Cancel();
-        _debounceCts?.Dispose();
-        _requestCts?.Cancel();
-        _requestCts?.Dispose();
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
     }
 }

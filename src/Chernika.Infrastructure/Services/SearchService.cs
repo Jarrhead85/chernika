@@ -1046,14 +1046,15 @@ public class SearchService
         };
 
         var totalCount = items.Count;
-        var totalPages = (int)Math.Ceiling(totalCount / (double)query.PageSize);
-        var currentPage = Math.Max(1, Math.Min(query.Page, totalPages == 0 ? 1 : totalPages));
+        var pageSize = Math.Clamp(query.PageSize <= 0 ? 25 : query.PageSize, 10, 100);
+        var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+        var currentPage = Math.Max(1, Math.Min(Math.Max(1, query.Page), totalPages == 0 ? 1 : totalPages));
 
         return new SearchPageDto(
-            items.Select(i => i.Item).Skip((currentPage - 1) * query.PageSize).Take(query.PageSize).ToList(),
+            items.Select(i => i.Item).Skip((currentPage - 1) * pageSize).Take(pageSize).ToList(),
             totalCount,
             currentPage,
-            query.PageSize,
+            pageSize,
             totalPages);
     }
 

@@ -547,4 +547,46 @@ public class SearchServiceExtendedIntegrationTests
 
         Assert.Equal(hk.Id, page.Items.First().EntityId);
     }
+
+    [Fact]
+    public async Task SearchAsync_CancelledToken_DoesNotOverwriteResults()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKCardAsync(s, nodeId);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            Service(s).SearchAsync(new SearchQuery { Text = "HK-", PageSize = 25 }, cts.Token));
+    }
+
+    [Theory]
+    [InlineData("HKCard", "ХИММОТОЛОГИЧЕСКАЯ КАРТА")]
+    [InlineData("IndividualCard", "ИНДИВИДУАЛЬНАЯ КАРТА")]
+    [InlineData("Complex", "КОМПЛЕКС")]
+    [InlineData("EquipmentModel", "ИЗДЕЛИЕ")]
+    [InlineData("Aggregate", "АГРЕГАТ")]
+    [InlineData("Node", "УЗЕЛ")]
+    [InlineData("AssemblyUnit", "СБОРОЧНАЯ ЕДИНИЦА")]
+    [InlineData("EquipmentInstance", "ЭКЗЕМПЛЯР ИЗДЕЛИЯ")]
+    [InlineData("GsmMaterial", "МАРКА ГСМ")]
+    [InlineData("Coefficient", "КОЭФФИЦИЕНТ")]
+    [InlineData("WorkTask", "ЗАДАЧА")]
+    public void SearchDisplayCatalog_RussianTagsOnly(string entityType, string expected)
+    {
+        var tag = Chernika.Domain.SearchDisplayCatalog.EntityTypeTag(entityType);
+        Assert.Equal(expected, tag);
+        foreach (var forbidden in new[]
+                 {
+                     "EquipmentModel", "HKCard", "IndividualCard", "WorkTask", "CreatedAt",
+                     "Snapshot", "Preflight", "Occurrence", "GUID",
+                     "Complex", "Aggregate", "Node", "AssemblyUnit", "GsmMaterial", "Coefficient",
+                 })
+        {
+            Assert.DoesNotContain(tag, forbidden, StringComparison.OrdinalIgnoreCase);
+        }
+    }
 }
