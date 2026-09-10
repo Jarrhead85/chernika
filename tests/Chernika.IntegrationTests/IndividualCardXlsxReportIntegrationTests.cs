@@ -550,7 +550,7 @@ public class IndividualCardXlsxReportIntegrationTests
         var r = calcCell.Address.RowNumber;
 
         Assert.Equal($"ROUNDUP(M{r}*N{r},0)", calcCell.FormulaA1);
-        Assert.Equal($"$D${totalRow}", ws.Cell(r, 14).FormulaA1);
+        Assert.Equal($"$G${totalRow}", ws.Cell(r, 14).FormulaA1);
         Assert.Equal($"I{r}*C{r}*J{r}*K{r}*L{r}", ws.Cell(r, 13).FormulaA1);
 
         Assert.Equal(export.Rows[0].SourceVolume, ws.Cell(r, 9).GetValue<decimal>());
@@ -586,7 +586,7 @@ public class IndividualCardXlsxReportIntegrationTests
         Assert.True(ws.Protection.IsProtected);
 
         var coefficientValueCells = ws.CellsUsed()
-            .Where(c => c.Address.ColumnNumber == 4 && c.Style.Protection.Locked == false)
+            .Where(c => c.Address.ColumnNumber == 7 && c.Style.Protection.Locked == false)
             .ToList();
         Assert.NotEmpty(coefficientValueCells);
 
@@ -599,10 +599,10 @@ public class IndividualCardXlsxReportIntegrationTests
             Assert.True(ws.Cell(mainRow, col).Style.Protection.Locked);
     }
 
-    // ── 14. Автофильтр и закрепление ──────────────────────────────────────
+    // ── 14. Автофильтр и отсутствие закрепления ───────────────────────────
 
     [Fact]
-    public async Task Xlsx_HasAutoFilterAndFrozenHeader()
+    public async Task Xlsx_HasAutoFilterAndNoFrozenPanes()
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
@@ -612,7 +612,244 @@ public class IndividualCardXlsxReportIntegrationTests
         var ws = wb.Worksheet("ИК");
 
         Assert.NotNull(ws.AutoFilter.Range);
-        Assert.True(ws.SheetView.SplitRow > 0);
+        Assert.Equal(0, ws.SheetView.SplitRow);
+        Assert.Equal(0, ws.SheetView.SplitColumn);
+    }
+
+    // ── Layout contract tests ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task Xlsx_MainTableHeaderIsConfiguredForPrintRepeat()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (cardId, _, _) = await CreateFormedCardAsync(s);
+
+        var bytes = IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content;
+        using var wb = OpenWorkbook(bytes);
+        var ws = wb.Worksheet("ИК");
+        var headerRow = ws.CellsUsed()
+            .First(c => c.GetString().StartsWith("Сборочная единица", StringComparison.Ordinal))
+            .Address.RowNumber;
+
+        using var ms = new MemoryStream(bytes);
+        using var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Read);
+        var entry = zip.Entries.First(e => e.FullName == "xl/workbook.xml");
+        using var sr = new StreamReader(entry.Open());
+        var xml = await sr.ReadToEndAsync();
+
+        Assert.Contains("Print_Titles", xml);
+        Assert.Matches($@"{headerRow}:{headerRow}\b", xml);
+    }
+
+    [Fact]
+    public async Task Xlsx_HeaderUsesWideMergedRanges()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (cardId, _, _) = await CreateFormedCardAsync(s);
+
+        using var wb = OpenWorkbook(IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content);
+        var ws = wb.Worksheet("ИК");
+
+        (int first, int last) MergeOf(IXLCell cell)
+        {
+            var row = cell.Address.RowNumber;
+            var col = cell.Address.ColumnNumber;
+            var merge = ws.MergedRanges.First(m =>
+                m.RangeAddress.FirstAddress.RowNumber <= row &&
+                m.RangeAddress.LastAddress.RowNumber >= row &&
+                m.RangeAddress.FirstAddress.ColumnNumber <= col &&
+                m.RangeAddress.LastAddress.ColumnNumber >= col);
+            return (merge.RangeAddress.FirstAddress.ColumnNumber, merge.RangeAddress.LastAddress.ColumnNumber);
+        }
+
+        var org = ws.CellsUsed().First(c => c.GetString().StartsWith("Организация:", StringComparison.Ordinal));
+        Assert.Equal((1, 3), MergeOf(org));
+        Assert.Equal((4, 18), MergeOf(ws.Cell(org.Address.RowNumber, 4)));
+
+        var branch = ws.CellsUsed().First(c => c.GetString().StartsWith("Филиал:", StringComparison.Ordinal));
+        Assert.Equal((1, 3), MergeOf(branch));
+        Assert.Equal((4, 18), MergeOf(ws.Cell(branch.Address.RowNumber, 4)));
+
+        var title = ws.CellsUsed().First(c => c.GetString() == "ИНДИВИДУАЛЬНАЯ КАРТА");
+        Assert.Equal((1, 18), MergeOf(title));
+
+        var obj = ws.CellsUsed().First(c => c.GetString().StartsWith("Объект:", StringComparison.Ordinal));
+        Assert.Equal((1, 3), MergeOf(obj));
+        Assert.Equal((4, 18), MergeOf(ws.Cell(obj.Address.RowNumber, 4)));
+    }
+
+    [Fact]
+    public async Task Xlsx_UsesRequiredMainColumnWidths()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (cardId, _, _) = await CreateFormedCardAsync(s);
+
+        using var wb = OpenWorkbook(IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content);
+        var ws = wb.Worksheet("ИК");
+
+        Assert.True(ws.Column(1).Width >= 5, "A >= 5");
+        Assert.True(ws.Column(2).Width >= 28, "B >= 28");
+        Assert.True(ws.Column(3).Width >= 9, "C >= 9");
+        Assert.True(ws.Column(4).Width >= 21, "D >= 21");
+        foreach (var col in new[] { 5, 6, 7 })
+            Assert.True(ws.Column(col).Width >= 20, $"{(char)('A' + col - 1)} >= 20");
+        Assert.True(ws.Column(8).Width >= 18, "H >= 18");
+        Assert.True(ws.Column(9).Width >= 12, "I >= 12");
+        Assert.True(ws.Column(10).Width >= 11, "J >= 11");
+        Assert.True(ws.Column(11).Width >= 13, "K >= 13");
+        Assert.True(ws.Column(12).Width >= 12, "L >= 12");
+        Assert.True(ws.Column(13).Width >= 14, "M >= 14");
+        Assert.True(ws.Column(14).Width >= 12, "N >= 12");
+        Assert.True(ws.Column(15).Width >= 15, "O >= 15");
+        Assert.True(ws.Column(16).Width >= 10, "P >= 10");
+        Assert.True(ws.Column(17).Width >= 15, "Q >= 15");
+        Assert.True(ws.Column(18).Width >= 28, "R >= 28");
+    }
+
+    [Fact]
+    public async Task Xlsx_SectionTitlesAreFullWidthStyledBands()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (cardId, _, _) = await CreateFormedCardAsync(s);
+
+        using var wb = OpenWorkbook(IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content);
+        var ws = wb.Worksheet("ИК");
+
+        foreach (var title in new[]
+                 {
+                     "Версия конструктивного состава", "Нормативные источники ХК", "Применённые коэффициенты",
+                     "Нормы расхода ГСМ", "Основные марки ГСМ", "История версий",
+                 })
+        {
+            var cell = ws.CellsUsed().First(c => c.Address.ColumnNumber == 1 && c.GetString() == title);
+            var row = cell.Address.RowNumber;
+            var merge = Assert.Single(ws.MergedRanges.Where(m =>
+                m.RangeAddress.FirstAddress.RowNumber == row &&
+                m.RangeAddress.LastAddress.RowNumber == row));
+            Assert.Equal(1, merge.RangeAddress.FirstAddress.ColumnNumber);
+            Assert.Equal(18, merge.RangeAddress.LastAddress.ColumnNumber);
+            Assert.True(cell.Style.Font.Bold, $"Секция «{title}» не жирная");
+            var argb = cell.Style.Fill.BackgroundColor.Color.ToArgb().ToString("X8");
+            Assert.True(argb.EndsWith("DCE6F1", StringComparison.OrdinalIgnoreCase), $"Секция «{title}» неверная заливка {argb}");
+        }
+    }
+
+    [Fact]
+    public async Task Xlsx_EditableCellsRemainYellowAndUnlocked()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var typeId = await CreateCoefficientTypeAsync(s, "Климат " + Suffix());
+        var coefficientId = await CreateCoefficientAsync(s, typeId, "Коэф " + Suffix(), 1.25m);
+        var (cardId, _, _) = await CreateFormedCardAsync(s, coefficientId: coefficientId);
+
+        using var wb = OpenWorkbook(IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content);
+        var ws = wb.Worksheet("ИК");
+
+        var editableFill = XLColor.FromHtml("#FFF2CC").Color.ToArgb().ToString("X8");
+
+        var coefficientCell = ws.CellsUsed()
+            .First(c => c.Address.ColumnNumber == 7 && c.Style.Protection.Locked == false);
+        var coefficientFill = coefficientCell.Style.Fill.BackgroundColor.Color.ToArgb().ToString("X8");
+        Assert.True(coefficientFill.EndsWith("FFF2CC", StringComparison.OrdinalIgnoreCase), $"Заливка коэффициента {coefficientFill}");
+
+        var mainRow = ws.CellsUsed()
+            .First(c => c.HasFormula && c.FormulaA1.StartsWith("ROUNDUP", StringComparison.Ordinal))
+            .Address.RowNumber;
+        foreach (var col in new[] { 3, 10, 11, 12 })
+        {
+            var cell = ws.Cell(mainRow, col);
+            Assert.False(cell.Style.Protection.Locked);
+            var fill = cell.Style.Fill.BackgroundColor.Color.ToArgb().ToString("X8");
+            Assert.True(fill.EndsWith("FFF2CC", StringComparison.OrdinalIgnoreCase), $"Заливка C/J/K/L {fill}");
+        }
+        foreach (var col in new[] { 13, 14, 15 })
+            Assert.True(ws.Cell(mainRow, col).Style.Protection.Locked);
+    }
+
+    [Fact]
+    public async Task Xlsx_WarningAndInputLegendHaveRequiredVisualStyle()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (cardId, _, _) = await CreateFormedCardAsync(s, form: false);
+
+        using var wb = OpenWorkbook(IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content);
+        var ws = wb.Worksheet("ИК");
+
+        var legend = ws.CellsUsed()
+            .First(c => c.GetString().StartsWith("Ячейки с выделенной заливкой", StringComparison.Ordinal));
+        var legendRow = legend.Address.RowNumber;
+        var legendMerge = Assert.Single(ws.MergedRanges.Where(m =>
+            m.RangeAddress.FirstAddress.RowNumber == legendRow &&
+            m.RangeAddress.LastAddress.RowNumber == legendRow));
+        Assert.Equal(1, legendMerge.RangeAddress.FirstAddress.ColumnNumber);
+        Assert.Equal(18, legendMerge.RangeAddress.LastAddress.ColumnNumber);
+        var legendFill = legend.Style.Fill.BackgroundColor.Color.ToArgb().ToString("X8");
+        Assert.True(legendFill.EndsWith("FFF4CC", StringComparison.OrdinalIgnoreCase), $"Заливка легенды {legendFill}");
+        Assert.True(legend.Style.Alignment.WrapText);
+
+        var warning = ws.CellsUsed().First(c => c.GetString().Contains("ЧЕРНОВИК", StringComparison.Ordinal));
+        var warningRow = warning.Address.RowNumber;
+        var warningMerge = Assert.Single(ws.MergedRanges.Where(m =>
+            m.RangeAddress.FirstAddress.RowNumber == warningRow &&
+            m.RangeAddress.LastAddress.RowNumber == warningRow));
+        Assert.Equal(1, warningMerge.RangeAddress.FirstAddress.ColumnNumber);
+        Assert.Equal(18, warningMerge.RangeAddress.LastAddress.ColumnNumber);
+        Assert.True(warning.Style.Alignment.WrapText);
+    }
+
+    [Fact]
+    public async Task Xlsx_MainTableHasReadableRowsAndNoMerge()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (cardId, _, _) = await CreateFormedCardAsync(s);
+
+        using var wb = OpenWorkbook(IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content);
+        var ws = wb.Worksheet("ИК");
+
+        var headerRow = ws.CellsUsed()
+            .First(c => c.GetString().StartsWith("Сборочная единица", StringComparison.Ordinal))
+            .Address.RowNumber;
+        Assert.True(ws.Row(headerRow).Height >= 42, $"Высота шапки таблицы: {ws.Row(headerRow).Height}");
+
+        var mainRow = ws.CellsUsed()
+            .First(c => c.HasFormula && c.FormulaA1.StartsWith("ROUNDUP", StringComparison.Ordinal))
+            .Address.RowNumber;
+        Assert.DoesNotContain(ws.MergedRanges, m =>
+            m.RangeAddress.FirstAddress.RowNumber <= mainRow && m.RangeAddress.LastAddress.RowNumber >= mainRow);
+        Assert.True(ws.Row(mainRow).Height >= 32);
+        Assert.Equal(XLAlignmentVerticalValues.Top, ws.Cell(mainRow, 2).Style.Alignment.Vertical);
+
+        var autofilter = ws.AutoFilter.Range!;
+        Assert.Equal(headerRow, autofilter.RangeAddress.FirstAddress.RowNumber);
+        Assert.True(autofilter.RangeAddress.LastAddress.RowNumber > headerRow);
+        Assert.Equal(1, autofilter.RangeAddress.FirstAddress.ColumnNumber);
+        Assert.Equal(18, autofilter.RangeAddress.LastAddress.ColumnNumber);
+    }
+
+    [Fact]
+    public async Task Xlsx_HasBoundedPrintArea()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var (cardId, _, _) = await CreateFormedCardAsync(s);
+
+        using var wb = OpenWorkbook(IndividualCardXlsxComposer.Compose((await s.IndividualCards.GetExportAsync(cardId))!).Content);
+        var ws = wb.Worksheet("ИК");
+
+        var area = Assert.Single(ws.PageSetup.PrintAreas);
+        var address = area.RangeAddress;
+        Assert.Equal(1, address.FirstAddress.RowNumber);
+        Assert.Equal(18, address.LastAddress.ColumnNumber);
+        Assert.True(address.LastAddress.RowNumber < 250,
+            $"Область печати заканчивается на строке {address.LastAddress.RowNumber} — не должна включать служебные строки");
+        Assert.True(address.LastAddress.RowNumber > 1);
     }
 
     // ── 15. Live-переименования ───────────────────────────────────────────
