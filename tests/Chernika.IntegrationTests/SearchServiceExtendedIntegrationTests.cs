@@ -313,18 +313,20 @@ public class SearchServiceExtendedIntegrationTests
     }
 
     [Fact]
-    public async Task SearchAsync_PageSizeConstraints()
+    public async Task SearchAsync_PageSizeIsFixed()
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
-        SetUser(s, _fixture.SystemAdminUser);
         var service = Service(s);
 
-        var small = await service.SearchAsync(new SearchQuery { Text = "тест", PageSize = 5 });
-        Assert.Equal(10, small.PageSize);
+        var skipped = await service.SearchAsync(new SearchQuery { Text = "тест", PageSize = 5 });
+        Assert.Equal(50, skipped.PageSize);
 
-        var huge = await service.SearchAsync(new SearchQuery { Text = "тест", PageSize = 1000 });
-        Assert.Equal(100, huge.PageSize);
+        var bigger = await service.SearchAsync(new SearchQuery { Text = "тест", PageSize = 1000 });
+        Assert.Equal(50, bigger.PageSize);
+
+        var defaulted = await service.SearchAsync(new SearchQuery { Text = "тест" });
+        Assert.Equal(50, defaulted.PageSize);
     }
 
     [Fact]

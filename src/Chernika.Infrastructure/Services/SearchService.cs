@@ -19,6 +19,9 @@ public class SearchService
     /// <summary>Ограничение кандидатов на одну ветку поиска — предохраняет объём выборки.</summary>
     private const int ExtendedLimit = 200;
 
+    /// <summary>Фиксированный размер страницы глобального поиска.</summary>
+    private const int GlobalSearchPageSize = 50;
+
     public SearchService(
         AppDbContext db,
         ICurrentUserService currentUser,
@@ -250,7 +253,6 @@ public class SearchService
 
     public async Task<SearchPageDto> SearchAsync(SearchQuery query, CancellationToken ct = default)
     {
-        var pageSize = Math.Clamp(query.PageSize <= 0 ? 25 : query.PageSize, 10, 100);
         var page = Math.Max(1, query.Page);
         var text = (query.Text ?? string.Empty).Trim();
         var pattern = Pattern(text);
@@ -269,7 +271,7 @@ public class SearchService
 
         // Полностью пустая страница не выполняет ни один запрос.
         if (!hasText && !hasFilters)
-            return new SearchPageDto([], 0, page, pageSize, 0);
+            return new SearchPageDto([], 0, page, GlobalSearchPageSize, 0);
 
         var scope = await LoadActorScopeAsync(ct);
         var branchFilter = scope.IsSystemAdmin ? query.BranchId : scope.UserBranchId;
@@ -1046,7 +1048,9 @@ public class SearchService
         };
 
         var totalCount = items.Count;
-        var pageSize = Math.Clamp(query.PageSize <= 0 ? 25 : query.PageSize, 10, 100);
+        // Глобальный поиск использует фиксированный размер страницы; запрос
+        // из строки URL его изменить не может.
+        const int pageSize = GlobalSearchPageSize;
         var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
         var currentPage = Math.Max(1, Math.Min(Math.Max(1, query.Page), totalPages == 0 ? 1 : totalPages));
 

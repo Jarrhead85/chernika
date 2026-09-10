@@ -305,7 +305,7 @@
                     }
                 </div>
 
-                @if (_totalCount > PageSize)
+                @if (_totalCount > SearchPageSize)
                 {
                     <div class="btnRow pager">
                         @if (PageCurrent > 1)
@@ -318,7 +318,7 @@
                             <button class="btn ghost" @onclick="() => GoToPage(PageCurrent + 1)">Вперёд →</button>
                         }
                     </div>
-                    <div class="searchRange hint">Показано @((_totalCount - 1) / PageSize + 1)–@Math.Min(PageCurrent * PageSize, _totalCount) из @_totalCount</div>
+                    <div class="searchRange hint">Показано @((_totalCount - 1) / SearchPageSize + 1)–@Math.Min(PageCurrent * SearchPageSize, _totalCount) из @_totalCount</div>
                 }
                 else
                 {
@@ -361,7 +361,7 @@
     private CancellationTokenSource? _searchCts;
     
 
-    private const int PageSize = 50;
+    private const int SearchPageSize = 50;
 
     private int PageCurrent
     {
@@ -464,46 +464,40 @@
     /// </summary>
     private async Task QueueSearchAsync(int delayMs, int page)
     {
+        // Отменяем и освобождаем ТОЛЬКО предыдущий запрос.
         _searchCts?.Cancel();
         _searchCts?.Dispose();
-        _searchCts = new CancellationTokenSource();
-        var ct = _searchCts.Token;
+
+        // Локальный CTS: отменённый старый запрос никогда не dispose-ит новый.
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        var ct = cts.Token;
         var version = ++_searchVersion;
-
-        if (delayMs > 0)
-        {
-            try
-            {
-                await Task.Delay(delayMs, ct);
-            }
-            catch (TaskCanceledException)
-            {
-                _searchCts?.Dispose();
-                return;
-            }
-        }
-
-        if (ct.IsCancellationRequested || version != _searchVersion)
-            return;
-
-        var textOK = _text.Trim().Length >= 3;
-        if (!textOK && !HasAnyFilterActive())
-            return;
-
-        var query = BuildQuery(page, PageSize);
-        var url = BuildUrl(query);
-        if (Nav.Uri != url)
-        {
-            _lastUrl = url;
-            Nav.NavigateTo(url, new NavigationOptions { ReplaceHistoryEntry = true });
-        }
-
-        _loading = _loaded;
-        _error = null;
-        StateHasChanged();
 
         try
         {
+            if (delayMs > 0)
+                await Task.Delay(delayMs, ct);
+
+            if (ct.IsCancellationRequested || version != _searchVersion)
+                return;
+
+            var textOK = _text.Trim().Length >= 3;
+            if (!textOK && !HasAnyFilterActive())
+                return;
+
+            var query = BuildQuery(page, SearchPageSize);
+            var url = BuildUrl(query);
+            if (Nav.Uri != url)
+            {
+                _lastUrl = url;
+                Nav.NavigateTo(url, new NavigationOptions { ReplaceHistoryEntry = true });
+            }
+
+            _loading = true;
+            _error = null;
+            await InvokeAsync(StateHasChanged);
+
             var result = await SearchSvc.SearchAsync(query, ct);
             if (ct.IsCancellationRequested || version != _searchVersion)
                 return;
@@ -512,39 +506,49 @@
             _totalCount = result.TotalCount;
             _totalPages = result.TotalPages;
             _loaded = true;
+            _error = null;
         }
-        catch (ArgumentException ex)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            if (version != _searchVersion || ct.IsCancellationRequested)
+            // Ожидаемая отмена устаревшего запроса. Не трогать _searchCts.
+        }
+        catch (ArgumentException inversion)
+        {
+            if (ct.IsCancellationRequested || version != _searchVersion)
                 return;
-            _loading = false;
-            _error = ex.Message;
+
+            _error = inversion.Message;
             _items = [];
             _totalCount = 0;
             _totalPages = 0;
             _loaded = true;
-            StateHasChanged();
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException access)
         {
-            if (version != _searchVersion || ct.IsCancellationRequested)
+            if (ct.IsCancellationRequested || version != _searchVersion)
                 return;
-            _loading = false;
-            _error = ex.Message;
-            StateHasChanged();
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // запрос отменён более свежим; ничего не применяем
+
+            _error = access.Message;
         }
         catch (Exception ex)
         {
-            if (version != _searchVersion || ct.IsCancellationRequested)
+            if (ct.IsCancellationRequested || version != _searchVersion)
                 return;
-            _loading = false;
+
             Logger.LogError(ex, "Расширенный поиск: ошибка выполнения запроса");
             _error = "Не удалось выполнить поиск. Повторите попытку.";
-            StateHasChanged();
+            _items = [];
+            _totalCount = 0;
+            _totalPages = 0;
+            _loaded = true;
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                _loading = false;
+                await InvokeAsync(StateHasChanged);
+            }
         }
     }
 
