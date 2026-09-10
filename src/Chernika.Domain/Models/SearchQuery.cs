@@ -21,8 +21,14 @@ public sealed class SearchQuery
     public HKObjectLevel? HKObjectLevel { get; set; }
     public HKValidityFilter? HKValidity { get; set; }
     public bool? HasAttachment { get; set; }
-    public bool OnlyMy { get; set; }
-    public bool RequiresMyAction { get; set; }
+
+    public IndividualCardStatus? IndividualCardStatus { get; set; }
+    public IndividualCardObjectLevel? IndividualCardObjectLevel { get; set; }
+    public bool? IsFormed { get; set; }
+    public bool? HasCoefficients { get; set; }
+
+    public RelatedResultsScope? RelatedScope { get; set; }
+
     public WorkTaskStatus? TaskStatus { get; set; }
     public WorkTaskPriority? TaskPriority { get; set; }
     public int Page { get; set; } = 1;

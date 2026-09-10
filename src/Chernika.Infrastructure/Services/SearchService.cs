@@ -263,8 +263,6 @@ public class SearchService
             query.HKObjectLevel is not null ||
             query.HKValidity is not null ||
             query.HasAttachment is not null ||
-            query.OnlyMy ||
-            query.RequiresMyAction ||
             query.TaskStatus is not null ||
             query.TaskPriority is not null ||
             query.BranchId is not null;
@@ -688,7 +686,7 @@ public class SearchService
         // ── Индивидуальные карты: прямой + зависимый поиск ────────────────
         if (canIC)
         {
-            var ic = IndividualCardsQuery(scope, branchFilter, from, to);
+            var ic = IndividualCardsQuery(query, scope, branchFilter, from, to);
 
             var icDirect = await ic
                 .Where(c => EF.Functions.ILike(c.Code, pattern, @"\") ||
@@ -770,11 +768,8 @@ public class SearchService
                 tasks = tasks.Where(t => t.Status == taskStatus);
             if (query.TaskPriority is { } taskPriority)
                 tasks = tasks.Where(t => t.Priority == taskPriority);
-            if (query.OnlyMy)
-                tasks = tasks.Where(t => t.AssignedToUserId == scope.UserId || t.CreatedByUserId == scope.UserId);
-            if (query.RequiresMyAction)
-                tasks = tasks.Where(t => t.AssignedToUserId == scope.UserId &&
-                                         (t.Status == WorkTaskStatus.Open || t.Status == WorkTaskStatus.InProgress));
+            if (query.BranchId is { } taskBranch && !scope.IsSystemAdmin)
+                tasks = tasks.Where(t => false); // branch scope для неадмина применён выше
 
             var taskRows = await tasks
                 .Where(t => !hasText ||
@@ -801,7 +796,7 @@ public class SearchService
             }
         }
 
-        return await FinalizePageAsync(candidates, query.SortBy, query.SortDescending, hasText, page, pageSize, ct);
+        return await FinalizePageAsync(candidates, query, hasText, ct);
     }
 
     // ── Построители базовых запросов расширенного поиска ─────────────────
@@ -862,6 +857,7 @@ public class SearchService
     }
 
     private IQueryable<IndividualCard> IndividualCardsQuery(
+        SearchQuery query,
         ActorScope scope,
         Guid? branchFilter,
         DateTime? from,
@@ -879,6 +875,17 @@ public class SearchService
         if (to is { } toValue)
             q = q.Where(c => c.CreatedAt <= toValue);
 
+        if (query.IndividualCardStatus is { } cardStatus)
+            q = q.Where(c => c.Status == cardStatus);
+        if (query.IndividualCardObjectLevel is { } objectLevel)
+            q = q.Where(c => c.ObjectLevel == objectLevel);
+        if (query.IsFormed is { } isFormed)
+            q = q.Where(c => isFormed ? c.FormedAt != null : c.FormedAt == null);
+        if (query.HasCoefficients is { } hasCoefficients)
+            q = q.Where(c => hasCoefficients
+                ? c.CoefficientSnapshots.Any()
+                : !c.CoefficientSnapshots.Any());
+
         return q;
     }
 
@@ -894,49 +901,14 @@ public class SearchService
         return new ActorScope(isSystemAdmin, branch, userId.ToString());
     }
 
-    private static string DisplayName(string entityType) => entityType switch
-    {
-        "HKCard" => "Химмотологическая карта",
-        "IndividualCard" => "Индивидуальная карта",
-        "Complex" => "Комплекс",
-        "EquipmentModel" => "Изделие",
-        "Aggregate" => "Агрегат",
-        "Node" => "Узел",
-        "AssemblyUnit" => "Сборочная единица",
-        "EquipmentInstance" => "Экземпляр техники",
-        "GsmMaterial" => "Марка ГСМ",
-        "Coefficient" => "Коэффициент",
-        "WorkTask" => "Задача",
-        _ => entityType,
-    };
+    private static string DisplayName(string entityType) =>
+        SearchDisplayCatalog.EntityTypeDisplay(entityType);
 
     private static string StatusDisplay(string entityType, string statusKey) => entityType switch
     {
-        "HKCard" => statusKey switch
-        {
-            nameof(HKCardStatus.Draft) => "Черновик",
-            nameof(HKCardStatus.OnReview) => "На рассмотрении",
-            nameof(HKCardStatus.RevisionRequired) => "Требует доработки",
-            nameof(HKCardStatus.Approved) => "Утверждена",
-            nameof(HKCardStatus.Archived) => "Архив",
-            _ => statusKey,
-        },
-        "IndividualCard" => statusKey switch
-        {
-            nameof(IndividualCardStatus.Draft) => "Черновик",
-            nameof(IndividualCardStatus.Formed) => "Сформирована",
-            nameof(IndividualCardStatus.Archived) => "Архив",
-            _ => statusKey,
-        },
-        "WorkTask" => statusKey switch
-        {
-            nameof(WorkTaskStatus.Open) => "Открыта",
-            nameof(WorkTaskStatus.InProgress) => "В работе",
-            nameof(WorkTaskStatus.Completed) => "Завершена",
-            nameof(WorkTaskStatus.Cancelled) => "Отменена",
-            nameof(WorkTaskStatus.Overdue) => "Просрочена",
-            _ => statusKey,
-        },
+        "HKCard" => SearchDisplayCatalog.HKStatus(statusKey),
+        "IndividualCard" => SearchDisplayCatalog.IndividualCardStatus(statusKey),
+        "WorkTask" => SearchDisplayCatalog.WorkTaskStatus(statusKey),
         _ => statusKey,
     };
 
@@ -958,11 +930,8 @@ public class SearchService
 
     private async Task<SearchPageDto> FinalizePageAsync(
         List<CandidateRow> candidates,
-        string sortKey,
-        bool sortDescending,
+        SearchQuery query,
         bool hasText,
-        int page,
-        int pageSize,
         CancellationToken ct)
     {
         // Дедупликация EntityType + EntityId: остаётся более точное (прямое) совпадение.
@@ -974,7 +943,21 @@ public class SearchService
                 .First())
             .ToList();
 
-        var sortBy = sortKey switch
+        // ── Область связанных данных: справочник / ХК / ИК ────────────────
+        if (query.RelatedScope is { } relatedScope && relatedScope != RelatedResultsScope.All)
+        {
+            dedup = dedup
+                .Where(r => relatedScope switch
+                {
+                    RelatedResultsScope.ReferenceOnly => r.EntityType is not ("HKCard" or "IndividualCard"),
+                    RelatedResultsScope.HKOnly => r.EntityType == "HKCard",
+                    RelatedResultsScope.ICOnly => r.EntityType == "IndividualCard",
+                    _ => true,
+                })
+                .ToList();
+        }
+
+        var sortBy = query.SortBy switch
         {
             "CreatedAt" => "CreatedAt",
             "ApprovedDate" => "ApprovedDate",
@@ -983,9 +966,18 @@ public class SearchService
             _ => hasText ? "Relevance" : "CreatedAt",
         };
 
-        var branchIds = dedup
-            .Where(c => c.BranchId != null)
-            .Select(c => c.BranchId!.Value)
+        // Детерминированный ранг релевантности (0..6) по текущему тексту.
+        var ranked = dedup
+            .Select(c => new
+            {
+                Row = c,
+                Rank = hasText ? RefinedRank(c, query.Text) : c.Rank,
+            })
+            .ToList();
+
+        var branchIds = ranked
+            .Where(c => c.Row.BranchId != null)
+            .Select(c => c.Row.BranchId!.Value)
             .Distinct()
             .ToList();
         var branchNames = branchIds.Count == 0
@@ -994,69 +986,108 @@ public class SearchService
                 .Where(b => branchIds.Contains(b.Id))
                 .ToDictionaryAsync(b => b.Id, b => b.Name, ct);
 
-        var items = dedup
-            .Select(c => (
-                Row: c,
+        var items = ranked
+            .Select(x => (
+                x.Rank,
                 Item: new SearchResultDto(
-                    c.EntityId,
-                    c.EntityType,
-                    DisplayName(c.EntityType),
-                    c.Title,
-                    c.Subtitle,
-                    c.Code,
-                    c.Version,
-                    c.StatusKey,
-                    StatusDisplay(c.EntityType, c.StatusKey),
-                    c.BranchId,
-                    c.BranchId is { } branchId && branchNames.TryGetValue(branchId, out var branchName)
+                    x.Row.EntityId,
+                    x.Row.EntityType,
+                    DisplayName(x.Row.EntityType),
+                    x.Row.Title,
+                    x.Row.Subtitle,
+                    x.Row.Code,
+                    x.Row.Version,
+                    x.Row.StatusKey,
+                    StatusDisplay(x.Row.EntityType, x.Row.StatusKey),
+                    x.Row.BranchId,
+                    x.Row.BranchId is { } branchId && branchNames.TryGetValue(branchId, out var branchName)
                         ? branchName : null,
-                    c.CreatedAt,
-                    c.ApprovedDate,
-                    hasText ? c.MatchContext : null,
-                    MapNavigation(c.EntityType, c.EntityId),
+                    x.Row.CreatedAt,
+                    x.Row.ApprovedDate,
+                    hasText ? x.Row.MatchContext : null,
+                    MapNavigation(x.Row.EntityType, x.Row.EntityId),
                     true)))
             .ToList();
 
         items = sortBy switch
         {
-            "EntityType" => sortDescending
-                ? items.OrderByDescending(i => i.Item.EntityType, StringComparer.Ordinal)
-                    .ThenByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue).ToList()
-                : items.OrderBy(i => i.Item.EntityType, StringComparer.Ordinal)
-                    .ThenByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue).ToList(),
-            "Title" => sortDescending
+            "EntityType" => query.SortDescending
+                ? items.OrderByDescending(i => i.Item.EntityTypeDisplay, StringComparer.OrdinalIgnoreCase)
+                    .ThenByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue)
+                    .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList()
+                : items.OrderBy(i => i.Item.EntityTypeDisplay, StringComparer.OrdinalIgnoreCase)
+                    .ThenByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue)
+                    .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList(),
+            "Title" => query.SortDescending
                 ? items.OrderByDescending(i => i.Item.Title, StringComparer.Ordinal)
-                    .ThenBy(i => i.Item.EntityType, StringComparer.Ordinal).ToList()
+                    .ThenBy(i => i.Item.EntityTypeDisplay, StringComparer.OrdinalIgnoreCase).ToList()
                 : items.OrderBy(i => i.Item.Title, StringComparer.Ordinal)
-                    .ThenBy(i => i.Item.EntityType, StringComparer.Ordinal).ToList(),
-            "ApprovedDate" => sortDescending
+                    .ThenBy(i => i.Item.EntityTypeDisplay, StringComparer.OrdinalIgnoreCase).ToList(),
+            "ApprovedDate" => query.SortDescending
                 ? items.OrderByDescending(i => i.Item.ApprovedDate ?? DateTime.MinValue)
-                    .ThenByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue).ToList()
+                    .ThenByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue)
+                    .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList()
                 : items.OrderBy(i => i.Item.ApprovedDate ?? DateTime.MaxValue)
                     .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList(),
-            "CreatedAt" => sortDescending
+            "CreatedAt" => query.SortDescending
                 ? items.OrderByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue)
                     .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList()
                 : items.OrderBy(i => i.Item.CreatedAt ?? DateTime.MaxValue)
                     .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList(),
-            _ => sortDescending
-                ? items.OrderBy(i => i.Row.Rank)
+            _ => query.SortDescending
+                ? items.OrderBy(i => i.Rank)
                     .ThenByDescending(i => i.Item.CreatedAt ?? DateTime.MinValue)
-                    .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList()
-                : items.OrderBy(i => i.Row.Rank)
+                    .ThenBy(i => i.Item.Title, StringComparer.Ordinal)
+                    .ThenBy(i => i.Item.EntityTypeDisplay, StringComparer.OrdinalIgnoreCase).ToList()
+                : items.OrderBy(i => i.Rank)
                     .ThenBy(i => i.Item.CreatedAt ?? DateTime.MaxValue)
-                    .ThenBy(i => i.Item.Title, StringComparer.Ordinal).ToList(),
+                    .ThenBy(i => i.Item.Title, StringComparer.Ordinal)
+                    .ThenBy(i => i.Item.EntityTypeDisplay, StringComparer.OrdinalIgnoreCase).ToList(),
         };
 
         var totalCount = items.Count;
-        var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
-        var currentPage = Math.Max(1, Math.Min(page, totalPages == 0 ? 1 : totalPages));
+        var totalPages = (int)Math.Ceiling(totalCount / (double)query.PageSize);
+        var currentPage = Math.Max(1, Math.Min(query.Page, totalPages == 0 ? 1 : totalPages));
 
         return new SearchPageDto(
-            items.Select(i => i.Item).Skip((currentPage - 1) * pageSize).Take(pageSize).ToList(),
+            items.Select(i => i.Item).Skip((currentPage - 1) * query.PageSize).Take(query.PageSize).ToList(),
             totalCount,
             currentPage,
-            pageSize,
+            query.PageSize,
             totalPages);
+    }
+
+    /// <summary>
+    /// Детерминированный ранг совпадения (меньше — лучше):
+    /// 0 — точное попадание в код/версию/инвентарный номер;
+    /// 1 — точное название;
+    /// 2 — начинается с запроса;
+    /// 3 — слово в основном названии;
+    /// 4 — совпадение в реквизитах/описании/примечаниях;
+    /// 5 — прямое упоминание в ХК или ИК;
+    /// 6 — связь через нормативную цепочку.
+    /// </summary>
+    private static int RefinedRank(CandidateRow c, string text)
+    {
+        var comparison = StringComparison.OrdinalIgnoreCase;
+        var code = c.Code ?? string.Empty;
+        var version = c.Version ?? string.Empty;
+        var title = c.Title ?? string.Empty;
+
+        if ((!string.IsNullOrEmpty(code) && code.Equals(text, comparison)) ||
+            (!string.IsNullOrEmpty(version) && version.Equals(text, comparison)))
+            return 0;
+        if (!string.IsNullOrEmpty(title) && title.Equals(text, comparison))
+            return 1;
+        if (code.StartsWith(text, comparison) || title.StartsWith(text, comparison))
+            return 2;
+        if (title.Contains(text, comparison))
+            return 3;
+        return c.Rank switch
+        {
+            0 => 4,
+            1 => 5,
+            _ => 6,
+        };
     }
 }

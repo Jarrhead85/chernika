@@ -415,4 +415,136 @@ public class SearchServiceExtendedIntegrationTests
 
     private void SetUser(TestScope s, ApplicationUser user) =>
         s.User.CurrentUserId = Guid.Parse(user.Id);
+
+    // ── UX corrective tests ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task SearchAsync_RelatedScopeHKOnly_RestrictsToHKCards()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var materialName = "М-10В " + Suffix();
+        var materialId = await CreateMaterialAsync(s, name: materialName);
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKCardAsync(s, nodeId, materialId: materialId);
+
+        var page = await Service(s).SearchAsync(new SearchQuery
+        {
+            Text = materialName,
+            RelatedScope = RelatedResultsScope.HKOnly,
+        });
+
+        Assert.NotEmpty(page.Items);
+        Assert.All(page.Items, i => Assert.Equal("HKCard", i.EntityType));
+    }
+
+    [Fact]
+    public async Task SearchAsync_RelatedScopeReferenceOnly_ShowsMaterialOnly()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var materialName = "М-10С " + Suffix();
+        var materialId = await CreateMaterialAsync(s, name: materialName);
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKCardAsync(s, nodeId, materialId: materialId);
+
+        var page = await Service(s).SearchAsync(new SearchQuery
+        {
+            Text = materialName,
+            RelatedScope = RelatedResultsScope.ReferenceOnly,
+        });
+
+        Assert.All(page.Items, i =>
+            Assert.DoesNotContain(i.EntityType, new[] { "HKCard", "IndividualCard" }));
+        Assert.Contains(page.Items, i => i.EntityType == "GsmMaterial" && i.EntityId == materialId);
+    }
+
+    [Fact]
+    public async Task SearchAsync_RelatedScopeICOnly_ShowsOnlyIndividualCards()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var materialName = "М-10Э " + Suffix();
+        var materialId = await CreateMaterialAsync(s, name: materialName);
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKCardAsync(s, nodeId, materialId: materialId);
+
+        var page = await Service(s).SearchAsync(new SearchQuery
+        {
+            Text = materialName,
+            RelatedScope = RelatedResultsScope.ICOnly,
+        });
+
+        Assert.All(page.Items, i => Assert.Equal("IndividualCard", i.EntityType));
+    }
+
+    [Fact]
+    public async Task SearchAsync_IndividualCardFormStateFilter_Works()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var nodeId = await CreateNodeAsync(s);
+        var hkId = await CreateHKCardAsync(s, nodeId);
+        var hk = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == hkId);
+        var modelId = await CreateEquipmentAsync(s);
+        var draft = await s.IndividualCards.CreateDraftAsync(
+            new CreateIndividualCardDraftRequest(IndividualCardObjectLevel.Node, nodeId));
+        var draftCode = "ИК-" + Suffix();
+        var card = await s.Db.IndividualCards.FirstAsync(c => c.Id == draft.Id);
+        card.Code = draftCode;
+        card.Version = "v" + Suffix()[..4];
+        await s.Db.SaveChangesAsync();
+
+        var notFormed = await Service(s).SearchAsync(new SearchQuery
+        {
+            Text = draftCode,
+            EntityType = "IndividualCard",
+            IsFormed = false,
+        });
+        Assert.Contains(notFormed.Items, i => i.EntityType == "IndividualCard" && i.EntityId == draft.Id);
+
+        var formed = await Service(s).SearchAsync(new SearchQuery
+        {
+            Text = draftCode,
+            EntityType = "IndividualCard",
+            IsFormed = true,
+        });
+        Assert.DoesNotContain(formed.Items, i => i.EntityId == draft.Id);
+    }
+
+    [Fact]
+    public async Task SearchAsync_RussianDisplay_MapsStatusAndTags()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKCardAsync(s, nodeId);
+
+        var page = await Service(s).SearchAsync(new SearchQuery { Text = "HK-", PageSize = 50 });
+
+        var hkResults = page.Items.Where(i => i.EntityType == "HKCard").ToList();
+        Assert.NotEmpty(hkResults);
+        Assert.Contains(hkResults, i => i.StatusDisplay == "Утверждена");
+        Assert.All(page.Items, i =>
+        {
+            Assert.DoesNotContain("EquipmentModel", i.EntityTypeDisplay);
+            Assert.DoesNotContain("HKCard", i.EntityTypeDisplay);
+        });
+    }
+
+    [Fact]
+    public async Task SearchAsync_RelevanceRank_ExactCodeFirst()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var nodeId = await CreateNodeAsync(s);
+        var hkId = await CreateHKCardAsync(s, nodeId);
+        var hk = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == hkId);
+        var nodeId2 = await CreateNodeAsync(s);
+        await CreateHKCardAsync(s, nodeId2);
+
+        var page = await Service(s).SearchAsync(new SearchQuery { Text = hk.Code, SortBy = "Relevance" });
+
+        Assert.Equal(hk.Id, page.Items.First().EntityId);
+    }
 }
