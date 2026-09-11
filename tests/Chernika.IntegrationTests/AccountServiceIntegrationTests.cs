@@ -383,7 +383,7 @@ public class AccountServiceIntegrationTests
             ConfirmPassword = "ново1",
         });
         await service.UploadMyAvatarAsync(
-            new MemoryStream([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0xFF, 0xD9]),
+            new MemoryStream(JpegBytes()),
             "a.jpg", "image/jpeg", 12);
         await service.DeleteMyAvatarAsync();
         await service.ResetUserPasswordByAdminAsync(
@@ -393,4 +393,108 @@ public class AccountServiceIntegrationTests
         Assert.Equal(0, await s.Db.AuditLogs
             .CountAsync(a => a.Details != null && a.Details.Contains("Без аудита")));
     }
+
+    [Fact]
+    public async Task StoredAvatar_KeepsOriginalSignatureAndBytes()
+    {
+        await using var s = Scope();
+        var admin = await CreateAdminAsync(s);
+        SetUser(s, admin);
+        var service = Service(s);
+        byte[] jpeg = JpegBytes();
+        using (var input = new MemoryStream(jpeg))
+        {
+            await service.UploadMyAvatarAsync(input, "a.jpg", "image/jpeg", jpeg.Length);
+        }
+
+        var content = await service.GetMyAvatarAsync();
+        Assert.NotNull(content);
+        Assert.Equal("image/jpeg", content!.ContentType);
+        Assert.Equal(jpeg, content.Content);
+        Assert.Equal(0xFF, content.Content[0]);
+        Assert.Equal(0xD8, content.Content[1]);
+        Assert.Equal(0xFF, content.Content[2]);
+        Assert.Equal(jpeg[^2], content.Content[^2]);
+        Assert.Equal(jpeg[^1], content.Content[^1]);
+    }
+
+    [Fact]
+    public async Task AvatarUpload_SignatureMismatchWithExtension_Rejected()
+    {
+        await using var s = Scope();
+        var admin = await CreateAdminAsync(s);
+        SetUser(s, admin);
+        var service = Service(s);
+        byte[] jpeg = JpegBytes();
+
+        // Фактический JPEG с расширением .png — консистентность нарушена
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UploadMyAvatarAsync(
+            new MemoryStream(jpeg), "a.png", "image/jpeg", jpeg.Length));
+    }
+
+    [Fact]
+    public async Task AvatarUpload_MismatchedDeclaredType_Rejected()
+    {
+        await using var s = Scope();
+        var admin = await CreateAdminAsync(s);
+        SetUser(s, admin);
+        var service = Service(s);
+        byte[] jpeg = JpegBytes();
+
+        // JPEG с декларацией image/gif — тип определяется по байтам; несоответствие
+        // content-type не опускает расширение — фактический формат сохраняется корректно
+        await service.UploadMyAvatarAsync(new MemoryStream(jpeg), "a.jpg", "image/gif", jpeg.Length);
+
+        var account = await service.GetMyAccountAsync();
+        Assert.True(account.HasAvatar);
+        var user = await s.Db.Users.AsNoTracking().FirstAsync(u => u.Id == admin.Id);
+        Assert.Equal("image/jpeg", user.AvatarContentType);
+    }
+
+    [Fact]
+    public async Task FailedChangePreservesOldPassword()
+    {
+        await using var s = Scope();
+        var user = await CreateUserAsync(s, nameof(UserRole.Operator), _fixture.BranchA);
+        SetUser(s, user);
+        var service = Service(s);
+
+        // неверный текущий
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ChangeMyPasswordAsync(new ChangeMyPasswordRequest
+        {
+            CurrentPassword = "не_тот",
+            NewPassword = "new1",
+            ConfirmPassword = "new1",
+        }));
+        // совпадение с текущим тоже отклоняется
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ChangeMyPasswordAsync(new ChangeMyPasswordRequest
+        {
+            CurrentPassword = InitialPassword,
+            NewPassword = InitialPassword,
+            ConfirmPassword = InitialPassword,
+        }));
+
+        Assert.True(await CheckPasswordAsync(s, user, InitialPassword));
+    }
+
+    [Fact]
+    public async Task AdminResetFailed_PreservesTargetPassword()
+    {
+        await using var s = Scope();
+        var admin = await CreateAdminAsync(s);
+        SetUser(s, admin);
+        var target = await CreateUserAsync(s, nameof(UserRole.Operator), _fixture.BranchA);
+        var service = Service(s);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ResetUserPasswordByAdminAsync(target.Id,
+            new ResetUserPasswordByAdminRequest { NewPassword = "", ConfirmPassword = "" }));
+
+        Assert.True(await CheckPasswordAsync(s, target, InitialPassword));
+        Assert.False(target.MustChangePassword);
+    }
+
+    private static byte[] JpegBytes() =>
+    [
+        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0xFF, 0xD9,
+    ];
 }

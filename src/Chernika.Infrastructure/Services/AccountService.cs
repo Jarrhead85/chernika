@@ -10,14 +10,13 @@ using Microsoft.Extensions.Logging;
 namespace Chernika.Infrastructure.Services;
 
 /// <summary>
-/// Аккаунт текущего пользователя: просмотр/изменение профиля, смена пароля,
-/// аватар и административный сброс пароля (SystemAdmin).
-/// Профильные и парольные операции аудиту не подлежат; никаких секретов
-/// (пароль, хэш, токен, storage key) в результатах не возвращается.
+/// Аккаунт текущего пользователя: профиль, собственный пароль, аватар
+/// и административный сброс пароля. Аудит для этих действий не применяется;
+/// секреты (пароль/хэш/токен/storage key) в результатах не возвращаются.
 /// </summary>
 public sealed class AccountService
 {
-    private const long MaxAvatarSizeBytes = 2 * 1024 * 1024;
+    private const int MaxAvatarSizeBytes = 2 * 1024 * 1024;
     private static readonly string[] AllowedAvatarExtensions = [".jpg", ".jpeg", ".png", ".webp"];
 
     private readonly AppDbContext _db;
@@ -75,7 +74,7 @@ public sealed class AccountService
 
     public async Task UpdateMyProfileAsync(UpdateMyProfileRequest request, CancellationToken ct = default)
     {
-        var fullName = request?.FullName?.Trim() ?? string.Empty;
+        var fullName = request.FullName?.Trim() ?? string.Empty;
         if (fullName.Length == 0)
             throw new ArgumentException("Введите ФИО.");
 
@@ -84,26 +83,16 @@ public sealed class AccountService
         await _db.SaveChangesAsync(ct);
     }
 
-    public async Task ClearMyForcePasswordChangeAsync(CancellationToken ct = default)
-    {
-        var user = await LoadCurrentUserAsync(ct);
-        if (!user.MustChangePassword)
-            return;
-        user.MustChangePassword = false;
-        await _db.SaveChangesAsync(ct);
-    }
-
     public async Task<bool> GetMyMustChangePasswordAsync(CancellationToken ct = default)
     {
-        var userId = _currentUser.GetRequiredUserId();
-        var flag = await _db.Users.AsNoTracking()
-            .Where(u => u.Id == userId.ToString())
-            .Select(u => (bool?)u.MustChangePassword)
+        var userId = _currentUser.GetRequiredUserId().ToString();
+        return await _db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.MustChangePassword)
             .FirstOrDefaultAsync(ct);
-        return flag ?? false;
     }
 
-    // ── Пароль ────────────────────────────────────────────────────────────
+    // ── Смена собственного пароля ─────────────────────────────────────────
 
     public async Task ChangeMyPasswordAsync(ChangeMyPasswordRequest request, CancellationToken ct = default)
     {
@@ -111,10 +100,7 @@ public sealed class AccountService
         var newPassword = request.NewPassword ?? string.Empty;
         var confirm = request.ConfirmPassword ?? string.Empty;
 
-        if (string.IsNullOrEmpty(confirm) && !string.IsNullOrEmpty(newPassword))
-            confirm = newPassword;
-
-        if (string.IsNullOrEmpty(newPassword))
+        if (newPassword.Length == 0)
             throw new ArgumentException("Введите новый пароль.");
         if (newPassword != confirm)
             throw new ArgumentException("Пароли не совпадают.");
@@ -123,28 +109,29 @@ public sealed class AccountService
         if (newPassword == current)
             throw new ArgumentException("Новый пароль совпадает с текущим.");
 
-        // Проверка текущего пароля через Identity — управляемая ошибка.
-        if (!await _userManager.CheckPasswordAsync(user, current))
-            throw new ArgumentException("Неверный текущий пароль.");
+        // Единственная точка смены собственного пароля — ChangePasswordAsync:
+        // Identity атомарно проверяет текущий пароль и обновляет хэш.
+        var result = await _userManager.ChangePasswordAsync(user, current, newPassword);
+        if (!result.Succeeded)
+            throw new ArgumentException(MapIdentityPasswordError(result));
 
-        // Смена пароля через UserManager: после проверки текущего пароля
-        // Remove + Add дают тот же результат, что и ChangePassword, и не
-        // требуют зарегистрированного IUserTwoFactorTokenProvider.
-        var remove = await _userManager.RemovePasswordAsync(user);
-        if (!remove.Succeeded)
-            throw new ArgumentException("Не удалось изменить пароль.");
-
-        var add = await _userManager.AddPasswordAsync(user, newPassword);
-        if (!add.Succeeded)
-        {
-            var message = string.Join(" ", add.Errors.Select(e => e.Description));
-            throw new ArgumentException(
-                string.IsNullOrWhiteSpace(message) ? "Не удалось изменить пароль." : $"Не удалось изменить пароль: {message}");
-        }
-
-        // Успешная смена собственного пароля снимает требование смены временного.
+        // Успешная смена снимает обязательную смену временного пароля.
         user.MustChangePassword = false;
         await _db.SaveChangesAsync(ct);
+    }
+
+    private static string MapIdentityPasswordError(IdentityResult result)
+    {
+        var details = string.Join(" ",
+            result.Errors
+                .Where(e => e.Code != "PasswordMismatch")
+                .Select(e => e.Description));
+        var failedCurrent = result.Errors.Any(e => e.Code == "PasswordMismatch");
+        if (failedCurrent)
+            return "Неверный текущий пароль.";
+        return string.IsNullOrWhiteSpace(details)
+            ? "Не удалось изменить пароль."
+            : details;
     }
 
     // ── Аватар ────────────────────────────────────────────────────────────
@@ -157,54 +144,51 @@ public sealed class AccountService
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(content);
-        var ext = Path.GetExtension(originalFileName ?? string.Empty)
-            .ToLowerInvariant();
 
+        var ext = Path.GetExtension(originalFileName ?? string.Empty).ToLowerInvariant();
         if (string.IsNullOrEmpty(ext) || !AllowedAvatarExtensions.Contains(ext))
-            throw new ArgumentException("Допустимы форматы JPEG, PNG и WEBP.");
-        if (declaredSize <= 0)
+            throw new ArgumentException("Неверное расширение: поддерживаются JPEG, PNG и WEBP.");
+
+        // Поток браузерного файла не поддерживает seek: читаем целиком в буфер.
+        using var buffered = new MemoryStream();
+        await content.CopyToAsync(buffered, ct);
+
+        if (buffered.Length <= 0)
             throw new ArgumentException("Файл пуст.");
-        if (declaredSize > MaxAvatarSizeBytes)
+        if (buffered.Length > MaxAvatarSizeBytes)
             throw new ArgumentException("Файл больше 2 МБ.");
 
-        // Проверка декларации content-type по расширению не принимает SVG/GIF.
-        if (contentType is { } declared &&
-            !declared.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Файл не является изображением.");
-
-        // Проверка подписи файла: только JPEG / PNG / WEBP, без SVG/GIF/PDF.
-        var header = new byte[16];
-        var read = await ReadAtLeastAsync(content, header, cancellationToken: ct);
-        if (read < 4)
-            throw new ArgumentException("Файл повреждён или не является изображением.");
-
-        if (!LooksLikeSupportedImage(header))
+        var bytes = buffered.ToArray();
+        // Content-Type определяется сервером по фактическим байтам; значение,
+        // присланное клиентом, авторитетным не является.
+        var detectedType = DetectAvatarContentType(bytes);
+        if (detectedType is null)
             throw new ArgumentException("Поддерживаются только JPEG, PNG и WEBP.");
 
+        // Согласованность расширения и фактической подписи.
+        if (detectedType is "image/jpeg" && ext is not (".jpg" or ".jpeg"))
+            throw new ArgumentException("Файл JPEG должен иметь расширение .jpg или .jpeg.");
+        if (detectedType is "image/png" && ext is not ".png")
+            throw new ArgumentException("Файл PNG должен иметь расширение .png.");
+        if (detectedType is "image/webp" && ext is not ".webp")
+            throw new ArgumentException("Файл WEBP должен иметь расширение .webp.");
+
         var user = await LoadCurrentUserAsync(ct);
-        var safeExt = ext switch
-        {
-            ".jpg" or ".jpeg" => ".jpg",
-            _ => ext,
-        };
-        var contentTypeValue = ContentTypeFromExtension(safeExt);
+        var safeExt = ext is ".jpeg" ? ".jpg" : ext;
         var storageKey = $"avatars/{user.Id}/{Guid.NewGuid():N}{safeExt}";
-        var stored = await _fileStorage.SaveAsync(content, storageKey, ct);
-        if (stored.SizeBytes > MaxAvatarSizeBytes)
-        {
-            await _fileStorage.DeleteAsync(storageKey, ct);
-            throw new ArgumentException("Файл больше 2 МБ.");
-        }
+
+        await using var upload = new MemoryStream(bytes, writable: false);
+        var stored = await _fileStorage.SaveAsync(upload, storageKey, ct);
 
         var oldKey = user.AvatarStorageKey;
         user.AvatarStorageKey = storageKey;
-        user.AvatarContentType = contentType ?? contentTypeValue;
+        user.AvatarContentType = detectedType;
         user.AvatarSizeBytes = stored.SizeBytes;
         user.AvatarUpdatedAt = DateTime.SpecifyKind(_time.GetUtcNow().UtcDateTime, DateTimeKind.Utc);
         await _db.SaveChangesAsync(ct);
 
-        // Успешная замена: старый файл удаляем best-effort.
-        if (oldKey != null && oldKey != storageKey)
+        // После успешного сохранения в БД старый файл удаляем best-effort.
+        if (oldKey is not null && oldKey != storageKey)
         {
             try
             {
@@ -259,6 +243,28 @@ public sealed class AccountService
         }
     }
 
+    /// <summary>
+    /// Определение типа по реальным магическим байтам; возвращает
+    /// image/jpeg, image/png или image/webp, иначе null.
+    /// </summary>
+    private static string? DetectAvatarContentType(ReadOnlySpan<byte> bytes)
+    {
+        // JPEG: FF D8 FF
+        if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            return "image/jpeg";
+        // PNG: 89 50 4E 47 0D 0A 1A 0A
+        if (bytes.Length >= 8 &&
+            bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+            bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A)
+            return "image/png";
+        // WEBP: RIFF....WEBP
+        if (bytes.Length >= 12 &&
+            bytes[0] == (byte)'R' && bytes[1] == (byte)'I' && bytes[2] == (byte)'F' && bytes[3] == (byte)'F' &&
+            bytes[8] == (byte)'W' && bytes[9] == (byte)'E' && bytes[10] == (byte)'B' && bytes[11] == (byte)'P')
+            return "image/webp";
+        return null;
+    }
+
     // ── Административный сброс пароля ─────────────────────────────────────
 
     public async Task<ResetUserPasswordResult> ResetUserPasswordByAdminAsync(
@@ -279,7 +285,7 @@ public sealed class AccountService
         if (password != request.ConfirmPassword)
             throw new ArgumentException("Пароли не совпадают.");
 
-        if (targetUserId == actorId)
+        if (string.Equals(targetUserId, actorId, StringComparison.Ordinal))
             return new ResetUserPasswordResult(false, "Свой пароль меняется в разделе «Мой аккаунт».");
 
         var target = await _userManager.FindByIdAsync(targetUserId);
@@ -288,20 +294,14 @@ public sealed class AccountService
         if (!target.IsActive || target.IsDeleted)
             return new ResetUserPasswordResult(false, "Учётная запись неактивна.");
 
-        var remove = await _userManager.RemovePasswordAsync(target);
-        if (!remove.Succeeded)
+        // Атомарная Identity-схема: токен сброса + ResetPassword.
+        var token = await _userManager.GeneratePasswordResetTokenAsync(target);
+        var result = await _userManager.ResetPasswordAsync(target, token, password);
+        if (!result.Succeeded)
         {
-            var message = string.Join(" ", remove.Errors.Select(e => e.Description));
+            var details = string.Join(" ", result.Errors.Select(e => e.Description));
             return new ResetUserPasswordResult(false,
-                string.IsNullOrWhiteSpace(message) ? "Не удалось установить временный пароль." : message);
-        }
-
-        var add = await _userManager.AddPasswordAsync(target, password);
-        if (!add.Succeeded)
-        {
-            var message = string.Join(" ", add.Errors.Select(e => e.Description));
-            return new ResetUserPasswordResult(false,
-                string.IsNullOrWhiteSpace(message) ? "Не удалось установить временный пароль." : message);
+                string.IsNullOrWhiteSpace(details) ? "Не удалось установить временный пароль." : details);
         }
 
         target.MustChangePassword = true;
@@ -319,46 +319,6 @@ public sealed class AccountService
             throw new UnauthorizedAccessException("Пользователь недоступен.");
         return user;
     }
-
-    private static async Task<int> ReadAtLeastAsync(
-        Stream source, byte[] buffer, int max = 0, CancellationToken cancellationToken = default)
-    {
-        var total = 0;
-        while (total < buffer.Length)
-        {
-            var read = await source.ReadAsync(buffer.AsMemory(total, buffer.Length - total), cancellationToken);
-            if (read <= 0)
-                break;
-            total += read;
-        }
-        return total;
-    }
-
-    private static bool LooksLikeSupportedImage(ReadOnlySpan<byte> header)
-    {
-        // JPEG: FF D8 FF
-        if (header.Length >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF)
-            return true;
-        // PNG: 89 50 4E 47 0D 0A 1A 0A
-        if (header.Length >= 8 &&
-            header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47 &&
-            header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A)
-            return true;
-        // WEBP: RIFF....WEBP
-        if (header.Length >= 12 &&
-            header[0] == (byte)'R' && header[1] == (byte)'I' && header[2] == (byte)'F' && header[3] == (byte)'F' &&
-            header[8] == (byte)'W' && header[9] == (byte)'E' && header[10] == (byte)'B' && header[11] == (byte)'P')
-            return true;
-        return false;
-    }
-
-    private static string ContentTypeFromExtension(string extension) => extension switch
-    {
-        ".jpg" => "image/jpeg",
-        ".png" => "image/png",
-        ".webp" => "image/webp",
-        _ => "application/octet-stream",
-    };
 
     private static string RoleDisplay(string? baseRole) => baseRole switch
     {

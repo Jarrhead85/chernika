@@ -70,7 +70,18 @@
     private bool _savingProfile;
     private bool _changingPassword;
 
+    [Parameter, SupplyParameterFromQuery(Name = "forcePasswordChange")] public string? ForceQuery { get; set; }
     [Parameter, SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrlQuery { get; set; }
+
+    /// <summary>
+    /// Безопасный returnUrl: только один начальный слэш, без «//» и схем.
+    /// </summary>
+    private string? _safeReturnUrl =>
+        string.IsNullOrEmpty(ReturnUrlQuery)
+            ? null
+            : ReturnUrlQuery.StartsWith("/") && !ReturnUrlQuery.StartsWith("//")
+                ? ReturnUrlQuery
+                : null;
 
     private string AccountAvatarUrl =>
         _account is { HasAvatar: true }
@@ -149,18 +160,8 @@
             <div class="definitionRow"><span class="definitionLabel">Базовая роль</span><span class="definitionValue">@_account?.BaseRoleDisplay</span></div>
             <div class="definitionRow"><span class="definitionLabel">Филиал</span><span class="definitionValue">@(string.IsNullOrEmpty(_account?.BranchName) ? "—" : _account?.BranchName)</span></div>
             <div class="definitionRow"><span class="definitionLabel">Дата создания учётной записи</span><span class="definitionValue">@(_account?.CreatedAt.ToString("dd.MM.yyyy") ?? "")</span></div>
-            <div class="definitionRow">
-                <span class="definitionLabel">Статус</span>
-                <span class="definitionValue"><span class="tag @(activeClass(_account))">@(activeText(_account))</span></span>
-            </div>
         </div>
     };
-
-    private static string activeClass(MyAccountDto? account) =>
-        account is { IsActive: true } ? "ok" : "bad";
-
-    private static string activeText(MyAccountDto? account) =>
-        account is { IsActive: true } ? "Активна" : "Неактивна";
 
     private RenderFragment SecurityPanel() => __builder =>
     {
@@ -283,20 +284,14 @@
             _confirmPassword = "";
             _securitySuccess = "Пароль успешно изменён.";
             await LoadAccountAsync();
+            await NotifRefresh.NotifyChangedAsync();
 
             // Обязательная смена временного пароля завершена: вернуться к
             // исходному запрошенному локальному URL или на главную.
-            if (_account is { MustChangePassword: false } && !string.IsNullOrEmpty(ReturnUrlQuery)
-                && ReturnUrlQuery.StartsWith("/", StringComparison.Ordinal)
-                && !ReturnUrlQuery.StartsWith("//", StringComparison.Ordinal))
+            var returnUrl = _safeReturnUrl;
+            if (_account is { MustChangePassword: false } && returnUrl is not null)
             {
-                Nav.NavigateTo(ReturnUrlQuery, forceLoad: true);
-                return;
-            }
-
-            if (!Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.EndsWith("/профиль",
-                    StringComparison.OrdinalIgnoreCase))
-            {
+                Nav.NavigateTo(returnUrl, forceLoad: true);
                 return;
             }
         }

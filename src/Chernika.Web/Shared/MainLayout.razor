@@ -634,8 +634,14 @@
                 decoded.EndsWith("/доступ-запрещен", StringComparison.OrdinalIgnoreCase))
                 return;
 
+            // Сохраняем исходный локальный маршрут, чтобы после смены
+            // временного пароля вернуться на него.
+            var current = Nav.ToAbsoluteUri(Nav.Uri);
+            var returnUrl = current.PathAndQuery;
             await InvokeAsync(() =>
-                Nav.NavigateTo("/профиль?forcePasswordChange=1", forceLoad: true));
+                Nav.NavigateTo(
+                    "/профиль?forcePasswordChange=1&returnUrl=" + Uri.EscapeDataString(returnUrl),
+                    forceLoad: true));
         }
         catch (Exception ex)
         {

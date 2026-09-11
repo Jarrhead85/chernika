@@ -3,6 +3,7 @@ using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Infrastructure.Data;
 using Chernika.Infrastructure.Services;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -53,7 +54,9 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
                 o.Password.RequireNonAlphanumeric = false;
             })
             .AddRoles<IdentityRole>()
+            .AddDefaultTokenProviders()
             .AddEntityFrameworkStores<AppDbContext>();
+        services.AddDataProtection();
         services.AddMemoryCache();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<FakeCurrentUser>();
