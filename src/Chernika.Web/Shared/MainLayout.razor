@@ -25,25 +25,25 @@
                aria-label="Открыть расширенный поиск">Расширенный поиск</a>
         </div>
         <nav class="nav" aria-label="Основная навигация">
-            <NavLink href="реестр-хк" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("реестр-хк")">
+            <NavLink href="реестр-хк" Match="NavLinkMatch.Prefix" class="@GetActive("реестр-хк")">
                 <span>Реестр ХК</span>
             </NavLink>
-            <NavLink href="составы" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetCompositionsActive()">
+            <NavLink href="составы" Match="NavLinkMatch.Prefix" class="@GetCompositionsActive()">
                 <span>Составы техники</span>
             </NavLink>
-            <NavLink href="инд-карты" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("инд-карты")">
+            <NavLink href="инд-карты" Match="NavLinkMatch.Prefix" class="@GetActive("инд-карты")">
                 <span>Индивидуальная карта</span>
             </NavLink>
 
             <div class="navDivider"></div>
 
-            <NavLink href="справочники" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetReferencesActive()">
+            <NavLink href="справочники" Match="NavLinkMatch.Prefix" class="@GetReferencesActive()">
                 <span>Справочники</span>
             </NavLink>
 
             <div class="navDivider"></div>
 
-            <NavLink href="задачи" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("задачи")">
+            <NavLink href="задачи" Match="NavLinkMatch.Prefix" class="@GetActive("задачи")">
                 <span>Задачи</span>
                 @if (openTaskCount > 0)
                 {
@@ -52,7 +52,7 @@
             </NavLink>
             @if (canViewAudit)
             {
-                <NavLink href="журнал-аудита" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("журнал-аудита")">
+                <NavLink href="журнал-аудита" Match="NavLinkMatch.Prefix" class="@GetActive("журнал-аудита")">
                     <span>Журнал аудита</span>
                 </NavLink>
             }
@@ -61,13 +61,13 @@
 
 @if (canManageUsers)
 {
-    <NavLink href="пользователи" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("пользователи")">
+    <NavLink href="пользователи" Match="NavLinkMatch.Prefix" class="@GetActive("пользователи")">
         <span>Пользователи</span>
     </NavLink>
 }
 @if (canSystemConfig)
 {
-    <NavLink href="диагностика" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("диагностика")">
+    <NavLink href="диагностика" Match="NavLinkMatch.Prefix" class="@GetActive("диагностика")">
         <span>Диагностика</span>
     </NavLink>
 }

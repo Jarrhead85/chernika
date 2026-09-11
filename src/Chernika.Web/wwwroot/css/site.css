@@ -225,25 +225,25 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
   .searchDateGrid{grid-template-columns:1fr;}
 }
 .nav{display:flex;flex-direction:column;gap:4px;padding:6px 4px}
-.nav a,.nav ::deep a{
+.nav a,.nav a:visited{
   position:relative;min-height:34px;
   text-decoration:none;color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:7px 10px 7px 12px;border-radius:var(--radius2,10px);border:1px solid transparent;
   background:transparent;font-size:13px;font-weight:600;line-height:1.25;
   transition:.15s ease;cursor:pointer;
 }
-.nav a:hover,.nav ::deep a:hover{
+.nav a:hover{
   color:var(--text);border-color:rgba(79,140,255,.24);background:rgba(79,140,255,.08);
   transform:translateY(-1px);
 }
-.nav a.active,.nav ::deep a.active{
+.nav a.active{
   border-color:rgba(79,140,255,.32);background:rgba(79,140,255,.18);font-weight:700;
 }
-.nav a.active::before,.nav ::deep a.active::before{
+.nav a.active::before{
   position:absolute;left:-1px;top:7px;bottom:7px;width:3px;border-radius:0 3px 3px 0;
   background:var(--accent);content:"";
 }
-.nav a:focus-visible,.nav ::deep a:focus-visible{
+.nav a:focus-visible{
   outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,140,255,.12);
 }
 .navDivider{height:1px;margin:7px 2px;background:var(--line)}
