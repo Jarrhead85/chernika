@@ -113,14 +113,15 @@
                     <div class="hkc-summary">
                         <span>Выбрано: @_selectedCoefficientIds.Count @(Plural(_selectedCoefficientIds.Count))</span>
                         <span>Общий коэффициент: <span class="mono">@FormatCoefficient(_savedCalculation?.TotalCoefficient ?? 1m)</span></span>
-                        @if (_canRecalculate)
+                        @if (_recalculating)
                         {
-                            <button type="button" class="btn primary" disabled="@(_recalculating)"
-                                    @onclick="Recalculate">
-                                @(_recalculating ? "Пересчёт…" : "Пересчитать")
-                            </button>
+                            <span class="hint recalcStatus">Пересчёт…</span>
                         }
                     </div>
+                    @if (!string.IsNullOrEmpty(_recalcError))
+                    {
+                        <div class="note bad">@_recalcError</div>
+                    }
                 }
                 else if (_draft.Status == IndividualCardStatus.Draft)
                 {
@@ -382,6 +383,7 @@
     private List<(Guid TypeId, string TypeName, List<CoefficientListItemDto> Items)> _coefficientGroups = new();
     private HashSet<Guid> _selectedCoefficientIds = new();
     private bool _recalculating;
+    private string? _recalcError;
     private bool _forming;
 
     private bool _canCreateVersion;
@@ -505,7 +507,82 @@
                 _selectedCoefficientIds.Remove(other);
             _selectedCoefficientIds.Add(coefficient.Id);
         }
+
+        // Автоматический пересчёт Draft после выбора/снятия коэффициента.
+        ScheduleAutoRecalculate();
         await Task.CompletedTask;
+    }
+
+    private CancellationTokenSource? _recalcCts;
+    private long _recalcVersion;
+
+    /// <summary>
+    /// Debounce авто-пересчёта: 300 мс после последнего выбора, каждый новый
+    /// выбор отменяет предыдущий запрос; параллельные вызовы невозможны.
+    /// </summary>
+    private void ScheduleAutoRecalculate()
+    {
+        if (!_canRecalculate)
+            return;
+
+        _recalcCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _recalcCts = cts;
+        var token = cts.Token;
+        var version = ++_recalcVersion;
+        _ = AutoRecalculateAsync(version, token);
+    }
+
+    private async Task AutoRecalculateAsync(long version, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(300, token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested || version != _recalcVersion)
+            return;
+
+        _recalcError = null;
+        _recalculating = true;
+        StateHasChanged();
+
+        try
+        {
+            await using (await DbLock.WaitAsync(token))
+            {
+                var result = await IndCardService.RecalculateDraftAsync(
+                    new RecalculateIndividualCardDraftRequest(Id, _selectedCoefficientIds.ToList()),
+                    token);
+
+                if (version != _recalcVersion || token.IsCancellationRequested)
+                    return;
+
+                _savedCalculation = result;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // заменён более свежим выбором
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            if (version != _recalcVersion || token.IsCancellationRequested)
+                return;
+            _recalcError = ex.Message;
+        }
+        finally
+        {
+            if (version == _recalcVersion)
+            {
+                _recalculating = false;
+                StateHasChanged();
+            }
+        }
     }
 
     private async Task Recalculate()

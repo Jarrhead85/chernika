@@ -179,6 +179,23 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
 @media (max-width:560px){
   .profileCol{padding:10px}
 }
+.icSectionPanel{margin-top:12px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:rgba(9,17,34,.25)}
+[data-theme="light"] .icSectionPanel{background:rgba(255,255,255,.55)}
+.icSectionPanel .hkc-subtitle{margin:0 0 8px}
+.icPanelGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:12px}
+.icReady{padding:8px 12px;border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:var(--radius2,10px);color:var(--muted);background:rgba(38,208,124,.06);font-size:12.5px}
+.icAlerts .note{margin-bottom:6px}
+.icAlerts .note:last-child{margin-bottom:0}
+.icTotal{margin-top:8px;font-weight:650;font-size:13px}
+.recalcStatus{margin-left:auto;color:var(--muted);font-weight:600;animation:none}
+.num{display:inline-block;text-align:right}
+td.num,th.num{text-align:right}
+@media (max-width:1120px){
+  .icPanelGrid{grid-template-columns:1fr}
+}
+@media (max-width:560px){
+  .icSectionPanel{padding:10px}
+}
 .user .meta{line-height:1.2}.user .name{font-size:13px;font-weight:650}.user .role{font-size:12px;color:var(--muted)}
 .sidebar{
   grid-area:sidebar;padding:14px 12px;border-right:1px solid var(--line);

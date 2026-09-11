@@ -1,4 +1,4 @@
-﻿using Chernika.Domain;
+using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
@@ -356,6 +356,21 @@ public class IndividualCardService
     /// override must not unlock foreign branches.
     /// </summary>
     private sealed record ActorScope(ApplicationUser Actor, bool IsSystemAdmin, Guid? BranchId);
+
+    /// <summary>
+    /// Имя пользователя для отображения в истории версий: ФИО или логин,
+    /// никогда — сырой идентификатор.
+    /// </summary>
+    private async Task<string?> ResolveUserDisplayNameAsync(string? userId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(userId))
+            return null;
+
+        return await _db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.FullName ?? u.UserName)
+            .FirstOrDefaultAsync(ct);
+    }
 
     private async Task<ActorScope> ResolveActorScopeAsync(CancellationToken ct)
     {
@@ -1454,7 +1469,7 @@ public class IndividualCardService
             _db.AddRange(newSnapshots);
     }
 
-    private static IndividualCardDraftDto ToDraftDto(IndividualCard draft)
+    private async Task<IndividualCardDraftDto> ToDraftDtoAsync(IndividualCard draft, CancellationToken ct)
     {
         var objectId = GetTargetObjectId(draft) ?? Guid.Empty;
         var objectCode = string.Empty;
@@ -1498,7 +1513,7 @@ public class IndividualCardService
             BranchId = draft.BranchId,
             Status = draft.Status,
             Notes = draft.Notes,
-            CreatedByUserId = draft.CreatedByUserId,
+            CreatedByUserId = await ResolveUserDisplayNameAsync(draft.CreatedByUserId, ct),
             CreatedAt = draft.CreatedAt,
             Compositions = draft.CompositionSnapshots
                 .OrderBy(cs => cs.CapturedAt).ThenBy(cs => cs.TargetObjectCode)
@@ -1646,7 +1661,7 @@ public class IndividualCardService
         // The unique (Code, Version) index guards concurrent duplicate creation.
         await _db.SaveChangesAsync(ct);
 
-        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? await ToDraftDtoAsync(reloaded, ct) : await ToDraftDtoAsync(draft, ct);
     }
 
     public async Task<IndividualCardDraftDto?> GetDraftByIdAsync(Guid individualCardId, CancellationToken ct = default)
@@ -1664,7 +1679,7 @@ public class IndividualCardService
 
         // Reading never rebuilds or refreshes snapshots: a Draft is historical
         // relative to its creation/last explicit refresh.
-        return ToDraftDto(draft);
+        return await ToDraftDtoAsync(draft, ct);
     }
 
     private async Task<IndividualCard?> LoadDraftDetailedAsync(Guid individualCardId, CancellationToken ct) =>
@@ -1792,7 +1807,7 @@ public class IndividualCardService
             throw;
         }
 
-        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? await ToDraftDtoAsync(reloaded, ct) : await ToDraftDtoAsync(draft, ct);
     }
 
     public async Task DeleteDraftAsync(Guid individualCardId, CancellationToken ct = default)
@@ -2476,7 +2491,7 @@ public class IndividualCardService
             throw new InvalidOperationException($"Для ИК «{source.Code} {source.Version}» новая версия уже создана.");
         }
 
-        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? await ToDraftDtoAsync(reloaded, ct) : await ToDraftDtoAsync(draft, ct);
     }
 
     public async Task ArchiveIndividualCardAsync(Guid individualCardId, CancellationToken ct = default)
