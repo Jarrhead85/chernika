@@ -24,49 +24,52 @@
                title="Расширенный поиск"
                aria-label="Открыть расширенный поиск">Расширенный поиск</a>
         </div>
-        <nav class="nav">
-            <a class="@GetActive("реестр-хк")" href="реестр-хк">
+        <nav class="nav" aria-label="Основная навигация">
+            <NavLink href="реестр-хк" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("реестр-хк")">
                 <span>Реестр ХК</span>
-                @*<span class="badge">Ctrl+1</span>*@
-            </a>
-            <a class="@GetCompositionsActive()" href="составы">
+            </NavLink>
+            <NavLink href="составы" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetCompositionsActive()">
                 <span>Составы техники</span>
-                @*<span class="badge">Ctrl+3</span>*@
-            </a>
-            <a class="@GetActive("инд-карты")" href="инд-карты">
+            </NavLink>
+            <NavLink href="инд-карты" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("инд-карты")">
                 <span>Индивидуальная карта</span>
-                @*<span class="badge">Ctrl+3</span>*@
-            </a>
-            <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
-            <a class="@GetReferencesActive()" href="справочники">
+            </NavLink>
+
+            <div class="navDivider"></div>
+
+            <NavLink href="справочники" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetReferencesActive()">
                 <span>Справочники</span>
-            </a>
-            <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
-            <a class="@GetActive("задачи")" href="задачи">
-                <span> Задачи</span>
+            </NavLink>
+
+            <div class="navDivider"></div>
+
+            <NavLink href="задачи" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("задачи")">
+                <span>Задачи</span>
                 @if (openTaskCount > 0)
                 {
-                    <span class="badge">@openTaskCount</span>
+                    <span class="tag navBadge">@openTaskCount</span>
                 }
-            </a>
+            </NavLink>
             @if (canViewAudit)
             {
-                <a class="@GetActive("журнал-аудита")" href="журнал-аудита">
+                <NavLink href="журнал-аудита" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("журнал-аудита")">
                     <span>Журнал аудита</span>
-                </a>
+                </NavLink>
             }
+
+            <div class="navDivider"></div>
+
 @if (canManageUsers)
 {
-    <div style="border-top:1px dashed var(--line);margin:6px 0"></div>
-    <a class="@GetActive("пользователи")" href="пользователи">
+    <NavLink href="пользователи" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("пользователи")">
         <span>Пользователи</span>
-    </a>
+    </NavLink>
 }
 @if (canSystemConfig)
 {
-    <a class="@GetActive("диагностика")" href="диагностика">
+    <NavLink href="диагностика" Match="NavLinkMatch.Prefix" ActiveClass="" class="@GetActive("диагностика")">
         <span>Диагностика</span>
-    </a>
+    </NavLink>
 }
         </nav>
         <section class="sideCard" aria-label="Статус">
