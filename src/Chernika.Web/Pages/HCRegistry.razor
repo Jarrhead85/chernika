@@ -78,7 +78,7 @@
                         }
                     </div>
                 }
-                <a class="btn ghost tasksAllLink" href="/задачи">Все задачи →</a>
+                <a class="btn ghost tasksAllLink" href="/задачи">Все задачи</a>
             </div>
         </section>
 
@@ -287,12 +287,12 @@
                         <div>
                             @if (_result.Page > 1)
                             {
-                                <button class="linkBtn" @onclick="() => GoToPage(_result.Page - 1)">← Назад</button>
+                                <button class="linkBtn" @onclick="() => GoToPage(_result.Page - 1)">Назад</button>
                             }
                             <span class="mono">стр. @_result.Page из @Math.Max(1, (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)</span>
                             @if (_result.Page < (_result.TotalCount + _result.PageSize - 1) / _result.PageSize)
                             {
-                                <button class="linkBtn" @onclick="() => GoToPage(_result.Page + 1)">Вперёд →</button>
+                                <button class="linkBtn" @onclick="() => GoToPage(_result.Page + 1)">Вперёд</button>
                             }
                         </div>
                         <div class="mono">Показано @_result.Items.Count из @_result.TotalCount</div>

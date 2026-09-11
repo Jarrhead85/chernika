@@ -1,4 +1,4 @@
-﻿@page "/инд-карты"
+@page "/инд-карты"
 @using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
@@ -159,9 +159,9 @@
                 </div>
 
                 <div class="hkr-pager">
-                    <button type="button" class="btn ghost" disabled="@(_page!.Page <= 1)" @onclick="() => ChangePage(_page.Page - 1)">← Назад</button>
+                    <button type="button" class="btn ghost" disabled="@(_page!.Page <= 1)" @onclick="() => ChangePage(_page.Page - 1)">Назад</button>
                     <span>Стр. @_page.Page из @Math.Max(1, _page.TotalPages) (@_page.TotalCount)</span>
-                    <button type="button" class="btn ghost" disabled="@(_page.Page >= _page.TotalPages)" @onclick="() => ChangePage(_page.Page + 1)">Вперёд →</button>
+                    <button type="button" class="btn ghost" disabled="@(_page.Page >= _page.TotalPages)" @onclick="() => ChangePage(_page.Page + 1)">Вперёд</button>
                 </div>
             }
         </div>

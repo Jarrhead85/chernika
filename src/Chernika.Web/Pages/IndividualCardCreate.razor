@@ -91,9 +91,9 @@
                         @if (_totalObjects > ObjectPageSize)
                         {
                             <div class="pager">
-                                <button class="btn ghost" disabled="@(_objectPage <= 1)" @onclick="PrevObjectPage">← Назад</button>
+                                <button class="btn ghost" disabled="@(_objectPage <= 1)" @onclick="PrevObjectPage">Назад</button>
                                 <span class="hint">Страница @_objectPage из @((int)Math.Ceiling(_totalObjects / (double)ObjectPageSize))</span>
-                                <button class="btn ghost" disabled="@(_objectPage * ObjectPageSize >= _totalObjects)" @onclick="NextObjectPage">Вперёд →</button>
+                                <button class="btn ghost" disabled="@(_objectPage * ObjectPageSize >= _totalObjects)" @onclick="NextObjectPage">Вперёд</button>
                             </div>
                         }
                     }

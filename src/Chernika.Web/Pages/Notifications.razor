@@ -20,7 +20,7 @@
             <div class="hero">
                 <div class="heroBox">
                     <div class="eyebrow">Колокольчик • Уведомления</div>
-                    <h3>События задач и workflow ХК</h3>
+                    <h3>События по задачам</h3>
                     <p>Назначенные задачи, возвраты и утверждения ХК, предложения справочника</p>
                 </div>
                 <div class="heroGrid">
@@ -86,7 +86,7 @@
                                             <div class="bellItemMsg" style="font-size:12px;color:var(--muted);margin-top:2px">@n.Message</div>
                                         }
                                     </td>
-                                    <td><span class="tag">@TypeLabel(n.Type)</span></td>
+                                    <td><span class="tag">@NotificationDisplayCatalog.TypeLabel(n.Type)</span></td>
                                     <td class="mono">@n.CreatedAtUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</td>
                                     <td><span class="tag @(n.IsRead ? "" : "warn")">@(n.IsRead ? "Прочитано" : "Новое")</span></td>
                                     <td>
@@ -94,7 +94,7 @@
                                             <button class="linkBtn" @onclick="() => OpenNotification(n)">Открыть</button>
                                             @if (!n.IsRead)
                                             {
-                                                <button class="linkBtn" @onclick="() => MarkRead(n.Id)">Прочитано</button>
+                                                <button class="linkBtn" @onclick="() => MarkRead(n.Id)">Отметить прочитанным</button>
                                             }
                                         </div>
                                     </td>
@@ -107,12 +107,12 @@
                     <div>
                         @if (result.Page > 1)
                         {
-                            <button class="linkBtn" @onclick="() => GoToPage(result.Page - 1)">← Назад</button>
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page - 1)">Назад</button>
                         }
                         <span class="mono">стр. @result.Page из @Math.Max(1, result.TotalPages)</span>
                         @if (result.Page < result.TotalPages)
                         {
-                            <button class="linkBtn" @onclick="() => GoToPage(result.Page + 1)">Вперёд →</button>
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page + 1)">Вперёд</button>
                         }
                     </div>
                     <div class="mono">Показано @result.Items.Count из @result.TotalCount</div>
@@ -247,18 +247,6 @@
         _loadCts?.Dispose();
     }
 
-    private static string TypeLabel(NotificationType type) => type switch
-    {
-        NotificationType.TaskAssigned => "Задача назначена",
-        NotificationType.TaskCompleted => "Задача выполнена",
-        NotificationType.HKSubmittedForReview => "ХК на проверке",
-        NotificationType.HKReturnedForRevision => "ХК на доработке",
-        NotificationType.HKApproved => "ХК утверждена",
-        NotificationType.HKExpiring => "Срок действия ХК",
-        NotificationType.HKExpired => "ХК просрочена",
-        NotificationType.ReferenceProposalPending => "Предложение справочника",
-        NotificationType.Information => "Информация",
-        NotificationType.System => "Система",
-        _ => type.ToString(),
-    };
+    private static string TypeLabel(NotificationType type) =>
+        NotificationDisplayCatalog.TypeLabel(type);
 }

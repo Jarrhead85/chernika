@@ -43,7 +43,15 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         services.AddLogging(b => b.AddFilter(_ => false));
         services.AddDbContext<AppDbContext>(o =>
             o.UseNpgsql(ConnectionString).AddInterceptors(FailingCommandInterceptor.Instance));
-        services.AddIdentityCore<ApplicationUser>(o => { })
+        services.AddIdentityCore<ApplicationUser>(o =>
+            {
+                o.Password.RequiredLength = 1;
+                o.Password.RequiredUniqueChars = 0;
+                o.Password.RequireDigit = false;
+                o.Password.RequireLowercase = false;
+                o.Password.RequireUppercase = false;
+                o.Password.RequireNonAlphanumeric = false;
+            })
             .AddRoles<IdentityRole>()
             .AddEntityFrameworkStores<AppDbContext>();
         services.AddMemoryCache();

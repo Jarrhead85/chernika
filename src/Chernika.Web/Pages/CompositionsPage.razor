@@ -187,9 +187,9 @@
                 @if (registry.TotalCount > registry.PageSize)
                 {
                     <div class="pager">
-                        <button class="btn ghost" disabled="@(registry.Page <= 1)" @onclick="PrevPage">← Назад</button>
+                        <button class="btn ghost" disabled="@(registry.Page <= 1)" @onclick="PrevPage">Назад</button>
                         <span class="hint">Страница @registry.Page из @((int)Math.Ceiling((double)registry.TotalCount / registry.PageSize))</span>
-                        <button class="btn ghost" disabled="@(registry.Page * registry.PageSize >= registry.TotalCount)" @onclick="NextPage">Вперёд →</button>
+                        <button class="btn ghost" disabled="@(registry.Page * registry.PageSize >= registry.TotalCount)" @onclick="NextPage">Вперёд</button>
                     </div>
                 }
             }

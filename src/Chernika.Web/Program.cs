@@ -1,5 +1,6 @@
 using Chernika.Domain;
 using Chernika.Domain.Entities;
+using Chernika.Domain.Models;
 using Chernika.Infrastructure;
 using Chernika.Infrastructure.Data;
 using Chernika.Infrastructure.Reports;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
 
@@ -48,7 +50,11 @@ builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, CustomU
 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
-    options.Password.RequiredLength = 8;
+    options.Password.RequiredLength = 1;
+    options.Password.RequiredUniqueChars = 0;
+    options.Password.RequireDigit = false;
+    options.Password.RequireLowercase = false;
+    options.Password.RequireUppercase = false;
     options.Password.RequireNonAlphanumeric = false;
     options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
     options.Lockout.MaxFailedAccessAttempts = 5;
@@ -108,6 +114,7 @@ builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<Chernika.Web.Services.NotificationRefreshService>();
 builder.Services.AddScoped<ReportService>();
 builder.Services.AddScoped<SearchService>();
+builder.Services.AddScoped<AccountService>();
 builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();
 builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
@@ -209,6 +216,71 @@ app.MapGet("/api/hkcards/{id:guid}/attachment/content",
         }
         return Results.File(content.Content, content.ContentType, fileDownloadName: content.OriginalFileName,
             enableRangeProcessing: true);
+    })
+    .RequireAuthorization();
+
+// ── Мой аккаунт (/профиль): действия текущего пользователя ─────────────
+
+app.MapGet("/api/account/me/avatar/content",
+    async (AccountService account) =>
+    {
+        var content = await account.GetMyAvatarAsync();
+        if (content is null)
+            return Results.NotFound();
+        return Results.File(content.Content, content.ContentType, enableRangeProcessing: false);
+    })
+    .RequireAuthorization();
+
+app.MapPost("/api/account/me/avatar",
+    async (HttpRequest request, AccountService account, CancellationToken ct) =>
+    {
+        if (!request.HasFormContentType || request.Form.Files.Count == 0)
+            return Results.BadRequest(new { error = "Файл не выбран." });
+
+        var file = request.Form.Files[0];
+        try
+        {
+            await using var stream = file.OpenReadStream();
+            await account.UploadMyAvatarAsync(
+                stream,
+                file.FileName,
+                file.ContentType,
+                file.Length,
+                ct);
+            return Results.Ok(new { message = "Фото обновлено." });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    })
+    .RequireAuthorization();
+
+app.MapDelete("/api/account/me/avatar",
+    async (AccountService account, CancellationToken ct) =>
+    {
+        await account.DeleteMyAvatarAsync(ct);
+        return Results.NoContent();
+    })
+    .RequireAuthorization();
+
+app.MapPost("/api/users/{id}/reset-password",
+    async (string id, [FromBody] ResetUserPasswordByAdminRequest request, AccountService account,
+        CancellationToken ct) =>
+    {
+        try
+        {
+            var result = await account.ResetUserPasswordByAdminAsync(id, request, ct);
+            return Results.Ok(new { success = result.Success, error = result.Error });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Results.StatusCode(403);
+        }
     })
     .RequireAuthorization();
 

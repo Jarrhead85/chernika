@@ -169,12 +169,12 @@
                     <div>
                         @if (result.Page > 1)
                         {
-                            <button class="linkBtn" @onclick="() => GoToPage(result.Page - 1)">← Назад</button>
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page - 1)">Назад</button>
                         }
                         <span class="mono">стр. @result.Page из @Math.Max(1, result.TotalPages)</span>
                         @if (result.Page < result.TotalPages)
                         {
-                            <button class="linkBtn" @onclick="() => GoToPage(result.Page + 1)">Вперёд →</button>
+                            <button class="linkBtn" @onclick="() => GoToPage(result.Page + 1)">Вперёд</button>
                         }
                     </div>
                     <div class="mono">Показано @result.Items.Count из @result.TotalCount</div>

@@ -3,6 +3,8 @@
 @using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@using Chernika.Infrastructure.Services
 @inject UserManagementService UserMgmt
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthState
@@ -84,6 +86,10 @@
                                             @(user.IsActive ? "Заблокировать" : "Разблокировать")
                                         </button>
                                         <button class="linkBtn" style="color:var(--error)" @onclick="() => DeleteUser(user)">Удалить</button>
+                                        @if (user.IsActive)
+                                        {
+                                            <button class="linkBtn" @onclick="() => OpenResetPassword(user)">Сбросить пароль</button>
+                                        }
                                     }
                                 </td>
                             </tr>
@@ -397,6 +403,43 @@
             </div>
         </div>
     }
+
+    @if (showResetPasswordModal)
+    {
+        <div class="modalOverlay" @onclick="() => showResetPasswordModal = false">
+            <div class="modal" @onclick:stopPropagation="true" style="max-width:400px">
+                <div class="modalHeader">
+                    <h3>Сбросить пароль</h3>
+                    <button class="linkBtn" @onclick="() => showResetPasswordModal = false" aria-label="Закрыть">✕</button>
+                </div>
+                <div class="modalBody">
+                    <p class="hint">Для «@resetTargetName» будет установлен временный пароль. Пользователь обязан сменить его при следующем входе.</p>
+                    <div class="field">
+                        <label for="reset-new-password">Временный пароль *</label>
+                        <input id="reset-new-password" type="password" class="fieldInput"
+                               value="@resetPasswordValue"
+                               @oninput="OnResetPasswordInput" />
+                    </div>
+                    <div class="field">
+                        <label for="reset-confirm-password">Повторите временный пароль *</label>
+                        <input id="reset-confirm-password" type="password" class="fieldInput"
+                               value="@resetConfirmPassword"
+                               @oninput="OnResetConfirmInput" />
+                    </div>
+                    @if (!string.IsNullOrEmpty(resetPasswordError))
+                    {
+                        <div class="note warn">@resetPasswordError</div>
+                    }
+                </div>
+                <div class="modalFooter">
+                    <button class="btn" @onclick="() => showResetPasswordModal = false">Отмена</button>
+                    <button class="btn primary" @onclick="ConfirmResetPassword" disabled="@resetPasswordSaving">
+                        @(resetPasswordSaving ? "Установка..." : "Сбросить пароль")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -449,6 +492,62 @@
     private string grantDenyReason = "";
     private string? grantDenyError;
     private bool grantDenySaving = false;
+
+    [Inject] AccountService AccountSvc { get; set; } = null!;
+    private bool showResetPasswordModal = false;
+    private string resetTargetId = "";
+    private string resetTargetName = "";
+    private string resetPasswordValue = "";
+    private string resetConfirmPassword = "";
+    private string? resetPasswordError;
+    private bool resetPasswordSaving = false;
+
+    private void OpenResetPassword(UserListItem user)
+    {
+        resetTargetId = user.Id;
+        resetTargetName = string.IsNullOrWhiteSpace(user.FullName) ? user.UserName : user.FullName;
+        resetPasswordValue = "";
+        resetConfirmPassword = "";
+        resetPasswordError = null;
+        showResetPasswordModal = true;
+    }
+
+    private void OnResetPasswordInput(ChangeEventArgs e) => resetPasswordValue = e.Value?.ToString() ?? "";
+    private void OnResetConfirmInput(ChangeEventArgs e) => resetConfirmPassword = e.Value?.ToString() ?? "";
+
+    private async Task ConfirmResetPassword()
+    {
+        resetPasswordSaving = true;
+        resetPasswordError = null;
+        try
+        {
+            var result = await AccountSvc.ResetUserPasswordByAdminAsync(resetTargetId, new ResetUserPasswordByAdminRequest
+            {
+                NewPassword = resetPasswordValue,
+                ConfirmPassword = resetConfirmPassword,
+            });
+            if (!result.Success)
+            {
+                resetPasswordError = result.Error ?? "Не удалось установить временный пароль.";
+                resetPasswordValue = "";
+                resetConfirmPassword = "";
+                return;
+            }
+            showResetPasswordModal = false;
+        }
+        catch (ArgumentException ex)
+        {
+            resetPasswordError = ex.Message;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            resetPasswordError = "Доступно только системному администратору.";
+        }
+        finally
+        {
+            resetPasswordSaving = false;
+        }
+    }
 
     IEnumerable<UserEffectivePermissionDto> filteredPermissions =>
         effectivePermissions?.Permissions.Where(p =>

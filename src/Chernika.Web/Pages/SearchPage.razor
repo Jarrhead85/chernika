@@ -300,7 +300,7 @@
                                     <span class="searchResultCtx">· @r.MatchContext</span>
                                 }
                             </div>
-                            <div class="searchResultGo"><span class="mono">Перейти →</span></div>
+                            <div class="searchResultGo"><span class="mono">Перейти</span></div>
                         </a>
                     }
                 </div>
@@ -310,12 +310,12 @@
                     <div class="btnRow pager">
                         @if (PageCurrent > 1)
                         {
-                            <button class="btn ghost" @onclick="() => GoToPage(PageCurrent - 1)">← Назад</button>
+                            <button class="btn ghost" @onclick="() => GoToPage(PageCurrent - 1)">Назад</button>
                         }
                         <span class="hint">Страница @PageCurrent из @_totalPages</span>
                         @if (PageCurrent < _totalPages)
                         {
-                            <button class="btn ghost" @onclick="() => GoToPage(PageCurrent + 1)">Вперёд →</button>
+                            <button class="btn ghost" @onclick="() => GoToPage(PageCurrent + 1)">Вперёд</button>
                         }
                     </div>
                     <div class="searchRange hint">Показано @((_totalCount - 1) / SearchPageSize + 1)–@Math.Min(PageCurrent * SearchPageSize, _totalCount) из @_totalCount</div>
@@ -498,15 +498,21 @@
             _error = null;
             await InvokeAsync(StateHasChanged);
 
-            var result = await SearchSvc.SearchAsync(query, ct);
-            if (ct.IsCancellationRequested || version != _searchVersion)
-                return;
+            // Доступ к DbContext сериализуется общим замком circuit: без него
+            // запрос конкурирует с обновлением индикаторов layout на том же
+            // scoped DbContext и ломает circuit («second operation»).
+            await using (await DbLock.WaitAsync(ct))
+            {
+                var result = await SearchSvc.SearchAsync(query, ct);
+                if (ct.IsCancellationRequested || version != _searchVersion)
+                    return;
 
-            _items = result.Items.ToList();
-            _totalCount = result.TotalCount;
-            _totalPages = result.TotalPages;
-            _loaded = true;
-            _error = null;
+                _items = result.Items.ToList();
+                _totalCount = result.TotalCount;
+                _totalPages = result.TotalPages;
+                _loaded = true;
+                _error = null;
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

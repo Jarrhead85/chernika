@@ -1,4 +1,4 @@
-﻿@inject IJSRuntime JS
+@inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthStateProvider
 @inject SearchService SearchSvc
 @inject IPermissionService PermSvc
@@ -130,7 +130,7 @@
                         @if (searchTotalCount > 4)
                         {
                             <a href="/поиск?q=@Uri.EscapeDataString(searchQuery)" class="searchDropdownAll">
-                                Показать все результаты (@searchTotalCount) →
+                                Показать все результаты (@searchTotalCount)
                             </a>
                         }
                     </div>
@@ -183,20 +183,35 @@
                             }
                         </div>
                         <div class="popoverFooter">
-                            <a href="/уведомления" class="linkBtn" @onclick="CloseBell">Все уведомления →</a>
+                            <a href="/уведомления" class="linkBtn" @onclick="CloseBell">Все уведомления</a>
                         </div>
                     </div>
                 }
             </div>
             <button class="modeBtn" @onclick="ToggleTheme" id="themeToggle">☀</button>
-            <div class="user" title="Профиль пользователя">
-                <div class="avatar">@(_authChecked ? userInitial : "?")</div>
-                <div class="meta">
-                    <div class="name">@(_authChecked ? userName : "Загрузка профиля…")</div>
-                    <div class="role">@userRole</div>
-                </div>
-                <a href="/выход" class="linkBtn" style="margin-left:8px" title="Выйти">→</a>
-            </div>
+<div class="user" title="Профиль пользователя">
+    @if (_authChecked && userAvatarUrl is not null)
+    {
+        <img class="avatar userAvatar" src="@userAvatarUrl" alt="" />
+    }
+    else
+    {
+        <div class="avatar">@(_authChecked ? userInitial : "?")</div>
+    }
+    <div class="meta">
+        <div class="name">@(_authChecked ? userName : "Загрузка профиля…")</div>
+        <div class="role">@userRole</div>
+    </div>
+    <a href="/профиль" class="userSettingsLink"
+       title="Мой аккаунт"
+       aria-label="Открыть мой аккаунт">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a2 2 0 0 0-1.82-.33 2 2 0 0 0-1.47 1.66V21a2 2 0 1 1-4 0v-.09A2 2 0 0 0 8.99 19a2 2 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a2 2 0 0 0 .33-1.82 2 2 0 0 0-1.66-1.47H3a2 2 0 1 1 0-4h.09A2 2 0 0 0 4.99 8.99a2 2 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a2 2 0 0 0 1.82.33H9a2 2 0 0 0 1.47-1.66V3a2 2 0 1 1 4 0v.09a2 2 0 0 0 1.66 1.66h.09a2 2 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A2 2 0 0 0 19 8.99V9a2 2 0 0 0 1.66 1.47H21a2 2 0 1 1 0 4h-.09a2 2 0 0 0-1.51 1.51z"></path>
+        </svg>
+    </a>
+    <a href="/выход" class="linkBtn" style="margin-left:8px" title="Выйти">Выйти</a>
+</div>
         </div>
     </header>
 
@@ -277,8 +292,9 @@
     private async Task OnNotifRefresh()
     {
         await RefreshBellAsync();
+        await RefreshAccountDataAsync();
         if (!_disposed)
-            StateHasChanged();
+        StateHasChanged();
     }
 
     private async Task RefreshLayoutIndicatorsAsync()
@@ -411,20 +427,8 @@
         await NotifRefresh.NotifyChangedAsync();
     }
 
-    private static string NotificationTypeLabel(NotificationType type) => type switch
-    {
-        NotificationType.TaskAssigned => "Задача",
-        NotificationType.TaskCompleted => "Задача выполнена",
-        NotificationType.HKSubmittedForReview => "ХК на проверке",
-        NotificationType.HKReturnedForRevision => "ХК на доработке",
-        NotificationType.HKApproved => "ХК утверждена",
-        NotificationType.HKExpiring => "Срок действия ХК",
-        NotificationType.HKExpired => "ХК просрочена",
-        NotificationType.ReferenceProposalPending => "Предложение справочника",
-        NotificationType.Information => "Информация",
-        NotificationType.System => "Система",
-        _ => type.ToString(),
-    };
+    private static string NotificationTypeLabel(NotificationType type) =>
+        NotificationDisplayCatalog.TypeLabel(type);
 
     private static string RelativeTime(DateTime utc)
     {
@@ -577,7 +581,9 @@
                 canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
                 canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
             }
+            await RefreshAccountDataAsync();
             await RefreshLayoutIndicatorsAsync();
+            await CheckMustChangePasswordAsync();
         }
     }
 
@@ -585,5 +591,55 @@
     {
         _isDark = !_isDark;
         await JS.InvokeVoidAsync("applyTheme", _isDark);
+    }
+
+    [Inject] AccountService AccountSvc { get; set; } = null!;
+
+    private string? userAvatarUrl;
+    private bool _mustChangePasswordChecked;
+
+    /// <summary>Аватар и флаг обязательной смены пароля текущего пользователя.</summary>
+    private async Task RefreshAccountDataAsync()
+    {
+        try
+        {
+            var account = await AccountSvc.GetMyAccountAsync();
+            userAvatarUrl = account.HasAvatar
+                ? $"/api/account/me/avatar/content?v={account.AvatarVersion}"
+                : null;
+        }
+        catch (Exception)
+        {
+            userAvatarUrl = null;
+        }
+    }
+
+    /// <summary>
+    /// Обязательная смена временного пароля: любой защищённый маршрут, кроме
+    /// /профиль, перенаправляется на профиль (без редиректного цикла).
+    /// </summary>
+    private async Task CheckMustChangePasswordAsync()
+    {
+        try
+        {
+            var account = await AccountSvc.GetMyAccountAsync();
+            if (!account.MustChangePassword)
+                return;
+
+            var path = new Uri(Nav.Uri).AbsolutePath;
+            var decoded = Uri.UnescapeDataString(path);
+            if (decoded.EndsWith("/профиль", StringComparison.OrdinalIgnoreCase) ||
+                decoded.EndsWith("/выход", StringComparison.OrdinalIgnoreCase) ||
+                decoded.EndsWith("/вход", StringComparison.OrdinalIgnoreCase) ||
+                decoded.EndsWith("/доступ-запрещен", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            await InvokeAsync(() =>
+                Nav.NavigateTo("/профиль?forcePasswordChange=1", forceLoad: true));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Проверка обязательной смены пароля пропущена");
+        }
     }
 }

@@ -14,4 +14,12 @@ public class ApplicationUser : IdentityUser
     public DateTime? DeletedAt { get; set; }
     public string? DeletedByUserId { get; set; }
     public string? DisplayNameSnapshot { get; set; }
+
+    /// <summary>Обязательная смена временного пароля при следующем входе.</summary>
+    public bool MustChangePassword { get; set; }
+
+    public string? AvatarStorageKey { get; set; }
+    public string? AvatarContentType { get; set; }
+    public long? AvatarSizeBytes { get; set; }
+    public DateTime? AvatarUpdatedAt { get; set; }
 }

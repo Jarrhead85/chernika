@@ -110,9 +110,9 @@
                 </div>
                 <div class="footer">
                     <div>
-                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
+                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">Назад</button>
                         <span style="margin:0 8px">Стр. @currentPage из @totalPages</span>
-                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
+                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд</button>
                     </div>
                     <div class="mono">Показано @units.Count из @totalCount</div>
                 </div>

@@ -140,7 +140,7 @@
                             {
                                 <button class="btn primary" @onclick="CreateNewVersion">Создать новую версию</button>
                             }
-                            <a class="btn ghost" href="/составы/изделия/@selectedComposition.EquipmentModelId/версии/@selectedComposition.Id">Открыть версию →</a>
+                            <a class="btn ghost" href="/составы/изделия/@selectedComposition.EquipmentModelId/версии/@selectedComposition.Id">Открыть версию</a>
                         </div>
                     </div>
                     <div class="panelBody">
@@ -265,7 +265,7 @@
                             <div class="field"><label>Комментарий</label><div>@selectedComposition.Comment</div></div>
                         }
                         <div class="compositionSidebarActions">
-                            <a class="btn ghost" href="/журнал-аудита?entity=ProductComposition&id=@(selectedComposition.Id)">Журнал аудита →</a>
+                            <a class="btn ghost" href="/журнал-аудита?entity=ProductComposition&id=@(selectedComposition.Id)">Журнал аудита</a>
                         </div>
                     }
                 </div>

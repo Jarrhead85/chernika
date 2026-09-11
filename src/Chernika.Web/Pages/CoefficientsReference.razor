@@ -162,9 +162,9 @@
                 </div>
                 <div class="footer">
                     <div>
-                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">← Назад</button>
+                        <button class="linkBtn" @onclick="PrevPage" disabled="@(currentPage <= 1)">Назад</button>
                         <span class="coefficientPagerLabel">Стр. @currentPage из @totalPages</span>
-                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд →</button>
+                        <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд</button>
                     </div>
                     <div class="mono">Показано @coefficients.Count из @totalCount</div>
                 </div>

@@ -1,0 +1,329 @@
+@page "/профиль"
+@attribute [Authorize]
+@using Chernika.Domain
+@using Chernika.Domain.Models
+@using Chernika.Infrastructure.Data
+@using Chernika.Infrastructure.Services
+@using Chernika.Web.Services
+@inject AccountService AccountSvc
+@inject NavigationManager Nav
+@inject NotificationRefreshService NotifRefresh
+@inject ILogger<Profile> Logger
+@implements IDisposable
+
+<div class="stack">
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Мой аккаунт</h2>
+        </div>
+        <div class="panelBody">
+            @if (_pageError is not null)
+            {
+                <div class="note bad profileNote">@_pageError</div>
+            }
+
+            @if (_account is null && _pageError is null)
+            {
+                <div class="loading">Загрузка…</div>
+            }
+            else if (_account is not null)
+            {
+                @if (_account.MustChangePassword)
+                {
+                    <div class="note warn profileNote">Администратор установил временный пароль. Смените его перед продолжением работы.</div>
+                    <div class="profileGrid profileGridSingle">
+                        <div class="profileCol">
+                            <h3>Безопасность</h3>
+                            @SecurityPanel()
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="profileGrid">
+                        <div class="profileCol">
+                            <h3>Профиль</h3>
+                            @ProfilePanel()
+                        </div>
+                        <div class="profileCol">
+                            <h3>Безопасность</h3>
+                            @SecurityPanel()
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private MyAccountDto? _account;
+    private string _fullName = "";
+    private string? _pageError;
+    private string? _profileError;
+    private string? _securityError;
+    private string? _avatarError;
+    private string? _securitySuccess;
+    private string _currentPassword = "";
+    private string _newPassword = "";
+    private string _confirmPassword = "";
+    private bool _savingProfile;
+    private bool _changingPassword;
+
+    [Parameter, SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrlQuery { get; set; }
+
+    private string AccountAvatarUrl =>
+        _account is { HasAvatar: true }
+            ? $"/api/account/me/avatar/content?v={_account.AvatarVersion}"
+            : string.Empty;
+
+    private string Initials
+    {
+        get
+        {
+            var n = _account?.FullName;
+            return string.IsNullOrEmpty(n) ? "?" : n[..1].ToUpperInvariant();
+        }
+    }
+
+    protected override async Task OnInitializedAsync() => await LoadAccountAsync();
+
+    private async Task LoadAccountAsync()
+    {
+        try
+        {
+            _account = await AccountSvc.GetMyAccountAsync();
+            _fullName = _account.FullName ?? "";
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _pageError = ex.Message;
+        }
+    }
+
+    // ── Раздел «Профиль» ──────────────────────────────────────────────────
+
+    private RenderFragment ProfilePanel() => __builder =>
+    {
+        <div class="avatarBlock">
+            @if (!string.IsNullOrEmpty(AccountAvatarUrl))
+            {
+                <img class="avatar profileAvatar" src="@AccountAvatarUrl" alt="Аватар" />
+            }
+            else
+            {
+                <div class="avatar profileAvatar">@Initials</div>
+            }
+            <div class="avatarActions">
+                <label class="btn avatarInputBtn">
+                    Изменить фото
+                    <InputFile OnChange="HandleAvatarSelectedAsync" accept=".jpg,.jpeg,.png,.webp" />
+                </label>
+                @if (_account?.HasAvatar == true)
+                {
+                    <button type="button" class="btn" @onclick="DeleteAvatarAsync">Удалить фото</button>
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(_avatarError))
+            {
+                <div class="note bad profileNote">@_avatarError</div>
+            }
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="fullName">ФИО</label>
+            <input id="fullName" class="field-input" type="text" value="@_fullName"
+                   @oninput="OnFullNameInput" />
+        </div>
+        @if (!string.IsNullOrEmpty(_profileError))
+        {
+            <div class="note bad profileNote">@_profileError</div>
+        }
+        <div class="btnRow">
+            <button class="btn primary" disabled="@_savingProfile" @onclick="SaveProfileAsync">Сохранить профиль</button>
+        </div>
+
+        <div class="definitionRows">
+            <div class="definitionRow"><span class="definitionLabel">Логин</span><span class="definitionValue">@_account?.Login</span></div>
+            <div class="definitionRow"><span class="definitionLabel">Должность</span><span class="definitionValue">@(string.IsNullOrEmpty(_account?.Position) ? "—" : _account?.Position)</span></div>
+            <div class="definitionRow"><span class="definitionLabel">Базовая роль</span><span class="definitionValue">@_account?.BaseRoleDisplay</span></div>
+            <div class="definitionRow"><span class="definitionLabel">Филиал</span><span class="definitionValue">@(string.IsNullOrEmpty(_account?.BranchName) ? "—" : _account?.BranchName)</span></div>
+            <div class="definitionRow"><span class="definitionLabel">Дата создания учётной записи</span><span class="definitionValue">@(_account?.CreatedAt.ToString("dd.MM.yyyy") ?? "")</span></div>
+            <div class="definitionRow">
+                <span class="definitionLabel">Статус</span>
+                <span class="definitionValue"><span class="tag @(activeClass(_account))">@(activeText(_account))</span></span>
+            </div>
+        </div>
+    };
+
+    private static string activeClass(MyAccountDto? account) =>
+        account is { IsActive: true } ? "ok" : "bad";
+
+    private static string activeText(MyAccountDto? account) =>
+        account is { IsActive: true } ? "Активна" : "Неактивна";
+
+    private RenderFragment SecurityPanel() => __builder =>
+    {
+        @if (!string.IsNullOrEmpty(_securitySuccess))
+        {
+            <div class="note ok profileNote">@_securitySuccess</div>
+        }
+        @if (!string.IsNullOrEmpty(_securityError))
+        {
+            <div class="note bad profileNote">@_securityError</div>
+        }
+        <form class="securityForm" @onsubmit="ChangePasswordAsync">
+            <div class="field">
+                <label class="field-label" for="currentPassword">Текущий пароль</label>
+                <input id="currentPassword" type="password" class="field-input"
+                       value="@_currentPassword"
+                       @oninput="OnCurrentPasswordInput" />
+            </div>
+            <div class="field">
+                <label class="field-label" for="newPassword">Новый пароль</label>
+                <input id="newPassword" type="password" class="field-input"
+                       value="@_newPassword"
+                       @oninput="OnNewPasswordInput" />
+            </div>
+            <div class="field">
+                <label class="field-label" for="confirmPassword">Повторите новый пароль</label>
+                <input id="confirmPassword" type="password" class="field-input"
+                       value="@_confirmPassword"
+                       @oninput="OnConfirmPasswordInput" />
+            </div>
+            <div class="btnRow">
+                <button type="submit" class="btn primary" disabled="@_changingPassword">Сменить пароль</button>
+            </div>
+        </form>
+    };
+
+    // ── Handlers ──────────────────────────────────────────────────────────
+
+    private async Task HandleAvatarSelectedAsync(InputFileChangeEventArgs e)
+    {
+        _avatarError = null;
+        var file = e.File;
+        if (file is null)
+            return;
+
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 3 * 1024 * 1024);
+            await AccountSvc.UploadMyAvatarAsync(stream, file.Name, file.ContentType, file.Size);
+            await LoadAccountAsync();
+            await NotifRefresh.NotifyChangedAsync();
+        }
+        catch (ArgumentException ex)
+        {
+            _avatarError = ex.Message;
+            StateHasChanged();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _avatarError = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteAvatarAsync()
+    {
+        _avatarError = null;
+        try
+        {
+            await AccountSvc.DeleteMyAvatarAsync();
+            await LoadAccountAsync();
+            await NotifRefresh.NotifyChangedAsync();
+            StateHasChanged();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _avatarError = ex.Message;
+        }
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        _profileError = null;
+        _savingProfile = true;
+        try
+        {
+            await AccountSvc.UpdateMyProfileAsync(new UpdateMyProfileRequest { FullName = _fullName.Trim() });
+            await LoadAccountAsync();
+        }
+        catch (ArgumentException ex)
+        {
+            _profileError = ex.Message;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _profileError = ex.Message;
+        }
+        finally
+        {
+            _savingProfile = false;
+        }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _securityError = null;
+        _securitySuccess = null;
+        _changingPassword = true;
+        try
+        {
+            await AccountSvc.ChangeMyPasswordAsync(new ChangeMyPasswordRequest
+            {
+                CurrentPassword = _currentPassword,
+                NewPassword = _newPassword,
+                ConfirmPassword = _confirmPassword,
+            });
+
+            _currentPassword = "";
+            _newPassword = "";
+            _confirmPassword = "";
+            _securitySuccess = "Пароль успешно изменён.";
+            await LoadAccountAsync();
+
+            // Обязательная смена временного пароля завершена: вернуться к
+            // исходному запрошенному локальному URL или на главную.
+            if (_account is { MustChangePassword: false } && !string.IsNullOrEmpty(ReturnUrlQuery)
+                && ReturnUrlQuery.StartsWith("/", StringComparison.Ordinal)
+                && !ReturnUrlQuery.StartsWith("//", StringComparison.Ordinal))
+            {
+                Nav.NavigateTo(ReturnUrlQuery, forceLoad: true);
+                return;
+            }
+
+            if (!Nav.ToAbsoluteUri(Nav.Uri).AbsolutePath.EndsWith("/профиль",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            _securityError = ex.Message;
+            _currentPassword = "";
+            _newPassword = "";
+            _confirmPassword = "";
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _securityError = ex.Message;
+        }
+        finally
+        {
+            _changingPassword = false;
+        }
+    }
+
+    private void OnFullNameInput(ChangeEventArgs e) => _fullName = e.Value?.ToString() ?? "";
+    private void OnCurrentPasswordInput(ChangeEventArgs e) => _currentPassword = e.Value?.ToString() ?? "";
+    private void OnNewPasswordInput(ChangeEventArgs e) => _newPassword = e.Value?.ToString() ?? "";
+
+    private void OnConfirmPasswordInput(ChangeEventArgs e) => _confirmPassword = e.Value?.ToString() ?? "";
+
+    public void Dispose()
+    {
+    }
+}
