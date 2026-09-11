@@ -906,12 +906,17 @@ public class SearchService
     private static string DisplayName(string entityType) =>
         SearchDisplayCatalog.EntityTypeDisplay(entityType);
 
-    private static string StatusDisplay(string entityType, string statusKey) => entityType switch
+    /// <summary>
+    /// Отображаемый статус для карточки: русский вариант для сущностей со
+    /// статусами; null для справочных результатов — не выводим техническое
+    /// значение статуса (английский дубликат) в пользовательский интерфейс.
+    /// </summary>
+    private static string? StatusDisplay(string entityType, string statusKey) => entityType switch
     {
         "HKCard" => SearchDisplayCatalog.HKStatus(statusKey),
         "IndividualCard" => SearchDisplayCatalog.IndividualCardStatus(statusKey),
         "WorkTask" => SearchDisplayCatalog.WorkTaskStatus(statusKey),
-        _ => statusKey,
+        _ => null,
     };
 
     private static string MapNavigation(string entityType, Guid id) => entityType switch

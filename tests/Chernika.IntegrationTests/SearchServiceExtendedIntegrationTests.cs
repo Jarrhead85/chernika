@@ -591,4 +591,40 @@ public class SearchServiceExtendedIntegrationTests
             Assert.DoesNotContain(tag, forbidden, StringComparison.OrdinalIgnoreCase);
         }
     }
+
+    [Fact]
+    public async Task SearchAsync_ResultCards_NeverExposeEnglishTechnicalNames()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var materialName = "М-10Х " + Suffix();
+        var materialId = await CreateMaterialAsync(s, name: materialName, gost: "ГОСТ-" + Suffix());
+        var nodeId = await CreateNodeAsync(s);
+        await CreateHKCardAsync(s, nodeId, materialId: materialId);
+
+        var page = await Service(s).SearchAsync(new SearchQuery { Text = materialName, PageSize = 50 });
+
+        var forbidden = new[]
+        {
+            "EquipmentModel", "HKCard", "IndividualCard", "WorkTask", "CreatedAt",
+            "Snapshot", "Preflight", "Occurrence", "GUID",
+        };
+        foreach (var result in page.Items)
+        {
+            // ровно один русский тип-тег
+            Assert.DoesNotContain(result.EntityTypeDisplay, forbidden, StringComparison.OrdinalIgnoreCase);
+            if (result.StatusDisplay is { } status)
+                Assert.DoesNotContain(result.StatusDisplay, forbidden, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(result.Title, forbidden, StringComparison.OrdinalIgnoreCase);
+            if (result.Subtitle is { } subtitle)
+                Assert.DoesNotContain(subtitle, forbidden, StringComparison.OrdinalIgnoreCase);
+            if (result.MatchContext is { } context)
+                Assert.DoesNotContain(context, forbidden, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var nodeResult = page.Items.FirstOrDefault(i => i.EntityType == "Node");
+        Assert.NotNull(nodeResult);
+        Assert.Equal("Узел", nodeResult!.EntityTypeDisplay);
+        Assert.Null(nodeResult.StatusDisplay);
+    }
 }

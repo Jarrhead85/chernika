@@ -22,12 +22,7 @@
             <a class="navSearchLink"
                href="/поиск"
                title="Расширенный поиск"
-               aria-label="Открыть расширенный поиск">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                    <circle cx="11" cy="11" r="7"></circle>
-                    <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
-                </svg>
-            </a>
+               aria-label="Открыть расширенный поиск">Расширенный поиск</a>
         </div>
         <nav class="nav">
             <a class="@GetActive("реестр-хк")" href="реестр-хк">
@@ -105,7 +100,12 @@
                            @onfocus="OnSearchFocus"
                            @onblur="OnSearchBlur"
                            id="globalSearchInput" />
-                    <button @onclick="DoSearch">Поиск</button>
+                    <button class="searchTopSubmit" @onclick="DoSearch" aria-label="Поиск" title="Поиск">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                            <circle cx="11" cy="11" r="7"></circle>
+                            <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
+                        </svg>
+                    </button>
                 </div>
                 @if (showSearchDropdown)
                 {
