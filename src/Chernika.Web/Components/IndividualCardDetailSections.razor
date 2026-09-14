@@ -7,42 +7,245 @@
 @* Read-only snapshot sections of an individual card, shared by Draft,
    Formed and Archived states. No input/select/textarea controls. *@
 
-<div class="icSectionPanel icRequisitesPanel">
-    <h3 class="hkc-subtitle">Реквизиты ИК</h3>
-    <div class="definitionRows">
-        <div class="definitionRow"><span class="definitionLabel">Объект</span><span class="definitionValue">@Detail.ObjectCode — @Detail.ObjectName</span></div>
-        @if (!string.IsNullOrEmpty(Detail.ContextText))
+@{
+    var hasReadinessProblems = Detail.NormativeGaps.Count > 0 || Detail.Problems.Count > 0;
+    var latestVersion = Detail.History.Count > 0
+        ? Detail.History.OrderBy(h => h.CreatedAt).Last()
+        : null;
+    var sourcesPreview = Detail.HKSources.Take(2).ToList();
+    var compositions = Detail.Compositions.ToList();
+}
+
+<div class="icOverviewGrid">
+    <div class="icOverviewColumn">
+        <div class="icSectionPanel icRequisitesPanel">
+            <h3 class="hkc-subtitle">Реквизиты ИК</h3>
+            <div class="definitionRows">
+                <div class="definitionRow"><span class="definitionLabel">Объект</span><span class="definitionValue">@Detail.ObjectCode — @Detail.ObjectName</span></div>
+                @if (!string.IsNullOrEmpty(Detail.ContextText))
+                {
+                    <div class="definitionRow"><span class="definitionLabel">Контекст</span><span class="definitionValue">@Detail.ContextText</span></div>
+                }
+                <div class="definitionRow"><span class="definitionLabel">Филиал</span><span class="definitionValue">@(Detail.BranchName ?? "—")</span></div>
+                <div class="definitionRow"><span class="definitionLabel">Автор</span><span class="definitionValue">@(Detail.AuthorName ?? "—")</span></div>
+                <div class="definitionRow"><span class="definitionLabel">Создана</span><span class="definitionValue">@Detail.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span></div>
+                <div class="definitionRow"><span class="definitionLabel">Сформирована</span><span class="definitionValue">@(Detail.FormedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
+                <div class="definitionRow"><span class="definitionLabel">Архивирована</span><span class="definitionValue">@(Detail.ArchivedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
+            </div>
+        </div>
+
+        @if (!hasReadinessProblems)
         {
-            <div class="definitionRow"><span class="definitionLabel">Контекст</span><span class="definitionValue">@Detail.ContextText</span></div>
+            <div class="icSectionPanel icReadinessSummary">
+                <h3 class="hkc-subtitle">Нормативная готовность</h3>
+                <div class="icReadyRow">
+                    <span class="tag ok">Готово</span>
+                    <span class="hint">Нормативные пробелы и проблемы расчёта отсутствуют.</span>
+                </div>
+            </div>
         }
-        <div class="definitionRow"><span class="definitionLabel">Филиал</span><span class="definitionValue">@(Detail.BranchName ?? "—")</span></div>
-        <div class="definitionRow"><span class="definitionLabel">Автор</span><span class="definitionValue">@(Detail.AuthorName ?? "—")</span></div>
-        <div class="definitionRow"><span class="definitionLabel">Создана</span><span class="definitionValue">@Detail.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span></div>
-        <div class="definitionRow"><span class="definitionLabel">Сформирована</span><span class="definitionValue">@(Detail.FormedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
-        <div class="definitionRow"><span class="definitionLabel">Архивирована</span><span class="definitionValue">@(Detail.ArchivedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
+    </div>
+
+    <div class="icOverviewColumn">
+        <div class="icSectionPanel icSummaryPanel">
+            <h3 class="hkc-subtitle">Источники ХК</h3>
+            @if (Detail.HKSources.Count == 0)
+            {
+                <div class="note">Источники ХК не зафиксированы.</div>
+            }
+            else
+            {
+                <div class="tableWrap" data-scroll="contained">
+                    <table class="hk-items-table">
+                        <thead>
+                            <tr>
+                                <th>Уровень</th>
+                                <th>Объект</th>
+                                <th>ХК</th>
+                                <th>Готовность</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var source in sourcesPreview)
+                            {
+                                <tr>
+                                    <td>@IndividualCardDisplay.ObjectLevel(source.ObjectLevel)</td>
+                                    <td>@source.SourceObjectCode — @source.SourceObjectName</td>
+                                    <td class="mono">@source.HKCardCode @source.HKCardVersion</td>
+                                    <td>@(source.IsComplete ? "Полная" : "Частичная")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (Detail.HKSources.Count > 2)
+                {
+                    <div class="icSummaryDisclosure">
+                        <span class="hint">Ещё @(Detail.HKSources.Count - 2) источника(ов)</span>
+                        <button type="button" class="btn ghost" aria-expanded="@_showSources"
+                                @onclick="() => _showSources = !_showSources">
+                            @(_showSources ? "Скрыть" : "Открыть")
+                        </button>
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="icSectionPanel icSummaryPanel">
+            <h3 class="hkc-subtitle">Версия состава</h3>
+            @if (compositions.Count == 0)
+            {
+                <div class="note">Состав не зафиксирован.</div>
+            }
+            else
+            {
+                var composition = compositions[0];
+                <div class="icSummaryLine">@composition.TargetObjectCode — @composition.TargetObjectName</div>
+                <div class="icSummaryLine hint">состав @composition.SourceCompositionVersion · @composition.Quantity × · агрегатов: @composition.Aggregates.Count</div>
+                <div class="icSummaryDisclosure">
+                    <button type="button" class="btn ghost" aria-expanded="@_showComposition"
+                            @onclick="() => _showComposition = !_showComposition">
+                        @(_showComposition ? "Скрыть" : "Открыть состав")
+                    </button>
+                </div>
+            }
+        </div>
+
+        <div class="icSectionPanel icSummaryPanel">
+            <h3 class="hkc-subtitle">История версий ИК</h3>
+            @if (latestVersion is null)
+            {
+                <div class="note">История версий отсутствует.</div>
+            }
+            else
+            {
+                <div class="icSummaryLine">@latestVersion.Version · @IndividualCardDisplay.Status(latestVersion.Status)</div>
+                <div class="icSummaryLine hint">Создана @latestVersion.CreatedAt.ToString("dd.MM.yyyy")</div>
+                @if (Detail.History.Count > 1)
+                {
+                    <div class="icSummaryDisclosure">
+                        <span class="hint">@Detail.History.Count версий</span>
+                        <button type="button" class="btn ghost" aria-expanded="@_showHistory"
+                                @onclick="() => _showHistory = !_showHistory">
+                            @(_showHistory ? "Скрыть" : "Открыть")
+                        </button>
+                    </div>
+                }
+            }
+        </div>
     </div>
 </div>
 
-<div class="icSectionPanel">
-    <h3 class="hkc-subtitle">Нормативная готовность</h3>
-    @if (Detail.NormativeGaps.Count == 0 && Detail.Problems.Count == 0)
-    {
-        <div class="icReady">Готово. Нормативные пробелы и проблемы расчёта отсутствуют.</div>
-    }
-    else
-    {
+@if (hasReadinessProblems)
+{
+    <div class="icSectionPanel icReadinessAlert">
+        <h3 class="hkc-subtitle">Нормативная готовность</h3>
+        <div class="icSummaryLine"><span class="tag warn">Требует внимания</span></div>
         <div class="icAlerts">
             @foreach (var gap in Detail.NormativeGaps)
             {
-                <div class="note warn">⚠ @gap.Message</div>
+                <div class="note warn">@gap.Message</div>
             }
             @foreach (var problem in Detail.Problems)
             {
-                <div class="note bad">⚠ @problem.Message</div>
+                <div class="note bad">@problem.Message</div>
             }
         </div>
-    }
-</div>
+    </div>
+}
+
+@if (_showSources && Detail.HKSources.Count > 0)
+{
+    <div class="icSectionPanel icDisclosurePanel">
+        <h3 class="hkc-subtitle">Источники ХК</h3>
+        <div class="tableWrap" data-scroll="contained">
+            <table class="hk-items-table">
+                <thead>
+                    <tr>
+                        <th>Уровень</th>
+                        <th>Объект</th>
+                        <th>ХК</th>
+                        <th>Готовность</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var source in Detail.HKSources)
+                    {
+                        <tr>
+                            <td>@IndividualCardDisplay.ObjectLevel(source.ObjectLevel)</td>
+                            <td>@source.SourceObjectCode — @source.SourceObjectName</td>
+                            <td class="mono">@source.HKCardCode @source.HKCardVersion</td>
+                            <td>@(source.IsComplete ? "Полная" : "Частичная")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@if (_showComposition && compositions.Count > 0)
+{
+    <div class="icSectionPanel icDisclosurePanel">
+        <h3 class="hkc-subtitle">Версия состава</h3>
+        @foreach (var composition in compositions)
+        {
+            <div class="hkv-row">@composition.TargetObjectCode — @composition.TargetObjectName: состав @composition.SourceCompositionVersion ×@composition.Quantity</div>
+            @foreach (var aggregate in composition.Aggregates)
+            {
+                <div class="hkv-muted">
+                    Агрегат @aggregate.AggregateCode — @aggregate.AggregateName ×@aggregate.Quantity
+                    (узлов: @aggregate.Nodes.Count)
+                </div>
+            }
+        }
+    </div>
+}
+
+@if (_showHistory && Detail.History.Count > 1)
+{
+    <div class="icSectionPanel icDisclosurePanel">
+        <h3 class="hkc-subtitle">История версий</h3>
+        <div class="tableWrap" data-scroll="contained">
+            <table class="hk-items-table">
+                <thead>
+                    <tr>
+                        <th>Версия</th>
+                        <th>Статус</th>
+                        <th>Создана</th>
+                        <th>Сформирована</th>
+                        <th>Архив</th>
+                        <th>Автор</th>
+                        <th>Действие</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var version in Detail.History)
+                    {
+                        <tr>
+                            <td class="mono">@version.Version</td>
+                            <td>@IndividualCardDisplay.Status(version.Status)</td>
+                            <td>@version.CreatedAt.ToString("dd.MM.yyyy")</td>
+                            <td>@(version.FormedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
+                            <td>@(version.ArchivedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
+                            <td>@(string.IsNullOrWhiteSpace(version.CreatedByDisplayName) ? "—" : version.CreatedByDisplayName)</td>
+                            <td>
+                                @if (version.Id != Detail.Id)
+                                {
+                                    <button type="button" class="linkBtn" @onclick="() => OpenVersionCard(version.Id)">Открыть</button>
+                                }
+                                else
+                                {
+                                    <span class="tag ok">текущая</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
 
 @if (Detail.Status != IndividualCardStatus.Draft)
 {
@@ -185,106 +388,6 @@
     }
 </div>
 
-<div class="icPanelGrid">
-    <div class="icSectionPanel">
-        <h3 class="hkc-subtitle">Версия состава</h3>
-        @if (Detail.Compositions.Count == 0)
-        {
-            <div class="note">Состав не зафиксирован.</div>
-        }
-        else
-        {
-            @foreach (var composition in Detail.Compositions)
-            {
-                <div class="hkv-row">@composition.TargetObjectCode — @composition.TargetObjectName: состав @composition.SourceCompositionVersion ×@composition.Quantity</div>
-                @foreach (var aggregate in composition.Aggregates)
-                {
-                    <div class="hkv-muted">
-                        Агрегат @aggregate.AggregateCode — @aggregate.AggregateName ×@aggregate.Quantity
-                        (узлов: @aggregate.Nodes.Count)
-                    </div>
-                }
-            }
-        }
-    </div>
-
-    <div class="icSectionPanel">
-        <h3 class="hkc-subtitle">Источники ХК</h3>
-        @if (Detail.HKSources.Count == 0)
-        {
-            <div class="note">Источники ХК не зафиксированы.</div>
-        }
-        else
-        {
-            <div class="tableWrap" data-scroll="contained">
-                <table class="hk-items-table">
-                    <thead>
-                        <tr>
-                            <th>Уровень</th>
-                            <th>Объект</th>
-                            <th>ХК</th>
-                            <th>Готовность</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var source in Detail.HKSources)
-                        {
-                            <tr>
-                                <td>@IndividualCardDisplay.ObjectLevel(source.ObjectLevel)</td>
-                                <td>@source.SourceObjectCode — @source.SourceObjectName</td>
-                                <td class="mono">@source.HKCardCode @source.HKCardVersion</td>
-                                <td>@(source.IsComplete ? "Полная" : "Частичная")</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        }
-    </div>
-</div>
-
-<div class="icSectionPanel">
-    <h3 class="hkc-subtitle">История версий</h3>
-    <div class="tableWrap" data-scroll="contained">
-        <table class="hk-items-table">
-            <thead>
-                <tr>
-                    <th>Версия</th>
-                    <th>Статус</th>
-                    <th>Создана</th>
-                    <th>Сформирована</th>
-                    <th>Архив</th>
-                    <th>Автор</th>
-                    <th>Действие</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var version in Detail.History)
-                {
-                    <tr>
-                        <td class="mono">@version.Version</td>
-                        <td>@IndividualCardDisplay.Status(version.Status)</td>
-                        <td>@version.CreatedAt.ToString("dd.MM.yyyy")</td>
-                        <td>@(version.FormedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
-                        <td>@(version.ArchivedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
-                        <td>@(string.IsNullOrWhiteSpace(version.CreatedByDisplayName) ? "—" : version.CreatedByDisplayName)</td>
-                        <td>
-                            @if (version.Id != Detail.Id)
-                            {
-                                <button type="button" class="linkBtn" @onclick="() => OpenVersionCard(version.Id)">Открыть</button>
-                            }
-                            else
-                            {
-                                <span class="tag ok">текущая</span>
-                            }
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    </div>
-</div>
-
 <div class="icSectionPanel">
     <h3 class="hkc-subtitle">Журнал событий</h3>
     <div class="tableWrap" data-scroll="contained">
@@ -316,6 +419,9 @@
     [Parameter] public IndividualCardDetailDto Detail { get; set; } = null!;
 
     private readonly HashSet<int> _expandedRows = new();
+    private bool _showSources;
+    private bool _showComposition;
+    private bool _showHistory;
 
     private void ToggleRow(int sortOrder)
     {

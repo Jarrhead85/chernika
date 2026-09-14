@@ -217,6 +217,17 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
 [data-theme="light"] .icSectionPanel{background:rgba(255,255,255,.55)}
 .icSectionPanel .hkc-subtitle{margin:0 0 8px}
 .icPanelGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:12px}
+.icOverviewGrid{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.1fr);align-items:start;gap:14px}
+.icOverviewColumn{display:flex;flex-direction:column;align-items:stretch;gap:14px}
+.icSummaryPanel .hkc-subtitle,.icReadinessSummary .hkc-subtitle,.icRequisitesPanel .hkc-subtitle{margin-bottom:8px}
+.icSummaryLine{font-size:13px;margin-top:2px}
+.icSummaryDisclosure{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;flex-wrap:wrap}
+.icReadyRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.icReadinessAlert .icAlerts{margin-top:8px}
+.icDisclosurePanel{border-color:rgba(79,140,255,.32)}
+@media (max-width:1120px){
+  .icOverviewGrid{grid-template-columns:1fr}
+}
 .icReady{padding:8px 12px;border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:var(--radius2,10px);color:var(--muted);background:rgba(38,208,124,.06);font-size:12.5px}
 .icAlerts .note{margin-bottom:6px}
 .icAlerts .note:last-child{margin-bottom:0}
