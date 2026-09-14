@@ -201,8 +201,10 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
 .recalcStatus{margin-left:auto;color:var(--muted);font-weight:600;animation:none}
 .num,
 td.num,
-th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--text)}
+th.num{text-align:center;vertical-align:middle;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--text)}
 .icCalculationTable td.num,.icCalculationTable th.num{font-family:inherit;font-size:13px}
+.icCalculationTable td,.icCalculationTable th,
+.hk-items-table td,.hk-items-table th{vertical-align:middle}
 .icCalcRow{cursor:pointer}
 .icCalcRow:hover{background:rgba(79,140,255,.06)}
 .icCalcChevron{display:inline-block;width:14px;color:var(--muted);transition:transform .15s ease}
