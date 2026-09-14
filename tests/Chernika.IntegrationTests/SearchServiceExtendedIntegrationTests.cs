@@ -612,14 +612,14 @@ public class SearchServiceExtendedIntegrationTests
         foreach (var result in page.Items)
         {
             // ровно один русский тип-тег
-            Assert.DoesNotContain(result.EntityTypeDisplay, forbidden, StringComparison.OrdinalIgnoreCase);
+            Assert.False(new[] { result.EntityTypeDisplay }.Any(t => forbidden.Any(f => t.Contains(f, StringComparison.OrdinalIgnoreCase))));
             if (result.StatusDisplay is { } status)
-                Assert.DoesNotContain(result.StatusDisplay, forbidden, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(result.Title, forbidden, StringComparison.OrdinalIgnoreCase);
+                Assert.False(new[] { result.StatusDisplay }.Any(t => forbidden.Any(f => t.Contains(f, StringComparison.OrdinalIgnoreCase))));
+            Assert.DoesNotContain(result.Title, forbidden);
             if (result.Subtitle is { } subtitle)
-                Assert.DoesNotContain(subtitle, forbidden, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(subtitle, forbidden);
             if (result.MatchContext is { } context)
-                Assert.DoesNotContain(context, forbidden, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(context, forbidden);
         }
 
         var nodeResult = page.Items.FirstOrDefault(i => i.EntityType == "Node");
