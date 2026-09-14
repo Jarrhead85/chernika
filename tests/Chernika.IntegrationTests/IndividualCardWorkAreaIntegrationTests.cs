@@ -126,6 +126,65 @@ public class IndividualCardWorkAreaIntegrationTests
         Assert.Contains("CalculationItemCount", recalculated.Details ?? "");
     }
 
+    [Fact]
+    public async Task RecalculateWithSelectedCoefficient_ThenResetRestoresNeutral()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var card = await CreateEquipmentModelDraftAsync(s);
+        var typeId = await CreateCoefficientTypeAsync(s);
+        var coefficientId = await CreateCoefficientAsync(s, typeId, value: 1.25m);
+
+        var withCoefficient = await s.IndividualCards.RecalculateDraftAsync(
+            new RecalculateIndividualCardDraftRequest(card.Id, new[] { coefficientId }));
+        Assert.Equal(1.25m, withCoefficient.TotalCoefficient);
+        Assert.Single(withCoefficient.Coefficients);
+
+        // «Сбросить» — пересчёт без коэффициентов (нейтральное значение).
+        var reset = await s.IndividualCards.RecalculateDraftAsync(
+            new RecalculateIndividualCardDraftRequest(card.Id, Array.Empty<Guid>()));
+        Assert.Equal(1m, reset.TotalCoefficient);
+        Assert.Empty(reset.Coefficients);
+
+        // Пересчёты не создают новую версию ИК.
+        var sameCard = await s.Db.IndividualCards.AsNoTracking().FirstAsync(c => c.Id == card.Id);
+        Assert.Equal(card.Version, sameCard.Version);
+        Assert.Equal(IndividualCardStatus.Draft, sameCard.Status);
+    }
+
+    private async Task<Guid> CreateCoefficientTypeAsync(TestScope s)
+    {
+        var type = new CoefficientType
+        {
+            Id = Guid.NewGuid(),
+            Name = "Тип " + Suffix(),
+            SortOrder = 1,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        s.Db.CoefficientTypes.Add(type);
+        await s.Db.SaveChangesAsync();
+        return type.Id;
+    }
+
+    private async Task<Guid> CreateCoefficientAsync(TestScope s, Guid typeId, decimal value)
+    {
+        var coefficient = new Coefficient
+        {
+            Id = Guid.NewGuid(),
+            CoefficientTypeId = typeId,
+            Name = "Коэф " + Suffix(),
+            Value = value,
+            IsActive = true,
+            SortOrder = 1,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        s.Db.Coefficients.Add(coefficient);
+        await s.Db.SaveChangesAsync();
+        return coefficient.Id;
+    }
+
     // ── Display catalog tests ─────────────────────────────────────────────
 
     [Fact]

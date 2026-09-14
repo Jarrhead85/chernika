@@ -38,6 +38,10 @@ public static class IndividualCardAuditDisplayCatalog
         @"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         RegexOptions.Compiled);
 
+    private static readonly Regex TechnicalKeyRegex = new(
+        @"\b(ObjectId|BranchId|SelectedRootHKCardId|EntityId|CreatedByUserId|Snapshot|Preflight|Occurrence)\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>
     /// Возвращает отформатированный русский текст Details или null, если
     /// Details не содержит распознанных технологических записей. Значения
@@ -45,22 +49,25 @@ public static class IndividualCardAuditDisplayCatalog
     /// </summary>
     public static string? FormatDetails(string? details)
     {
-        if (details is not { Length: > 0 } source)
+        if (string.IsNullOrWhiteSpace(details))
             return null;
 
-        // Проверка на сырые GUID в свободном тексте — скрываем целиком.
-        if (GuidRegex.IsMatch(source))
-            return null;
-
-        var hasKeys = Known.Any((known) => details.Contains(known.Key, StringComparison.OrdinalIgnoreCase));
+        var source = details;
+        var hasKeys = Known.Any((known) => source.Contains(known.Key, StringComparison.OrdinalIgnoreCase));
         if (!hasKeys)
-            return source; // уже диалоговый русский текст — показываем как есть.
+        {
+            // Свободный текст без технических ключей и GUID — показываем как есть;
+            // текст с GUID/техническими ключами скрываем.
+            return GuidRegex.IsMatch(source) || TechnicalKeyRegex.IsMatch(source)
+                ? null
+                : source;
+        }
 
         var entries = new List<string>();
 
         foreach (var (key, label) in Known)
         {
-            if (!TryGetValue(details, key, out var rawValue))
+            if (!TryGetValue(source, key, out var rawValue))
                 continue;
 
             var formatted = FormatValue(key, label, rawValue);

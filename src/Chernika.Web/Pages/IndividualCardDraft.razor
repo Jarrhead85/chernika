@@ -88,30 +88,32 @@
                                value="@_coefficientSearch" @oninput="OnCoefficientSearchChanged" />
                     </div>
 
-                    @foreach (var group in _coefficientGroups)
-                    {
-                        <div class="hkc-group">
-                            <div class="hkc-group-title">@group.TypeName</div>
-                            @foreach (var coefficient in group.Items)
-                            {
-                                var selected = _selectedCoefficientIds.Contains(coefficient.Id);
-                                <label class="hkc-item @(selected ? "selected" : "")">
-                                    <input type="radio" name="@($"coef-{group.TypeId}")" checked="@selected"
-                                           @onchange="() => ToggleCoefficient(group, coefficient)" />
-                                    <span class="hkc-item-name">@coefficient.Name</span>
-                                    <span class="mono hkc-item-value">@FormatCoefficient(coefficient.Value)</span>
-                                    @if (!string.IsNullOrWhiteSpace(coefficient.ConditionDescription))
-                                    {
-                                        <span class="hkc-item-desc">@coefficient.ConditionDescription</span>
-                                    }
-                                    @if (!string.IsNullOrWhiteSpace(coefficient.NormativeBasis))
-                                    {
-                                        <span class="hkc-item-desc">@coefficient.NormativeBasis</span>
-                                    }
-                                </label>
-                            }
-                        </div>
-                    }
+                    <div class="icCoefficientGroups">
+                        @foreach (var group in _coefficientGroups)
+                        {
+                            <div class="hkc-group">
+                                <div class="hkc-group-title">@group.TypeName</div>
+                                @foreach (var coefficient in group.Items)
+                                {
+                                    var selected = _selectedCoefficientIds.Contains(coefficient.Id);
+                                    <label class="hkc-item @(selected ? "selected" : "")">
+                                        <input type="checkbox" checked="@selected"
+                                               @onchange="() => ToggleCoefficient(group.TypeId, coefficient.Id)" />
+                                        <span class="hkc-item-name">@coefficient.Name</span>
+                                        <span class="mono hkc-item-value">@FormatCoefficient(coefficient.Value)</span>
+                                        @if (!string.IsNullOrWhiteSpace(coefficient.ConditionDescription))
+                                        {
+                                            <span class="hkc-item-desc">@coefficient.ConditionDescription</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(coefficient.NormativeBasis))
+                                        {
+                                            <span class="hkc-item-desc">@coefficient.NormativeBasis</span>
+                                        }
+                                    </label>
+                                }
+                            </div>
+                        }
+                    </div>
 
                     <div class="hkc-summary">
                         <span>Выбрано: @_selectedCoefficientIds.Count @(Plural(_selectedCoefficientIds.Count))</span>
@@ -119,6 +121,12 @@
                         @if (_recalculating)
                         {
                             <span class="hint recalcStatus">Пересчёт…</span>
+                        }
+                        @if (_selectedCoefficientIds.Count > 0)
+                        {
+                            <button type="button" class="btn ghost icCoefficientReset" @onclick="ResetCoefficients">
+                                Сбросить
+                            </button>
                         }
                     </div>
                     @if (!string.IsNullOrEmpty(_recalcError))
@@ -495,23 +503,41 @@
     }
 
     private async Task ToggleCoefficient(
-        (Guid TypeId, string TypeName, List<CoefficientListItemDto> Items) group,
-        CoefficientListItemDto coefficient)
+        Guid typeId,
+        Guid coefficientId)
     {
-        // Radio semantics: choosing a value within one type replaces only that
-        // type's choice; other types keep their selections.
-        if (_selectedCoefficientIds.Contains(coefficient.Id))
+        // Внутри одного типа допускается 0 или 1 коэффициент; разные типы
+        // независимы. Повторный клик по выбранному — снимает его.
+        if (_selectedCoefficientIds.Contains(coefficientId))
         {
-            _selectedCoefficientIds.Remove(coefficient.Id);
+            _selectedCoefficientIds.Remove(coefficientId);
         }
         else
         {
-            foreach (var other in group.Items.Select(i => i.Id))
-                _selectedCoefficientIds.Remove(other);
-            _selectedCoefficientIds.Add(coefficient.Id);
+            var group = _coefficientGroups.FirstOrDefault(g => g.TypeId == typeId);
+            if (group.Items is { } items)
+            {
+                foreach (var other in items
+                    .Select(i => i.Id)
+                    .Where(id => id != coefficientId && _selectedCoefficientIds.Contains(id)))
+                {
+                    _selectedCoefficientIds.Remove(other);
+                }
+            }
+            _selectedCoefficientIds.Add(coefficientId);
         }
 
         // Автоматический пересчёт Draft после выбора/снятия коэффициента.
+        ScheduleAutoRecalculate();
+        await Task.CompletedTask;
+    }
+
+    private async Task ResetCoefficients()
+    {
+        if (_selectedCoefficientIds.Count == 0)
+            return;
+
+        _selectedCoefficientIds.Clear();
         ScheduleAutoRecalculate();
         await Task.CompletedTask;
     }

@@ -55,7 +55,18 @@
         else
         {
             <div class="tableWrap" data-scroll="contained">
-            <table class="hk-items-table">
+            <table class="hk-items-table icCalculationTable">
+                <colgroup>
+                    <col style="width:16%" />
+                    <col style="width:17%" />
+                    <col style="width:8%" />
+                    <col style="width:9%" />
+                    <col style="width:10%" />
+                    <col style="width:9%" />
+                    <col style="width:8%" />
+                    <col style="width:11%" />
+                    <col style="width:12%" />
+                </colgroup>
                 <thead>
                     <tr>
                         <th>ХК узла</th>
@@ -73,8 +84,8 @@
                     @foreach (var row in Detail.Rows)
                     {
                         <tr>
-                            <td class="mono">@row.HKCardCode @row.HKCardVersion</td>
-                            <td>@row.AssemblyUnitName</td>
+                            <td class="mono hkc-wrap">@row.HKCardCode @row.HKCardVersion</td>
+                            <td class="hkc-wrap">@row.AssemblyUnitName</td>
                             <td class="num">@row.AssemblyUnitQuantity</td>
                             <td class="num">@row.NodeQuantity</td>
                             <td class="num">@row.AggregateQuantity</td>
