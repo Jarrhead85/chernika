@@ -2936,10 +2936,14 @@ public class EquipmentService
             {
                 var any = await _db.ComplexCompositions.AsNoTracking()
                     .Where(c => c.ComplexId == objectId)
-                    .Select(c => new { c.Id, c.Version, c.Status })
+                    .Select(c => new { c.Id, c.Version, c.Status, c.ApprovedAt })
                     .ToListAsync(ct);
                 compositionExists = any.Count > 0;
-                var current = any.FirstOrDefault(c => c.Status == ProductCompositionStatus.Approved);
+                var current = any
+                    .Where(c => c.Status == ProductCompositionStatus.Approved)
+                    .OrderByDescending(c => c.ApprovedAt)
+                    .ThenByDescending(c => c.Id)
+                    .FirstOrDefault();
                 compositionId = current?.Id;
                 compositionVersion = current?.Version;
                 compositionActive = current is not null;
@@ -2949,10 +2953,14 @@ public class EquipmentService
             {
                 var any = await _db.ProductCompositions.AsNoTracking()
                     .Where(c => c.EquipmentModelId == objectId)
-                    .Select(c => new { c.Id, c.Version, c.Status, c.IsActive })
+                    .Select(c => new { c.Id, c.Version, c.Status, c.IsActive, c.ApprovedAt })
                     .ToListAsync(ct);
                 compositionExists = any.Count > 0;
-                var current = any.FirstOrDefault(c => c.Status == ProductCompositionStatus.Approved && c.IsActive);
+                var current = any
+                    .Where(c => c.Status == ProductCompositionStatus.Approved && c.IsActive)
+                    .OrderByDescending(c => c.ApprovedAt)
+                    .ThenByDescending(c => c.Id)
+                    .FirstOrDefault();
                 compositionId = current?.Id;
                 compositionVersion = current?.Version;
                 compositionActive = current is not null;
@@ -2962,10 +2970,14 @@ public class EquipmentService
             {
                 var any = await _db.AggregateCompositions.AsNoTracking()
                     .Where(c => c.AggregateId == objectId)
-                    .Select(c => new { c.Id, c.Version, c.Status, c.IsActive })
+                    .Select(c => new { c.Id, c.Version, c.Status, c.IsActive, c.ApprovedAt })
                     .ToListAsync(ct);
                 compositionExists = any.Count > 0;
-                var current = any.FirstOrDefault(c => c.Status == ProductCompositionStatus.Approved && c.IsActive);
+                var current = any
+                    .Where(c => c.Status == ProductCompositionStatus.Approved && c.IsActive)
+                    .OrderByDescending(c => c.ApprovedAt)
+                    .ThenByDescending(c => c.Id)
+                    .FirstOrDefault();
                 compositionId = current?.Id;
                 compositionVersion = current?.Version;
                 compositionActive = current is not null;
@@ -2973,9 +2985,13 @@ public class EquipmentService
             }
         }
 
+        // Узел не является владельцем конструктивного состава: состав для него
+        // не требуется — только действующая утверждённая ХК.
+        var nodeOwnsNoComposition = level == HKObjectLevel.Node;
+
         var status = hk is null
             ? CompositionReadinessStatus.MissingHK
-            : compositionActive
+            : nodeOwnsNoComposition || compositionActive
                 ? CompositionReadinessStatus.Ready
                 : compositionExists
                     ? CompositionReadinessStatus.NoActiveComposition
@@ -3011,7 +3027,13 @@ public class EquipmentService
 
         string compositionTarget;
         string compositionLabel;
-        if (compositionId is { } compId)
+        if (nodeOwnsNoComposition)
+        {
+            // Для узла конструктивный состав не предусмотрен.
+            compositionTarget = null!;
+            compositionLabel = null!;
+        }
+        else if (compositionId is { } compId)
         {
             compositionTarget = level switch
             {

@@ -9,8 +9,12 @@
 {
     <div class="icReadinessCard">
         <div class="icReadinessMain">
-            <div class="icReadinessCode">@readiness.ObjectCode</div>
-            <div class="icReadinessName">@readiness.ObjectName</div>
+            <div class="icReadinessTitle">Нормативная готовность</div>
+            @if (ShowObjectIdentity)
+            {
+                <div class="icReadinessCode">@readiness.ObjectCode</div>
+                <div class="icReadinessName">@readiness.ObjectName</div>
+            }
             <div class="icReadinessMessage">@readiness.Message</div>
         </div>
         <div class="icReadinessActions">
@@ -32,6 +36,12 @@
 @code {
     [Parameter] public HKObjectLevel Level { get; set; }
     [Parameter] public Guid ObjectId { get; set; }
+
+    /// <summary>
+    /// В контексте редактора код/наименование объекта уже показаны в header,
+    /// поэтому по умолчанию карточка показывает только нормативное состояние.
+    /// </summary>
+    [Parameter] public bool ShowObjectIdentity { get; set; }
 
     private CompositionNormativeReadinessDto? readiness;
     private Guid _loadedFor = Guid.Empty;

@@ -21,8 +21,9 @@
         <div class="panelBody">
             <div class="form">
                 <div class="field"><label>Комплекс</label>
-                    <select @bind="selectedComplexId" class="field-select">
-                        <option value="">— Выберите комплекс —</option>
+                    <select value="@(selectedComplexId == Guid.Empty ? "" : selectedComplexId.ToString())"
+                            @onchange="OnComplexChanged" class="field-select">
+                        <option value="" disabled hidden>Выберите комплекс</option>
                         @foreach (var c in complexes)
                         {
                             <option value="@c.Id">@c.Code — @c.Name</option>
@@ -31,8 +32,7 @@
                 </div>
                 <div class="field"><label>Комментарий</label><input @bind="comment" /></div>
                 <div class="formActions">
-                    <button class="btn" @onclick="LoadCompositions">Обновить список</button>
-                    @if (canCreate) { <button class="btn primary" @onclick="CreateComposition">Создать черновик</button> }
+                    @if (canCreate) { <button class="btn primary" disabled="@(selectedComplexId == Guid.Empty)" @onclick="CreateComposition">Создать черновик</button> }
                 </div>
             </div>
         </div>
@@ -374,17 +374,47 @@
             loading = true;
             complexes = await EquipService.GetComplexesAsync();
             models = await EquipService.GetModelsAsync();
-            await LoadCompositions();
         }
+        if (selectedComplexId != Guid.Empty)
+            await LoadCompositions();
+        else
+            loading = false;
+    }
+
+    /// <summary>Выбор комплекса сразу загружает его составы (без кнопки обновления).</summary>
+    private async Task OnComplexChanged(ChangeEventArgs args)
+    {
+        selectedComplexId = Guid.TryParse(args.Value?.ToString(), out var id) ? id : Guid.Empty;
+        await LoadCompositions();
     }
 
     async Task LoadCompositions()
     {
-        var ct = _loadCts?.Token ?? default;
-        compositions = selectedComplexId != Guid.Empty
-            ? (await EquipService.GetComplexCompositionSummariesAsync(selectedComplexId, ct)).ToList()
-            : new();
-        loading = false;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+        loading = true;
+        try
+        {
+            await using (await DbLock.WaitAsync(ct))
+            {
+                var result = selectedComplexId != Guid.Empty
+                    ? (await EquipService.GetComplexCompositionSummariesAsync(selectedComplexId, ct)).ToList()
+                    : new List<CompositionVersionSummary>();
+                if (ct.IsCancellationRequested)
+                    return;
+                compositions = result;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            loading = false;
+        }
     }
 
     async Task CreateComposition()

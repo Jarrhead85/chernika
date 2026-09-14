@@ -20,8 +20,9 @@
         <div class="panelBody">
             <div class="form">
                 <div class="field"><label>Модель техники</label>
-                    <select @bind="selectedModelId" class="field-select">
-                        <option value="">— Выберите модель —</option>
+                    <select value="@(selectedModelId == Guid.Empty ? "" : selectedModelId.ToString())"
+                            @onchange="OnModelChanged" class="field-select">
+                        <option value="" disabled hidden>Выберите изделие</option>
                         @foreach (var m in models)
                         {
                             <option value="@m.Id">@m.Index — @m.Name</option>
@@ -30,8 +31,7 @@
                 </div>
                 <div class="field"><label>Комментарий</label><input @bind="comment" /></div>
                 <div class="formActions">
-                    <button class="btn" @onclick="LoadCompositions">Обновить список</button>
-                    @if (canCreate) { <button class="btn primary" @onclick="CreateComposition">Создать черновик</button> }
+                    @if (canCreate) { <button class="btn primary" disabled="@(selectedModelId == Guid.Empty)" @onclick="CreateComposition">Создать черновик</button> }
                 </div>
             </div>
         </div>
@@ -186,13 +186,14 @@
                             </div>
                         }
 
-                        <div class="form compositionFilterForm">
-                            <div class="field compositionFilterInput"><label>Фильтр агрегатов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
-                        </div>
+                        <div class="compositionContentPanel">
+                            <div class="compositionUtilityRow">
+                                <div class="field compositionFilterInput"><label>Фильтр агрегатов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
+                            </div>
 
                         @if (CanEditSelectedDraft || selectedComposition.UngroupedAggregates.Any())
                         {
-                            <div class="compositionPartPanel">
+                            <div class="compositionPartPanel compositionGroup">
                                 <div class="compositionPartHeader">
                                     <span>Без группы</span>
                                     <span class="hint">@selectedComposition.UngroupedAggregates.Count агрегатов</span>
@@ -207,7 +208,7 @@
 
                         @foreach (var part in selectedComposition.Parts.OrderBy(p => p.SortOrder))
                         {
-                            <div class="compositionPartPanel">
+                            <div class="compositionPartPanel compositionGroup">
                                 <div class="compositionPartHeader">
                                     @if (editingPartId == part.Id)
                                     {
@@ -237,6 +238,7 @@
                                 }
                             </div>
                         }
+                        </div>
                     </div>
                 </section>
             }
@@ -425,15 +427,46 @@
             loading = true;
             models = await EquipService.GetModelsAsync();
             aggregates = await EquipService.GetAggregatesAsync();
-            await LoadCompositions();
         }
+        if (selectedModelId != Guid.Empty)
+            await LoadCompositions();
+        else
+            loading = false;
+    }
+
+    /// <summary>Выбор изделия сразу загружает его составы (без кнопки обновления).</summary>
+    private async Task OnModelChanged(ChangeEventArgs args)
+    {
+        selectedModelId = Guid.TryParse(args.Value?.ToString(), out var id) ? id : Guid.Empty;
+        await LoadCompositions();
     }
 
     async Task LoadCompositions()
     {
-        var ct = _loadCts?.Token ?? default;
-        compositions = (await EquipService.GetProductCompositionSummariesAsync(selectedModelId != Guid.Empty ? selectedModelId : null, ct)).ToList();
-        loading = false;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+        loading = true;
+        try
+        {
+            await using (await DbLock.WaitAsync(ct))
+            {
+                var result = (await EquipService.GetProductCompositionSummariesAsync(
+                    selectedModelId != Guid.Empty ? selectedModelId : null, ct)).ToList();
+                if (ct.IsCancellationRequested)
+                    return;
+                compositions = result;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            loading = false;
+        }
     }
 
     async Task CreateComposition()
@@ -831,7 +864,7 @@
             </div>;
         }
 
-        return @<div class="form compositionFormRow compositionInlineAddRow">
+            return @<div class="form compositionFormRow compositionInlineAddRow compositionAddAfterTable">
             <div class="field">
                 <label>Агрегат</label>
                 <select @bind="inlineAddAggregateId" class="field-select">

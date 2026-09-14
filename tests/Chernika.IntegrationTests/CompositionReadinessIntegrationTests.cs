@@ -196,4 +196,103 @@ public class CompositionReadinessIntegrationTests
         Assert.DoesNotContain("НК", readiness.Message);
         Assert.Contains("ХК", readiness.HKActionLabel);
     }
+
+    [Fact]
+    public async Task NodeWithValidHk_IsReady_WithoutCompositionTarget()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var nodeId = await CreateNodeAsync(s);
+        var hkId = await CreateNodeApprovedHkAsync(s, nodeId);
+
+        var readiness = await s.Equipment.GetCompositionNormativeReadinessAsync(
+            HKObjectLevel.Node, nodeId);
+
+        Assert.Equal(CompositionReadinessStatus.Ready, readiness.Status);
+        Assert.Equal(hkId, readiness.CurrentApprovedHKCardId);
+        Assert.Equal("Открыть ХК", readiness.HKActionLabel);
+        // У узла нет конструктивного состава.
+        Assert.Null(readiness.CompositionNavigationTarget);
+        Assert.Null(readiness.CompositionActionLabel);
+        Assert.Null(readiness.CurrentCompositionId);
+    }
+
+    [Fact]
+    public async Task NodeWithoutHk_IsMissingHk_WithoutCompositionTarget()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var nodeId = await CreateNodeAsync(s);
+
+        var readiness = await s.Equipment.GetCompositionNormativeReadinessAsync(
+            HKObjectLevel.Node, nodeId);
+
+        Assert.Equal(CompositionReadinessStatus.MissingHK, readiness.Status);
+        Assert.Equal("Отсутствует действующая ХК", readiness.Message);
+        Assert.Equal("Перейти в реестр ХК", readiness.HKActionLabel);
+        Assert.Null(readiness.CompositionNavigationTarget);
+    }
+
+    [Fact]
+    public async Task DeterministicCurrentComposition_PrefersActiveLatestApproved()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var modelId = await CreateModelAsync(s);
+        await CreateApprovedHkAsync(s, modelId);
+        // Устаревшая утверждённая версия (не активна, утверждена раньше).
+        await CreateProductCompositionAsync(s, modelId, isActive: false, approvedAt: DateTime.UtcNow.AddDays(-10));
+        var currentId = await CreateProductCompositionAsync(s, modelId, isActive: true, approvedAt: DateTime.UtcNow);
+
+        var readiness = await s.Equipment.GetCompositionNormativeReadinessAsync(
+            HKObjectLevel.EquipmentModel, modelId);
+
+        Assert.Equal(CompositionReadinessStatus.Ready, readiness.Status);
+        Assert.Equal(currentId, readiness.CurrentCompositionId);
+    }
+
+    private async Task<Guid> CreateNodeAsync(TestScope s)
+    {
+        var node = new Node { Id = Guid.NewGuid(), Code = "N-" + Suffix(), Name = "Узел " + Suffix(), IsDeleted = false, IsDraft = false };
+        s.Db.Nodes.Add(node);
+        await s.Db.SaveChangesAsync();
+        return node.Id;
+    }
+
+    private async Task<Guid> CreateNodeApprovedHkAsync(TestScope s, Guid nodeId)
+    {
+        var hk = new HKCard
+        {
+            Id = Guid.NewGuid(),
+            Code = "HK-" + Suffix(),
+            Version = "v" + Suffix()[..4],
+            Status = HKCardStatus.Approved,
+            ObjectLevel = HKObjectLevel.Node,
+            NodeId = nodeId,
+            BranchId = _fixture.BranchA,
+            CreatedAt = DateTime.UtcNow,
+            ApprovedDate = DateTime.UtcNow,
+        };
+        s.Db.HKCards.Add(hk);
+        await s.Db.SaveChangesAsync();
+        return hk.Id;
+    }
+
+    private async Task<Guid> CreateProductCompositionAsync(TestScope s, Guid modelId, bool isActive, DateTime approvedAt)
+    {
+        var pc = new ProductComposition
+        {
+            Id = Guid.NewGuid(),
+            EquipmentModelId = modelId,
+            Version = "v" + Suffix()[..4],
+            Status = ProductCompositionStatus.Approved,
+            IsActive = isActive,
+            ApprovedAt = approvedAt,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        s.Db.ProductCompositions.Add(pc);
+        await s.Db.SaveChangesAsync();
+        return pc.Id;
+    }
 }
