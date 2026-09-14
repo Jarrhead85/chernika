@@ -48,6 +48,7 @@ public sealed record IndividualCardVersionChainItemDto(
     DateTime? FormedAt,
     DateTime? ArchivedAt,
     string CreatedByUserId,
+    string? CreatedByDisplayName,
     Guid? SupersedesIndividualCardId);
 
 public sealed record IndividualCardAuditItemDto(

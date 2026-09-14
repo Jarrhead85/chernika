@@ -12,6 +12,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject CircuitDbLock DbLock
 @inject NavigationManager Nav
+@implements IDisposable
 
 <div class="stack">
     @if (_loading)
@@ -24,32 +25,34 @@
     {
         @if (_detail is not null)
         {
-            <section class="panel">
-                <div class="panelHeader">
+            <section class="panel icHeaderPanel">
+                <div class="panelHeader icCompactHeader">
                     <h2>ИК @_detail.Code @_detail.Version</h2>
-                    <div class="hint">@_detail.ObjectLevelDisplay: @_detail.ObjectName</div>
+                    <div class="hint">@_detail.ObjectLevelDisplay: @_detail.ObjectCode — @_detail.ObjectName · @(_detail.BranchName ?? "—")</div>
                     <span class="tag @(_detail.Status == IndividualCardStatus.Formed ? "ok" : "")">@IndividualCardDisplay.Status(_detail.Status)</span>
                 </div>
-                <div class="panelBody">
+                <div class="icHeaderActions">
+                    <div class="icExportActions">
+                        <a class="btn" href="@($"/api/individualcards/{_detail.Id}/pdf")" target="_blank" rel="noopener">PDF</a>
+                        <a class="btn" href="@($"/api/individualcards/{_detail.Id}/xlsx")">XLSX</a>
+                    </div>
+                    <div class="icLifecycleActions">
+                        @if (_detail.Status == IndividualCardStatus.Formed && _canCreateVersion)
+                        {
+                            <button type="button" class="btn primary" @onclick="OpenVersionModalAsync" disabled="@_comparisonLoading">
+                                @(_comparisonLoading ? "Загрузка…" : "Создать новую версию ИК")
+                            </button>
+                        }
+                        @if (_canArchive && _detail.Status != IndividualCardStatus.Archived)
+                        {
+                            <button type="button" class="btn ghost" @onclick="() => _showArchiveConfirm = true">В архив</button>
+                        }
+                    </div>
+                </div>
+                <div class="panelBody icPanelBodyNoPad">
                     @if (!string.IsNullOrEmpty(_error))
                     {
                         <div class="hkc-error">@_error</div>
-                    }
-
-                    @if (_detail.Status == IndividualCardStatus.Formed && (_canCreateVersion || _canArchive))
-                    {
-                        <div class="formActions">
-                            @if (_canCreateVersion)
-                            {
-                                <button type="button" class="btn primary" @onclick="OpenVersionModalAsync" disabled="@_comparisonLoading">
-                                    @(_comparisonLoading ? "Загрузка…" : "Создать новую версию ИК")
-                                </button>
-                            }
-                            @if (_canArchive)
-                            {
-                                <button type="button" class="btn ghost" @onclick="() => _showArchiveConfirm = true">В архив</button>
-                            }
-                        </div>
                     }
 
                     <IndividualCardDetailSections Detail="_detail"/>
@@ -526,9 +529,9 @@
             return;
 
         _recalcCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _recalcCts = cts;
-        var token = cts.Token;
+        _recalcCts?.Dispose();
+        _recalcCts = new CancellationTokenSource();
+        var token = _recalcCts.Token;
         var version = ++_recalcVersion;
         _ = AutoRecalculateAsync(version, token);
     }
@@ -764,4 +767,11 @@
         var n when n % 10 is >= 3 and <= 4 && (n % 100 < 10 || n % 100 >= 20) => "коэффициента",
         _ => "коэффициентов",
     };
+
+    public void Dispose()
+    {
+        _recalcCts?.Cancel();
+        _recalcCts?.Dispose();
+        _recalcCts = null;
+    }
 }

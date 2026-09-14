@@ -95,11 +95,15 @@ public class IndividualCardWorkAreaIntegrationTests
 
         var detail = await s.IndividualCards.GetDetailAsync(card.Id);
 
+        // CreatedByUserId остаётся идентификатором; CreatedByDisplayName — имя.
         Assert.NotNull(detail);
         Assert.All(detail!.History, h => Assert.False(string.IsNullOrWhiteSpace(h.CreatedByUserId)));
-        // В цепочке версий — ФИО/логин, а не сырой GUID-идентификатор.
-        Assert.All(detail.History, h => Assert.DoesNotContain(
-            $"{Guid.NewGuid():D}", h.CreatedByUserId));
+        Assert.Equal(card.CreatedByUserId, detail.History.First().CreatedByUserId);
+        Assert.All(detail.History, h => Assert.False(string.IsNullOrWhiteSpace(h.CreatedByDisplayName)));
+        Assert.All(detail.History, h => Assert.False(
+            Guid.TryParse(h.CreatedByDisplayName, out _), "display name must not be a GUID"));
+        // Display name — ФИО/логин пользователя, не идентификатор.
+        Assert.All(detail.History, h => Assert.NotEqual(h.CreatedByUserId, h.CreatedByDisplayName));
     }
 
     [Fact]
@@ -143,13 +147,34 @@ public class IndividualCardWorkAreaIntegrationTests
     {
         var raw = "ObjectLevel=Node; " + Guid.NewGuid() + "; BranchId=" + Guid.NewGuid() +
                   "; CompositionCount=0; HKSourceCount=1; NormativeGapCount=0";
-        Assert.NotNull(IndividualCardAuditDisplayCatalog.FormatDetails(raw));
+        var result = IndividualCardAuditDisplayCatalog.FormatDetails(raw);
+        Assert.NotNull(result);
+        Assert.Contains("Уровень объекта: Узел", result);
+        Assert.Contains("Версия состава: отсутствует", result);
+        Assert.Contains("Источников ХК: 1", result);
+        Assert.Contains("Нормативных замечаний: нет", result);
+        Assert.DoesNotContain("ObjectId", result, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("BranchId", result, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void DisplayCatalog_KeylessDetails_RequireNoTransformation()
+    public void DisplayCatalog_KeylessSafeRussianDetails_RemainVisible()
     {
-        Assert.Null(IndividualCardAuditDisplayCatalog.FormatDetails("Ручная причина, без технических ключей"));
+        var freeText = "Причина ручная, без технических ключей";
+        Assert.Equal(freeText, IndividualCardAuditDisplayCatalog.FormatDetails(freeText));
+    }
+
+    [Fact]
+    public void DisplayCatalog_TechnicalGuidDetails_Hidden()
+    {
+        var raw = "ObjectId=" + Guid.NewGuid() + "; BranchId=" + Guid.NewGuid();
+        var formatted = IndividualCardAuditDisplayCatalog.FormatDetails(raw);
+        Assert.Null(formatted);
+    }
+
+    [Fact]
+    public void DisplayCatalog_KeylessUnknownDetails_ReturnNull()
+    {
         Assert.Null(IndividualCardAuditDisplayCatalog.FormatDetails(null));
         Assert.Null(IndividualCardAuditDisplayCatalog.FormatDetails(" "));
     }

@@ -179,6 +179,17 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
 @media (max-width:560px){
   .profileCol{padding:10px}
 }
+.icHeaderPanel{padding:12px 14px}
+.icHeaderPanel .panelHeader{margin-bottom:0}
+.icCompactHeader{padding:0 0 0;border-bottom:none}
+.icCompactHeader h2{margin:0}
+.icHeaderActions{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  flex-wrap:wrap;margin-top:10px;
+}
+.icExportActions,.icLifecycleActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.icPanelBodyNoPad{padding:0}
+.icRequisitesPanel .definitionRows+.definitionRows{margin-top:6px}
 .icSectionPanel{margin-top:12px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:rgba(9,17,34,.25)}
 [data-theme="light"] .icSectionPanel{background:rgba(255,255,255,.55)}
 .icSectionPanel .hkc-subtitle{margin:0 0 8px}

@@ -2684,7 +2684,7 @@ public class IndividualCardService
             .Select(c => new IndividualCardVersionChainItemDto(
                 c.Id, c.Code, c.Version, c.RevisionNumber, c.Status,
                 c.CreatedAt, c.FormedAt, c.ArchivedAt, c.CreatedByUserId,
-                c.SupersedesIndividualCardId))
+                null, c.SupersedesIndividualCardId))
             .ToListAsync(ct);
         return chain;
     }
@@ -2706,14 +2706,26 @@ public class IndividualCardService
         var objectName = card.TargetObjectNameSnapshot;
         var contextText = card.TargetContextSnapshot;
 
-        var history = await _db.IndividualCards.AsNoTracking()
+        var historyRaw = await _db.IndividualCards.AsNoTracking()
             .Where(c => c.Code == card.Code && c.BranchId == card.BranchId)
             .OrderBy(c => c.RevisionNumber)
-            .Select(c => new IndividualCardVersionChainItemDto(
+            .Select(c => new
+            {
                 c.Id, c.Code, c.Version, c.RevisionNumber, c.Status,
                 c.CreatedAt, c.FormedAt, c.ArchivedAt, c.CreatedByUserId,
-                c.SupersedesIndividualCardId))
+                c.SupersedesIndividualCardId,
+            })
             .ToListAsync(ct);
+        var historyAuthorIds = historyRaw.Select(c => c.CreatedByUserId).Distinct().ToList();
+        var historyAuthors = await _db.Users.AsNoTracking()
+            .Where(u => historyAuthorIds.Contains(u.Id))
+            .Select(u => new { u.Id, Name = u.FullName ?? u.UserName })
+            .ToDictionaryAsync(u => u.Id, u => u.Name, ct);
+        var history = historyRaw.Select(c => new IndividualCardVersionChainItemDto(
+            c.Id, c.Code, c.Version, c.RevisionNumber, c.Status,
+            c.CreatedAt, c.FormedAt, c.ArchivedAt, c.CreatedByUserId,
+            historyAuthors.GetValueOrDefault(c.CreatedByUserId),
+            c.SupersedesIndividualCardId)).ToList();
 
         var auditEntries = await _db.AuditLogs.AsNoTracking()
             .Where(a => a.EntityType == "IndividualCard" && a.EntityId == card.Id.ToString())
@@ -2960,7 +2972,7 @@ public class IndividualCardService
             .Select(c => new IndividualCardVersionChainItemDto(
                 c.Id, c.Code, c.Version, c.RevisionNumber, c.Status,
                 c.CreatedAt, c.FormedAt, c.ArchivedAt, c.CreatedByUserId,
-                c.SupersedesIndividualCardId))
+                null, c.SupersedesIndividualCardId))
             .ToListAsync(ct);
 
         var exportRows = card.Items.OrderBy(i => i.SortOrder)

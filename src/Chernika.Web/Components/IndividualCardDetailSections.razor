@@ -7,6 +7,22 @@
 @* Read-only snapshot sections of an individual card, shared by Draft,
    Formed and Archived states. No input/select/textarea controls. *@
 
+<div class="icSectionPanel icRequisitesPanel">
+    <h3 class="hkc-subtitle">Реквизиты ИК</h3>
+    <div class="definitionRows">
+        <div class="definitionRow"><span class="definitionLabel">Объект</span><span class="definitionValue">@Detail.ObjectCode — @Detail.ObjectName</span></div>
+        @if (!string.IsNullOrEmpty(Detail.ContextText))
+        {
+            <div class="definitionRow"><span class="definitionLabel">Контекст</span><span class="definitionValue">@Detail.ContextText</span></div>
+        }
+        <div class="definitionRow"><span class="definitionLabel">Филиал</span><span class="definitionValue">@(Detail.BranchName ?? "—")</span></div>
+        <div class="definitionRow"><span class="definitionLabel">Автор</span><span class="definitionValue">@(Detail.AuthorName ?? "—")</span></div>
+        <div class="definitionRow"><span class="definitionLabel">Создана</span><span class="definitionValue">@Detail.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span></div>
+        <div class="definitionRow"><span class="definitionLabel">Сформирована</span><span class="definitionValue">@(Detail.FormedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
+        <div class="definitionRow"><span class="definitionLabel">Архивирована</span><span class="definitionValue">@(Detail.ArchivedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
+    </div>
+</div>
+
 <div class="icSectionPanel">
     <h3 class="hkc-subtitle">Нормативная готовность</h3>
     @if (Detail.NormativeGaps.Count == 0 && Detail.Problems.Count == 0)
@@ -233,7 +249,7 @@
                         <td>@version.CreatedAt.ToString("dd.MM.yyyy")</td>
                         <td>@(version.FormedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
                         <td>@(version.ArchivedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
-                        <td>@(string.IsNullOrWhiteSpace(version.CreatedByUserId) ? "—" : version.CreatedByUserId)</td>
+                        <td>@(string.IsNullOrWhiteSpace(version.CreatedByDisplayName) ? "—" : version.CreatedByDisplayName)</td>
                         <td>
                             @if (version.Id != Detail.Id)
                             {

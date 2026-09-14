@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace Chernika.Domain;
 
@@ -33,6 +34,10 @@ public static class IndividualCardAuditDisplayCatalog
             ["EquipmentInstance"] = "Экземпляр изделия",
         };
 
+    private static readonly Regex GuidRegex = new(
+        @"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        RegexOptions.Compiled);
+
     /// <summary>
     /// Возвращает отформатированный русский текст Details или null, если
     /// Details не содержит распознанных технологических записей. Значения
@@ -40,11 +45,16 @@ public static class IndividualCardAuditDisplayCatalog
     /// </summary>
     public static string? FormatDetails(string? details)
     {
-        if (string.IsNullOrWhiteSpace(details))
+        if (details is not { Length: > 0 } source)
             return null;
 
-        if (!Known.Any((known) => details.Contains(known.Key, StringComparison.OrdinalIgnoreCase)))
+        // Проверка на сырые GUID в свободном тексте — скрываем целиком.
+        if (GuidRegex.IsMatch(source))
             return null;
+
+        var hasKeys = Known.Any((known) => details.Contains(known.Key, StringComparison.OrdinalIgnoreCase));
+        if (!hasKeys)
+            return source; // уже диалоговый русский текст — показываем как есть.
 
         var entries = new List<string>();
 
@@ -79,6 +89,17 @@ public static class IndividualCardAuditDisplayCatalog
         return value.Length > 0;
     }
 
+    private static readonly string[] IntegerKeys =
+    [
+        "CoefficientCount=",
+        "CalculationItemCount=",
+        "PrimaryMaterialSnapshotCount=",
+        "CalculationProblemCount=",
+        "CompositionCount=",
+        "NormativeGapCount=",
+        "HKSourceCount=",
+    ];
+
     private static string FormatValue(string key, string label, string rawValue)
     {
         if (key is "ObjectLevel=")
@@ -97,23 +118,23 @@ public static class IndividualCardAuditDisplayCatalog
             return "Источников ХК: нет";
         if (key is "NormativeGapCount=" && rawValue is "0")
             return "Нормативных замечаний: нет";
-        if (key is "CoefficientCount=" && rawValue is "0")
-            return "Коэффициенты не применялись";
 
-        if (decimal.TryParse(rawValue, NumberStyles.Any, CultureInfo.InvariantCulture, out var decimalValue))
+        if (key is "TotalCoefficient=")
         {
-            if (key is "HKSourceCount=" or "NormativeGapCount=" or "CalculationProblemCount=")
-            {
-                return decimalValue == 0
-                    ? label + "нет"
-                    : label + ((int)decimalValue).ToString(CultureInfo.InvariantCulture);
-            }
-
-            return label + decimalValue.ToString("F2", CultureInfo.GetCultureInfo("ru-RU"));
+            if (decimal.TryParse(rawValue, NumberStyles.Any, CultureInfo.InvariantCulture, out var coefficient))
+                return label + decimalValue(coefficient);
+            return label + rawValue;
         }
+
+        // Все остальные известные ключи — целочисленные счётчики.
+        if (IntegerKeys.Contains(key, StringComparer.Ordinal) &&
+            int.TryParse(rawValue, NumberStyles.Any, CultureInfo.InvariantCulture, out var count))
+            return label + count.ToString(CultureInfo.InvariantCulture);
 
         return label + rawValue;
     }
+
+    private static string decimalValue(decimal value) => value.ToString("F2", CultureInfo.GetCultureInfo("ru-RU"));
 
     private static bool IsTechnicalValue(string value) =>
         value.Contains('-') && value.Length >= 16;
