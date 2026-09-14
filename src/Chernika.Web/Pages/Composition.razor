@@ -107,11 +107,15 @@
                             </div>
                         </div>
                         <div class="compositionHeaderActions">
+                            @if (CanEditSelectedDraft)
+                            {
+                                <button class="btn primary" @onclick="SaveCompositionDraft">Сохранить</button>
+                            }
                             @if (selectedComposition.Status == ProductCompositionStatus.Draft)
                             {
                                 @if (canSubmit)
                                 {
-                                    <button class="btn primary" @onclick="SubmitForReview">Отправить на согласование</button>
+                                    <button class="btn" @onclick="SubmitForReview">Отправить на согласование</button>
                                 }
                             }
                             else if (selectedComposition.Status == ProductCompositionStatus.OnReview)
@@ -144,6 +148,8 @@
                         </div>
                     </div>
                     <div class="panelBody">
+                        <CompositionReadinessCard Level="HKObjectLevel.EquipmentModel" ObjectId="selectedComposition.EquipmentModelId" />
+
                         @if (selectedComposition.Status != ProductCompositionStatus.Draft || !canEditDraft)
                         {
                             <div class="compositionReadOnlyBanner @ReadOnlyBannerClass">
@@ -160,16 +166,19 @@
 
                         @if (CanEditSelectedDraft)
                         {
-                            <div class="form compositionFormRow">
-                                <div class="field full-width"><label>Комментарий</label><input @bind="editComment" /></div>
-                                <div class="field"><label>Дата начала действия</label><input type="date" @bind="editEffectiveDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
-                                <div class="field"><label>Дата окончания</label><input type="date" @bind="editExpirationDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
-                                <div class="formActions">
-                                    <button class="btn primary" @onclick="SaveCompositionDraft">Сохранить</button>
+                            <div class="icSectionPanel icCompositionRequisites">
+                                <h3 class="hkc-subtitle">Реквизиты состава</h3>
+                                <div class="field field-full">
+                                    <label>Комментарий</label>
+                                    <input @bind="editComment" class="field-input" />
+                                </div>
+                                <div class="icDateGrid">
+                                    <div class="field"><label>Дата начала действия</label><input type="date" @bind="editEffectiveDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
+                                    <div class="field"><label>Дата окончания действия</label><input type="date" @bind="editExpirationDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
                                 </div>
                             </div>
 
-                            <div class="form compositionFormRow compositionAddPartRow">
+                            <div class="form compositionFormRow compositionAddPartRow icAddRow">
                                 <div class="field"><label>Новая часть</label><input @bind="inlinePartName" placeholder="Напр. Силовая установка" class="field-input" /></div>
                                 <div class="field compositionFormAction">
                                     <button class="btn" @onclick="AddPart">+ Добавить часть</button>

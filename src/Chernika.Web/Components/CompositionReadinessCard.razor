@@ -1,0 +1,64 @@
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@using Chernika.Infrastructure.Services
+@using Chernika.Web.Services
+@inject EquipmentService EquipService
+@inject CircuitDbLock DbLock
+
+@if (readiness is not null)
+{
+    <div class="icReadinessCard">
+        <div class="icReadinessMain">
+            <div class="icReadinessCode">@readiness.ObjectCode</div>
+            <div class="icReadinessName">@readiness.ObjectName</div>
+            <div class="icReadinessMessage">@readiness.Message</div>
+        </div>
+        <div class="icReadinessActions">
+            <span class="tag @(readiness.Status == CompositionReadinessStatus.Ready ? "ok" : "warn")">
+                @readiness.StatusDisplay
+            </span>
+            @if (!string.IsNullOrEmpty(readiness.HKNavigationTarget))
+            {
+                <a class="btn ghost" href="@readiness.HKNavigationTarget">@readiness.HKActionLabel</a>
+            }
+            @if (!string.IsNullOrEmpty(readiness.CompositionNavigationTarget))
+            {
+                <a class="btn ghost" href="@readiness.CompositionNavigationTarget">@readiness.CompositionActionLabel</a>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public HKObjectLevel Level { get; set; }
+    [Parameter] public Guid ObjectId { get; set; }
+
+    private CompositionNormativeReadinessDto? readiness;
+    private Guid _loadedFor = Guid.Empty;
+    private HKObjectLevel _loadedLevel;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ObjectId == Guid.Empty)
+        {
+            readiness = null;
+            return;
+        }
+        if (_loadedFor == ObjectId && _loadedLevel == Level)
+            return;
+
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                readiness = await EquipService.GetCompositionNormativeReadinessAsync(Level, ObjectId);
+            }
+            _loadedFor = ObjectId;
+            _loadedLevel = Level;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            readiness = null;
+        }
+    }
+}

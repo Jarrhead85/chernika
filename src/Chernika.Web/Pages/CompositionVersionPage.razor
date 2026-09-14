@@ -817,7 +817,7 @@
     private static string ReadinessMessage(ReadinessRow r) => r.Status switch
     {
         ReadinessRow.Ready => $"НК {r.HkVersion}",
-        ReadinessRow.Missing => "Отсутствует действующая НК",
+        ReadinessRow.Missing => "Отсутствует действующая ХК",
         ReadinessRow.Expired => $"НК {r.HkVersion} просрочена",
         ReadinessRow.FutureEffective => "Действует с будущей даты",
         ReadinessRow.ArchivedOrClosed => "НК заархивирована или закрыта",

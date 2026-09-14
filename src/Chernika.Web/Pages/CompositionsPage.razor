@@ -28,7 +28,8 @@
             <div class="compositionRegistryFilters">
                 <div class="field compositionRegistrySearch">
                     <label>Поиск</label>
-                    <input @bind="searchText" placeholder="Код, наименование или версия..." class="field-input" />
+                    <input value="@searchText" @oninput="OnSearchInput"
+                           placeholder="Код, наименование или версия..." class="field-input" />
                 </div>
                 <div class="compositionRegistryQuickFilters" aria-label="Область поиска и фильтры">
                     <button type="button"
@@ -48,7 +49,7 @@
                 </div>
                 <div class="field compositionRegistryStatus">
                     <label>Статус</label>
-                    <select @bind="statusFilter" class="field-select">
+                    <select value="@(statusFilter?.ToString() ?? "")" @onchange="OnStatusChanged" class="field-select">
                         <option value="">Все</option>
                         <option value="@ProductCompositionStatus.Draft">Черновик</option>
                         <option value="@ProductCompositionStatus.OnReview">На проверке</option>
@@ -58,14 +59,11 @@
                 </div>
                 <div class="field compositionRegistryPresence">
                     <label>Наличие состава</label>
-                    <select @bind="presence" class="field-select">
+                    <select value="@presence" @onchange="OnPresenceChanged" class="field-select">
                         <option value="@CompositionPresenceFilter.All">Все объекты</option>
                         <option value="@CompositionPresenceFilter.WithComposition">Только с составом</option>
                         <option value="@CompositionPresenceFilter.WithoutComposition">Только без состава</option>
                     </select>
-                </div>
-                <div class="compositionRegistryFilterAction">
-                    <button class="btn primary" @onclick="ApplyFilters">Применить</button>
                 </div>
             </div>
 
@@ -320,30 +318,79 @@
         page = 1;
         error = null;
 
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        _loadCts = new CancellationTokenSource();
-
-        await LoadData();
+        await ReloadNowAsync();
     }
 
     private void ToggleSearchAllLevels()
     {
         searchAllLevels = !searchAllLevels;
         page = 1;
+        ScheduleReload(200);
     }
 
     private void ToggleArchived()
     {
         showArchived = !showArchived;
         page = 1;
+        ScheduleReload(200);
     }
 
     private bool IsActiveTab(CompositionRegistryLevel l) => !IsGlobalSearch && level == l;
 
-    private async Task ApplyFilters()
+    private void OnSearchInput(ChangeEventArgs args)
     {
+        searchText = args.Value?.ToString() ?? string.Empty;
         page = 1;
+        ScheduleReload(400);
+    }
+
+    private void OnStatusChanged(ChangeEventArgs args)
+    {
+        statusFilter = string.IsNullOrEmpty(args.Value?.ToString())
+            ? null
+            : Enum.Parse<ProductCompositionStatus>(args.Value!.ToString()!);
+        page = 1;
+        ScheduleReload(200);
+    }
+
+    private void OnPresenceChanged(ChangeEventArgs args)
+    {
+        presence = Enum.Parse<CompositionPresenceFilter>(args.Value!.ToString()!);
+        page = 1;
+        ScheduleReload(200);
+    }
+
+    private void ScheduleReload(int delayMs)
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var token = _loadCts.Token;
+        _ = DebouncedReloadAsync(delayMs, token);
+    }
+
+    private async Task DebouncedReloadAsync(int delayMs, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(delayMs, token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested)
+            return;
+
+        await LoadData();
+    }
+
+    private async Task ReloadNowAsync()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
         await LoadData();
     }
 

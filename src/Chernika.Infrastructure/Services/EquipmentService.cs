@@ -2893,6 +2893,192 @@ public class EquipmentService
         return actor.BranchId;
     }
 
+    /// <summary>
+    /// Готовность объекта конструктивного состава: действующая утверждённая ХК
+    /// и актуальный утверждённый состав. Термин пользователя — «ХК».
+    /// </summary>
+    public async Task<CompositionNormativeReadinessDto> GetCompositionNormativeReadinessAsync(
+        HKObjectLevel level, Guid objectId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.HKView, ct);
+        var accessibleBranchId = await GetAccessibleCompositionBranchIdAsync(null, ct);
+        var today = _time.GetUtcNow().UtcDateTime.Date;
+
+        var (code, name, _) = await LoadObjectIdentityAsync(level, objectId, ct);
+
+        var hkQuery = _db.HKCards.AsNoTracking()
+            .Where(c => c.Status == HKCardStatus.Approved)
+            .Where(c => c.EffectiveDate == null || c.EffectiveDate.Value.Date <= today)
+            .Where(c => c.ExpirationDate == null || c.ExpirationDate.Value.Date >= today);
+        hkQuery = level switch
+        {
+            HKObjectLevel.Complex => hkQuery.Where(c => c.ComplexId == objectId),
+            HKObjectLevel.EquipmentModel => hkQuery.Where(c => c.EquipmentModelId == objectId),
+            HKObjectLevel.Aggregate => hkQuery.Where(c => c.AggregateId == objectId),
+            _ => hkQuery.Where(c => c.NodeId == objectId),
+        };
+        if (accessibleBranchId is { } branch)
+            hkQuery = hkQuery.Where(c => c.BranchId == branch);
+
+        var hk = await hkQuery
+            .OrderByDescending(c => c.ApprovedDate)
+            .ThenByDescending(c => c.CreatedAt)
+            .Select(c => new { c.Id, c.Code, c.Version })
+            .FirstOrDefaultAsync(ct);
+
+        Guid? compositionId = null;
+        string? compositionVersion = null;
+        var compositionExists = false;
+        var compositionActive = false;
+        switch (level)
+        {
+            case HKObjectLevel.Complex:
+            {
+                var any = await _db.ComplexCompositions.AsNoTracking()
+                    .Where(c => c.ComplexId == objectId)
+                    .Select(c => new { c.Id, c.Version, c.Status })
+                    .ToListAsync(ct);
+                compositionExists = any.Count > 0;
+                var current = any.FirstOrDefault(c => c.Status == ProductCompositionStatus.Approved);
+                compositionId = current?.Id;
+                compositionVersion = current?.Version;
+                compositionActive = current is not null;
+                break;
+            }
+            case HKObjectLevel.EquipmentModel:
+            {
+                var any = await _db.ProductCompositions.AsNoTracking()
+                    .Where(c => c.EquipmentModelId == objectId)
+                    .Select(c => new { c.Id, c.Version, c.Status, c.IsActive })
+                    .ToListAsync(ct);
+                compositionExists = any.Count > 0;
+                var current = any.FirstOrDefault(c => c.Status == ProductCompositionStatus.Approved && c.IsActive);
+                compositionId = current?.Id;
+                compositionVersion = current?.Version;
+                compositionActive = current is not null;
+                break;
+            }
+            case HKObjectLevel.Aggregate:
+            {
+                var any = await _db.AggregateCompositions.AsNoTracking()
+                    .Where(c => c.AggregateId == objectId)
+                    .Select(c => new { c.Id, c.Version, c.Status, c.IsActive })
+                    .ToListAsync(ct);
+                compositionExists = any.Count > 0;
+                var current = any.FirstOrDefault(c => c.Status == ProductCompositionStatus.Approved && c.IsActive);
+                compositionId = current?.Id;
+                compositionVersion = current?.Version;
+                compositionActive = current is not null;
+                break;
+            }
+        }
+
+        var status = hk is null
+            ? CompositionReadinessStatus.MissingHK
+            : compositionActive
+                ? CompositionReadinessStatus.Ready
+                : compositionExists
+                    ? CompositionReadinessStatus.NoActiveComposition
+                    : CompositionReadinessStatus.MissingComposition;
+
+        var message = status switch
+        {
+            CompositionReadinessStatus.Ready => $"ХК {hk!.Code} {hk.Version}",
+            CompositionReadinessStatus.MissingHK => "Отсутствует действующая ХК",
+            CompositionReadinessStatus.MissingComposition => "Состав не зафиксирован",
+            _ => "Нет актуальной утверждённой версии состава",
+        };
+
+        var statusDisplay = status switch
+        {
+            CompositionReadinessStatus.Ready => "Готово",
+            CompositionReadinessStatus.MissingHK => "Отсутствует",
+            _ => "Требует внимания",
+        };
+
+        string hkTarget;
+        string hkLabel;
+        if (hk is not null)
+        {
+            hkTarget = $"/хк/{hk.Id}";
+            hkLabel = "Открыть ХК";
+        }
+        else
+        {
+            hkTarget = $"/реестр-хк?search={Uri.EscapeDataString(code)}";
+            hkLabel = "Перейти в реестр ХК";
+        }
+
+        string compositionTarget;
+        string compositionLabel;
+        if (compositionId is { } compId)
+        {
+            compositionTarget = level switch
+            {
+                HKObjectLevel.Complex => $"/составы/комплексы/{objectId}/версии/{compId}",
+                HKObjectLevel.EquipmentModel => $"/составы/изделия/{objectId}/версии/{compId}",
+                _ => $"/составы/агрегаты/{objectId}/версии/{compId}",
+            };
+            compositionLabel = "Открыть состав";
+        }
+        else
+        {
+            var registryLevel = level switch
+            {
+                HKObjectLevel.Complex => "Complex",
+                HKObjectLevel.EquipmentModel => "EquipmentModel",
+                _ => "Aggregate",
+            };
+            compositionTarget = $"/составы?level={registryLevel}&search={Uri.EscapeDataString(code)}";
+            compositionLabel = "Перейти к составам";
+        }
+
+        return new CompositionNormativeReadinessDto(
+            objectId, level, code, name, status, statusDisplay, message,
+            hk?.Id, hk?.Code, hk?.Version, hkLabel, hkTarget,
+            compositionId, compositionVersion, compositionLabel, compositionTarget);
+    }
+
+    private async Task<(string Code, string Name, Guid? BranchId)> LoadObjectIdentityAsync(
+        HKObjectLevel level, Guid objectId, CancellationToken ct)
+    {
+        switch (level)
+        {
+            case HKObjectLevel.Complex:
+            {
+                var o = await _db.Complexes.AsNoTracking()
+                    .Where(x => x.Id == objectId)
+                    .Select(x => new { x.Code, x.Name })
+                    .FirstOrDefaultAsync(ct);
+                return (o?.Code ?? "", o?.Name ?? "", null);
+            }
+            case HKObjectLevel.EquipmentModel:
+            {
+                var o = await _db.EquipmentModels.AsNoTracking()
+                    .Where(x => x.Id == objectId)
+                    .Select(x => new { Code = x.Index, x.Name })
+                    .FirstOrDefaultAsync(ct);
+                return (o?.Code ?? "", o?.Name ?? "", null);
+            }
+            case HKObjectLevel.Aggregate:
+            {
+                var o = await _db.Aggregates.AsNoTracking()
+                    .Where(x => x.Id == objectId)
+                    .Select(x => new { x.Code, x.Name })
+                    .FirstOrDefaultAsync(ct);
+                return (o?.Code ?? "", o?.Name ?? "", null);
+            }
+            default:
+            {
+                var o = await _db.Nodes.AsNoTracking()
+                    .Where(x => x.Id == objectId)
+                    .Select(x => new { x.Code, x.Name })
+                    .FirstOrDefaultAsync(ct);
+                return (o?.Code ?? "", o?.Name ?? "", null);
+            }
+        }
+    }
+
     private static AggregateCompositionReadModel ToAggregateCompositionReadModel(AggregateComposition c, string? authorName) => new(
         c.Id,
         c.AggregateId,

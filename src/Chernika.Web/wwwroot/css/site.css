@@ -179,8 +179,7 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
 @media (max-width:560px){
   .profileCol{padding:10px}
 }
-.icHeaderPanel{padding:12px 14px}
-.icHeaderPanel .panelHeader{margin-bottom:0}
+.icHeaderPanel{padding:12px 14px}.icHeaderPanel .panelHeader{margin-bottom:0}
 .icCompactHeader{padding:0 0 0;border-bottom:none}
 .icCompactHeader h2{margin:0}
 .icHeaderActions{
@@ -190,6 +189,22 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
 .icExportActions,.icLifecycleActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .icPanelBodyNoPad{padding:0}
 .icRequisitesPanel .definitionRows+.definitionRows{margin-top:6px}
+.icSectionPanel .field-full{grid-column:1/-1}
+.icSectionPanel .field-full .field-input{width:100%}
+.icCompositionRequisites{display:flex;flex-direction:column;gap:10px}
+.icDateGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.icAddRow{align-items:flex-end}
+.icReadinessCard{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:rgba(9,17,34,.25)}
+[data-theme="light"] .icReadinessCard{background:rgba(255,255,255,.55)}
+.icReadinessMain{min-width:220px}
+.icReadinessCode{font-weight:700}
+.icReadinessName{color:var(--muted);font-size:12.5px}
+.icReadinessMessage{font-size:12.5px;margin-top:2px}
+.icReadinessActions{display:flex;gap:8px;flex-wrap:wrap}
+@media (max-width:560px){
+  .icDateGrid{grid-template-columns:1fr}
+}
 .icSectionPanel{margin-top:12px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:rgba(9,17,34,.25)}
 [data-theme="light"] .icSectionPanel{background:rgba(255,255,255,.55)}
 .icSectionPanel .hkc-subtitle{margin:0 0 8px}

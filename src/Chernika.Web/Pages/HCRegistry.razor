@@ -522,6 +522,8 @@
     private List<WorkTaskListItemDto> _myTasks = new();
     private HKCardRegistryListItemDto? _selectedCard;
     private HKCardRegistryQuery _query = new() { PageSize = 50 };
+
+    [Parameter, SupplyParameterFromQuery(Name = "search")] public string? SearchQuery { get; set; }
     private List<Branch> _branches = new();
     private List<HKCardRegistryAuthorDto> _authors = new();
     private bool _loading = true;
@@ -644,6 +646,9 @@
             _deletableStatuses.Add(HKCardStatus.OnReview);
         if (HasPermission(PermissionCodes.HKDeleteRevisionRequired))
             _deletableStatuses.Add(HKCardStatus.RevisionRequired);
+
+        if (!string.IsNullOrWhiteSpace(SearchQuery))
+            _query.SearchText = SearchQuery;
 
         _loadCts = new CancellationTokenSource();
         await LoadBranchesAsync();
