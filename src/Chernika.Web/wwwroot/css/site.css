@@ -201,7 +201,12 @@ img.avatar.userAvatar, .profileAvatar{object-fit:cover}
 .recalcStatus{margin-left:auto;color:var(--muted);font-weight:600;animation:none}
 .num,
 td.num,
-th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--text)}
+.icCalculationTable td.num,.icCalculationTable th.num{font-family:inherit;font-size:13px}
+.icCalcRow{cursor:pointer}
+.icCalcRow:hover{background:rgba(79,140,255,.06)}
+.icCalcChevron{display:inline-block;width:14px;color:var(--muted);transition:transform .15s ease}
+.icCalcChevron.open{transform:rotate(90deg)}
 .icCoefficientGroups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
 .icCoefficientReset{margin-left:auto}
 .icCalculationTable{width:100%;table-layout:fixed}

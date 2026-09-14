@@ -71,43 +71,50 @@
                     <tr>
                         <th>ХК узла</th>
                         <th>Сборочная единица</th>
-                        <th>Кол-во СЕ</th>
-                        <th>Кол-во узлов</th>
-                        <th>Кол-во агрегатов</th>
-                        <th>Кол-во изделий</th>
-                        <th>Норма ХК</th>
-                        <th>Базовая норма</th>
-                        <th>Расчётная норма, г</th>
+                        <th class="num">Кол-во СЕ</th>
+                        <th class="num">Кол-во узлов</th>
+                        <th class="num">Кол-во агрегатов</th>
+                        <th class="num">Кол-во изделий</th>
+                        <th class="num">Норма ХК</th>
+                        <th class="num">Базовая норма</th>
+                        <th class="num">Расчётная норма, г</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var row in Detail.Rows)
                     {
-                        <tr>
-                            <td class="mono hkc-wrap">@row.HKCardCode @row.HKCardVersion</td>
+                        var expanded = _expandedRows.Contains(row.SortOrder);
+                        <tr class="icCalcRow" @onclick="() => ToggleRow(row.SortOrder)"
+                            aria-expanded="@expanded" title="Показать состав строки">
+                            <td class="mono hkc-wrap">
+                                <span class="icCalcChevron @(expanded ? "open" : "")">▸</span>
+                                @row.HKCardCode @row.HKCardVersion
+                            </td>
                             <td class="hkc-wrap">@row.AssemblyUnitName</td>
                             <td class="num">@row.AssemblyUnitQuantity</td>
                             <td class="num">@row.NodeQuantity</td>
                             <td class="num">@row.AggregateQuantity</td>
                             <td class="num">@row.ProductQuantity</td>
-                            <td class="mono num">@FormatGram(row.SourceVolume)</td>
-                            <td class="mono num">@FormatGram(row.BaseVolume)</td>
-                            <td class="mono num">@FormatGram(row.CalculatedVolume)</td>
+                            <td class="num">@FormatGram(row.SourceVolume)</td>
+                            <td class="num">@FormatGram(row.BaseVolume)</td>
+                            <td class="num">@FormatGram(row.CalculatedVolume)</td>
                         </tr>
-                        @foreach (var material in row.Materials)
+                        @if (expanded)
                         {
-                            <tr class="hkc-material-row">
-                                <td></td>
-                                <td colspan="8">
-                                    <span class="tag @(material.Category == GsmCategory.Primary ? "ok" : "")">@CategoryName(material.Category)</span>
-                                    @material.MaterialName
-                                    @if (!string.IsNullOrWhiteSpace(material.Gost))
-                                    {
-                                        <span class="hkc-gost">ГОСТ/ТУ: @material.Gost</span>
-                                    }
-                                    — <span class="mono">@FormatGram(material.CalculatedVolume) @material.UnitOfMeasure</span>
-                                </td>
-                            </tr>
+                            @foreach (var material in row.Materials)
+                            {
+                                <tr class="hkc-material-row">
+                                    <td></td>
+                                    <td colspan="8">
+                                        <span class="tag @(material.Category == GsmCategory.Primary ? "ok" : "")">@CategoryName(material.Category)</span>
+                                        @material.MaterialName
+                                        @if (!string.IsNullOrWhiteSpace(material.Gost))
+                                        {
+                                            <span class="hkc-gost">ГОСТ/ТУ: @material.Gost</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
                         }
                     }
                 </tbody>
@@ -116,15 +123,15 @@
 
             @if (Detail.PrimaryTotals.Count > 0)
             {
-                <h3 class="hkc-subtitle">Основные марки ГСМ (альтернативы, не суммируются)</h3>
+                <h3 class="hkc-subtitle">Основные марки ГСМ</h3>
                 <table class="hk-items-table">
                     <thead>
                         <tr>
                             <th>Марка ГСМ</th>
                             <th>ГОСТ/ТУ</th>
                             <th>Ед. изм.</th>
-                            <th>Количество строк</th>
-                            <th>Значение по марке</th>
+                            <th class="num">Количество строк</th>
+                            <th class="num">Значение по марке</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -135,7 +142,7 @@
                                 <td>@total.Gost</td>
                                 <td>@total.UnitOfMeasure</td>
                                 <td class="num">@total.ItemCount</td>
-                                <td class="mono num">@FormatGram(total.TotalVolume) @total.UnitOfMeasure</td>
+                                <td class="num">@FormatGram(total.TotalVolume) @total.UnitOfMeasure</td>
                             </tr>
                         }
                     </tbody>
@@ -168,7 +175,7 @@
                         <tr>
                             <td>@coefficient.CoefficientTypeName</td>
                             <td>@coefficient.CoefficientName</td>
-                            <td class="mono num">@FormatCoefficient(coefficient.Value)</td>
+                            <td class="num">@FormatCoefficient(coefficient.Value)</td>
                         </tr>
                     }
                 </tbody>
@@ -307,6 +314,14 @@
 
 @code {
     [Parameter] public IndividualCardDetailDto Detail { get; set; } = null!;
+
+    private readonly HashSet<int> _expandedRows = new();
+
+    private void ToggleRow(int sortOrder)
+    {
+        if (!_expandedRows.Remove(sortOrder))
+            _expandedRows.Add(sortOrder);
+    }
 
     private void OpenVersionCard(Guid id) => Nav.NavigateTo($"/инд-карты/{id}");
 
