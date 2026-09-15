@@ -177,7 +177,7 @@
                             <div class="form compositionFormRow icAddRow">
                                 <div class="field"><label>Модель техники</label>
                                     <select @bind="newModelId" class="field-select">
-                                        <option value="">— Выберите модель —</option>
+                                        <option value="" disabled hidden>Выберите изделие</option>
                                         @foreach (var m in models)
                                         {
                                             <option value="@m.Id">@m.Index — @m.Name</option>

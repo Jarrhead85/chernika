@@ -296,7 +296,7 @@
             <div class="modalBody">
                 <div class="field"><label>Новый агрегат</label>
                     <select @bind="replaceWithAggregateId" class="field-select">
-                        <option value="">— Выберите агрегат —</option>
+                        <option value="" disabled hidden>Выберите агрегат</option>
                         @foreach (var a in aggregates.OrderBy(a => a.Code))
                         {
                             <option value="@a.Id">@a.Code — @a.Name</option>
@@ -868,7 +868,7 @@
             <div class="field">
                 <label>Агрегат</label>
                 <select @bind="inlineAddAggregateId" class="field-select">
-                    <option value="">— Выберите агрегат —</option>
+                    <option value="" disabled hidden>Выберите агрегат</option>
                     @foreach (var a in aggregates.OrderBy(x => x.Code))
                     {
                         <option value="@a.Id">@a.Code — @a.Name</option>

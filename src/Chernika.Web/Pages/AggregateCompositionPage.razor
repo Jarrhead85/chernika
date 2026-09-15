@@ -178,7 +178,7 @@
                             <div class="form compositionFormRow icAddRow">
                                 <div class="field"><label>Узел</label>
                                     <select @bind="newNodeId" class="field-select">
-                                        <option value="">— Выберите узел —</option>
+                                        <option value="" disabled hidden>Выберите узел</option>
                                         @foreach (var n in nodes)
                                         {
                                             <option value="@n.Id">@n.Code — @n.Name</option>
