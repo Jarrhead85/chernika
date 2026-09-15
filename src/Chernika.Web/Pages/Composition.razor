@@ -177,23 +177,27 @@
                                     <div class="field"><label>Дата окончания действия</label><input type="date" @bind="editExpirationDate" @bind:format="yyyy-MM-dd" class="field-input" /></div>
                                 </div>
                             </div>
-
-                            <div class="form compositionFormRow compositionAddPartRow icAddRow">
-                                <div class="field"><label>Новая часть</label><input @bind="inlinePartName" placeholder="Напр. Силовая установка" class="field-input" /></div>
-                                <div class="field compositionFormAction">
-                                    <button class="btn" @onclick="AddPart">+ Добавить часть</button>
-                                </div>
-                            </div>
                         }
 
-                        <div class="compositionContentPanel">
+                        <div class="icSectionPanel icCompositionUtility">
+                            @if (CanEditSelectedDraft)
+                            {
+                                <div class="compositionUtilityRow">
+                                    <div class="field"><label>Новая часть</label><input @bind="inlinePartName" placeholder="Напр. Силовая установка" class="field-input" /></div>
+                                    <div class="field compositionFormAction">
+                                        <button class="btn" @onclick="AddPart">+ Добавить часть</button>
+                                    </div>
+                                </div>
+                            }
                             <div class="compositionUtilityRow">
                                 <div class="field compositionFilterInput"><label>Фильтр агрегатов</label><input @bind="nodeFilter" placeholder="Поиск по коду или наименованию..." class="field-input" /></div>
                             </div>
+                        </div>
 
+                        <div class="compositionContentPanel">
                         @if (CanEditSelectedDraft || selectedComposition.UngroupedAggregates.Any())
                         {
-                            <div class="compositionPartPanel compositionGroup">
+                            <div class="icSectionPanel compositionGroupPanel">
                                 <div class="compositionPartHeader">
                                     <span>Без группы</span>
                                     <span class="hint">@selectedComposition.UngroupedAggregates.Count агрегатов</span>
@@ -208,7 +212,7 @@
 
                         @foreach (var part in selectedComposition.Parts.OrderBy(p => p.SortOrder))
                         {
-                            <div class="compositionPartPanel compositionGroup">
+                            <div class="icSectionPanel compositionGroupPanel">
                                 <div class="compositionPartHeader">
                                     @if (editingPartId == part.Id)
                                     {

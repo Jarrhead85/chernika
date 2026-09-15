@@ -175,7 +175,8 @@
                                 </div>
                             </div>
 
-                            <div class="form compositionFormRow icAddRow">
+                            <div class="icSectionPanel icCompositionUtility">
+                                <div class="compositionUtilityRow">
                                 <div class="field"><label>Узел</label>
                                     <select @bind="newNodeId" class="field-select">
                                         <option value="" disabled hidden>Выберите узел</option>
@@ -188,6 +189,7 @@
                                 <div class="field"><label>Количество</label><input type="number" @bind="newNodeQty" min="1" class="field-input" /></div>
                                 <div class="field compositionFormAction">
                                     <button class="btn primary" @onclick="AddNode">Добавить</button>
+                                </div>
                                 </div>
                             </div>
                         }

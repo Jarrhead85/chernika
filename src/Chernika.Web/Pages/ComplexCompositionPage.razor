@@ -174,19 +174,21 @@
                                 </div>
                             </div>
 
-                            <div class="form compositionFormRow icAddRow">
-                                <div class="field"><label>Модель техники</label>
-                                    <select @bind="newModelId" class="field-select">
-                                        <option value="" disabled hidden>Выберите изделие</option>
-                                        @foreach (var m in models)
-                                        {
-                                            <option value="@m.Id">@m.Index — @m.Name</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div class="field"><label>Количество</label><input type="number" @bind="newModelQty" min="1" class="field-input" /></div>
-                                <div class="field compositionFormAction">
-                                    <button class="btn primary" @onclick="AddItem">Добавить</button>
+                            <div class="icSectionPanel icCompositionUtility">
+                                <div class="compositionUtilityRow">
+                                    <div class="field"><label>Модель техники</label>
+                                        <select @bind="newModelId" class="field-select">
+                                            <option value="" disabled hidden>Выберите изделие</option>
+                                            @foreach (var m in models)
+                                            {
+                                                <option value="@m.Id">@m.Index — @m.Name</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="field"><label>Количество</label><input type="number" @bind="newModelQty" min="1" class="field-input" /></div>
+                                    <div class="field compositionFormAction">
+                                        <button class="btn primary" @onclick="AddItem">Добавить</button>
+                                    </div>
                                 </div>
                             </div>
                         }
