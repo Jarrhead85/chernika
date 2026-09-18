@@ -46,7 +46,7 @@
                     </div>
                     <div class="field"><label>Марка</label><input @bind="newInst.Brand" /></div>
                     <div class="field"><label>Модификация</label><input @bind="newInst.Modification" /></div>
-                    <div class="field"><label>Описание</label><textarea @bind="newInst.Description" rows="2" class="compact"></textarea></div>
+                    <div class="field"><label>Описание</label><input @bind="newInst.Description" /></div>
                     <div class="formActions">
                         <button class="btn ghost" @onclick="ResetForm">Очистить</button>
                         <button class="btn primary" @onclick="SaveInst">@(editing ? "Сохранить" : "Добавить")</button>

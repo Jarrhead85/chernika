@@ -25,18 +25,15 @@
                     <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
                     <div class="field">
                         <label>Вид техники</label>
-                        <SearchablePopoverSelect TItem="EquipmentType"
-                                                  Items="_equipmentTypes"
-                                                  Selected="_selectedEquipmentType"
-                                                  DisplayTextSelector="TypeDisplayName"
-                                                  SearchPredicate="TypeMatchesSearch"
-                                                  Placeholder="Выберите вид техники"
-                                                  EmptyText="Виды техники не найдены"
-                                                  OnSelected="OnEquipmentTypeSelectedAsync">
-                            <ItemTemplate Context="type">@TypeDisplayName(type)</ItemTemplate>
-                        </SearchablePopoverSelect>
+                        <select class="field-select" value="@(newModel.EquipmentTypeId?.ToString() ?? "")" @onchange="OnFormTypeChanged">
+                            <option value="">Не указан</option>
+                            @foreach (var t in _equipmentTypes)
+                            {
+                                <option value="@t.Id">@TypeDisplayName(t)</option>
+                            }
+                        </select>
                     </div>
-                    <div class="field"><label>Описание</label><textarea @bind="newModel.Description" rows="2" class="compact"></textarea></div>
+                    <div class="field"><label>Описание</label><input @bind="newModel.Description" /></div>
                     <div class="formActions">
                         <button class="btn ghost" @onclick="ResetForm">Очистить</button>
                         <button class="btn primary" @onclick="SaveModel">@(editing ? "Сохранить" : "Добавить")</button>
@@ -163,15 +160,13 @@
     private ElementReference _firstField;
     private bool _focusForm;
 
-    private EquipmentType? _selectedEquipmentType => _equipmentTypes.FirstOrDefault(t => t.Id == newModel.EquipmentTypeId);
     private static string TypeDisplayName(EquipmentType t) => string.IsNullOrWhiteSpace(t.TypeGroup) ? t.Name : $"{t.TypeGroup} — {t.Name}";
-    private static bool TypeMatchesSearch(EquipmentType t, string text) => ((t.TypeGroup ?? "") + " " + t.Name).Contains(text, StringComparison.OrdinalIgnoreCase);
     private static string TypeDisplay(EquipmentModel m) => m.EquipmentType != null ? TypeDisplayName(m.EquipmentType) : "—";
     private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(typeFilter) || statusFilter != 0;
 
-    private Task OnEquipmentTypeSelectedAsync(EquipmentType type)
+    private Task OnFormTypeChanged(ChangeEventArgs args)
     {
-        newModel.EquipmentTypeId = type.Id;
+        newModel.EquipmentTypeId = Guid.TryParse(args.Value?.ToString(), out var id) ? id : null;
         return Task.CompletedTask;
     }
 
