@@ -7,6 +7,7 @@ public sealed class EquipmentInstanceQuery
 
     public string? Search { get; init; }
     public Guid? EquipmentModelId { get; init; }
+    public Guid? EquipmentTypeId { get; init; }
     public bool? ShowDeleted { get; init; } = false;
     public string? SortBy { get; init; }
     public bool SortDescending { get; init; }

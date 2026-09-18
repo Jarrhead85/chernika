@@ -7,18 +7,14 @@ public record EquipmentModelDto(
     Guid Id,
     string Index,
     string Name,
-    string? Type,
-    string? Brand,
-    string? Modification,
+    Guid? EquipmentTypeId,
     string? Description);
 
 public record EquipmentModelDetailDto(
     Guid Id,
     string Index,
     string Name,
-    string? Type,
-    string? Brand,
-    string? Modification,
+    Guid? EquipmentTypeId,
     string? Description,
     IReadOnlyList<EquipmentInstanceDto> Instances,
     IReadOnlyList<ProductCompositionDto> ProductCompositions);
@@ -56,17 +52,13 @@ public record AggregateRefDto(
 public record CreateEquipmentModelRequest(
     string Index,
     string Name,
-    string? Type,
-    string? Brand,
-    string? Modification,
+    Guid? EquipmentTypeId,
     string? Description);
 
 public record UpdateEquipmentModelRequest(
     string Index,
     string Name,
-    string? Type,
-    string? Brand,
-    string? Modification,
+    Guid? EquipmentTypeId,
     string? Description);
 
 public record CreateProductCompositionRequest(
@@ -76,10 +68,10 @@ public record CreateProductCompositionRequest(
 public static class EquipmentModelMapper
 {
     public static EquipmentModelDto ToDto(EquipmentModel m) => new(
-        m.Id, m.Index, m.Name, m.Type, m.Brand, m.Modification, m.Description);
+        m.Id, m.Index, m.Name, m.EquipmentTypeId, m.Description);
 
     public static EquipmentModelDetailDto ToDetail(EquipmentModel m) => new(
-        m.Id, m.Index, m.Name, m.Type, m.Brand, m.Modification, m.Description,
+        m.Id, m.Index, m.Name, m.EquipmentTypeId, m.Description,
         m.Instances.Select(ToInstanceDto).ToList(),
         m.ProductCompositions.Select(ToCompDto).ToList());
 
@@ -114,9 +106,7 @@ public static class EquipmentModelMapper
     {
         Index = r.Index,
         Name = r.Name,
-        Type = r.Type,
-        Brand = r.Brand,
-        Modification = r.Modification,
+        EquipmentTypeId = r.EquipmentTypeId,
         Description = r.Description
     };
 
@@ -124,9 +114,7 @@ public static class EquipmentModelMapper
     {
         m.Index = r.Index;
         m.Name = r.Name;
-        m.Type = r.Type;
-        m.Brand = r.Brand;
-        m.Modification = r.Modification;
+        m.EquipmentTypeId = r.EquipmentTypeId;
         m.Description = r.Description;
     }
 }

@@ -1513,7 +1513,7 @@ public class IndividualCardService
             BranchId = draft.BranchId,
             Status = draft.Status,
             Notes = draft.Notes,
-            CreatedByUserId = await ResolveUserDisplayNameAsync(draft.CreatedByUserId, ct),
+            CreatedByUserId = draft.CreatedByUserId,
             CreatedAt = draft.CreatedAt,
             Compositions = draft.CompositionSnapshots
                 .OrderBy(cs => cs.CapturedAt).ThenBy(cs => cs.TargetObjectCode)

@@ -11,12 +11,12 @@
 @inject CircuitDbLock DbLock
 
 <div class="stack">
-    <ReferenceBreadcrumb Group="Техника" Current="Модели техники" />
+    <ReferenceBreadcrumb Group="Техника" Current="Изделия" />
     @if (canEdit)
     {
         <section class="panel">
             <div class="panelHeader">
-                <h2>@(editing ? "Редактирование модели" : "Новая модель техники")</h2>
+                <h2>@(editing ? "Редактирование изделия" : "Новое изделие")</h2>
                 <div class="hint">Модели / образцы</div>
             </div>
             <div class="panelBody">
@@ -24,7 +24,7 @@
                     <div class="field"><label>Индекс</label><input @ref="_firstField" @bind="newModel.Index" /></div>
                     <div class="field"><label>Наименование</label><input @bind="newModel.Name" /></div>
                     <div class="field">
-                        <label>Вид техники из справочника</label>
+                        <label>Вид техники</label>
                         <SearchablePopoverSelect TItem="EquipmentType"
                                                   Items="_equipmentTypes"
                                                   Selected="_selectedEquipmentType"
@@ -36,9 +36,6 @@
                             <ItemTemplate Context="type">@TypeDisplayName(type)</ItemTemplate>
                         </SearchablePopoverSelect>
                     </div>
-                    <div class="field"><label>Устаревший текстовый вид техники</label><input @bind="newModel.Type" /></div>
-                    <div class="field"><label>Марка</label><input @bind="newModel.Brand" /></div>
-                    <div class="field"><label>Модификация</label><input @bind="newModel.Modification" /></div>
                     <div class="field full-width"><label>Описание</label><input @bind="newModel.Description" /></div>
                     <div class="formActions">
                         <button class="btn ghost" @onclick="ResetForm">Очистить</button>
@@ -55,12 +52,12 @@
 
     <section class="panel">
         <div class="panelHeader">
-            <h2>Список моделей</h2>
+            <h2>Список изделий</h2>
             <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
             <div class="mbFilters">
-                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по индексу, наименованию, виду, марке..." />
+                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по индексу, наименованию, виду..." />
                 <select class="field-select" @bind="typeFilter" @bind:after="OnFiltersChanged">
                     <option value="">Все виды техники</option>
                     @foreach (var t in _equipmentTypes)
@@ -76,8 +73,6 @@
                 <select class="field-select" @bind="sortBy" @bind:after="OnFiltersChanged">
                     <option value="Index">Сортировка: индекс</option>
                     <option value="Name">Сортировка: наименование</option>
-                    <option value="Type">Сортировка: вид техники</option>
-                    <option value="Brand">Сортировка: марка</option>
                 </select>
                 <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
                 @if (HasActiveFilters)
@@ -92,14 +87,14 @@
             }
             else if (!models.Any())
             {
-                <div class="empty-state">Нет моделей техники</div>
+                <div class="empty-state">Нет изделий</div>
             }
             else
             {
                 <div class="referenceTableWrap">
                     <table>
                         <thead>
-                            <tr><th>Индекс</th><th>Наименование</th><th>Вид</th><th>Марка</th><th>Модификация</th><th>Статус</th><th>Действия</th></tr>
+                            <tr><th>Индекс</th><th>Наименование</th><th>Вид техники</th><th>Статус</th><th>Действия</th></tr>
                         </thead>
                         <tbody>
                             @foreach (var m in models)
@@ -109,8 +104,6 @@
                                     <td class="mono">@m.Index</td>
                                     <td>@m.Name</td>
                                     <td>@TypeDisplay(m)</td>
-                                    <td>@m.Brand</td>
-                                    <td>@m.Modification</td>
                                     <td><span class="tag @(m.IsDeleted ? "bad" : "ok")">@(m.IsDeleted ? "Удалён" : "Активен")</span></td>
                                     <td @ondblclick:stopPropagation="true">
                                         <div class="rowActions">
@@ -173,7 +166,7 @@
     private EquipmentType? _selectedEquipmentType => _equipmentTypes.FirstOrDefault(t => t.Id == newModel.EquipmentTypeId);
     private static string TypeDisplayName(EquipmentType t) => string.IsNullOrWhiteSpace(t.TypeGroup) ? t.Name : $"{t.TypeGroup} — {t.Name}";
     private static bool TypeMatchesSearch(EquipmentType t, string text) => ((t.TypeGroup ?? "") + " " + t.Name).Contains(text, StringComparison.OrdinalIgnoreCase);
-    private static string TypeDisplay(EquipmentModel m) => m.EquipmentType != null ? TypeDisplayName(m.EquipmentType) : (m.Type ?? "—");
+    private static string TypeDisplay(EquipmentModel m) => m.EquipmentType != null ? TypeDisplayName(m.EquipmentType) : "—";
     private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(typeFilter) || statusFilter != 0;
 
     private Task OnEquipmentTypeSelectedAsync(EquipmentType type)
@@ -253,8 +246,7 @@
     {
         newModel = new EquipmentModel
         {
-            Id = m.Id, Index = m.Index, Name = m.Name, Type = m.Type,
-            Brand = m.Brand, Modification = m.Modification, Description = m.Description,
+            Id = m.Id, Index = m.Index, Name = m.Name, Description = m.Description,
             EquipmentTypeId = m.EquipmentTypeId
         };
         editing = true; _focusForm = true; return Task.CompletedTask;

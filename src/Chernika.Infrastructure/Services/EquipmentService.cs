@@ -185,9 +185,6 @@ public class EquipmentService
             queryable = queryable.Where(m =>
                 EF.Functions.ILike(m.Index ?? "", $"%{term}%")
                 || EF.Functions.ILike(m.Name, $"%{term}%")
-                || EF.Functions.ILike(m.Type ?? "", $"%{term}%")
-                || EF.Functions.ILike(m.Brand ?? "", $"%{term}%")
-                || EF.Functions.ILike(m.Modification ?? "", $"%{term}%")
                 || EF.Functions.ILike(m.Description ?? "", $"%{term}%")
                 || (m.EquipmentType != null && (EF.Functions.ILike(m.EquipmentType.TypeGroup ?? "", $"%{term}%") || EF.Functions.ILike(m.EquipmentType.Name, $"%{term}%"))));
         }
@@ -199,12 +196,6 @@ public class EquipmentService
             "Name" => query.SortDescending
                 ? queryable.OrderByDescending(m => m.Name).ThenByDescending(m => m.Index)
                 : queryable.OrderBy(m => m.Name).ThenBy(m => m.Index),
-            "Type" => query.SortDescending
-                ? queryable.OrderByDescending(m => m.Type).ThenByDescending(m => m.Name)
-                : queryable.OrderBy(m => m.Type).ThenBy(m => m.Name),
-            "Brand" => query.SortDescending
-                ? queryable.OrderByDescending(m => m.Brand).ThenByDescending(m => m.Name)
-                : queryable.OrderBy(m => m.Brand).ThenBy(m => m.Name),
             _ => query.SortDescending
                 ? queryable.OrderByDescending(m => m.Index).ThenByDescending(m => m.Name)
                 : queryable.OrderBy(m => m.Index).ThenBy(m => m.Name),
@@ -253,9 +244,6 @@ public class EquipmentService
 
         existing.Index = updated.Index?.Trim() ?? string.Empty;
         existing.Name = updated.Name?.Trim() ?? string.Empty;
-        existing.Type = updated.Type?.Trim();
-        existing.Brand = updated.Brand?.Trim();
-        existing.Modification = updated.Modification?.Trim();
         existing.Description = updated.Description?.Trim();
         existing.EquipmentTypeId = updated.EquipmentTypeId;
 
@@ -279,9 +267,6 @@ public class EquipmentService
         await ValidateModelEquipmentTypeAsync(updated);
         model.Index = updated.Index;
         model.Name = updated.Name;
-        model.Type = updated.Type;
-        model.Brand = updated.Brand;
-        model.Modification = updated.Modification;
         model.Description = updated.Description;
         model.EquipmentTypeId = updated.EquipmentTypeId;
         await _db.SaveChangesAsync();
@@ -332,16 +317,17 @@ public class EquipmentService
     }
 
     public Task<List<EquipmentInstance>> GetInstancesAsync() =>
-        _db.EquipmentInstances.Include(i => i.EquipmentModel)
+        _db.EquipmentInstances.Include(i => i.EquipmentModel).Include(i => i.EquipmentType)
             .OrderBy(i => i.SerialNumber).ToListAsync();
 
     public Task<EquipmentInstance?> GetInstanceAsync(Guid id) =>
-        _db.EquipmentInstances.Include(i => i.EquipmentModel)
+        _db.EquipmentInstances.Include(i => i.EquipmentModel).Include(i => i.EquipmentType)
             .FirstOrDefaultAsync(i => i.Id == id);
 
     public async Task<EquipmentInstance> CreateInstanceAsync(EquipmentInstance inst)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        await NormalizeInstanceEquipmentTypeAsync(inst);
         inst.Id = Guid.NewGuid();
         _db.EquipmentInstances.Add(inst);
         await _db.SaveChangesAsync();
@@ -351,6 +337,7 @@ public class EquipmentService
     public async Task<EquipmentInstance> UpdateInstanceAsync(EquipmentInstance inst)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
+        await NormalizeInstanceEquipmentTypeAsync(inst);
         _db.EquipmentInstances.Update(inst);
         await _db.SaveChangesAsync();
         await _audit.LogAsync(new AuditWriteRequest("EquipmentInstance", inst.Id.ToString(), "Update", _currentUser.GetRequiredUserId(),
@@ -358,11 +345,40 @@ public class EquipmentService
         return inst;
     }
 
+    /// <summary>
+    /// Согласование «Вид техники» экземпляра с изделием. Оба поля необязательны:
+    /// если у изделия вид задан, а у экземпляра нет — подставляем; если заданы
+    /// оба и различаются — ошибка.
+    /// </summary>
+    private async Task NormalizeInstanceEquipmentTypeAsync(EquipmentInstance inst)
+    {
+        if (inst.EquipmentTypeId == Guid.Empty)
+            inst.EquipmentTypeId = null;
+
+        var model = await _db.EquipmentModels.AsNoTracking()
+            .Where(m => m.Id == inst.EquipmentModelId)
+            .Select(m => new { m.EquipmentTypeId })
+            .FirstOrDefaultAsync();
+        if (model is null)
+            return;
+
+        if (inst.EquipmentTypeId is null)
+        {
+            inst.EquipmentTypeId = model.EquipmentTypeId;
+            return;
+        }
+
+        if (model.EquipmentTypeId is { } modelTypeId && modelTypeId != inst.EquipmentTypeId)
+            throw new InvalidOperationException("Вид техники не соответствует изделию.");
+    }
+
     public async Task<PagedResult<EquipmentInstance>> GetInstancesPagedAsync(EquipmentInstanceQuery query, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
-        IQueryable<EquipmentInstance> queryable = _db.EquipmentInstances.Include(i => i.EquipmentModel);
+        IQueryable<EquipmentInstance> queryable = _db.EquipmentInstances
+            .Include(i => i.EquipmentModel)
+            .Include(i => i.EquipmentType);
 
         if (query.ShowDeleted == null)
         {
@@ -380,6 +396,9 @@ public class EquipmentService
         if (query.EquipmentModelId.HasValue)
             queryable = queryable.Where(i => i.EquipmentModelId == query.EquipmentModelId.Value);
 
+        if (query.EquipmentTypeId.HasValue)
+            queryable = queryable.Where(i => i.EquipmentTypeId == query.EquipmentTypeId.Value);
+
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
             var term = query.Search.Trim();
@@ -388,7 +407,10 @@ public class EquipmentService
                 || EF.Functions.ILike(i.Index, $"%{term}%")
                 || EF.Functions.ILike(i.Name, $"%{term}%")
                 || EF.Functions.ILike(i.Description ?? "", $"%{term}%")
-                || (i.EquipmentModel != null && (EF.Functions.ILike(i.EquipmentModel.Index, $"%{term}%") || EF.Functions.ILike(i.EquipmentModel.Name, $"%{term}%"))));
+                || EF.Functions.ILike(i.Brand ?? "", $"%{term}%")
+                || EF.Functions.ILike(i.Modification ?? "", $"%{term}%")
+                || (i.EquipmentModel != null && (EF.Functions.ILike(i.EquipmentModel.Index, $"%{term}%") || EF.Functions.ILike(i.EquipmentModel.Name, $"%{term}%")))
+                || (i.EquipmentType != null && (EF.Functions.ILike(i.EquipmentType.Name, $"%{term}%") || EF.Functions.ILike(i.EquipmentType.TypeGroup ?? "", $"%{term}%"))));
         }
 
         var totalCount = await queryable.CountAsync(ct);
@@ -401,6 +423,9 @@ public class EquipmentService
             "Index" => query.SortDescending
                 ? queryable.OrderByDescending(i => i.Index).ThenByDescending(i => i.Name)
                 : queryable.OrderBy(i => i.Index).ThenBy(i => i.Name),
+            "Brand" => query.SortDescending
+                ? queryable.OrderByDescending(i => i.Brand).ThenByDescending(i => i.Name)
+                : queryable.OrderBy(i => i.Brand).ThenBy(i => i.Name),
             _ => query.SortDescending
                 ? queryable.OrderByDescending(i => i.SerialNumber).ThenByDescending(i => i.Name)
                 : queryable.OrderBy(i => i.SerialNumber).ThenBy(i => i.Name),
@@ -428,7 +453,7 @@ public class EquipmentService
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var query = _db.EquipmentInstances.Include(i => i.EquipmentModel);
+        var query = _db.EquipmentInstances.Include(i => i.EquipmentModel).Include(i => i.EquipmentType);
         var total = await query.CountAsync();
         var items = await query
             .OrderBy(i => i.SerialNumber)

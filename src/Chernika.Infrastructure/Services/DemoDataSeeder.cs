@@ -106,10 +106,18 @@ public static class DemoDataSeeder
 
         var models = new List<EquipmentModel>
         {
-            new() { Id = Guid.NewGuid(), Index = "4320-31", Name = "УРАЛ-4320", Type = "Колесная техника", Brand = "Урал", Modification = "4320-31" },
-            new() { Id = Guid.NewGuid(), Index = "5350", Name = "КАМАЗ-5350", Type = "Колесная техника", Brand = "КамАЗ", Modification = "5350" },
+            new() { Id = Guid.NewGuid(), Index = "4320-31", Name = "УРАЛ-4320" },
+            new() { Id = Guid.NewGuid(), Index = "5350", Name = "КАМАЗ-5350" },
         };
         db.EquipmentModels.AddRange(models);
+
+        // Марка/модификация теперь относятся к экземплярам (единицам учёта).
+        var instances = new List<EquipmentInstance>
+        {
+            new() { Id = Guid.NewGuid(), EquipmentModelId = models[0].Id, SerialNumber = "4320-31-001", Index = "4320-31", Name = "УРАЛ-4320", Brand = "Урал", Modification = "4320-31" },
+            new() { Id = Guid.NewGuid(), EquipmentModelId = models[1].Id, SerialNumber = "5350-001", Index = "5350", Name = "КАМАЗ-5350", Brand = "КамАЗ", Modification = "5350" },
+        };
+        db.EquipmentInstances.AddRange(instances);
 
         SeedCoefficientTypes(db);
         await db.SaveChangesAsync();

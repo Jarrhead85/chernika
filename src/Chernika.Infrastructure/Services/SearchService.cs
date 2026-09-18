@@ -100,12 +100,11 @@ public class SearchService
         }
 
         var models = await _db.EquipmentModels
-            .Include(m => m.ProductCompositions).ThenInclude(pc => pc.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
+            .Include(m => m.EquipmentType)
             .Where(m => EF.Functions.ILike(m.Index, qPattern) ||
                         EF.Functions.ILike(m.Name, qPattern) ||
-                        EF.Functions.ILike(m.Type ?? "", qPattern) ||
-                        EF.Functions.ILike(m.Brand ?? "", qPattern) ||
-                        EF.Functions.ILike(m.Modification ?? "", qPattern))
+                        (m.EquipmentType != null && (EF.Functions.ILike(m.EquipmentType.Name, qPattern) ||
+                                                     EF.Functions.ILike(m.EquipmentType.TypeGroup ?? "", qPattern))))
             .Take(maxResults)
             .ToListAsync();
 
@@ -114,20 +113,27 @@ public class SearchService
             results.Add(new SearchResultItem
             {
                 EntityType = "EquipmentModel",
-                EntityTypeDisplay = "Модель техники",
+                EntityTypeDisplay = "Изделие",
                 EntityId = m.Id,
                 Title = $"{m.Index} — {m.Name}",
-                Subtitle = $"{m.Brand} / {m.Type}",
+                Subtitle = m.EquipmentType is null
+                    ? null
+                    : string.IsNullOrEmpty(m.EquipmentType.TypeGroup)
+                        ? m.EquipmentType.Name
+                        : $"{m.EquipmentType.TypeGroup} / {m.EquipmentType.Name}",
                 ContextInfo = "",
                 Url = "/справочник-моделей"
             });
         }
 
         var instances = await _db.EquipmentInstances
-            .Include(i => i.EquipmentModel).ThenInclude(m => m.ProductCompositions).ThenInclude(pc => pc.Parts).ThenInclude(p => p.Aggregates).ThenInclude(a => a.Aggregate)
+            .Include(i => i.EquipmentModel)
+            .Include(i => i.EquipmentType)
             .Where(i => EF.Functions.ILike(i.SerialNumber, qPattern) ||
                         EF.Functions.ILike(i.Index, qPattern) ||
                         EF.Functions.ILike(i.Name, qPattern) ||
+                        EF.Functions.ILike(i.Brand ?? "", qPattern) ||
+                        EF.Functions.ILike(i.Modification ?? "", qPattern) ||
                         EF.Functions.ILike(i.Description ?? "", qPattern))
             .Take(maxResults)
             .ToListAsync();
@@ -137,12 +143,12 @@ public class SearchService
             results.Add(new SearchResultItem
             {
                 EntityType = "EquipmentInstance",
-                EntityTypeDisplay = "Экземпляр техники",
+                EntityTypeDisplay = "Экземпляр изделия",
                 EntityId = i.Id,
                 Title = $"{i.SerialNumber} — {i.Name}",
-                Subtitle = i.EquipmentModel?.Index ?? "",
+                Subtitle = BuildInstanceSubtitle(i),
                 ContextInfo = "",
-                Url = $"/экземпляры/{i.Id}"
+                Url = "/справочник-экземпляров"
             });
         }
 
@@ -498,23 +504,27 @@ public class SearchService
                     .Where(m => !hasText ||
                                 EF.Functions.ILike(m.Index, pattern, @"\") ||
                                 EF.Functions.ILike(m.Name, pattern, @"\") ||
-                                EF.Functions.ILike(m.Type ?? "", pattern, @"\") ||
-                                EF.Functions.ILike(m.Brand ?? "", pattern, @"\") ||
-                                EF.Functions.ILike(m.Modification ?? "", pattern, @"\") ||
+                                (m.EquipmentType != null && (EF.Functions.ILike(m.EquipmentType.Name, pattern, @"\") ||
+                                                             EF.Functions.ILike(m.EquipmentType.TypeGroup ?? "", pattern, @"\"))) ||
                                 (objModelIds.Count > 0 && objModelIds.Contains(m.Id)))
                     .OrderBy(m => m.Index)
                     .Take(ExtendedLimit)
                     .Select(m => new
                     {
-                        m.Id, m.Index, m.Name, m.Brand, m.Type,
+                        m.Id, m.Index, m.Name,
+                        TypeName = m.EquipmentType != null ? m.EquipmentType.Name : null,
+                        TypeGroup = m.EquipmentType != null ? m.EquipmentType.TypeGroup : null,
                         IsAnchor = objModelIds.Contains(m.Id),
                     })
                     .ToListAsync(ct);
                 foreach (var m in rows)
                 {
+                    var typeDisplay = m.TypeName is null
+                        ? null
+                        : string.IsNullOrEmpty(m.TypeGroup) ? m.TypeName : $"{m.TypeGroup} / {m.TypeName}";
                     candidates.Add(new CandidateRow(
                         "EquipmentModel", m.Id, $"{m.Index} — {m.Name}",
-                        string.IsNullOrEmpty(m.Brand) ? m.Type : $"{m.Brand} / {m.Type}",
+                        typeDisplay,
                         m.Index, null, "EquipmentModel", null, null, null,
                         m.IsAnchor ? "Совпадение: нормативная ХК изделия" : "Совпадение: реквизиты изделия",
                         m.IsAnchor ? 1 : 0));
@@ -610,22 +620,34 @@ public class SearchService
                                 EF.Functions.ILike(i.SerialNumber, pattern, @"\") ||
                                 EF.Functions.ILike(i.Index, pattern, @"\") ||
                                 EF.Functions.ILike(i.Name, pattern, @"\") ||
-                                EF.Functions.ILike(i.Description ?? "", pattern, @"\"))
+                                EF.Functions.ILike(i.Brand ?? "", pattern, @"\") ||
+                                EF.Functions.ILike(i.Modification ?? "", pattern, @"\") ||
+                                EF.Functions.ILike(i.Description ?? "", pattern, @"\") ||
+                                (i.EquipmentType != null && (EF.Functions.ILike(i.EquipmentType.Name, pattern, @"\") ||
+                                                             EF.Functions.ILike(i.EquipmentType.TypeGroup ?? "", pattern, @"\"))))
                     .OrderBy(i => i.SerialNumber)
                     .Take(ExtendedLimit)
                     .Select(i => new
                     {
-                        i.Id, i.SerialNumber, i.Name, i.Description,
-                        ModelIndex = i.EquipmentModel.Index,
+                        i.Id, i.SerialNumber, i.Name, i.Description, i.Brand, i.Modification,
+                        ModelIndex = i.EquipmentModel != null ? i.EquipmentModel.Index : null,
+                        TypeName = i.EquipmentType != null ? i.EquipmentType.Name : null,
+                        TypeGroup = i.EquipmentType != null ? i.EquipmentType.TypeGroup : null,
                         IsAnchor = objModelIds.Contains(i.EquipmentModelId),
                     })
                     .ToListAsync(ct);
                 foreach (var i in rows)
                 {
+                    var subtitleParts = new List<string>();
+                    if (i.TypeName is not null)
+                        subtitleParts.Add(string.IsNullOrEmpty(i.TypeGroup) ? i.TypeName : $"{i.TypeGroup} / {i.TypeName}");
+                    if (!string.IsNullOrEmpty(i.Brand))
+                        subtitleParts.Add(string.IsNullOrEmpty(i.Modification) ? i.Brand : $"{i.Brand} {i.Modification}");
+                    var subtitle = subtitleParts.Count > 0 ? string.Join(" · ", subtitleParts) : i.ModelIndex;
                     candidates.Add(new CandidateRow(
-                        "EquipmentInstance", i.Id, $"{i.SerialNumber} — {i.Name}", i.Description,
+                        "EquipmentInstance", i.Id, $"{i.SerialNumber} — {i.Name}", subtitle,
                         i.SerialNumber, null, "EquipmentInstance", null, null, null,
-                        i.IsAnchor ? "Совпадение: модель из найденной ХК" : "Совпадение: реквизиты экземпляра",
+                        i.IsAnchor ? "Совпадение: изделие из найденной ХК" : "Совпадение: реквизиты экземпляра",
                         i.IsAnchor ? 1 : 0));
                 }
             }
@@ -901,6 +923,23 @@ public class SearchService
         if (!isSystemAdmin && branch is null)
             throw new UnauthorizedAccessException("У пользователя не указан филиал.");
         return new ActorScope(isSystemAdmin, branch, userId.ToString());
+    }
+
+    /// <summary>Короткое описание экземпляра: вид техники и марка/модификация.</summary>
+    private static string? BuildInstanceSubtitle(EquipmentInstance instance)
+    {
+        var parts = new List<string>();
+        if (instance.EquipmentType is { } type)
+        {
+            parts.Add(string.IsNullOrEmpty(type.TypeGroup) ? type.Name : $"{type.TypeGroup} / {type.Name}");
+        }
+        if (!string.IsNullOrEmpty(instance.Brand))
+        {
+            parts.Add(string.IsNullOrEmpty(instance.Modification)
+                ? instance.Brand
+                : $"{instance.Brand} {instance.Modification}");
+        }
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
     }
 
     private static string DisplayName(string entityType) =>

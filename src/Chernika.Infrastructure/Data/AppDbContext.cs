@@ -138,9 +138,6 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(x => x.Id);
             e.Property(x => x.Index).HasMaxLength(100).IsRequired();
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
-            e.Property(x => x.Type).HasMaxLength(128);
-            e.Property(x => x.Brand).HasMaxLength(128);
-            e.Property(x => x.Modification).HasMaxLength(128);
             e.HasOne(x => x.EquipmentType).WithMany().HasForeignKey(x => x.EquipmentTypeId)
                 .OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(x => !x.IsDeleted);
@@ -161,7 +158,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.SerialNumber).HasMaxLength(100).IsRequired();
             e.Property(x => x.Index).HasMaxLength(100).IsRequired();
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Brand).HasMaxLength(128);
+            e.Property(x => x.Modification).HasMaxLength(128);
             e.HasOne(x => x.EquipmentModel).WithMany(x => x.Instances).HasForeignKey(x => x.EquipmentModelId);
+            e.HasOne(x => x.EquipmentType).WithMany().HasForeignKey(x => x.EquipmentTypeId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(x => x.EquipmentTypeId).HasDatabaseName("IX_EquipmentInstances_EquipmentTypeId");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 
