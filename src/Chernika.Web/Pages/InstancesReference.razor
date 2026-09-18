@@ -10,12 +10,12 @@
 @inject CircuitDbLock DbLock
 
 <div class="stack">
-    <ReferenceBreadcrumb Group="Техника" Current="Экземпляры техники" />
+    <ReferenceBreadcrumb Group="Техника" Current="Экземпляры изделий" />
     @if (canEdit)
     {
         <section class="panel">
             <div class="panelHeader">
-                <h2>@(editing ? "Редактирование экземпляра" : "Новый экземпляр техники")</h2>
+                <h2>@(editing ? "Редактирование экземпляра" : "Новый экземпляр изделия")</h2>
                 <div class="hint">Конкретные единицы</div>
             </div>
             <div class="panelBody">
@@ -24,15 +24,28 @@
                     <div class="field"><label>Индекс</label><input @bind="newInst.Index" /></div>
                     <div class="field"><label>Наименование</label><input @bind="newInst.Name" /></div>
                     <div class="field">
-                        <label>Модель</label>
-                        <select @bind="newInst.EquipmentModelId" class="field-select">
-                            <option value="">— Выберите —</option>
-                            @foreach (var m in models)
+                        <label>Вид техники</label>
+                        <select value="@(_newInstTypeId?.ToString() ?? "")" @onchange="OnFormTypeChanged" class="field-select">
+                            <option value="">Не указан</option>
+                            @foreach (var t in _equipmentTypes)
+                            {
+                                <option value="@t.Id">@TypeDisplayName(t)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Изделие</label>
+                        <select value="@(newInst.EquipmentModelId == Guid.Empty ? "" : newInst.EquipmentModelId.ToString())"
+                                @onchange="OnFormModelChanged" class="field-select">
+                            <option value="" disabled hidden>Выберите изделие</option>
+                            @foreach (var m in FormModelOptions)
                             {
                                 <option value="@m.Id">@m.Index — @m.Name</option>
                             }
                         </select>
                     </div>
+                    <div class="field"><label>Марка</label><input @bind="newInst.Brand" /></div>
+                    <div class="field"><label>Модификация</label><input @bind="newInst.Modification" /></div>
                     <div class="field full-width"><label>Описание</label><input @bind="newInst.Description" /></div>
                     <div class="formActions">
                         <button class="btn ghost" @onclick="ResetForm">Очистить</button>
@@ -54,9 +67,16 @@
         </div>
         <div class="panelBody">
             <div class="mbFilters">
-                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по зав. №, индексу, наименованию, модели..." />
+                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по зав. №, индексу, наименованию, марке, виду..." />
+                <select class="field-select" @bind="typeFilter" @bind:after="OnFiltersChanged">
+                    <option value="">Все виды техники</option>
+                    @foreach (var t in _equipmentTypes)
+                    {
+                        <option value="@t.Id">@TypeDisplayName(t)</option>
+                    }
+                </select>
                 <select class="field-select" @bind="modelFilter" @bind:after="OnFiltersChanged">
-                    <option value="">Все модели</option>
+                    <option value="">Все изделия</option>
                     @foreach (var m in models)
                     {
                         <option value="@m.Id">@m.Index — @m.Name</option>
@@ -71,6 +91,7 @@
                     <option value="SerialNumber">Сортировка: зав. №</option>
                     <option value="Name">Сортировка: наименование</option>
                     <option value="Index">Сортировка: индекс</option>
+                    <option value="Brand">Сортировка: марка</option>
                 </select>
                 <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
                 @if (HasActiveFilters)
@@ -85,14 +106,14 @@
             }
             else if (!instances.Any())
             {
-                <div class="empty-state">Нет экземпляров техники</div>
+                <div class="empty-state">Нет экземпляров изделий</div>
             }
             else
             {
                 <div class="referenceTableWrap">
                     <table>
                         <thead>
-                            <tr><th>Зав. №</th><th>Индекс</th><th>Наименование</th><th>Модель</th><th>Статус</th><th>Действия</th></tr>
+                            <tr><th>Зав. №</th><th>Индекс</th><th>Наименование</th><th>Вид техники</th><th>Изделие</th><th>Марка</th><th>Модификация</th><th>Статус</th><th>Действия</th></tr>
                         </thead>
                         <tbody>
                             @foreach (var i in instances)
@@ -102,7 +123,10 @@
                                     <td class="mono">@i.SerialNumber</td>
                                     <td>@i.Index</td>
                                     <td>@i.Name</td>
+                                    <td>@(i.EquipmentType is null ? "—" : TypeDisplayName(i.EquipmentType))</td>
                                     <td>@i.EquipmentModel?.Name</td>
+                                    <td>@i.Brand</td>
+                                    <td>@i.Modification</td>
                                     <td><span class="tag @(i.IsDeleted ? "bad" : "ok")">@(i.IsDeleted ? "Удалён" : "Активен")</span></td>
                                     <td @ondblclick:stopPropagation="true">
                                         <div class="rowActions">
@@ -144,12 +168,14 @@
 @code {
     private List<EquipmentInstance> instances = new();
     private List<EquipmentModel> models = new();
+    private List<EquipmentType> _equipmentTypes = new();
     private EquipmentInstance newInst = new();
     private bool editing;
     private bool loading = true;
     private bool canEdit;
     private string? errorMessage;
     private string search = "";
+    private string? typeFilter;
     private string? modelFilter;
     private int statusFilter;
     private string sortBy = "SerialNumber";
@@ -161,7 +187,20 @@
     private ElementReference _firstField;
     private bool _focusForm;
 
-    private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(modelFilter) || statusFilter != 0;
+    private Guid? _newInstTypeId => newInst.EquipmentTypeId;
+
+    /// <summary>Изделия для формы: при выбранном виде — только изделия этого вида.</summary>
+    private IEnumerable<EquipmentModel> FormModelOptions =>
+        newInst.EquipmentTypeId is { } typeId
+            ? models.Where(m => m.EquipmentTypeId == typeId)
+            : models;
+
+    private bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(search) || !string.IsNullOrEmpty(typeFilter) ||
+        !string.IsNullOrEmpty(modelFilter) || statusFilter != 0;
+
+    private static string TypeDisplayName(EquipmentType t) =>
+        string.IsNullOrWhiteSpace(t.TypeGroup) ? t.Name : $"{t.TypeGroup} — {t.Name}";
 
     protected override async Task OnInitializedAsync()
     {
@@ -169,6 +208,8 @@
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
         models = await EquipService.GetModelsAsync();
+        try { _equipmentTypes = await EquipService.GetActiveEquipmentTypesAsync(); }
+        catch { _equipmentTypes = new List<EquipmentType>(); }
         await ReloadAsync();
     }
 
@@ -178,6 +219,33 @@
     }
 
     private async Task OnFiltersChanged() { currentPage = 1; await ReloadAsync(); }
+
+    /// <summary>Выбор вида техники фильтрует изделия и подтягивает вид у выбранного изделия.</summary>
+    private Task OnFormTypeChanged(ChangeEventArgs args)
+    {
+        newInst.EquipmentTypeId = Guid.TryParse(args.Value?.ToString(), out var id) ? id : null;
+
+        // Если выбранное изделие не относится к выбранному виду — сбрасываем его.
+        if (newInst.EquipmentModelId != Guid.Empty)
+        {
+            var model = models.FirstOrDefault(m => m.Id == newInst.EquipmentModelId);
+            if (model is null || (newInst.EquipmentTypeId is { } t && model.EquipmentTypeId != t))
+                newInst.EquipmentModelId = Guid.Empty;
+        }
+        return Task.CompletedTask;
+    }
+
+    private Task OnFormModelChanged(ChangeEventArgs args)
+    {
+        newInst.EquipmentModelId = Guid.TryParse(args.Value?.ToString(), out var id) ? id : Guid.Empty;
+        if (newInst.EquipmentModelId != Guid.Empty)
+        {
+            var model = models.FirstOrDefault(m => m.Id == newInst.EquipmentModelId);
+            if (model?.EquipmentTypeId is { } modelTypeId)
+                newInst.EquipmentTypeId = modelTypeId;
+        }
+        return Task.CompletedTask;
+    }
 
     private async Task ReloadAsync()
     {
@@ -193,6 +261,7 @@
                 Page = currentPage,
                 Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
                 EquipmentModelId = string.IsNullOrEmpty(modelFilter) ? null : Guid.Parse(modelFilter),
+                EquipmentTypeId = string.IsNullOrEmpty(typeFilter) ? null : Guid.Parse(typeFilter),
                 ShowDeleted = showDeleted,
                 SortBy = sortBy,
                 SortDescending = sortDesc,
@@ -210,6 +279,7 @@
     {
         errorMessage = null;
         if (string.IsNullOrWhiteSpace(newInst.SerialNumber)) { errorMessage = "Укажите заводской номер."; return; }
+        if (newInst.EquipmentModelId == Guid.Empty) { errorMessage = "Выберите изделие."; return; }
         try
         {
             if (editing) await EquipService.UpdateInstanceAsync(newInst); else await EquipService.CreateInstanceAsync(newInst);
@@ -229,7 +299,8 @@
         newInst = new EquipmentInstance
         {
             Id = i.Id, SerialNumber = i.SerialNumber, Index = i.Index, Name = i.Name,
-            EquipmentModelId = i.EquipmentModelId, Description = i.Description
+            EquipmentModelId = i.EquipmentModelId, EquipmentTypeId = i.EquipmentTypeId,
+            Brand = i.Brand, Modification = i.Modification, Description = i.Description
         };
         editing = true; _focusForm = true; return Task.CompletedTask;
     }
@@ -256,7 +327,7 @@
 
     async Task ResetFilters()
     {
-        search = ""; modelFilter = null; statusFilter = 0; sortBy = "SerialNumber"; sortDesc = false; currentPage = 1;
+        search = ""; typeFilter = null; modelFilter = null; statusFilter = 0; sortBy = "SerialNumber"; sortDesc = false; currentPage = 1;
         await ReloadAsync();
     }
 

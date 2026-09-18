@@ -196,6 +196,27 @@
 
     private sealed record ObjectOption(Guid Id, string Code, string Name, string ModelDisplay);
 
+    /// <summary>Описание экземпляра: вид техники, изделие и марка/модификация.</summary>
+    private static string BuildInstanceDisplay(EquipmentInstance instance)
+    {
+        var parts = new List<string>();
+        if (instance.EquipmentType is { } type)
+        {
+            parts.Add(string.IsNullOrWhiteSpace(type.TypeGroup) ? type.Name : $"{type.TypeGroup} — {type.Name}");
+        }
+        if (instance.EquipmentModel is { } model)
+        {
+            parts.Add($"{model.Index} — {model.Name}");
+        }
+        if (!string.IsNullOrWhiteSpace(instance.Brand))
+        {
+            parts.Add(string.IsNullOrWhiteSpace(instance.Modification)
+                ? instance.Brand
+                : $"{instance.Brand} {instance.Modification}");
+        }
+        return string.Join(" · ", parts);
+    }
+
     private static readonly List<(IndividualCardObjectLevel Level, string Label)> LevelOptions = new()
     {
         (IndividualCardObjectLevel.Complex, "Комплекс"),
@@ -329,7 +350,7 @@
                     var page = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery { Page = _objectPage, PageSize = ObjectPageSize, Search = search });
                     _objects = page.Items.Select(o => new ObjectOption(
                         o.Id, o.SerialNumber, o.Name,
-                        o.EquipmentModel is null ? string.Empty : $"{o.EquipmentModel.Index} — {o.EquipmentModel.Name}")).ToList();
+                        BuildInstanceDisplay(o))).ToList();
                     _totalObjects = page.TotalCount;
                     break;
                 }
