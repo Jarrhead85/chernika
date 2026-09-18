@@ -102,6 +102,9 @@
                                 <span class="mono">Версия @selectedComposition.Version</span>
                                 <CompositionStatusBadge Status="@selectedComposition.Status" />
                             </div>
+                            <div class="compositionVersionLine compositionReadinessLine">
+                                <CompositionReadinessCard Level="HKObjectLevel.Aggregate" ObjectId="selectedComposition.AggregateId" StatusOnly="true" />
+                            </div>
                         </div>
                         <div class="compositionHeaderActions">
                             @if (CanEditSelectedDraft)
@@ -145,8 +148,6 @@
                         </div>
                     </div>
                     <div class="panelBody">
-                        <CompositionReadinessCard Level="HKObjectLevel.Aggregate" ObjectId="selectedComposition.AggregateId" />
-
                         @if (selectedComposition.Status != ProductCompositionStatus.Draft || !canEditDraft)
                         {
                             <div class="compositionReadOnlyBanner @ReadOnlyBannerClass">

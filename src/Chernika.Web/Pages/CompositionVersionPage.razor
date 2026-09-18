@@ -337,6 +337,20 @@
                                         </div>
                                         <div class="sub">@r.ChildName</div>
                                         <div class="sub">@ReadinessMessage(r)</div>
+                                        @if (readinessNav.TryGetValue(r.ChildId, out var nav) &&
+                                             (!string.IsNullOrEmpty(nav.HKNavigationTarget) || !string.IsNullOrEmpty(nav.CompositionNavigationTarget)))
+                                        {
+                                            <div class="rowCardActions">
+                                                @if (!string.IsNullOrEmpty(nav.HKNavigationTarget))
+                                                {
+                                                    <a class="linkBtn" href="@nav.HKNavigationTarget">@nav.HKActionLabel</a>
+                                                }
+                                                @if (!string.IsNullOrEmpty(nav.CompositionNavigationTarget))
+                                                {
+                                                    <a class="linkBtn" href="@nav.CompositionNavigationTarget">@nav.CompositionActionLabel</a>
+                                                }
+                                            </div>
+                                        }
                                     </div>
                                 }
                             </div>
@@ -431,6 +445,8 @@
     private string? objectName;
     private readonly List<CompositionVersionSummary> versions = new();
     private List<ReadinessRow> readinessRows = new();
+    private readonly Dictionary<Guid, CompositionNormativeReadinessDto> readinessNav = new();
+    private bool canViewHK;
     private List<WorkTask> linkedTasks = new();
     private List<AuditLogEntity> history = new();
 
@@ -507,6 +523,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canViewHK = await Perms.HasPermissionAsync(userId!, PermissionCodes.HKView);
         canCreateVersion = Level switch
         {
             0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion),
@@ -588,6 +605,7 @@
                     readinessRows = (await EquipService.EvaluateReadinessAsync(Level, compositionId, ct)).ToList();
                     linkedTasks = (await EquipService.GetCompositionTasksAsync(Level, compositionId, ct)).ToList();
                     history = (await EquipService.GetCompositionHistoryAsync(Level, compositionId, ct)).ToList();
+                    await LoadReadinessNavigationAsync(ct);
                 }
             }
             catch (Exception ex)
@@ -595,6 +613,39 @@
                 error = $"Ошибка загрузки: {ex.Message}";
             }
             loading = false;
+        }
+    }
+
+    /// <summary>Уровень дочерних объектов текущего состава.</summary>
+    private HKObjectLevel ReadinessChildLevel => Level switch
+    {
+        0 => HKObjectLevel.EquipmentModel,
+        1 => HKObjectLevel.Aggregate,
+        _ => HKObjectLevel.Node
+    };
+
+    /// <summary>
+    /// Для каждой строки нормативной готовности строит переходы к ХК и составу
+    /// дочернего объекта (та же логика, что была в карточке готовности редактора).
+    /// </summary>
+    private async Task LoadReadinessNavigationAsync(CancellationToken ct)
+    {
+        readinessNav.Clear();
+        if (!canViewHK || readinessRows.Count == 0)
+            return;
+
+        var childLevel = ReadinessChildLevel;
+        foreach (var row in readinessRows)
+        {
+            try
+            {
+                readinessNav[row.ChildId] =
+                    await EquipService.GetCompositionNormativeReadinessAsync(childLevel, row.ChildId, ct);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Нет доступа к данным другого филиала — переходы не показываем.
+            }
         }
     }
 

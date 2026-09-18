@@ -7,30 +7,40 @@
 
 @if (readiness is not null)
 {
-    <div class="icReadinessCard">
-        <div class="icReadinessMain">
-            <div class="icReadinessTitle">Нормативная готовность</div>
-            @if (ShowObjectIdentity)
-            {
-                <div class="icReadinessCode">@readiness.ObjectCode</div>
-                <div class="icReadinessName">@readiness.ObjectName</div>
-            }
-            <div class="icReadinessMessage">@readiness.Message</div>
+    if (StatusOnly)
+    {
+        <span class="compositionReadinessStatus">
+            <span class="compositionReadinessLabel">Нормативная готовность</span>
+            <span class="auditAction @ReadinessBadgeClass">@readiness.StatusDisplay</span>
+        </span>
+    }
+    else
+    {
+        <div class="icReadinessCard">
+            <div class="icReadinessMain">
+                <div class="icReadinessTitle">Нормативная готовность</div>
+                @if (ShowObjectIdentity)
+                {
+                    <div class="icReadinessCode">@readiness.ObjectCode</div>
+                    <div class="icReadinessName">@readiness.ObjectName</div>
+                }
+                <div class="icReadinessMessage">@readiness.Message</div>
+            </div>
+            <div class="icReadinessActions">
+                <span class="tag @(readiness.Status == CompositionReadinessStatus.Ready ? "ok" : "warn")">
+                    @readiness.StatusDisplay
+                </span>
+                @if (!string.IsNullOrEmpty(readiness.HKNavigationTarget))
+                {
+                    <a class="btn ghost" href="@readiness.HKNavigationTarget">@readiness.HKActionLabel</a>
+                }
+                @if (!string.IsNullOrEmpty(readiness.CompositionNavigationTarget))
+                {
+                    <a class="btn ghost" href="@readiness.CompositionNavigationTarget">@readiness.CompositionActionLabel</a>
+                }
+            </div>
         </div>
-        <div class="icReadinessActions">
-            <span class="tag @(readiness.Status == CompositionReadinessStatus.Ready ? "ok" : "warn")">
-                @readiness.StatusDisplay
-            </span>
-            @if (!string.IsNullOrEmpty(readiness.HKNavigationTarget))
-            {
-                <a class="btn ghost" href="@readiness.HKNavigationTarget">@readiness.HKActionLabel</a>
-            }
-            @if (!string.IsNullOrEmpty(readiness.CompositionNavigationTarget))
-            {
-                <a class="btn ghost" href="@readiness.CompositionNavigationTarget">@readiness.CompositionActionLabel</a>
-            }
-        </div>
-    </div>
+    }
 }
 
 @code {
@@ -42,6 +52,15 @@
     /// поэтому по умолчанию карточка показывает только нормативное состояние.
     /// </summary>
     [Parameter] public bool ShowObjectIdentity { get; set; }
+
+    /// <summary>
+    /// Компактный режим для шапки редактора: показывает только статус
+    /// нормативной готовности (без реквизитов, сообщения и кнопок перехода).
+    /// </summary>
+    [Parameter] public bool StatusOnly { get; set; }
+
+    private string ReadinessBadgeClass =>
+        readiness?.Status == CompositionReadinessStatus.Ready ? "auditAction--success" : "auditAction--warning";
 
     private CompositionNormativeReadinessDto? readiness;
     private Guid _loadedFor = Guid.Empty;
