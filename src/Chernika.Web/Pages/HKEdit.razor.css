@@ -95,7 +95,10 @@
     border-left: 1px solid var(--line);
 }
 
-.hk-letter-numbers .fieldInput {
+/* ::deep: InputText рендерит <input> вне scope-атрибута компонента,
+   без этого правила не применяются и глобальный .field input рисует
+   собственную рамку — на стыке «Входящий/Исходящий» рамки накладываются. */
+.hk-letter-numbers ::deep .fieldInput {
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -105,18 +108,18 @@
     box-shadow: none;
 }
 
-.hk-letter-numbers .fieldInput:focus {
+.hk-letter-numbers ::deep .fieldInput:focus {
     position: relative;
     z-index: 1;
     outline: none;
     box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-.hk-letter-numbers .hk-letter-number-part:first-child .fieldInput:focus {
+.hk-letter-numbers ::deep .hk-letter-number-part:first-child .fieldInput:focus {
     border-radius: var(--radius2, 10px) 0 0 var(--radius2, 10px);
 }
 
-.hk-letter-numbers .hk-letter-number-part:last-child .fieldInput:focus {
+.hk-letter-numbers ::deep .hk-letter-number-part:last-child .fieldInput:focus {
     border-radius: 0 var(--radius2, 10px) var(--radius2, 10px) 0;
 }
 

@@ -1168,39 +1168,64 @@ public class HKCardService
                 "Откройте, продолжите или удалите существующую карточку.");
     }
 
-    private async Task<string> ResolveObjectCodeAsync(HKCard card)
+    private Task<string> ResolveObjectCodeAsync(HKCard card) => card.ObjectLevel switch
     {
-        var code = card.ObjectLevel switch
+        Domain.Enums.HKObjectLevel.Node => ResolveObjectCodeAsync(Domain.Enums.HKObjectLevel.Node, card.NodeId ?? Guid.Empty),
+        Domain.Enums.HKObjectLevel.Aggregate => ResolveObjectCodeAsync(Domain.Enums.HKObjectLevel.Aggregate, card.AggregateId ?? Guid.Empty),
+        Domain.Enums.HKObjectLevel.EquipmentModel => ResolveObjectCodeAsync(Domain.Enums.HKObjectLevel.EquipmentModel, card.EquipmentModelId ?? Guid.Empty),
+        Domain.Enums.HKObjectLevel.Complex => ResolveObjectCodeAsync(Domain.Enums.HKObjectLevel.Complex, card.ComplexId ?? Guid.Empty),
+        _ => throw new ArgumentException("Не удалось определить код объекта нормирования.")
+    };
+
+    private async Task<string> ResolveObjectCodeAsync(Domain.Enums.HKObjectLevel level, Guid objectId)
+    {
+        var code = level switch
         {
-            Domain.Enums.HKObjectLevel.Node => (await _db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == card.NodeId))?.Code,
-            Domain.Enums.HKObjectLevel.Aggregate => (await _db.Aggregates.AsNoTracking().FirstOrDefaultAsync(a => a.Id == card.AggregateId))?.Code,
-            Domain.Enums.HKObjectLevel.EquipmentModel => (await _db.EquipmentModels.AsNoTracking().FirstOrDefaultAsync(m => m.Id == card.EquipmentModelId))?.Index,
-            Domain.Enums.HKObjectLevel.Complex => (await _db.Complexes.AsNoTracking().FirstOrDefaultAsync(c => c.Id == card.ComplexId))?.Code,
+            Domain.Enums.HKObjectLevel.Node => (await _db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == objectId))?.Code,
+            Domain.Enums.HKObjectLevel.Aggregate => (await _db.Aggregates.AsNoTracking().FirstOrDefaultAsync(a => a.Id == objectId))?.Code,
+            Domain.Enums.HKObjectLevel.EquipmentModel => (await _db.EquipmentModels.AsNoTracking().FirstOrDefaultAsync(m => m.Id == objectId))?.Index,
+            Domain.Enums.HKObjectLevel.Complex => (await _db.Complexes.AsNoTracking().FirstOrDefaultAsync(c => c.Id == objectId))?.Code,
             _ => null
         };
         return code ?? throw new ArgumentException("Не удалось определить код объекта нормирования.");
     }
 
-    public async Task<string> GenerateCodeForNodeAsync(Guid nodeId)
+    /// <summary>Строит предикат активной ХК по объекту нормирования для любого уровня.</summary>
+    private IQueryable<HKCard> CardsForObjectQuery(Domain.Enums.HKObjectLevel level, Guid objectId) => level switch
     {
-        var node = await _db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId)
-            ?? throw new ArgumentException("Узел не найден");
-        return await GenerateCodeAsync(node.Code);
+        Domain.Enums.HKObjectLevel.Node => _db.HKCards.AsNoTracking().Where(x => x.ObjectLevel == level && x.NodeId == objectId),
+        Domain.Enums.HKObjectLevel.Aggregate => _db.HKCards.AsNoTracking().Where(x => x.ObjectLevel == level && x.AggregateId == objectId),
+        Domain.Enums.HKObjectLevel.EquipmentModel => _db.HKCards.AsNoTracking().Where(x => x.ObjectLevel == level && x.EquipmentModelId == objectId),
+        Domain.Enums.HKObjectLevel.Complex => _db.HKCards.AsNoTracking().Where(x => x.ObjectLevel == level && x.ComplexId == objectId),
+        _ => _db.HKCards.AsNoTracking().Where(_ => false)
+    };
+
+    public Task<string> GenerateCodeForNodeAsync(Guid nodeId) =>
+        GenerateCodeForObjectAsync(Domain.Enums.HKObjectLevel.Node, nodeId);
+
+    public Task<bool> HasActiveCardForNodeAsync(Guid nodeId) =>
+        HasActiveCardForObjectAsync(Domain.Enums.HKObjectLevel.Node, nodeId);
+
+    public Task<HKCard?> GetActiveCardForNodeAsync(Guid nodeId) =>
+        GetActiveCardForObjectAsync(Domain.Enums.HKObjectLevel.Node, nodeId);
+
+    /// <summary>Предварительный номер ХК для выбранного объекта любого уровня (без сохранения).</summary>
+    public async Task<string> GenerateCodeForObjectAsync(Domain.Enums.HKObjectLevel level, Guid objectId)
+    {
+        var objectCode = await ResolveObjectCodeAsync(level, objectId);
+        return await GenerateCodeAsync(objectCode);
     }
 
-    public async Task<bool> HasActiveCardForNodeAsync(Guid nodeId) =>
-        await _db.HKCards.AnyAsync(x =>
-            x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
-            x.NodeId == nodeId &&
-            (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));
+    /// <summary>Есть ли активная (черновик/на проверке/на доработке) ХК по выбранному объекту.</summary>
+    public async Task<bool> HasActiveCardForObjectAsync(Domain.Enums.HKObjectLevel level, Guid objectId) =>
+        await CardsForObjectQuery(level, objectId).AnyAsync(x =>
+            x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired);
 
-    public async Task<HKCard?> GetActiveCardForNodeAsync(Guid nodeId) =>
-        await _db.HKCards.AsNoTracking()
-            .Where(x =>
-                x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
-                x.NodeId == nodeId &&
-                (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview ||
-                 x.Status == HKCardStatus.RevisionRequired || x.Status == HKCardStatus.Approved))
+    /// <summary>Активная или утверждённая ХК по выбранному объекту (для предупреждения в форме).</summary>
+    public async Task<HKCard?> GetActiveCardForObjectAsync(Domain.Enums.HKObjectLevel level, Guid objectId) =>
+        await CardsForObjectQuery(level, objectId)
+            .Where(x => x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview ||
+                        x.Status == HKCardStatus.RevisionRequired || x.Status == HKCardStatus.Approved)
             .FirstOrDefaultAsync();
 
     public async Task<HKCard> CreateAsync(HKCard card, CancellationToken ct = default)

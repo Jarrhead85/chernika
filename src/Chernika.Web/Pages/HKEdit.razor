@@ -151,6 +151,7 @@
                                 }
                             }
                         </div>
+                        }
                         <div class="field hk-pdf-field">
                             <label>PDF-скан исходной ХК</label>
                             @if (_attachment == null)
@@ -206,7 +207,6 @@
                                 <div class="hki-field-error">@_attachmentError</div>
                             }
                         </div>
-                        }
                     </div>
 
                     <div class="hk-form-row hk-form-row--object">
@@ -1763,33 +1763,37 @@
 
     private async Task SelectObject(string display)
     {
+        var objectId = Guid.Empty;
         switch (selectedLevel)
         {
             case HKObjectLevel.Complex:
                 var c = complexes.FirstOrDefault(x => $"{x.Code} — {x.Name}" == display);
-                if (c != null) { selectedComplexId = c.Id; card.ComplexId = c.Id; }
+                if (c != null) { selectedComplexId = c.Id; card.ComplexId = c.Id; objectId = c.Id; }
                 break;
             case HKObjectLevel.EquipmentModel:
                 var m = models.FirstOrDefault(x => $"{x.Index} — {x.Name}" == display);
-                if (m != null) { selectedModelId = m.Id; card.EquipmentModelId = m.Id; }
+                if (m != null) { selectedModelId = m.Id; card.EquipmentModelId = m.Id; objectId = m.Id; }
                 break;
             case HKObjectLevel.Aggregate:
                 var a = aggregates.FirstOrDefault(x => $"{x.Code} — {x.Name}" == display);
-                if (a != null) { selectedAggregateId = a.Id; card.AggregateId = a.Id; }
+                if (a != null) { selectedAggregateId = a.Id; card.AggregateId = a.Id; objectId = a.Id; }
                 break;
             case HKObjectLevel.Node:
                 var n = nodes.FirstOrDefault(x => $"{x.Code} — {x.Name}" == display);
-                if (n != null) { selectedNodeId = n.Id; card.NodeId = n.Id; }
+                if (n != null) { selectedNodeId = n.Id; card.NodeId = n.Id; objectId = n.Id; }
                 break;
         }
         _objectSearch = display;
         await CloseActiveDropdownAsync();
-        if (IsNew && selectedLevel == HKObjectLevel.Node && selectedNodeId != Guid.Empty)
+        if (IsNew && objectId != Guid.Empty)
         {
-            card.Code = await HKCardService.GenerateCodeForNodeAsync(selectedNodeId);
-            _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(selectedNodeId);
+            await using (await DbLock.WaitAsync())
+            {
+                card.Code = await HKCardService.GenerateCodeForObjectAsync(selectedLevel, objectId);
+                _existingActiveCard = await HKCardService.GetActiveCardForObjectAsync(selectedLevel, objectId);
+            }
             _activeCardWarning = _existingActiveCard != null
-                ? $"Для узла уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
+                ? $"Для {LevelName(selectedLevel).ToLowerInvariant()} уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
                 : null;
         }
         StateHasChanged();
