@@ -417,6 +417,7 @@ th.num{text-align:center;vertical-align:middle;white-space:nowrap;font-variant-n
   background:rgba(255,255,255,.94);border-color:rgba(111,138,178,.22);
 }
 .field textarea{min-height:92px;resize:vertical}
+.field textarea.compact{min-height:0}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:rgba(79,140,255,.4);box-shadow:0 0 0 3px rgba(79,140,255,.12)}
 [data-theme="light"] .field input:focus,[data-theme="light"] .field select:focus,[data-theme="light"] .field textarea:focus{
   background:#fff;border-color:rgba(79,140,255,.38);box-shadow:0 0 0 3px rgba(79,140,255,.10),0 8px 16px rgba(48,86,150,.05);

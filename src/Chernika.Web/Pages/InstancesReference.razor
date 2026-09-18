@@ -46,7 +46,7 @@
                     </div>
                     <div class="field"><label>Марка</label><input @bind="newInst.Brand" /></div>
                     <div class="field"><label>Модификация</label><input @bind="newInst.Modification" /></div>
-                    <div class="field full-width"><label>Описание</label><input @bind="newInst.Description" /></div>
+                    <div class="field"><label>Описание</label><textarea @bind="newInst.Description" rows="2" class="compact"></textarea></div>
                     <div class="formActions">
                         <button class="btn ghost" @onclick="ResetForm">Очистить</button>
                         <button class="btn primary" @onclick="SaveInst">@(editing ? "Сохранить" : "Добавить")</button>
@@ -207,8 +207,14 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
-        models = await EquipService.GetModelsAsync();
-        try { _equipmentTypes = await EquipService.GetActiveEquipmentTypesAsync(); }
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                models = await EquipService.GetModelsAsync();
+                _equipmentTypes = await EquipService.GetActiveEquipmentTypesAsync();
+            }
+        }
         catch { _equipmentTypes = new List<EquipmentType>(); }
         await ReloadAsync();
     }

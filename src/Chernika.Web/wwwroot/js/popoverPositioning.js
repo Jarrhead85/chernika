@@ -46,7 +46,7 @@ window.popoverPositioning = {
       ? rect.top - containerRect.top - 8
       : containerRect.bottom - rect.bottom - 8;
 
-    return Math.max(120, Math.min(320, available));
+    return Math.round(Math.max(120, Math.min(320, available)));
   },
 
   addOutsideClickListener(anchorElement, popoverElement, dotnetRef, methodName) {

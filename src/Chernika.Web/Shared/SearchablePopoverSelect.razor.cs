@@ -76,7 +76,8 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
             try
             {
                 _placement = await JS.InvokeAsync<string>("popoverPositioning.getPlacement", _anchorRef, PopoverMaxHeightPx);
-                _availableHeight = await JS.InvokeAsync<int>("popoverPositioning.getAvailableHeight", _anchorRef, _placement);
+                var availableHeight = await JS.InvokeAsync<double>("popoverPositioning.getAvailableHeight", _anchorRef, _placement);
+                _availableHeight = (int)Math.Round(availableHeight);
                 await JS.InvokeVoidAsync("popoverPositioning.addOutsideClickListener", _anchorRef, _popoverRef, _dotNetRef, nameof(CloseFromOutsideClick));
                 StateHasChanged();
             }
@@ -84,6 +85,9 @@ public partial class SearchablePopoverSelect<TItem> : IAsyncDisposable where TIt
             {
             }
             catch (ObjectDisposedException)
+            {
+            }
+            catch (JSException)
             {
             }
         }
