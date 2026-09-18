@@ -24,7 +24,7 @@
             <span>/</span>
             <a href="@ListEditorUrl">@LevelPlural</a>
             <span>/</span>
-            <a href="@ListEditorUrl">@objectCode</a>
+            <a href="@ObjectEditorUrl">@objectCode</a>
             <span>/</span>
             <span>@selected.Version</span>
         </nav>
@@ -327,30 +327,32 @@
                         }
                         else
                         {
-                            <div class="listRows">
+                            <div class="listRows @(readinessRows.Count > 10 ? "readinessRowsScroll" : null)">
                                 @foreach (var r in readinessRows)
                                 {
                                     <div class="rowCard">
                                         <div class="top">
                                             <span class="mono">@r.ChildCode</span>
-                                            <span class="tag @ReadinessTag(r.Status)">@ReadinessLabel(r.Status)</span>
+                                            <div class="rowCardAside">
+                                                <span class="tag @ReadinessTag(r.Status)">@ReadinessLabel(r.Status)</span>
+                                                @if (readinessNav.TryGetValue(r.ChildId, out var nav) &&
+                                                     (!string.IsNullOrEmpty(nav.HKNavigationTarget) || !string.IsNullOrEmpty(nav.CompositionNavigationTarget)))
+                                                {
+                                                    <div class="rowCardActions">
+                                                        @if (!string.IsNullOrEmpty(nav.HKNavigationTarget))
+                                                        {
+                                                            <a class="linkBtn" href="@nav.HKNavigationTarget">@nav.HKActionLabel</a>
+                                                        }
+                                                        @if (!string.IsNullOrEmpty(nav.CompositionNavigationTarget))
+                                                        {
+                                                            <a class="linkBtn" href="@nav.CompositionNavigationTarget">@nav.CompositionActionLabel</a>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
                                         </div>
                                         <div class="sub">@r.ChildName</div>
                                         <div class="sub">@ReadinessMessage(r)</div>
-                                        @if (readinessNav.TryGetValue(r.ChildId, out var nav) &&
-                                             (!string.IsNullOrEmpty(nav.HKNavigationTarget) || !string.IsNullOrEmpty(nav.CompositionNavigationTarget)))
-                                        {
-                                            <div class="rowCardActions">
-                                                @if (!string.IsNullOrEmpty(nav.HKNavigationTarget))
-                                                {
-                                                    <a class="linkBtn" href="@nav.HKNavigationTarget">@nav.HKActionLabel</a>
-                                                }
-                                                @if (!string.IsNullOrEmpty(nav.CompositionNavigationTarget))
-                                                {
-                                                    <a class="linkBtn" href="@nav.CompositionNavigationTarget">@nav.CompositionActionLabel</a>
-                                                }
-                                            </div>
-                                        }
                                     </div>
                                 }
                             </div>
@@ -666,12 +668,16 @@
         _ => $"/составы/агрегаты/{selectedObjectId}/версии/{id}"
     };
 
-    private string EditorUrl => Level switch
+    /// <summary>Редактор состава с предвыбранным объектом уровня.</summary>
+    private string ObjectEditorUrl => Level switch
     {
-        0 => "/состав-комплекса",
-        1 => "/состав-изделия",
-        _ => "/состав-агрегата"
+        0 => $"/состав-комплекса?complexId={selectedObjectId}",
+        1 => $"/состав-изделия?equipmentModelId={selectedObjectId}",
+        _ => $"/состав-агрегата?aggregateId={selectedObjectId}"
     };
+
+    /// <summary>Редактор с предвыбранным объектом и конкретной версией состава.</summary>
+    private string EditorUrl => $"{ObjectEditorUrl}&compositionId={compositionId}";
 
     private static CompositionVersionSummary ToComplexSummary(ComplexCompositionReadModel c) =>
         new(c.Id, c.ComplexId, c.Version, c.Status, c.CreatedAt, c.UpdatedAt, c.EffectiveDate, c.ExpirationDate, c.ApprovedAt, c.Comment, c.SupersedesComplexCompositionId, c.AuthorName);

@@ -295,6 +295,7 @@
 
 @code {
     [SupplyParameterFromQuery(Name = "aggregateId")] public Guid? AggregateIdQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "compositionId")] public Guid? CompositionIdQuery { get; set; }
 
     private List<Aggregate> aggregates = new();
     private List<Node> nodes = new();
@@ -366,6 +367,10 @@
         {
             selectedAggregateId = AggregateIdQuery.Value;
             await LoadCompositions();
+        }
+        if (CompositionIdQuery.HasValue && CompositionIdQuery.Value != Guid.Empty)
+        {
+            await SelectCompositionAsync(CompositionIdQuery.Value);
         }
     }
 

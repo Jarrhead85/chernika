@@ -349,6 +349,7 @@
 
 @code {
     [SupplyParameterFromQuery(Name = "equipmentModelId")] public Guid? EquipmentModelIdQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "compositionId")] public Guid? CompositionIdQuery { get; set; }
 
     private List<EquipmentModel> models = new();
     private List<Aggregate> aggregates = new();
@@ -421,6 +422,10 @@
         {
             selectedModelId = EquipmentModelIdQuery.Value;
             await LoadCompositions();
+        }
+        if (CompositionIdQuery.HasValue && CompositionIdQuery.Value != Guid.Empty)
+        {
+            await SelectCompositionAsync(CompositionIdQuery.Value);
         }
     }
 

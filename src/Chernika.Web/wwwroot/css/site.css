@@ -496,8 +496,10 @@ a.btn{text-decoration:none}
   border-color:rgba(111,138,178,.24);box-shadow:0 10px 26px rgba(34,61,109,.06),inset 0 1px 0 rgba(255,255,255,.78);
 }
 .rowCard .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.rowCardActions{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
-.rowCardActions .linkBtn{font-size:12px}
+.rowCardAside{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.rowCardActions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.rowCardActions .linkBtn{padding:2px 8px;border-radius:7px;font-size:11px;line-height:1.2;white-space:nowrap}
+.readinessRowsScroll{max-height:420px;overflow-y:auto}
 .rowCard .name{font-size:13px;font-weight:700}
 .rowCard .sub{color:var(--muted);font-size:12px;margin-top:2px}
 .qty{min-width:30px;height:30px;padding:0 10px;border-radius:999px;border:1px solid rgba(32,50,86,.85);display:grid;place-items:center;background:rgba(79,140,255,.12);font-weight:700;font-size:12px}

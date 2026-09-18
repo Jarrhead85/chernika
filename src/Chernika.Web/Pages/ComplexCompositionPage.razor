@@ -295,6 +295,7 @@
 
 @code {
     [SupplyParameterFromQuery(Name = "complexId")] public Guid? ComplexIdQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "compositionId")] public Guid? CompositionIdQuery { get; set; }
 
     private List<Complex> complexes = new();
     private List<EquipmentModel> models = new();
@@ -366,6 +367,10 @@
         {
             selectedComplexId = ComplexIdQuery.Value;
             await LoadCompositions();
+        }
+        if (CompositionIdQuery.HasValue && CompositionIdQuery.Value != Guid.Empty)
+        {
+            await SelectCompositionAsync(CompositionIdQuery.Value);
         }
     }
 
