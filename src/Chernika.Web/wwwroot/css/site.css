@@ -248,6 +248,9 @@ th.num{text-align:center;vertical-align:middle;white-space:nowrap;font-variant-n
 .hk-items-table tbody td{border-right:1px solid var(--line)}
 .hk-items-table thead th:last-child,
 .hk-items-table tbody td:last-child{border-right:0}
+/* Реестр индивидуальных карт — без вертикальных разделителей. */
+.hk-items-table.hk-items-table--no-col-borders thead th,
+.hk-items-table.hk-items-table--no-col-borders tbody td{border-right:0}
 .icCalcRow{cursor:pointer}
 .icCalcRow:hover{background:rgba(79,140,255,.06)}
 .icCalcChevron{display:inline-block;width:14px;color:var(--muted);transition:transform .15s ease}
