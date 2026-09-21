@@ -120,29 +120,21 @@ window.dropdownPortal = {
 };
 
 window.hkPdfPreview = {
-  async load(streamRef, iframeId) {
-    const iframe = document.getElementById(iframeId);
-    if (!iframe || !streamRef) return;
-    if (iframe.__blobUrl) {
-      URL.revokeObjectURL(iframe.__blobUrl);
-      iframe.__blobUrl = null;
-    }
+  // Предпросмотр PDF открывается в отдельной вкладке, чтобы можно было
+  // продолжать заполнять форму и строки ХК рядом с документом.
+  async openInNewTab(streamRef) {
+    if (!streamRef) return;
+    // Вкладку открываем сразу (синхронно), иначе popup-blocker может её заблокировать.
+    const win = window.open('', '_blank');
     try {
-      const blob = await new Response(streamRef.stream).blob();
-      iframe.__blobUrl = URL.createObjectURL(blob);
-      iframe.src = iframe.__blobUrl;
+      const buffer = typeof streamRef.arrayBuffer === 'function'
+        ? await streamRef.arrayBuffer()
+        : await new Response(await streamRef.stream()).arrayBuffer();
+      const url = URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }));
+      if (win) win.location = url;
+      else window.open(url, '_blank');
     } catch (_) {
-      iframe.src = '';
+      if (win) win.close();
     }
-  },
-
-  clear(iframeId) {
-    const iframe = document.getElementById(iframeId);
-    if (!iframe) return;
-    if (iframe.__blobUrl) {
-      URL.revokeObjectURL(iframe.__blobUrl);
-      iframe.__blobUrl = null;
-    }
-    iframe.src = '';
   }
 };

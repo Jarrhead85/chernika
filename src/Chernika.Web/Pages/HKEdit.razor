@@ -154,57 +154,65 @@
                         }
                         <div class="field hk-pdf-field">
                             <label>PDF-скан исходной ХК</label>
-                            @if (_attachment == null)
+                            @{ var pdfError = !string.IsNullOrEmpty(_attachmentError); }
+                            @if (_attachment != null)
                             {
-                                @if (canEdit && CanSelectAttachment)
-                                {
-                                    <div class="hki-file-row">
-                                        <label class="btn ghost hki-file-btn">
-                                            Выбрать файл
+                                <div class="fieldInput hki-pdf-chip @(pdfError ? "hki-pdf-chip--error" : null)"
+                                     title="@AttachmentChipTitle">
+                                    <button type="button" class="hki-pdf-name" title="@_attachment.OriginalFileName" @onclick="OpenAttachmentPreview">📄 @_attachment.OriginalFileName</button>
+                                    <span class="hki-pdf-size">@FormatSize(_attachment.SizeBytes)</span>
+                                    @if (_uploading)
+                                    {
+                                        <span class="hki-pdf-size">Загрузка…</span>
+                                    }
+                                    <button type="button" class="hki-pdf-icon" title="Скачать" @onclick="DownloadAttachment">⤓</button>
+                                    @if (canEdit && CanManageAttachment)
+                                    {
+                                        <label class="hki-pdf-icon" title="Заменить">
                                             <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept="application/pdf,.pdf" class="hki-file-input" />
                                         </label>
-                                        @if (!IsNew)
-                                        {
-                                            <button type="button" class="btn primary" disabled="@(_pendingFile == null || _uploading)" @onclick="() => UploadAttachment()">@(_uploading ? "Загрузка..." : "Загрузить")</button>
-                                        }
-                                    </div>
-                                }
-                                else if (!canEdit)
-                                {
-                                    <div class="readonlyValue"></div>
-                                }
+                                        <button type="button" class="hki-pdf-icon hki-pdf-icon--danger" title="Удалить" @onclick="DeleteAttachment">🗑</button>
+                                    }
+                                    @if (pdfError)
+                                    {
+                                        <span class="hki-pdf-icon hki-pdf-icon--danger" title="@_attachmentError">⚠</span>
+                                    }
+                                </div>
+                            }
+                            else if (_pendingFile != null)
+                            {
+                                <div class="fieldInput hki-pdf-chip hki-pdf-chip--pending @(pdfError ? "hki-pdf-chip--error" : null)"
+                                     title="@PendingChipTitle">
+                                    <button type="button" class="hki-pdf-name" title="@_pendingFile.Name" @onclick="OpenPendingPreviewAsync">📄 @_pendingFile.Name</button>
+                                    <span class="hki-pdf-size">@FormatSize(_pendingFile.Size)</span>
+                                    @if (_uploading)
+                                    {
+                                        <span class="hki-pdf-size">Загрузка…</span>
+                                    }
+                                    <button type="button" class="hki-pdf-icon" title="Убрать" @onclick="ClearPendingAttachment">×</button>
+                                    @if (pdfError)
+                                    {
+                                        <span class="hki-pdf-icon hki-pdf-icon--danger" title="@_attachmentError">⚠</span>
+                                    }
+                                </div>
+                            }
+                            else if (canEdit && CanSelectAttachment)
+                            {
+                                <label class="fieldInput hki-pdf-empty @(pdfError ? "hki-pdf-chip--error" : null)"
+                                       title="@_attachmentError">
+                                    <span>📄 Выбрать файл</span>
+                                    @if (pdfError)
+                                    {
+                                        <span class="hki-pdf-icon hki-pdf-icon--danger" title="@_attachmentError">⚠</span>
+                                    }
+                                    <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept="application/pdf,.pdf" class="hki-file-input" />
+                                </label>
                             }
                             else
                             {
-                                <div class="hki-file-row">
-                                    <span class="hki-file-name">📄 @_attachment.OriginalFileName <span class="hki-file-size">(@FormatSize(_attachment.SizeBytes))</span></span>
-                                    <button type="button" class="btn" @onclick="OpenAttachmentPreview">Открыть</button>
-                                    <button type="button" class="btn" @onclick="DownloadAttachment">Скачать</button>
-                                    @if (canEdit && CanManageAttachment)
-                                    {
-                                        <label class="btn ghost hki-file-btn">
-                                            Заменить
-                                            <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept="application/pdf,.pdf" class="hki-file-input" />
-                                        </label>
-                                        <button type="button" class="btn primary" disabled="@(_pendingFile == null || _uploading)" @onclick="() => UploadAttachment()">@(_uploading ? "Загрузка..." : "Загрузить")</button>
-                                        <button type="button" class="btn ghost hki-file-danger" @onclick="DeleteAttachment">Удалить</button>
-                                    }
+                                <div class="fieldInput hki-pdf-chip hki-pdf-chip--empty">
+                                    <span class="hki-pdf-size">Файл не прикреплён</span>
                                 </div>
-                                <div class="hki-file-meta">Загрузил: @(_attachment.UploadedByUserName ?? "—") · @(_attachment.UploadedAt.ToString("dd.MM.yyyy HH:mm"))</div>
-                            }
-                            @if (_pendingFile != null)
-                            {
-                                <div class="hki-file-row" style="margin-top:4px">
-                                    <span class="hki-file-meta hki-file-pending">@(IsNew ? "Файл будет прикреплён при сохранении: " : "Выбрано: ")@_pendingFile.Name (@FormatSize(_pendingFile.Size))</span>
-                                    @if (IsNew)
-                                    {
-                                        <button type="button" class="btn" @onclick="OpenPendingPreview">Предпросмотр</button>
-                                    }
-                                </div>
-                            }
-                            @if (!string.IsNullOrEmpty(_attachmentError))
-                            {
-                                <div class="hki-field-error">@_attachmentError</div>
                             }
                         </div>
                     </div>
@@ -912,21 +920,6 @@
     </div>
 }
 
-@if (_previewOpen && IsNew && _pendingFile != null)
-{
-    <div class="modalOverlay" @onclick="ClosePendingPreview">
-        <div class="modal hk-preview-modal" @onclick:stopPropagation>
-            <div class="modalHeader">
-                <h3>Предпросмотр PDF</h3>
-                <button type="button" class="linkBtn" @onclick="ClosePendingPreview">✕</button>
-            </div>
-            <div class="modalBody">
-                <iframe id="hk-pdf-preview" class="hk-pdf-preview hk-pdf-preview-modal" title="Предпросмотр PDF"></iframe>
-            </div>
-        </div>
-    </div>
-}
-
 @code {
     [Parameter] public Guid? Id { get; set; }
     [SupplyParameterFromQuery(Name = "nodeId")] public Guid? NodeId { get; set; }
@@ -1004,11 +997,15 @@
     private string? _attachmentError;
     private IBrowserFile? _pendingFile;
     private int _fileInputKey;
-    private bool _previewPending;
-    private bool _previewOpen;
 
     private bool CanSelectAttachment => canEdit && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
     private bool CanManageAttachment => !IsNew && canEdit && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
+
+    private string? PendingChipTitle => _attachmentError ?? "Файл будет прикреплён при сохранении";
+
+    private string? AttachmentChipTitle => _attachment is null
+        ? _attachmentError
+        : _attachmentError ?? $"Загрузил: {_attachment.UploadedByUserName ?? "—"} · {_attachment.UploadedAt:dd.MM.yyyy HH:mm}";
 
     private record AttachmentInfo(Guid Id, string OriginalFileName, long SizeBytes, string? UploadedByUserName, DateTime UploadedAt);
 
@@ -1051,28 +1048,12 @@
         try
         {
             await JS.InvokeVoidAsync("dropdownPortal.cleanup");
-            await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
         }
         catch { /* ignore — page is unloading */ }
         finally
         {
             _dotNetRef?.Dispose();
         }
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (_previewPending && !_disposed && IsNew && _pendingFile != null)
-        {
-            _previewPending = false;
-            try
-            {
-                var stream = _pendingFile.OpenReadStream(maxAllowedSize: FileOptions.Value.MaxPdfSizeBytes);
-                await JS.InvokeVoidAsync("hkPdfPreview.load", new DotNetStreamReference(stream), "hk-pdf-preview");
-            }
-            catch { /* preview is best-effort */ }
-        }
-        await base.OnAfterRenderAsync(firstRender);
     }
 
     protected override async Task OnInitializedAsync()
@@ -2152,21 +2133,52 @@
         StateHasChanged();
     }
 
-    private void HandleAttachmentUpload(InputFileChangeEventArgs e)
+    /// <summary>Выбор или замена файла: на сохранённой карте сразу загружаем, на новой — копим до сохранения.</summary>
+    private async Task HandleAttachmentUpload(InputFileChangeEventArgs e)
     {
-        _pendingFile = e.File;
         _attachmentError = null;
-        _previewPending = true;
-        _previewOpen = false;
+        _pendingFile = e.File;
+
+        if (!IsNew)
+        {
+            await UploadAttachment();
+
+            // Не удалось загрузить — возвращаем поле в прежнее состояние с ошибкой.
+            if (!string.IsNullOrEmpty(_attachmentError))
+            {
+                _pendingFile = null;
+                _fileInputKey++;
+            }
+            return;
+        }
+
         StateHasChanged();
     }
 
-    private void OpenPendingPreview()
+    /// <summary>Предпросмотр несохранённого файла в отдельной вкладке.</summary>
+    private async Task OpenPendingPreviewAsync()
     {
-        if (!IsNew || _pendingFile == null) return;
-        _previewOpen = true;
-        _previewPending = true;
-        StateHasChanged();
+        if (_pendingFile == null) return;
+        try
+        {
+            var maxBytes = FileOptions.Value.MaxPdfSizeBytes > 0
+                ? FileOptions.Value.MaxPdfSizeBytes
+                : 20L * 1024 * 1024;
+            var stream = _pendingFile.OpenReadStream(maxAllowedSize: maxBytes);
+            await JS.InvokeVoidAsync("hkPdfPreview.openInNewTab", new DotNetStreamReference(stream));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Не удалось открыть предпросмотр PDF");
+            _attachmentError = "Не удалось открыть предпросмотр PDF.";
+        }
+    }
+
+    private void ClearPendingAttachment()
+    {
+        _pendingFile = null;
+        _attachmentError = null;
+        _fileInputKey++;
     }
 
     private Dictionary<string, object> ExpirationDateAttributes()
@@ -2175,18 +2187,6 @@
         if (card.EffectiveDate.HasValue)
             attributes["min"] = card.EffectiveDate.Value.ToString("yyyy-MM-dd");
         return attributes;
-    }
-
-    private async Task ClosePendingPreview()
-    {
-        _previewOpen = false;
-        _previewPending = false;
-        try
-        {
-            await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
-        }
-        catch { /* page unloading or iframe already detached */ }
-        StateHasChanged();
     }
 
     private async Task UploadAttachment()
@@ -2216,9 +2216,6 @@
 
             _pendingFile = null;
             _fileInputKey++;
-            _previewPending = false;
-            _previewOpen = false;
-            await JS.InvokeVoidAsync("hkPdfPreview.clear", "hk-pdf-preview");
         }
         catch (UnauthorizedAccessException ex)
         {

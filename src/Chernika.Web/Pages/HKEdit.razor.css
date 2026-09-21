@@ -568,25 +568,91 @@
     cursor: default;
 }
 
-/* ---- PDF-скан: compact field ---- */
+/* ---- PDF-скан: компактное поле в одну строку ---- */
 
-.hki-file-row {
+/* Поле выглядит как остальные контролы (.fieldInput): та же высота,
+   рамка и фон, поэтому при вложении ничего не растягивается. */
+.hki-pdf-empty,
+.hki-pdf-chip {
+    position: relative;
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
+    padding: 0 8px 0 10px;
+    overflow: hidden;
+    white-space: nowrap;
+    min-width: 0;
+    cursor: pointer;
 }
 
-.hki-file-btn {
+.hki-pdf-empty:hover {
+    color: var(--text);
+}
+
+.hki-pdf-chip--pending {
+    color: var(--accent);
+}
+
+.hki-pdf-chip--error {
+    border-color: rgba(214, 88, 88, .65) !important;
+}
+
+.hki-pdf-chip--empty {
+    cursor: default;
+}
+
+.hki-pdf-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.hki-pdf-name:hover {
+    color: var(--accent);
+}
+
+.hki-pdf-size {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.hki-pdf-icon {
     position: relative;
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: var(--hk-control-height);
-    white-space: nowrap;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
 }
 
-.hki-file-btn ::deep .hki-file-input {
+.hki-pdf-icon:hover {
+    color: var(--accent);
+}
+
+.hki-pdf-icon--danger:hover {
+    color: var(--bad);
+}
+
+/* InputFile рендерится вне scope-атрибута компонента — нужен ::deep. */
+.hki-pdf-field ::deep .hki-file-input {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -598,62 +664,6 @@
     clip: rect(0 0 0 0);
     clip-path: inset(50%);
     white-space: nowrap;
-}
-
-.hki-file-name {
-    font-size: 13px;
-    word-break: break-word;
-    min-width: 0;
-}
-
-.hki-file-size {
-    opacity: .6;
-}
-
-.hki-file-meta {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 4px;
-}
-
-.hki-file-pending {
-    color: var(--accent);
-}
-
-.hk-pdf-preview {
-    display: block;
-    width: 100%;
-    height: 300px;
-    margin-top: 8px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius2, 10px);
-    background: var(--panel2);
-}
-
-.hk-preview-modal {
-    max-width: 900px;
-}
-
-.hk-pdf-preview-modal {
-    height: 70vh;
-    max-height: 70vh;
-    margin-top: 0;
-}
-
-.hki-field-error {
-    font-size: 12px;
-    color: var(--bad);
-    margin-top: 6px;
-}
-
-.hki-file-danger {
-    color: var(--bad);
-}
-
-.hk-pdf-field .btn {
-    height: var(--hk-control-height);
-    padding: 0 10px;
-    font-size: 12px;
 }
 
 /* ---- Статус + кнопки действий ---- */
