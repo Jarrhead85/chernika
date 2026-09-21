@@ -124,17 +124,12 @@ window.hkPdfPreview = {
   // продолжать заполнять форму и строки ХК рядом с документом.
   async openInNewTab(streamRef) {
     if (!streamRef) return;
-    // Вкладку открываем сразу (синхронно), иначе popup-blocker может её заблокировать.
-    const win = window.open('', '_blank');
-    try {
-      const buffer = typeof streamRef.arrayBuffer === 'function'
-        ? await streamRef.arrayBuffer()
-        : await new Response(await streamRef.stream()).arrayBuffer();
-      const url = URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }));
-      if (win) win.location = url;
-      else window.open(url, '_blank');
-    } catch (_) {
-      if (win) win.close();
-    }
+    // Сначала читаем поток (через SignalR), только потом открываем вкладку:
+    // window.open('about:blank') во время чтения ломает соединение Blazor.
+    const buffer = typeof streamRef.arrayBuffer === 'function'
+      ? await streamRef.arrayBuffer()
+      : await new Response(await streamRef.stream()).arrayBuffer();
+    const url = URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }));
+    window.open(url, '_blank');
   }
 };

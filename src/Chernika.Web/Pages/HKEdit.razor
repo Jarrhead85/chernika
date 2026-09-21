@@ -995,7 +995,7 @@
     private AttachmentInfo? _attachment;
     private bool _uploading;
     private string? _attachmentError;
-    private IBrowserFile? _pendingFile;
+    private PendingFile? _pendingFile;
     private int _fileInputKey;
 
     private bool CanSelectAttachment => canEdit && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
@@ -1008,6 +1008,12 @@
         : _attachmentError ?? $"Загрузил: {_attachment.UploadedByUserName ?? "—"} · {_attachment.UploadedAt:dd.MM.yyyy HH:mm}";
 
     private record AttachmentInfo(Guid Id, string OriginalFileName, long SizeBytes, string? UploadedByUserName, DateTime UploadedAt);
+
+    /// <summary>
+    /// Выбранный (ещё не сохранённый) PDF, заранее прочитанный в память:
+    /// поток IBrowserFile доступен только пока InputFile есть в DOM.
+    /// </summary>
+    private sealed record PendingFile(byte[] Content, string Name, string ContentType, long Size);
 
     private bool _objectDropOpen;
     private string _objectSearch = "";
@@ -2137,7 +2143,30 @@
     private async Task HandleAttachmentUpload(InputFileChangeEventArgs e)
     {
         _attachmentError = null;
-        _pendingFile = e.File;
+        try
+        {
+            var maxBytes = FileOptions.Value.MaxPdfSizeBytes > 0
+                ? FileOptions.Value.MaxPdfSizeBytes
+                : 20L * 1024 * 1024;
+
+            // Читаем файл сразу, пока InputFile ещё в DOM: после замены поля на чип
+            // поток IBrowserFile прочитать уже нельзя.
+            var file = e.File;
+            using var buffer = new MemoryStream();
+            await using (var source = file.OpenReadStream(maxAllowedSize: maxBytes))
+            {
+                await source.CopyToAsync(buffer);
+            }
+            _pendingFile = new PendingFile(buffer.ToArray(), file.Name, file.ContentType, file.Size);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Не удалось прочитать выбранный PDF-файл");
+            _pendingFile = null;
+            _fileInputKey++;
+            _attachmentError = "Не удалось прочитать выбранный файл.";
+            return;
+        }
 
         if (!IsNew)
         {
@@ -2161,10 +2190,7 @@
         if (_pendingFile == null) return;
         try
         {
-            var maxBytes = FileOptions.Value.MaxPdfSizeBytes > 0
-                ? FileOptions.Value.MaxPdfSizeBytes
-                : 20L * 1024 * 1024;
-            var stream = _pendingFile.OpenReadStream(maxAllowedSize: maxBytes);
+            var stream = new MemoryStream(_pendingFile.Content);
             await JS.InvokeVoidAsync("hkPdfPreview.openInNewTab", new DotNetStreamReference(stream));
         }
         catch (Exception ex)
@@ -2200,16 +2226,14 @@
         _uploading = true;
         StateHasChanged();
 
+        var pending = _pendingFile;
         try
         {
             await using (await DbLock.WaitAsync())
             {
-                await using var stream = _pendingFile.OpenReadStream(
-                    maxAllowedSize: FileOptions.Value.MaxPdfSizeBytes > 0
-                        ? FileOptions.Value.MaxPdfSizeBytes
-                        : 20L * 1024 * 1024);
+                using var stream = new MemoryStream(pending.Content);
                 var info = await HKCardService.SaveAttachmentAsync(
-                    card.Id, stream, _pendingFile.Name, _pendingFile.ContentType, _pendingFile.Size);
+                    card.Id, stream, pending.Name, pending.ContentType, pending.Size);
                 _attachment = new AttachmentInfo(info.Id, info.OriginalFileName, info.SizeBytes,
                     info.UploadedByUserName, info.UploadedAt);
             }

@@ -652,7 +652,7 @@
 }
 
 /* InputFile рендерится вне scope-атрибута компонента — нужен ::deep. */
-.hki-pdf-field ::deep .hki-file-input {
+.hk-pdf-field ::deep .hki-file-input {
     position: absolute;
     width: 1px;
     height: 1px;
