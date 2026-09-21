@@ -579,7 +579,7 @@
                             <div style="margin-bottom:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)">
                                 <div style="display:flex;gap:8px;align-items:center">
                                     <input @bind="_addChildSearch" placeholder="Поиск по коду или объекту..." style="flex:1;padding:6px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px" />
-                                    <button type="button" class="btn primary" @onclick="ConfirmAddChild" disabled="@(string.IsNullOrWhiteSpace(_addChildSearch))">Добавить</button>
+                                    <button type="button" class="btn primary" @onclick="ConfirmAddChild" disabled="@(_pendingChild is null)">Добавить</button>
                                     <button type="button" class="btn ghost" @onclick="ToggleAddChild">Отмена</button>
                                 </div>
                                 @if (_availableChildCards.Any())
@@ -600,7 +600,7 @@
                             </div>
                         }
 
-                        @if (_components.Count == 0)
+                        @if (_components.Count == 0 && _pendingChildCards.Count == 0)
                         {
                             <div class="note">Состав пуст. Добавьте утверждённые дочерние ХК.</div>
                         }
@@ -636,6 +636,23 @@
                                             </td>
                                         </tr>
                                     }
+                                    @foreach (var child in _pendingChildCards)
+                                    {
+                                        compIdx++;
+                                        <tr>
+                                            <td>@compIdx</td>
+                                            <td class="mono">@child.Code</td>
+                                            <td>@child.Version</td>
+                                            <td>@child.ObjectName</td>
+                                            <td>@child.ApprovedDate?.ToString("dd.MM.yyyy")</td>
+                                            <td class="hki-actions col-actions">
+                                                @if (canEdit)
+                                                {
+                                                    <button type="button" class="linkBtn" @onclick="() => RemovePendingChild(child)" style="color:var(--bad)" title="Удалить">🗑</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
                                 </tbody>
                             </table>
                         }
@@ -643,7 +660,11 @@
                         <h4 style="font-size:13px;font-weight:600;margin:12px 0 8px">Агрегированные строки</h4>
                         @if (_aggregatedRows.Count == 0)
                         {
-                            <div class="note">Нет данных</div>
+                            <div class="note">
+                                @(IsNew && _pendingChildCards.Count > 0
+                                    ? "Будут рассчитаны после сохранения черновика"
+                                    : "Нет данных")
+                            </div>
                         }
                         else
                         {
@@ -1000,7 +1021,9 @@
     private bool _addChildOpen;
     private string _addChildSearch = "";
     private List<HKCardListItemDto> _availableChildCards = new();
-    private Guid? _pendingChildId;
+    private HKCardListItemDto? _pendingChild;
+    private readonly List<HKCardListItemDto> _pendingChildCards = new();
+    private Guid? _createdCardId;
 
     private enum QuickCreateKind { Node, AssemblyUnit, GsmMaterial }
     private QuickCreateKind? _quickCreateKind;
@@ -1163,6 +1186,11 @@
         _components = new();
         _aggregatedRows = new();
         _availableChildCards = new();
+        _pendingChild = null;
+        _pendingChildCards.Clear();
+        _createdCardId = null;
+        _addChildOpen = false;
+        _addChildSearch = "";
         selectedMilitaryBranchIds = new();
         _loadedCardId = null;
 
@@ -1590,10 +1618,15 @@
 
         try
         {
-            if (IsNew)
+            if (IsNew && _createdCardId is null)
+            {
                 await HKCardService.CreateAsync(card);
+                _createdCardId = card.Id;
+            }
             else
+            {
                 await HKCardService.UpdateAsync(card);
+            }
         }
         catch (ArgumentException ex)
         {
@@ -1620,6 +1653,37 @@
             errorMessage = "Не удалось сохранить ХК. Проверьте заполнение " +
                 "всех обязательных полей и повторите попытку.";
             return;
+        }
+
+        if (_createdCardId.HasValue && _pendingChildCards.Count > 0)
+        {
+            // Дочерние ХК, добавленные до сохранения, записываем сразу после создания карты.
+            string? failedChild = null;
+            await using (await DbLock.WaitAsync())
+            {
+                foreach (var child in _pendingChildCards.ToList())
+                {
+                    try
+                    {
+                        await HKCardService.AddComponentAsync(card.Id, child.Id);
+                        _pendingChildCards.Remove(child);
+                    }
+                    catch (Exception ex)
+                    {
+                        failedChild = $"{child.Code} — {ex.Message}";
+                        break;
+                    }
+                }
+
+                if (_pendingChildCards.Count == 0)
+                    _components = await HKCardService.GetComponentsAsync(card.Id);
+            }
+
+            if (failedChild is not null)
+            {
+                errorMessage = $"Черновик ХК сохранён, но дочернюю ХК не удалось добавить: {failedChild}";
+                return;
+            }
         }
 
         if (IsNew && selectedLevel == HKObjectLevel.EquipmentModel
@@ -1863,6 +1927,10 @@
         if (!IsNew) return;
         selectedLevel = level;
         ClearObject();
+        _pendingChild = null;
+        _pendingChildCards.Clear();
+        _addChildOpen = false;
+        _addChildSearch = "";
         if (IsNew)
         {
             card.ObjectLevel = level;
@@ -1913,34 +1981,32 @@
 
     // ---- composition methods ----
 
+    /// <summary>Допустимый уровень дочерней ХК для выбранного уровня родителя.</summary>
+    private HKObjectLevel? AllowedChildLevel => selectedLevel switch
+    {
+        HKObjectLevel.Complex => HKObjectLevel.EquipmentModel,
+        HKObjectLevel.EquipmentModel => HKObjectLevel.Aggregate,
+        HKObjectLevel.Aggregate => HKObjectLevel.Node,
+        _ => null
+    };
+
     private async Task ToggleAddChild()
     {
-        if (IsNew)
-        {
-            try
-            {
-                await HKCardService.CreateAsync(card);
-                Nav.NavigateTo($"/хк/{card.Id}", replace: true);
-                return;
-            }
-            catch (Exception)
-            {
-                errorMessage = "Сохраните карту перед добавлением дочерней ХК.";
-                return;
-            }
-        }
         _addChildOpen = !_addChildOpen;
         if (_addChildOpen)
         {
             _addChildSearch = "";
             _availableChildCards = new();
-            _pendingChildId = null;
+            _pendingChild = null;
             var paged = await HKCardService.GetFilteredAsync();
-            var allCards = paged.Items;
             var existingChildIds = _components.Select(c => c.ChildHKCardId).ToHashSet();
+            existingChildIds.UnionWith(_pendingChildCards.Select(c => c.Id));
             existingChildIds.Add(card.Id);
-            _availableChildCards = allCards
-                .Where(c => c.Status == HKCardStatus.Approved && !existingChildIds.Contains(c.Id))
+            var allowedChildLevel = AllowedChildLevel;
+            _availableChildCards = paged.Items
+                .Where(c => c.Status == HKCardStatus.Approved
+                            && (allowedChildLevel is null || c.ObjectLevel == allowedChildLevel.Value)
+                            && !existingChildIds.Contains(c.Id))
                 .OrderBy(c => c.Code)
                 .ToList();
         }
@@ -1949,26 +2015,44 @@
     private async Task SelectAvailableChild(HKCardListItemDto child)
     {
         _addChildSearch = $"{child.Code} — {child.ObjectName}";
-        _pendingChildId = child.Id;
+        _pendingChild = child;
         await CloseActiveDropdownAsync();
     }
 
     private async Task ConfirmAddChild()
     {
-        if (_pendingChildId == null || _pendingChildId.Value == Guid.Empty) return;
+        if (_pendingChild is null || _pendingChild.Id == Guid.Empty) return;
+
+        // На несохранённом черновике строки держим в памяти и записываем
+        // одной операцией при сохранении карты.
+        if (IsNew)
+        {
+            if (_pendingChildCards.All(c => c.Id != _pendingChild.Id))
+                _pendingChildCards.Add(_pendingChild);
+            _addChildOpen = false;
+            _addChildSearch = "";
+            _pendingChild = null;
+            return;
+        }
+
         try
         {
-            await HKCardService.AddComponentAsync(card.Id, _pendingChildId.Value);
+            await HKCardService.AddComponentAsync(card.Id, _pendingChild.Id);
             _components = await HKCardService.GetComponentsAsync(card.Id);
             _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
             _addChildOpen = false;
             _addChildSearch = "";
-            _pendingChildId = null;
+            _pendingChild = null;
         }
         catch (Exception ex)
         {
             errorMessage = ex.Message;
         }
+    }
+
+    private void RemovePendingChild(HKCardListItemDto child)
+    {
+        _pendingChildCards.RemoveAll(c => c.Id == child.Id);
     }
 
     private async Task RemoveComponent(Guid componentId)
