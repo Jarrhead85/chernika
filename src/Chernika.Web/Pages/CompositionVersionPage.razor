@@ -330,26 +330,10 @@
                             <div class="listRows @(readinessRows.Count > 10 ? "readinessRowsScroll" : null)">
                                 @foreach (var r in readinessRows)
                                 {
-                                    <div class="rowCard">
+                                    <div class="rowCard readinessCard" @ondblclick="() => NavigateReadinessAsync(r)" title="@ReadinessHint(r)">
                                         <div class="top">
                                             <span class="mono">@r.ChildCode</span>
-                                            <div class="rowCardAside">
-                                                <span class="tag @ReadinessTag(r.Status)">@ReadinessLabel(r.Status)</span>
-                                                @if (readinessNav.TryGetValue(r.ChildId, out var nav) &&
-                                                     (!string.IsNullOrEmpty(nav.HKNavigationTarget) || !string.IsNullOrEmpty(nav.CompositionNavigationTarget)))
-                                                {
-                                                    <div class="rowCardActions">
-                                                        @if (!string.IsNullOrEmpty(nav.HKNavigationTarget))
-                                                        {
-                                                            <a class="linkBtn" href="@nav.HKNavigationTarget">@nav.HKActionLabel</a>
-                                                        }
-                                                        @if (!string.IsNullOrEmpty(nav.CompositionNavigationTarget))
-                                                        {
-                                                            <a class="linkBtn" href="@nav.CompositionNavigationTarget">@nav.CompositionActionLabel</a>
-                                                        }
-                                                    </div>
-                                                }
-                                            </div>
+                                            <span class="tag @ReadinessTag(r.Status)">@ReadinessLabel(r.Status)</span>
                                         </div>
                                         <div class="sub">@r.ChildName</div>
                                         <div class="sub">@ReadinessMessage(r)</div>
@@ -649,6 +633,39 @@
                 // Нет доступа к данным другого филиала — переходы не показываем.
             }
         }
+    }
+
+    /// <summary>
+    /// Цель двойного клика по строке готовности: для объектов, владеющих составом
+    /// (изделие на уровне комплекса, агрегат на уровне изделия) — состав,
+    /// для узлов — ХК. Возвращает цель и подпись для подсказки.
+    /// </summary>
+    private (string? Target, string Label) ReadinessAction(ReadinessRow r)
+    {
+        if (!readinessNav.TryGetValue(r.ChildId, out var nav) || nav is null)
+            return ($"/реестр-хк?search={Uri.EscapeDataString(r.ChildCode)}", "Перейти в реестр ХК");
+
+        if (Level != 2 && !string.IsNullOrEmpty(nav.CompositionNavigationTarget))
+            return (nav.CompositionNavigationTarget, nav.CompositionActionLabel ?? "Открыть состав");
+
+        if (!string.IsNullOrEmpty(nav.HKNavigationTarget))
+            return (nav.HKNavigationTarget, nav.HKActionLabel ?? "Открыть ХК");
+
+        return (null, "");
+    }
+
+    private string? ReadinessHint(ReadinessRow r)
+    {
+        var (target, label) = ReadinessAction(r);
+        return target is null ? null : $"Двойной щелчок — {label.ToLowerInvariant()}";
+    }
+
+    private Task NavigateReadinessAsync(ReadinessRow r)
+    {
+        var (target, _) = ReadinessAction(r);
+        if (!string.IsNullOrEmpty(target))
+            Nav.NavigateTo(target);
+        return Task.CompletedTask;
     }
 
     private string? PredecessorVersion
