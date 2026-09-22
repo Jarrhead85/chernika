@@ -220,13 +220,25 @@
     vertical-align: middle;
 }
 
-.hk-items-table thead th[colspan] {
-    border-bottom: none;
-}
-
 .hk-items-table thead th.col-wrap {
     white-space: normal;
     word-break: break-word;
+}
+
+/* Компактные заголовки: на узких окнах сокращаются до коротких названий. */
+.th-narrow {
+    display: none;
+    white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+    .th-wide {
+        display: none;
+    }
+
+    .th-narrow {
+        display: inline;
+    }
 }
 
 .hk-items-table thead th.col-actions {
