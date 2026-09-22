@@ -87,6 +87,24 @@
     background: var(--panel2);
 }
 
+/* В редактируемой (неутверждённой) ХК поле такое же бесцветное, как остальные. */
+.hk-letter-numbers--editable {
+    background: rgba(11, 18, 32, .65);
+}
+
+[data-theme="light"] .hk-letter-numbers--editable {
+    background: rgba(255, 255, 255, .94);
+}
+
+/* В утверждённой ХК поле остаётся приглушённым (не редактируется),
+   но без внутренних рамок — читается как один блок с разделителем. */
+.hk-letter-numbers .readonlyValue {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    min-height: var(--hk-control-height);
+}
+
 .hk-letter-number-part {
     min-width: 0;
 }
@@ -166,6 +184,11 @@
     border: 1px solid var(--line);
     overflow-x: auto;
     overflow-y: hidden;
+}
+
+/* На узких экранах таблица не сжимается, а прокручивается. */
+.hk-items-table-wrapper table {
+    min-width: 980px;
 }
 
 .form > .full-width {
@@ -280,6 +303,20 @@
 .hki-actions {
     text-align: center;
     white-space: nowrap;
+}
+
+/* Колонка действий: три кнопки (вверх/вниз/удалить) целиком в 92px. */
+.hk-items-table tbody td.hki-actions {
+    padding: 6px 6px;
+}
+
+/* В редактируемой (неутверждённой) ХК заливка полей строк бесцветная, как у остальных. */
+.hk-rows-editable .hki-td-input {
+    background: rgba(11, 18, 32, .65) !important;
+}
+
+[data-theme="light"] .hk-rows-editable .hki-td-input {
+    background: rgba(255, 255, 255, .94) !important;
 }
 
 /* ── Поле поиска сборочной единицы (контейнер) ── */
@@ -424,8 +461,8 @@
     border: none;
     background: none;
     cursor: pointer;
-    padding: 2px 5px;
-    font-size: 15px;
+    padding: 2px 4px;
+    font-size: 14px;
     color: var(--accent);
 }
 
