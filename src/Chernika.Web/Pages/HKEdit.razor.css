@@ -186,9 +186,10 @@
     overflow-y: hidden;
 }
 
-/* На узких экранах таблица не сжимается, а прокручивается. */
-.hk-items-table-wrapper table {
-    min-width: 980px;
+/* Строки ХК: колонки подстраиваются под содержимое (никаких зафиксированных
+   ширин), жёстко задана только узкая колонка «№». */
+.hk-items-table.hk-rows-table {
+    table-layout: auto;
 }
 
 .form > .full-width {
@@ -450,6 +451,7 @@
     border-radius: var(--radius2);
     cursor: pointer;
     transition: .15s ease;
+    white-space: nowrap;
 }
 
 .hki-add-mat:hover {
