@@ -822,10 +822,10 @@ public class TaskService
             throw new UnauthorizedAccessException("Пользователь не найден.");
 
         if (actor.BranchId is null || actor.BranchId == Guid.Empty)
-            throw new UnauthorizedAccessException("У пользователя не указан филиал.");
+            throw new UnauthorizedAccessException("У пользователя не указана организация.");
 
         if (requestedBranchId.HasValue && requestedBranchId != actor.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к данным другой организации.");
 
         return actor.BranchId;
     }

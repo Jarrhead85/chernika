@@ -70,7 +70,7 @@ public class HKCardWorkflowIntegrationTests
         s.User.CurrentUserId = Guid.Parse(author.Id);
         var (success, error) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
         Assert.False(success);
-        Assert.Equal("Невозможно отправить ХК на проверку: в филиале не назначен нормативный администратор.", error);
+        Assert.Equal("Невозможно отправить ХК на проверку: в организации не назначен нормативный администратор.", error);
 
         var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
         Assert.Equal(HKCardStatus.Draft, card.Status);

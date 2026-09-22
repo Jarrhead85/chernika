@@ -127,7 +127,7 @@ public class NotificationService
         return CreateForUsersAsync(systemAdminUserIds, new CreateNotificationCommand(
             Type: NotificationType.System,
             Title: title,
-            Message: "В филиале отсутствуют активные NormAdmin. Назначена задача SystemAdmin.",
+            Message: "В организации отсутствуют активные NormAdmin. Назначена задача SystemAdmin.",
             EntityType: entityType,
             EntityId: entityId,
             NavigationUrl: $"/составы/{EntityTypeSegment(entityType)}/{entityId}",

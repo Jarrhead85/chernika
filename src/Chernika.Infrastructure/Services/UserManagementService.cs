@@ -136,10 +136,10 @@ public class UserManagementService
             return (false, $"Роль «{roleName}» не является допустимой бизнес-ролью");
 
         if (roleName != nameof(UserRole.SystemAdmin) && branchId == null)
-            return (false, "Филиал обязателен для роли отличной от SystemAdmin");
+            return (false, "Организация обязательна для роли отличной от SystemAdmin");
 
         if (branchId.HasValue && !await _db.Branches.AnyAsync(b => b.Id == branchId.Value))
-            return (false, "Указанный филиал не существует");
+            return (false, "Указанная организация не существует");
 
         var user = new ApplicationUser
         {
@@ -160,7 +160,7 @@ public class UserManagementService
 
         await _audit.LogAsync(new AuditWriteRequest("User", user.Id, "Created", actorId,
             EntityDisplayName: $"{userName} — {fullName}",
-            Details: $"Роль: {roleName}; филиал: {branchId}"));
+            Details: $"Роль: {roleName}; организация: {branchId}"));
 
         return (true, null);
     }
@@ -187,10 +187,10 @@ public class UserManagementService
             return (false, $"Роль «{roleName}» не является допустимой бизнес-ролью");
 
         if (roleName != nameof(UserRole.SystemAdmin) && branchId == null)
-            return (false, "Филиал обязателен для роли отличной от SystemAdmin");
+            return (false, "Организация обязательна для роли отличной от SystemAdmin");
 
         if (branchId.HasValue && !await _db.Branches.AnyAsync(b => b.Id == branchId.Value))
-            return (false, "Указанный филиал не существует");
+            return (false, "Указанная организация не существует");
 
         user.FullName = fullName;
         user.Position = position;
@@ -346,7 +346,7 @@ public class UserManagementService
             return (false, $"Роль «{roleName}» не является допустимой бизнес-ролью");
 
         if (roleName != nameof(UserRole.SystemAdmin) && branchId == null)
-            return (false, "Филиал обязателен для роли отличной от SystemAdmin");
+            return (false, "Организация обязательна для роли отличной от SystemAdmin");
 
         user.IsDeleted = false;
         user.IsActive = true;
@@ -374,7 +374,7 @@ public class UserManagementService
 
         await _audit.LogAsync(new AuditWriteRequest("User", userId, "Restored", actorId,
             EntityDisplayName: $"{user.UserName} — {user.FullName}",
-            Details: $"Роль: {GetRoleDisplayName(roleName)}; филиал: {branchId}"));
+            Details: $"Роль: {GetRoleDisplayName(roleName)}; организация: {branchId}"));
 
         return (true, null);
     }

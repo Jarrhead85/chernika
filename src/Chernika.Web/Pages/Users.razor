@@ -149,7 +149,7 @@
                             @if (formRole != nameof(UserRole.SystemAdmin))
                             {
                                 <div class="field">
-                                    <label for="new-user-branch">Филиал *</label>
+                                    <label for="new-user-branch">Организация *</label>
                                     <BranchSelect @bind-Value="SelectedBranchId" CanCreate="canQuickCreateBranch" />
                                 </div>
                             }
@@ -649,7 +649,7 @@
             {
                 if (string.IsNullOrEmpty(formBranchId) || !Guid.TryParse(formBranchId, out var parsed))
                 {
-                    formError = "Филиал обязателен для выбранной роли";
+                    formError = "Организация обязательна для выбранной роли";
                     return;
                 }
                 branchId = parsed;

@@ -987,7 +987,7 @@ public class IndividualCardDraftIntegrationTests
             s.IndividualCards.RefreshDraftSourcesAsync(
                 new RefreshIndividualCardDraftSourcesRequest(dto.Id, rootB.Id)));
 
-        Assert.Contains("другой филиал", ex.Message);
+        Assert.Contains("другую организацию", ex.Message);
         var reloaded = await s.IndividualCards.GetDraftByIdAsync(dto.Id);
         Assert.NotNull(reloaded);
         Assert.Equal(_fixture.BranchA, reloaded!.BranchId);

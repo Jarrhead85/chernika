@@ -114,7 +114,7 @@
                         @if (_canSystemConfig)
                         {
                             <div class="field">
-                                <label>Филиал</label>
+                                <label>Организация</label>
                                 <select class="field-select" @bind="_branchFilterId">
                                     <option value="">Все</option>
                                     @foreach (var b in _branches)
@@ -231,7 +231,7 @@
                                     <th>Объект</th>
                                     <th>Уровень</th>
                                     <th>Статус</th>
-                                    <th>Филиал</th>
+                                    <th>Организация</th>
                                     <th>Действия</th>
                                 </tr>
                             </thead>
@@ -317,7 +317,7 @@
                             <div class="metric"><div class="label">Статус</div><div class="value"><StatusBadge Status="@_selectedCard.Status" /></div></div>
                             <div class="metric"><div class="label">Уровень</div><div class="value">@LevelName(_selectedCard.ObjectLevel)</div></div>
                             <div class="metric"><div class="label">Объект</div><div class="value">@_selectedCard.ObjectName</div></div>
-                            <div class="metric"><div class="label">Филиал</div><div class="value">@_selectedCard.BranchName</div></div>
+                            <div class="metric"><div class="label">Организация</div><div class="value">@_selectedCard.BranchName</div></div>
                             <div class="metric"><div class="label">Автор</div><div class="value">@(_selectedCard.AuthorName ?? "—")</div></div>
                             <div class="metric"><div class="label">Создана</div><div class="value mono">@_selectedCard.CreatedAt.ToString("dd.MM.yyyy")</div></div>
                         </div>

@@ -505,7 +505,7 @@ public class EquipmentService
         {
             var user = await _userManager.FindByIdAsync(userId.ToString());
             if (user?.BranchId != branchId.Value)
-                throw new UnauthorizedAccessException("Нет доступа к составу другого филиала.");
+                throw new UnauthorizedAccessException("Нет доступа к составу другой организации.");
         }
     }
 
@@ -604,7 +604,7 @@ public class EquipmentService
             var sysAdminIds = await GetActiveSystemAdminIdsAsync(ct);
             await _notifications.NotifyCompositionReviewFallbackAsync(sysAdminIds, entity, compositionId, branchId.Value, code, version, ct);
             await _audit.LogAsync(new AuditWriteRequest(entity, compositionId.ToString(), "ReferenceProposal.NoNormAdmin",
-                _currentUser.GetRequiredUserId(), Details: "Нет активного NormAdmin в филиале для согласования состава."), ct);
+                _currentUser.GetRequiredUserId(), Details: "Нет активного NormAdmin в организации для согласования состава."), ct);
             return;
         }
 
@@ -825,7 +825,7 @@ public class EquipmentService
 
         if (cards.Any(c => !IsBranchAccessible(c.BranchId, accessibleBranchId)))
         {
-            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к данным другой организации.");
         }
 
         var applicable = cards
@@ -950,7 +950,7 @@ public class EquipmentService
         var accessibleBranchId = await GetAccessibleCompositionBranchIdAsync(null, ct);
         if (!IsBranchAccessible(card.BranchId, accessibleBranchId))
         {
-            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к данным другой организации.");
         }
 
         if (card.ObjectLevel == HKObjectLevel.Node || !card.ObjectId.HasValue)
@@ -1810,7 +1810,7 @@ public class EquipmentService
             if (predecessor.EquipmentModelId != comp.EquipmentModelId)
                 throw new InvalidOperationException("Предшествующий состав относится к другому изделию.");
             if (predecessor.BranchId != comp.BranchId)
-                throw new InvalidOperationException("Предшествующий состав относится к другому филиалу.");
+                throw new InvalidOperationException("Предшествующий состав относится к другой организации.");
             if (predecessor.Status is ProductCompositionStatus.Draft or ProductCompositionStatus.OnReview)
                 throw new InvalidOperationException("Предшествующий состав ещё не утверждён.");
         }
@@ -2238,14 +2238,14 @@ public class EquipmentService
         if (branch == null) return (false, null);
 
         var hasActiveUsers = await _db.Users.AnyAsync(u => u.BranchId == id && !u.IsDeleted, ct);
-        if (hasActiveUsers) return (false, "Невозможно архивировать филиал: с ним связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
+        if (hasActiveUsers) return (false, "Невозможно архивировать организацию: с ней связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
 
         var hasActiveCards = await _db.HKCards.AnyAsync(h => h.BranchId == id && h.Status != HKCardStatus.Deleted, ct);
-        if (hasActiveCards) return (false, "Невозможно архивировать филиал: с ним связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
+        if (hasActiveCards) return (false, "Невозможно архивировать организацию: с ней связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
 
         var hasUnfinishedTasks = await _db.WorkTasks.AnyAsync(w => w.BranchId == id && !w.IsDeleted
             && w.Status != WorkTaskStatus.Completed && w.Status != WorkTaskStatus.Cancelled, ct);
-        if (hasUnfinishedTasks) return (false, "Невозможно архивировать филиал: с ним связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
+        if (hasUnfinishedTasks) return (false, "Невозможно архивировать организацию: с ней связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
 
         branch.IsDeleted = true;
         branch.DeletedAt = _time.GetUtcNow().UtcDateTime;
@@ -2302,7 +2302,7 @@ public class EquipmentService
             query = query.Where(b => b.Id != selfId.Value);
 
         if (await query.AnyAsync(ct))
-            throw new InvalidOperationException($"Филиал «{name.Trim()}» уже существует.");
+            throw new InvalidOperationException($"Организация «{name.Trim()}» уже существует.");
     }
 
     public Task<List<Aggregate>> GetAggregatesAsync() =>
@@ -2910,10 +2910,10 @@ public class EquipmentService
             throw new UnauthorizedAccessException("Пользователь не найден.");
 
         if (actor.BranchId is null || actor.BranchId == Guid.Empty)
-            throw new UnauthorizedAccessException("У пользователя не указан филиал.");
+            throw new UnauthorizedAccessException("У пользователя не указана организация.");
 
         if (requestedBranchId.HasValue && requestedBranchId != actor.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к данным другой организации.");
 
         return actor.BranchId;
     }
@@ -3324,7 +3324,7 @@ public class EquipmentService
             if (predecessor.AggregateId != comp.AggregateId)
                 throw new InvalidOperationException("Предшествующий состав относится к другому агрегату.");
             if (predecessor.BranchId != comp.BranchId)
-                throw new InvalidOperationException("Предшествующий состав относится к другому филиалу.");
+                throw new InvalidOperationException("Предшествующий состав относится к другой организации.");
             if (predecessor.Status is ProductCompositionStatus.Draft or ProductCompositionStatus.OnReview)
                 throw new InvalidOperationException("Предшествующий состав ещё не утверждён.");
         }
@@ -3823,7 +3823,7 @@ public class EquipmentService
             if (predecessor.ComplexId != comp.ComplexId)
                 throw new InvalidOperationException("Предшествующий состав относится к другому комплексу.");
             if (predecessor.BranchId != comp.BranchId)
-                throw new InvalidOperationException("Предшествующий состав относится к другому филиалу.");
+                throw new InvalidOperationException("Предшествующий состав относится к другой организации.");
             if (predecessor.Status is ProductCompositionStatus.Draft or ProductCompositionStatus.OnReview)
                 throw new InvalidOperationException("Предшествующий состав ещё не утверждён.");
         }

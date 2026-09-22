@@ -739,8 +739,8 @@
                         <div class="hk-form-actions-buttons">
                             @if (isSystemAdmin && IsNew)
                             {
-                                <select class="fieldInput hk-admin-branch-select" @bind="_adminBranchId" aria-label="Филиал">
-                                    <option value="">Филиал: выберите…</option>
+                                <select class="fieldInput hk-admin-branch-select" @bind="_adminBranchId" aria-label="Организация">
+                                    <option value="">Организация: выберите…</option>
                                     @foreach (var b in allBranches)
                                     {
                                         <option value="@b.Id">@b.Name</option>
@@ -1571,7 +1571,7 @@
         {
             if (!Guid.TryParse(_adminBranchId, out var adminBranchId) || adminBranchId == Guid.Empty)
             {
-                errorMessage = "Укажите филиал для создания ХК.";
+                errorMessage = "Укажите организацию для создания ХК.";
                 return;
             }
             card.BranchId = adminBranchId;

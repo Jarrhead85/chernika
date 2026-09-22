@@ -98,9 +98,9 @@
                         @if (_isSystemAdmin)
                         {
                             <div class="field">
-                                <label class="field-label" for="branch">Филиал</label>
+                                <label class="field-label" for="branch">Организация</label>
                                 <select id="branch" class="field-select" value="@(_branchId?.ToString() ?? "")" @onchange="OnBranchChanged">
-                                    <option value="">Все филиалы</option>
+                                    <option value="">Все организации</option>
                                     @foreach (var branch in _branches)
                                     {
                                         <option value="@branch.Id" selected="@(branch.Id == _branchId)">@branch.Name</option>
@@ -293,7 +293,7 @@
                                 }
                                 @if (!string.IsNullOrEmpty(r.BranchName))
                                 {
-                                    <span>· Филиал: @r.BranchName</span>
+                                    <span>· Организация: @r.BranchName</span>
                                 }
                                 @if (!string.IsNullOrEmpty(r.MatchContext))
                                 {

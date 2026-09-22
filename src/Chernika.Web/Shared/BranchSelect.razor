@@ -13,13 +13,13 @@
                  @onkeydown:preventDefault="true"
                  @onkeydown="OnSelectedKeyDown">
                 <span class="bs-select-tag-text" title="@Selected.Name">@Selected.Name</span>
-                <button type="button" class="bs-select-clear" aria-label="Очистить" title="Убрать филиал"
+                <button type="button" class="bs-select-clear" aria-label="Очистить" title="Убрать организацию"
                         @onclick:stopPropagation="true" @onkeydown:stopPropagation="true" @onclick="Clear">×</button>
             </div>
         }
         else
         {
-            <button type="button" class="bs-select-trigger" @onclick="Toggle">Выбрать филиал</button>
+            <button type="button" class="bs-select-trigger" @onclick="Toggle">Выберите организацию</button>
         }
     </div>
 
@@ -55,14 +55,14 @@
     <div class="modalOverlay" style="z-index:10000" @onclick="CloseCreateModal" @onkeydown="OnCreateKeyDown">
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bs-create-title" @onclick:stopPropagation="true" style="max-width:420px">
             <div class="modalHeader">
-                <h3 id="bs-create-title">Новый филиал</h3>
+                <h3 id="bs-create-title">Новая организация</h3>
                 <button type="button" class="linkBtn" @onclick="CloseCreateModal" aria-label="Закрыть">✕</button>
             </div>
             <div class="modalBody">
                 <div class="form">
                     <div class="field">
                         <label for="bs-create-name">Наименование *</label>
-                        <input id="bs-create-name" @ref="_createNameRef" type="text" @bind="_createName" @bind:event="oninput" class="fieldInput" autocomplete="off" maxlength="256" placeholder="Наименование филиала" />
+                        <input id="bs-create-name" @ref="_createNameRef" type="text" @bind="_createName" @bind:event="oninput" class="fieldInput" autocomplete="off" maxlength="256" placeholder="Наименование организации" />
                     </div>
                     <div class="field">
                         <label for="bs-create-desc">Описание</label>
@@ -276,7 +276,7 @@
         }
         catch (Exception)
         {
-            _createError = "Не удалось создать филиал. Обновите список и повторите попытку.";
+            _createError = "Не удалось создать организацию. Обновите список и повторите попытку.";
         }
         finally
         {

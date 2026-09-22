@@ -158,7 +158,7 @@
             <div class="definitionRow"><span class="definitionLabel">Логин</span><span class="definitionValue">@_account?.Login</span></div>
             <div class="definitionRow"><span class="definitionLabel">Должность</span><span class="definitionValue">@(string.IsNullOrEmpty(_account?.Position) ? "—" : _account?.Position)</span></div>
             <div class="definitionRow"><span class="definitionLabel">Базовая роль</span><span class="definitionValue">@_account?.BaseRoleDisplay</span></div>
-            <div class="definitionRow"><span class="definitionLabel">Филиал</span><span class="definitionValue">@(string.IsNullOrEmpty(_account?.BranchName) ? "—" : _account?.BranchName)</span></div>
+            <div class="definitionRow"><span class="definitionLabel">Организация</span><span class="definitionValue">@(string.IsNullOrEmpty(_account?.BranchName) ? "—" : _account?.BranchName)</span></div>
             <div class="definitionRow"><span class="definitionLabel">Дата создания учётной записи</span><span class="definitionValue">@(_account?.CreatedAt.ToString("dd.MM.yyyy") ?? "")</span></div>
         </div>
     };

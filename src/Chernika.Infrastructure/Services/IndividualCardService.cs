@@ -382,7 +382,7 @@ public class IndividualCardService
         if (!isSystemAdmin)
         {
             if (actor.BranchId is null || actor.BranchId == Guid.Empty)
-                throw new UnauthorizedAccessException("У пользователя не указан филиал.");
+                throw new UnauthorizedAccessException("У пользователя не указана организация.");
             return new ActorScope(actor, false, actor.BranchId);
         }
 
@@ -1189,7 +1189,7 @@ public class IndividualCardService
                         expectedChildLevel, requirement.ObjectId,
                         IndividualCardDisplay.ObjectLevel(expectedChildLevel),
                         requirement.Code, requirement.Name, approved.Child.Id,
-                        "Связанная ХК относится к другому филиалу.",
+                        "Связанная ХК относится к другой организации.",
                         gapOrder++));
                     continue;
                 }
@@ -1337,7 +1337,7 @@ public class IndividualCardService
         }
 
         if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другой организации.");
     }
 
     private void CopyDraftSnapshots(
@@ -1735,7 +1735,7 @@ public class IndividualCardService
 
         // The immutable branch identity of a Draft never changes on refresh.
         if (preflight.SelectedRoot.BranchId != draft.BranchId)
-            throw new InvalidOperationException("Нельзя заменить нормативные источники черновика ИК на другой филиал.");
+            throw new InvalidOperationException("Нельзя заменить нормативные источники черновика ИК на другую организацию.");
 
         var oldCompositionCount = draft.CompositionSnapshots.Count;
         var oldHKSourceCount = draft.HKSourceSnapshots.Count;
@@ -2070,7 +2070,7 @@ public class IndividualCardService
             throw new InvalidOperationException("Сформировать можно только черновик ИК.");
 
         if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к черновику ИК другой организации.");
 
         // Form is blocked by D3 normative gaps or by ANY persisted calculation
         // problem snapshot; per-item validation happens at recalculation time
@@ -2180,7 +2180,7 @@ public class IndividualCardService
             throw new InvalidOperationException("Новая версия создаётся только для сформированной ИК.");
 
         if (!scope.IsSystemAdmin && source.BranchId != scope.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к ИК другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к ИК другой организации.");
 
         return source;
     }
@@ -2424,7 +2424,7 @@ public class IndividualCardService
         // A new version must live in the same branch as the source, even for a
         // SystemAdmin.
         if (preflight.SelectedRoot.BranchId != source.BranchId)
-            throw new InvalidOperationException("Нельзя создать новую версию ИК по ХК другого филиала.");
+            throw new InvalidOperationException("Нельзя создать новую версию ИК по ХК другой организации.");
 
         var successorExists = await _db.IndividualCards.AsNoTracking()
             .AnyAsync(c => c.SupersedesIndividualCardId == source.Id, ct);
@@ -2507,7 +2507,7 @@ public class IndividualCardService
             throw new InvalidOperationException("Архивировать можно только сформированную ИК.");
 
         if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к ИК другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к ИК другой организации.");
 
         var actorId = _currentUser.GetRequiredUserId();
         var now = _time.GetUtcNow().UtcDateTime;

@@ -165,7 +165,7 @@ public class HKCardExpirationService
                 Action: "Workflow.NoAssignee",
                 ActorUserId: Guid.Empty,
                 EntityDisplayName: $"{card.Code} v{card.Version}",
-                Details: $"Нет активного пользователя с ролью NormAdmin в филиале для задачи «Пересмотр ХК {card.Code}»."), ct);
+                Details: $"Нет активного пользователя с ролью NormAdmin в организации для задачи «Пересмотр ХК {card.Code}»."), ct);
             return false;
         }
 

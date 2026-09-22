@@ -91,7 +91,7 @@ public class ReportService
                         table.Cell().Border(1).Padding(5).Text("Узел:").Bold();
                         table.Cell().Border(1).Padding(5).Text(card.Node?.Name ?? "—");
 
-                        table.Cell().Border(1).Padding(5).Text("Филиал:").Bold();
+                        table.Cell().Border(1).Padding(5).Text("Организация:").Bold();
                         table.Cell().Border(1).Padding(5).Text(card.Branch?.Name ?? "—");
 
                         table.Cell().Border(1).Padding(5).Text("Дата утверждения:").Bold();
@@ -204,7 +204,7 @@ public class ReportService
 
     private static void WriteHKRegistryHeaders(IXLWorksheet worksheet)
     {
-        var headers = new[] { "№ ХК", "Версия", "Статус", "Узел", "Филиал", "Дата создания", "Дата утверждения", "Строк" };
+        var headers = new[] { "№ ХК", "Версия", "Статус", "Узел", "Организация", "Дата создания", "Дата утверждения", "Строк" };
         for (int i = 0; i < headers.Length; i++)
         {
             var cell = worksheet.Cell(1, i + 1);

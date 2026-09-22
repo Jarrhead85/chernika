@@ -921,7 +921,7 @@ public class SearchService
         var isSystemAdmin = await _userManager.IsInRoleAsync(actor, UserRole.SystemAdmin.ToString());
         Guid? branch = actor.BranchId is { } branchId && branchId != Guid.Empty ? branchId : null;
         if (!isSystemAdmin && branch is null)
-            throw new UnauthorizedAccessException("У пользователя не указан филиал.");
+            throw new UnauthorizedAccessException("У пользователя не указана организация.");
         return new ActorScope(isSystemAdmin, branch, userId.ToString());
     }
 

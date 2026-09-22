@@ -77,7 +77,7 @@ public static class IndividualCardPdfComposer
     private static void ComposeTitleAndRequisites(ColumnDescriptor col, IndividualCardExportDto dto)
     {
         col.Item().Text("Организация: ________________________________________________").FontSize(9);
-        col.Item().Text($"Филиал: {dto.BranchName}").FontSize(9);
+        col.Item().Text($"Организация: {dto.BranchName}").FontSize(9);
 
         col.Item().PaddingTop(8).AlignCenter().Text("ИНДИВИДУАЛЬНАЯ КАРТА").FontSize(15).Bold();
         col.Item().AlignCenter().Text("норм расхода горюче-смазочных материалов").FontSize(10).Bold();

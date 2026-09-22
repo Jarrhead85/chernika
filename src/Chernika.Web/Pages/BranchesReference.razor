@@ -11,17 +11,17 @@
 @inject CircuitDbLock DbLock
 
 <div class="stack">
-    <ReferenceBreadcrumb Group="Администрирование" Current="Филиалы" />
+    <ReferenceBreadcrumb Group="Администрирование" Current="Организации" />
     @if (canEdit)
     {
         <section class="panel">
             <div class="panelHeader">
-                <h2>@(editing ? "Редактирование филиала" : "Новый филиал")</h2>
-                <div class="hint">Справочник филиалов организации</div>
+                <h2>@(editing ? "Редактирование организации" : "Новая организация")</h2>
+                <div class="hint">Справочник организаций</div>
             </div>
             <div class="panelBody">
                 <div class="form">
-                    <div class="field"><label>Наименование</label><input @ref="_firstField" @bind="newBranch.Name" maxlength="256" /></div>
+                    <div class="field"><label>Наименование организации</label><input @ref="_firstField" @bind="newBranch.Name" maxlength="256" /></div>
                     <div class="field full-width"><label>Описание</label><input @bind="newBranch.Description" maxlength="2000" /></div>
                     <div class="formActions">
                         <button class="btn ghost" @onclick="ResetForm">Очистить</button>
@@ -38,7 +38,7 @@
 
     <section class="panel">
         <div class="panelHeader">
-            <h2>Список филиалов</h2>
+            <h2>Список организаций</h2>
             <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
@@ -73,7 +73,7 @@
                 <div class="referenceTableWrap">
                     <table>
                         <thead>
-                            <tr><th>Наименование</th><th>Описание</th><th>Статус</th><th>Действия</th></tr>
+                            <tr><th>Организация</th><th>Описание</th><th>Статус</th><th>Действия</th></tr>
                         </thead>
                         <tbody>
                             @foreach (var b in branches)

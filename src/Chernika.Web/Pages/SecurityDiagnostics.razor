@@ -36,7 +36,7 @@
                         <ul style="margin:0;padding-left:18px;list-style:disc">
                             <li>Назначить роль пользователю без роли</li>
                             <li>Оставить ровно одну базовую роль пользователю с несколькими ролями</li>
-                            <li>Назначить филиал пользователю без филиала</li>
+                            <li>Назначить организацию пользователю без организации</li>
                             <li>Разобрать удалённые/заблокированные учётные записи и бизнес-исключения</li>
                         </ul>
                     </div>
@@ -69,7 +69,7 @@
                         <div class="value @(diagnostics.UsersWithMultipleRoles > 0 ? "bad" : "")">@diagnostics.UsersWithMultipleRoles</div>
                     </div>
                     <div class="stat-card">
-                        <div class="label">Без филиала</div>
+                        <div class="label">Без организации</div>
                         <div class="value @(diagnostics.UsersMissingBranch > 0 ? "warn" : "")">@diagnostics.UsersMissingBranch</div>
                     </div>
                 </div>
@@ -192,7 +192,7 @@
                         @if (repairResult.UsersMissingBranch.Any())
                         {
                             <div style="margin-top:12px;font-size:13px">
-                                <div style="font-weight:700;color:var(--warn);margin-bottom:6px">Пользователи без назначенного филиала</div>
+                                <div style="font-weight:700;color:var(--warn);margin-bottom:6px">Пользователи без назначенной организации</div>
                                 <table>
                                     <thead>
                                         <tr>
@@ -247,7 +247,7 @@
                     кэш полномочий будет обновлён.
                 </p>
                 <p style="font-size:13px;color:var(--warn);margin:0">
-                    Пользователи без роли, с несколькими ролями или без филиала автоматически не изменяются.
+                    Пользователи без роли, с несколькими ролями или без организации автоматически не изменяются.
                 </p>
             </div>
             <div class="modalFooter">

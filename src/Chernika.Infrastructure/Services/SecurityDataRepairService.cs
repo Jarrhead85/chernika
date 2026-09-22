@@ -252,7 +252,7 @@ public class SecurityDataRepairService : ISecurityDataRepairService
                             UserName = user.UserName ?? "",
                             FullName = user.FullName ?? "",
                             CurrentRoles = [baseRole],
-                            RecommendedAction = "Открыть пользователя и указать филиал",
+                            RecommendedAction = "Открыть пользователя и указать организацию",
                         });
                     }
                 }
@@ -401,7 +401,7 @@ public class SecurityDataRepairService : ISecurityDataRepairService
                         UserName = user.UserName ?? "",
                         FullName = user.FullName ?? "",
                         CurrentRoles = [baseRole],
-                        RecommendedAction = "Открыть пользователя и указать филиал",
+                        RecommendedAction = "Открыть пользователя и указать организацию",
                     });
                 }
             }

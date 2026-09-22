@@ -668,7 +668,7 @@ public class IndividualCardXlsxReportIntegrationTests
         Assert.Equal((1, 3), MergeOf(org));
         Assert.Equal((4, 18), MergeOf(ws.Cell(org.Address.RowNumber, 4)));
 
-        var branch = ws.CellsUsed().First(c => c.GetString().StartsWith("Филиал:", StringComparison.Ordinal));
+        var branch = ws.CellsUsed().First(c => c.GetString().StartsWith("Организация:", StringComparison.Ordinal));
         Assert.Equal((1, 3), MergeOf(branch));
         Assert.Equal((4, 18), MergeOf(ws.Cell(branch.Address.RowNumber, 4)));
 

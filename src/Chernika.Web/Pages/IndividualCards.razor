@@ -47,7 +47,7 @@
                 @if (_isSystemAdmin)
                 {
                     <select class="fieldInput hkr-select" value="@_branchFilter" @onchange="OnBranchChanged">
-                        <option value="">Все филиалы</option>
+                        <option value="">Все организации</option>
                         @foreach (var branch in _branches)
                         {
                             <option value="@branch.Id">@branch.Name</option>
@@ -98,7 +98,7 @@
                                 <th>Цель ИК</th>
                                 <th>Объект</th>
                                 <th>Статус</th>
-                                <th>Филиал</th>
+                                <th>Организация</th>
                                 <th>Создана</th>
                                 <th>Сформирована</th>
                                 <th>Источники ХК</th>

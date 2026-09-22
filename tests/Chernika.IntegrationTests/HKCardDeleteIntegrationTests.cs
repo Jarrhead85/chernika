@@ -56,7 +56,7 @@ public class HKCardDeleteIntegrationTests
         var (success, error) = await s.HK.DeleteAsync(cardId, "Попытка удаления");
 
         Assert.False(success);
-        Assert.Contains("другого филиала", error);
+        Assert.Contains("другой организации", error);
     }
 
     [Fact]

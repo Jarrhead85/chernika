@@ -107,7 +107,7 @@ public static class IndividualCardXlsxComposer
 
         int r = 1;
 
-        // ── Шапка: организация и филиал ───────────────────────────────────
+        // ── Шапка: организация и её реквизиты ───────────────────────────
         ws.Range(r, 1, r, 3).Merge();
         ws.Range(r, 1, r, 3).Style = st.RequisiteLabel;
         ws.Cell(r, 1).Value = "Организация:";
@@ -119,7 +119,7 @@ public static class IndividualCardXlsxComposer
 
         ws.Range(r, 1, r, 3).Merge();
         ws.Range(r, 1, r, 3).Style = st.RequisiteLabel;
-        ws.Cell(r, 1).Value = "Филиал:";
+        ws.Cell(r, 1).Value = "Организация:";
         ws.Range(r, 4, r, LastColumn).Merge();
         ws.Range(r, 4, r, LastColumn).Style = st.RequisiteValue;
         ws.Cell(r, 4).Value = dto.BranchName;

@@ -66,10 +66,10 @@ public class HKCardService
             throw new UnauthorizedAccessException("Пользователь не найден.");
 
         if (actor.BranchId is null || actor.BranchId == Guid.Empty)
-            throw new UnauthorizedAccessException("У пользователя не указан филиал.");
+            throw new UnauthorizedAccessException("У пользователя не указана организация.");
 
         if (requestedBranchId.HasValue && requestedBranchId != actor.BranchId)
-            throw new UnauthorizedAccessException("Нет доступа к данным другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к данным другой организации.");
 
         return actor.BranchId;
     }
@@ -532,7 +532,7 @@ public class HKCardService
             return (null, null, null, new InvalidOperationException("ХК не найдена."));
 
         if (!await IsSystemAdminAsync(actor) && actor.BranchId != card.BranchId)
-            return (null, null, new UnauthorizedAccessException("Нет доступа к ХК другого филиала."), null);
+            return (null, null, new UnauthorizedAccessException("Нет доступа к ХК другой организации."), null);
 
         if (requireEdit)
         {
@@ -1250,15 +1250,15 @@ public class HKCardService
         {
             // Системный администратор выбирает филиал явно на форме создания.
             if (card.BranchId == Guid.Empty)
-                throw new InvalidOperationException("Укажите филиал для создания ХК.");
+                throw new InvalidOperationException("Укажите организацию для создания ХК.");
             var branchExists = await _db.Branches.AsNoTracking()
                 .AnyAsync(b => b.Id == card.BranchId, ct);
             if (!branchExists)
-                throw new InvalidOperationException("Указанный филиал не найден.");
+                throw new InvalidOperationException("Указанная организация не найдена.");
         }
         else if (actor.BranchId == null || actor.BranchId.Value == Guid.Empty)
         {
-            throw new InvalidOperationException("У пользователя не указан филиал. Создание ХК невозможно.");
+            throw new InvalidOperationException("У пользователя не указана организация. Создание ХК невозможно.");
         }
 
         // Даты из HTML date-input приходят с Kind=Unspecified; колонки —
@@ -1364,7 +1364,7 @@ public class HKCardService
             ?? throw new ArgumentException("ХК не найдена.");
 
         if (actor.BranchId != existing.BranchId && !await IsSystemAdminAsync(actor))
-            throw new UnauthorizedAccessException("Нет доступа к карточке другого филиала.");
+            throw new UnauthorizedAccessException("Нет доступа к карточке другой организации.");
 
         if (existing.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
             throw new InvalidOperationException("Редактирование недоступно для карточки в текущем статусе.");
@@ -1503,7 +1503,7 @@ public class HKCardService
         if (actor.BranchId != card.BranchId
             && !await IsSystemAdminAsync(actor)
             && !await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig))
-            return (false, "Нет прав для изменения карточки другого филиала");
+            return (false, "Нет прав для изменения карточки другой организации");
 
         var permError = await CheckStatusChangePermissionAsync(card, newStatus);
         if (permError != null)
@@ -1538,7 +1538,7 @@ public class HKCardService
             {
                 await LogWorkflowNoAssigneeAsync(card, "NormAdmin", $"Проверка ХК {card.Code}", ct);
                 await _db.SaveChangesAsync(ct);
-                return (false, "Невозможно отправить ХК на проверку: в филиале не назначен нормативный администратор.");
+                return (false, "Невозможно отправить ХК на проверку: в организации не назначен нормативный администратор.");
             }
         }
 
@@ -1695,7 +1695,7 @@ public class HKCardService
 
         var isSystemAdmin = await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig);
         if (!isSystemAdmin && actor.BranchId != card.BranchId)
-            return (false, "Нельзя удалить ХК другого филиала.");
+            return (false, "Нельзя удалить ХК другой организации.");
 
         return await ChangeStatusAsync(id, HKCardStatus.Deleted, reason, ct);
     }
@@ -1722,7 +1722,7 @@ public class HKCardService
 
         var isSystemAdmin = await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig);
         if (!isSystemAdmin && actor.BranchId != source.BranchId)
-            return (false, null, "Нельзя создать версию для ХК другого филиала.");
+            return (false, null, "Нельзя создать версию для ХК другой организации.");
 
         var createPerm = source.ObjectLevel switch
         {
@@ -1876,7 +1876,7 @@ public class HKCardService
             return (false, "Ручное архивирование доступно только для утверждённой ХК.");
 
         if (!isSystemAdmin && actor.BranchId != card.BranchId)
-            return (false, "Нельзя архивировать ХК другого филиала.");
+            return (false, "Нельзя архивировать ХК другой организации.");
 
         HKCard? replacement = null;
         if (replacementCardId != Guid.Empty)
@@ -1889,7 +1889,7 @@ public class HKCardService
                 return (false, "Заменяющая ХК должна быть утверждена.");
 
             if (replacement.BranchId != card.BranchId)
-                return (false, "Заменяющая ХК должна принадлежать тому же филиалу.");
+                return (false, "Заменяющая ХК должна принадлежать той же организации.");
 
             if (replacement.ObjectLevel != card.ObjectLevel ||
                 replacement.ComplexId != card.ComplexId ||
@@ -2499,7 +2499,7 @@ public class HKCardService
                 Action: "ReferenceProposal.NoNormAdmin",
                 ActorUserId: actorUserId,
                 EntityDisplayName: $"Предложение для {card.Code}: {name}",
-                Details: $"В филиале карты {card.Code} нет активного NormAdmin для проверки предложения «{name}»."),
+                Details: $"В организации карты {card.Code} нет активного NormAdmin для проверки предложения «{name}»."),
             ct);
 
         var systemAdminId = await GetAnyUserInRoleAsync("SystemAdmin");
@@ -2510,7 +2510,7 @@ public class HKCardService
             Title: $"Нет NormAdmin для проверки предложения: {name}",
             Type: WorkTaskType.UserAdministration,
             Priority: WorkTaskPriority.Normal,
-            Description: $"В филиале карты {card.Code} (v{card.Version}) нет активного NormAdmin. Предложение справочника «{name}» некому проверять. Назначьте NormAdmin в филиал.",
+            Description: $"В организации карты {card.Code} (v{card.Version}) нет активного NormAdmin. Предложение справочника «{name}» некому проверять. Назначьте NormAdmin в организацию.",
             AssignedToUserId: systemAdminId,
             BranchId: card.BranchId,
             EntityType: "ReferenceProposal",
@@ -2529,7 +2529,7 @@ public class HKCardService
                 Action: "Workflow.NoAssignee",
                 ActorUserId: Guid.Empty,
                 EntityDisplayName: $"{card.Code} v{card.Version}",
-                Details: $"Нет активного пользователя с ролью {role} в филиале для задачи «{taskTitle}»."),
+                Details: $"Нет активного пользователя с ролью {role} в организации для задачи «{taskTitle}»."),
             ct);
     }
 
