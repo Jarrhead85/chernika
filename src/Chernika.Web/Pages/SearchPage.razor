@@ -597,7 +597,7 @@
         _text = e.Value?.ToString() ?? "";
         // Не сбрасывать текст при смене фильтров; автопоиск по debounce.
         if (_text.Trim().Length >= 3)
-            QueueSearchAsync(400, 1);
+            _ = QueueSearchAsync(400, 1);
     }
 
     private void ToggleFilters() => _filtersOpen = !_filtersOpen;
@@ -626,103 +626,103 @@
         }
         // Смена типа сбрасывает устаревшую область связанных данных.
         _relatedScope = null;
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnCreatedFromChanged(ChangeEventArgs e)
     {
         _createdFrom = ParseDate(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnCreatedToChanged(ChangeEventArgs e)
     {
         _createdTo = ParseDate(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnBranchChanged(ChangeEventArgs e)
     {
         _branchId = ParseGuid(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnSortByChanged(ChangeEventArgs e)
     {
         _sortBy = e.Value?.ToString() ?? "Relevance";
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnSortDirectionChanged(ChangeEventArgs e)
     {
         _sortDescending = ParseBool(e.Value?.ToString()) ?? true;
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnHKStatusChanged(ChangeEventArgs e)
     {
         _hkCardStatus = ParseEnum<HKCardStatus>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnHKLevelChanged(ChangeEventArgs e)
     {
         _hkObjectLevel = ParseEnum<HKObjectLevel>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnHKValidityChanged(ChangeEventArgs e)
     {
         _hkValidity = ParseEnum<HKValidityFilter>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnHasAttachmentChanged(ChangeEventArgs e)
     {
         _hasAttachment = ParseBool(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnICStatusChanged(ChangeEventArgs e)
     {
         _icStatus = ParseEnum<IndividualCardStatus>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnICLevelChanged(ChangeEventArgs e)
     {
         _icObjectLevel = ParseEnum<IndividualCardObjectLevel>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnICFormedChanged(ChangeEventArgs e)
     {
         _icIsFormed = ParseBool(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnICCoefficientsChanged(ChangeEventArgs e)
     {
         _icHasCoefficients = ParseBool(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnRelatedScopeChanged(ChangeEventArgs e)
     {
         _relatedScope = ParseEnum<RelatedResultsScope>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnTaskStatusChanged(ChangeEventArgs e)
     {
         _taskStatus = ParseEnum<WorkTaskStatus>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void OnTaskPriorityChanged(ChangeEventArgs e)
     {
         _taskPriority = ParseEnum<WorkTaskPriority>(e.Value?.ToString());
-        QueueSearchAsync(200, 1);
+        _ = QueueSearchAsync(200, 1);
     }
 
     private void Reset()

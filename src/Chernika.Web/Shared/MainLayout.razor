@@ -457,9 +457,32 @@
         _layoutRefreshCts?.Cancel();
         _layoutRefreshCts?.Dispose();
         // CircuitDbLock управляется DI scope, не dispose-им его из компонента
-        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeOutsideClickListener", _bellButtonRef); } catch { }
-        try { _ = JS.InvokeVoidAsync("popoverPositioning.removeEscapeListener", _bellButtonRef); } catch { }
+        FireAndForgetJs("popoverPositioning.removeOutsideClickListener", _bellButtonRef);
+        FireAndForgetJs("popoverPositioning.removeEscapeListener", _bellButtonRef);
         _bellRef?.Dispose();
+    }
+
+    /// <summary>
+    /// Вызов JS без ожидания при завершении circuit: исключения гасятся,
+    /// чтобы не стать необработанными (async void допустим только здесь).
+    /// </summary>
+    private async void FireAndForgetJs(string identifier, params object?[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+        }
+        catch (JSDisconnectedException)
+        {
+            // circuit уже завершён
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (JSException)
+        {
+            // JS-модуль уже недоступен
+        }
     }
 
     private string GetActive(string path)

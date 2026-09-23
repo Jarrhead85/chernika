@@ -1358,7 +1358,21 @@
     {
         if (_activeDropdownId != null)
         {
-            await JS.InvokeVoidAsync("dropdownPortal.detach", _activeDropdownId);
+            try
+            {
+                await JS.InvokeVoidAsync("dropdownPortal.detach", _activeDropdownId);
+            }
+            catch (JSDisconnectedException)
+            {
+                // circuit завершается — просто сбрасываем состояние
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSException)
+            {
+                // JS-модуль уже недоступен, состояние всё равно сбрасываем
+            }
             _activeDropdownId = null;
         }
         _objectDropOpen = false;

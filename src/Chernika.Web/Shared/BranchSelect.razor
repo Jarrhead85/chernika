@@ -226,7 +226,7 @@
         StateHasChanged();
     }
 
-    private void OpenCreateModal()
+    private async Task OpenCreateModal()
     {
         _createName = _search.Trim();
         _createDescription = "";
@@ -234,21 +234,41 @@
         _creating = false;
         _createFocused = false;
         _showCreate = true;
-        _ = JS.InvokeVoidAsync("dropdownPortal.clearEscape");
+        await SafeJsAsync("dropdownPortal.clearEscape");
     }
 
-    private void CloseCreateModal()
+    private async Task CloseCreateModal()
     {
         _showCreate = false;
         _createError = null;
         if (_open)
-            _ = JS.InvokeVoidAsync("dropdownPortal.onEscape", _dotNetRef);
+            await SafeJsAsync("dropdownPortal.onEscape", _dotNetRef);
     }
 
-    private void OnCreateKeyDown(KeyboardEventArgs ev)
+    /// <summary>JS-вызов с гашением ошибок от уже закрытого circuit.</summary>
+    private async Task SafeJsAsync(string identifier, params object?[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+        }
+        catch (JSDisconnectedException)
+        {
+            // circuit завершается
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (JSException)
+        {
+            // JS-модуль уже недоступен
+        }
+    }
+
+    private async Task OnCreateKeyDown(KeyboardEventArgs ev)
     {
         if (ev.Key == "Escape")
-            CloseCreateModal();
+            await CloseCreateModal();
     }
 
     private async Task CreateAndSelect()

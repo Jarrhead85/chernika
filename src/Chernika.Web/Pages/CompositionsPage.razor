@@ -10,6 +10,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject CircuitDbLock DbLock
+@inject ILogger<CompositionsPage> Logger
 @implements IDisposable
 
 <div class="stack compositionRegistry">
@@ -386,7 +387,20 @@
         if (token.IsCancellationRequested)
             return;
 
-        await LoadData();
+        try
+        {
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            // Метод запускается без ожидания — исключение нужно погасить,
+            // иначе оно станет необработанным и уронит circuit.
+            if (!token.IsCancellationRequested)
+            {
+                Logger.LogError(ex, "Ошибка отложенной перезагрузки реестра составов");
+                error = $"Ошибка загрузки: {ex.Message}";
+            }
+        }
     }
 
     private async Task ReloadNowAsync()

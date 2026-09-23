@@ -12,6 +12,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject CircuitDbLock DbLock
 @inject NavigationManager Nav
+@inject ILogger<IndividualCardDraft> Logger
 @implements IDisposable
 
 <div class="stack">
@@ -606,6 +607,15 @@
             if (version != _recalcVersion || token.IsCancellationRequested)
                 return;
             _recalcError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            // Задача запускается без ожидания: любое исключение нужно погасить,
+            // иначе оно станет необработанным и уронит circuit.
+            if (version != _recalcVersion || token.IsCancellationRequested)
+                return;
+            Logger.LogError(ex, "Ошибка автоматического пересчёта черновика ИК {Id}", Id);
+            _recalcError = "Не удалось выполнить пересчёт. Повторите попытку.";
         }
         finally
         {
