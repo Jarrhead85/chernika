@@ -253,7 +253,7 @@
     {
         try
         {
-            workingTypes = (await CoeffService.GetActiveCoefficientTypesForSelectAsync()).ToList();
+            workingTypes = (await DbLock.LockedAsync(() => CoeffService.GetActiveCoefficientTypesForSelectAsync())).ToList();
         }
         catch
         {
