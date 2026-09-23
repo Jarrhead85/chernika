@@ -46,7 +46,7 @@ public static class GsmMaterialMapper
     public static void ApplyUpdate(GsmMaterial m, UpdateGsmMaterialRequest r) { m.Name = r.Name; m.Type = r.Type; m.Gost = r.Gost; m.Description = r.Description; }
 }
 
-// ── Aggregate ────────────────────────────────────────────────────
+// ── Агрегат ──────────────────────────────────────────────────────
 
 public record AggregateDto(Guid Id, string Code, string Name, string? Description);
 public record CreateAggregateApiRequest(string Code, string Name, string? Description);
@@ -59,7 +59,7 @@ public static class AggregateMapper
     public static void ApplyUpdate(Aggregate a, UpdateAggregateApiRequest r) { a.Code = r.Code; a.Name = r.Name; a.Description = r.Description; }
 }
 
-// ── Complex ──────────────────────────────────────────────────────
+// ── Комплекс ─────────────────────────────────────────────────────
 
 public record ComplexDto(Guid Id, string Code, string Name, string? Description);
 public record CreateComplexApiRequest(string Code, string Name, string? Description);

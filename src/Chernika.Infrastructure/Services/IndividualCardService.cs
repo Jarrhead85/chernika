@@ -116,8 +116,8 @@ public class IndividualCardService
     }
 
     /// <summary>
-    /// Legacy D0 generation path (one card per node, no preflight, no snapshots).
-    /// Locked in D2: new IndividualCards must be created through the D3+ workflow.
+    /// Легаси-путь генерации D0 (одна карта на узел, без предварительной проверки и снапшотов).
+    /// Закрыт в D2: новые индивидуальные карты создаются только сценарием D3+.
     /// </summary>
     public async Task<List<IndividualCard>> GenerateCardsForInstanceAsync(Guid instanceId, List<Guid> coefficientIds, CancellationToken ct = default)
     {
@@ -274,7 +274,7 @@ public class IndividualCardService
     }
 
 
-    // ── D2: Preflight and normative chain resolver ─────────────────────────
+    // ── D2: предварительная проверка и разрешение нормативной цепочки ───────
 
     private sealed record ChildRequirement(Guid ObjectId, string Code, string Name);
 
@@ -284,10 +284,10 @@ public class IndividualCardService
         string RootObjectCode, string RootObjectName,
         Guid? LinkedEquipmentModelId);
 
-    /// <summary>Immutable target identity captured at Draft creation: live
-    /// renames of Complex/EquipmentModel/Aggregate/Node/EquipmentInstance must
-    /// never change how a historical card displays its target. Context is set
-    /// only where the preflight already resolved it from snapshots.</summary>
+    /// <summary>Неизменяемая идентичность целевого объекта, зафиксированная при создании черновика: живые
+    /// переименования Комплекса/Изделия/Агрегата/Узла/Экземпляра не должны
+    /// менять отображение целевого объекта в исторической карте. Контекст задаётся
+    /// только там, где он уже разрешён из снапшотов предварительной проверкой.</summary>
     private static (string Code, string Name, string? Context) BuildTargetSnapshots(
         IndividualCardObjectLevel level, TargetInfo target, IndividualCardPreflightResult preflight)
     {
@@ -317,12 +317,12 @@ public class IndividualCardService
     {
         public List<IndividualCardPreflightHKSourceDto> Sources { get; } = new();
         public List<IndividualCardNormativeGapDto> Gaps { get; } = new();
-        // Per-parent resolution: the same required object may resolve under
-        // several parents (repeated aggregate under different Изделие chains).
+        // Разрешение по родителю: один и тот же требуемый объект может разрешаться под
+        // несколькими родителями (повторяющийся агрегат в разных цепочках изделий).
         public Dictionary<Guid, Dictionary<Guid, HKCard>> ResolvedByParentAndObject { get; } = new();
-        // Tree-position occurrence identity: parent card id → object id → the
-        // occurrence id of the resolved source at that position. The next level
-        // uses it as its parent occurrence, keeping repeated sources distinct.
+        // Идентичность вхождения по позиции дерева: id родительской карты → id объекта →
+        // id вхождения разрешённого источника в этой позиции. Следующий уровень
+        // использует его как родительское вхождение, сохраняя повторы источников различными.
         public Dictionary<Guid, Dictionary<Guid, Guid>> OccurrenceByParentAndObject { get; } = new();
     }
 
@@ -351,9 +351,9 @@ public class IndividualCardService
     };
 
     /// <summary>
-    /// Actor scope for IndividualCard operations: cross-branch access is decided
-    /// by the actual SystemAdmin role only — an individual SystemConfig permission
-    /// override must not unlock foreign branches.
+    /// Область доступа для операций с индивидуальной картой: доступ между ветками решает
+    /// только реальная роль SystemAdmin — отдельное разрешение SystemConfig
+    /// не должно открывать доступ к чужим веткам.
     /// </summary>
     private sealed record ActorScope(ApplicationUser Actor, bool IsSystemAdmin, Guid? BranchId);
 
@@ -390,8 +390,8 @@ public class IndividualCardService
     }
 
     /// <param name="demandCreateDraftPermission">
-    /// Public entry points demand IndividualCard.CreateDraft; the internal
-    /// refresh path does not (a Draft editor may be only an EditDraft holder).
+    /// Публичные точки входа требуют IndividualCard.CreateDraft; внутренний
+    /// путь обновления — нет (редактор черновика может иметь только EditDraft).
     /// </param>
     public async Task<IndividualCardPreflightResult> BuildPreflightAsync(
         IndividualCardPreflightRequest request,
@@ -416,7 +416,7 @@ public class IndividualCardService
         var gaps = new List<IndividualCardNormativeGapDto>();
         var gapOrder = 0;
 
-        // ── Root candidates ──
+        // ── Корневые кандидаты ──
         var candidates = await LoadRootCandidatesAsync(target, actorBranchId, ct);
 
         HKCard? selectedRoot = null;
@@ -461,19 +461,19 @@ public class IndividualCardService
                 gapOrder++));
         }
 
-        // ── Constructive compositions ──
+        // ── Конструктивные составы ──
         var (compositions, compositionData, compositionGaps) = await ResolveCompositionsAsync(
             request.ObjectLevel, target, ct);
         foreach (var g in compositionGaps)
             gaps.Add(g with { SortOrder = gapOrder++ });
         gapOrder += compositionGaps.Count;
 
-        // ── Normative chain ──
+        // ── Нормативная цепочка ──
         var hkSources = new List<IndividualCardPreflightHKSourceDto>();
         if (selectedRoot is not null)
         {
-            // Occurrence identity: one entry per tree POSITION, so the same
-            // source HKCardId may appear in several branches.
+            // Идентичность вхождения: одна запись на ПОЗИЦИЮ дерева, поэтому один и тот же
+            // источник HKCardId может встречаться в нескольких ветках.
             var occurrenceByHKCardId = new Dictionary<Guid, Guid>();
             var rootOccurrenceId = Guid.NewGuid();
             occurrenceByHKCardId[selectedRoot.Id] = rootOccurrenceId;
@@ -605,8 +605,8 @@ public class IndividualCardService
             })
             .ToListAsync(ct);
 
-        // EffectiveDate/ExpirationDate are intentionally NOT used for filtering —
-        // informational only, per the approved D2 rule.
+        // EffectiveDate/ExpirationDate намеренно НЕ используются для фильтрации —
+        // только как справочная информация, по утверждённому правилу D2.
         return rows.Select((h, index) => new IndividualCardHKCandidateDto(
             h.Id, h.Code, h.Version, target.RootLevel, target.RootObjectId,
             target.RootObjectCode, target.RootObjectName,
@@ -686,7 +686,7 @@ public class IndividualCardService
             hk.ApprovedDate, hk.EffectiveDate, hk.ExpirationDate, sortOrder, isComplete);
     }
 
-    // ── Constructive compositions ──
+    // ── Конструктивные составы ──
 
     private async Task<(
         IReadOnlyList<IndividualCardPreflightCompositionDto> Dtos,
@@ -856,9 +856,9 @@ public class IndividualCardService
     }
 
     /// <summary>
-    /// Fills AggregateCompositionId/Version/Nodes for all aggregate DTO groups
-    /// with one batched query. Items are replaced in the caller-owned lists,
-    /// which are the same list instances referenced by the composition DTOs.
+    /// Заполняет AggregateCompositionId/Version/Nodes для всех групп DTO агрегатов
+    /// одним пакетным запросом. Элементы заменяются в списках, принадлежащих вызывающему коду,
+    /// — это те же экземпляры списков, на которые ссылаются DTO составов.
     /// </summary>
     private async Task FillAggregateCompositionsAsync(
         List<List<IndividualCardPreflightAggregateDto>> aggregateDtoGroups,
@@ -907,16 +907,16 @@ public class IndividualCardService
         }
     }
 
-    // ── Normative chain resolution ──
+    // ── Разрешение нормативной цепочки ──
 
     /// <summary>
-    /// Bottom-up completeness propagation over resolved positions: a source is
-    /// complete when its own required children all resolved (no gaps attached
-    /// to its HK card) and every child position is complete. The root position
-    /// additionally requires the preflight to be gap-free overall, because
-    /// composition gaps attach to no HK card. Gap→HK mapping is by HKCardId,
-    /// so repeated occurrences of the same broken HK are conservatively
-    /// incomplete together.
+    /// Распространение полноты снизу вверх по разрешённым позициям: источник полон,
+    /// когда все его обязательные дочерние объекты разрешены (нет пробелов, привязанных
+    /// к его ХК) и каждая дочерняя позиция полна. Корневая позиция
+    /// дополнительно требует отсутствия пробелов во всей предварительной проверке, потому что
+    /// пробелы составов не привязаны ни к одной ХК. Сопоставление пробел→ХК идёт по HKCardId,
+    /// поэтому повторные вхождения одной и той же проблемной ХК считаются неполными
+    /// вместе.
     /// </summary>
     private static void MarkSourceCompleteness(
         List<IndividualCardPreflightHKSourceDto> hkSources,
@@ -969,15 +969,15 @@ public class IndividualCardService
     {
         var gapOrder = gapOrderStart;
 
-        // Without resolved constructive compositions there is nothing to match
-        // the normative chain against; the composition gap is already reported.
+        // Без разрешённых конструктивных составов не с чем сопоставлять
+        // нормативную цепочку; пробел по составу уже зафиксирован.
         if (compositionData.Count == 0)
             return;
 
         switch (level)
         {
             case IndividualCardObjectLevel.Node:
-                // Node root requires no children; the chain is complete with the root alone.
+                // Корень-узел не требует дочерних объектов; цепочка полна уже с одним корнем.
                 break;
 
             case IndividualCardObjectLevel.Aggregate:
@@ -996,14 +996,14 @@ public class IndividualCardService
             {
                 var data = compositionData[0];
 
-                // Aggregate level under the model root.
+                // Уровень агрегата под корнем-изделием.
                 var aggregateMatch = await MatchChildLevelAsync(
                     IndividualCardObjectLevel.Aggregate,
                     new[] { (Parent: root, ParentOccurrenceId: rootOccurrenceId, Requirements: data.Requirements) }.ToList(),
                     branchId, hkSources, gaps, gapOrder, ct);
                 gapOrder += aggregateMatch.Gaps.Count;
 
-                // Node level under each resolved aggregate occurrence.
+                // Уровень узла под каждым разрешённым вхождением агрегата.
                 var nodeParentRequirements = new List<(HKCard Parent, Guid ParentOccurrenceId, IReadOnlyList<ChildRequirement> Requirements)>();
                 foreach (var aggregateDto in data.Dto.Aggregates)
                 {
@@ -1028,7 +1028,7 @@ public class IndividualCardService
 
             case IndividualCardObjectLevel.Complex:
             {
-                // Изделие level under the complex root.
+                // Уровень изделия под корнем-комплексом.
                 var modelRequirements = compositions
                     .Select(d => new ChildRequirement(d.TargetObjectId, d.TargetObjectCode, d.TargetObjectName))
                     .ToList();
@@ -1038,7 +1038,7 @@ public class IndividualCardService
                     branchId, hkSources, gaps, gapOrder, ct);
                 gapOrder += modelMatch.Gaps.Count;
 
-                // Aggregate level under each resolved изделие occurrence.
+                // Уровень агрегата под каждым разрешённым вхождением изделия.
                 var aggregateParentRequirements = new List<(HKCard Parent, Guid ParentOccurrenceId, IReadOnlyList<ChildRequirement> Requirements)>();
                 foreach (var composition in compositions)
                 {
@@ -1058,9 +1058,9 @@ public class IndividualCardService
                 if (aggregateMatch is not null)
                     gapOrder += aggregateMatch.Gaps.Count;
 
-                // Node level under each resolved aggregate occurrence. The same
-                // aggregate HK may be resolved under several Изделие chains —
-                // each occurrence gets its own node-level parent requirements.
+                // Уровень узла под каждым разрешённым вхождением агрегата. Один и тот же
+                // агрегат может быть разрешён в нескольких цепочках изделий —
+                // каждое вхождение получает собственные требования к родителям уровня узла.
                 var nodeParentRequirements = new List<(HKCard Parent, Guid ParentOccurrenceId, IReadOnlyList<ChildRequirement> Requirements)>();
                 if (aggregateMatch is not null)
                 {
@@ -1165,9 +1165,9 @@ public class IndividualCardService
                     continue;
                 }
 
-                // Automatic selection is only allowed when exactly one valid variant
-                // exists; several Approved linked children of the same object are a
-                // normative inconsistency and must never be silently resolved.
+                // Автоматический выбор допускается только при ровно одном допустимом варианте;
+                // несколько утверждённых дочерних ХК одного объекта — это
+                // нормативная несогласованность, и её нельзя разрешать молча.
                 if (approvedCandidates.Count > 1)
                 {
                     match.Gaps.Add(new IndividualCardNormativeGapDto(
@@ -1196,10 +1196,10 @@ public class IndividualCardService
 
                 if (resolvedForParent.TryAdd(requirement.ObjectId, approved.Child))
                 {
-                    // A tree position: every resolved source gets a fresh
-                    // occurrence id, so the same source HKCardId under another
-                    // parent — or even under the same parent in another
-                    // parentRequirements entry — stays a distinct tree position.
+                    // Позиция дерева: каждый разрешённый источник получает новый
+                    // id вхождения, поэтому один и тот же источник HKCardId под другим
+                    // родителем — или даже под тем же родителем в другой
+                    // записи parentRequirements — остаётся отдельной позицией дерева.
                     var childOccurrenceId = Guid.NewGuid();
                     if (!match.OccurrenceByParentAndObject.TryGetValue(parent.Id, out var underParent))
                         underParent = match.OccurrenceByParentAndObject[parent.Id] = new Dictionary<Guid, Guid>();
@@ -1282,7 +1282,7 @@ public class IndividualCardService
             .ToList();
     }
 
-    // ── D3: Draft workflow ─────────────────────────────────────────────────
+    // ── D3: работа с черновиком ───────────────────────────────────────────
 
     private static Guid? GetTargetObjectId(IndividualCard card) => card.ObjectLevel switch
     {
@@ -1343,12 +1343,12 @@ public class IndividualCardService
     private void CopyDraftSnapshots(
         IndividualCard draft, IndividualCardPreflightResult preflight, DateTime now)
     {
-        // New snapshot entities are attached explicitly: a dependent discovered
-        // by DetectChanges through a tracked (Unchanged) principal with a client
-        // key set would be tracked as Modified instead of Added.
+        // Новые сущности снапшотов добавляются явно: зависимая сущность, найденная
+        // через DetectChanges у отслеживаемого (Unchanged) принципала с клиентским
+        // ключом, была бы помечена как Modified, а не Added.
         var newSnapshots = new List<object>();
 
-        // Compositions with aggregates and nodes.
+        // Составы с агрегатами и узлами.
         foreach (var composition in preflight.Compositions)
         {
             var compositionSnapshot = new IndividualCardCompositionSnapshot
@@ -1401,9 +1401,9 @@ public class IndividualCardService
             draft.CompositionSnapshots.Add(compositionSnapshot);
         }
 
-        // HK source chain: the same source HKCardId may appear in several
-        // branches, so parent mapping uses preflight occurrence identity —
-        // never the source HKCardId.
+        // Цепочка источников ХК: один и тот же источник HKCardId может встречаться в нескольких
+        // ветках, поэтому сопоставление родителей идёт по идентичности вхождения —
+        // никогда по самому источнику HKCardId.
         var snapshotByOccurrenceId = new Dictionary<Guid, IndividualCardHKSourceSnapshot>();
         foreach (var source in preflight.HKSources)
         {
@@ -1443,7 +1443,7 @@ public class IndividualCardService
         foreach (var snapshot in snapshotByOccurrenceId.Values)
             draft.HKSourceSnapshots.Add(snapshot);
 
-        // Normative gaps: historical explanation of a partial Draft.
+        // Нормативные пробелы: историческое объяснение неполного черновика.
         foreach (var gap in preflight.NormativeGaps)
         {
             var snapshot = new IndividualCardNormativeGapSnapshot
@@ -1600,7 +1600,7 @@ public class IndividualCardService
         if (request.ObjectLevel == 0 || !Enum.IsDefined(request.ObjectLevel))
             throw new InvalidOperationException("Укажите корректный уровень цели ИК.");
 
-        // Preflight is the only source of the allowed normative chain.
+        // Предварительная проверка — единственный источник допустимой нормативной цепочки.
         var preflight = await BuildPreflightAsync(
             new IndividualCardPreflightRequest(request.ObjectLevel, request.ObjectId, request.RootHKCardId),
             demandCreateDraftPermission: true, ct);
@@ -1658,7 +1658,7 @@ public class IndividualCardService
             actorId, EntityDisplayName: $"{code} {version}",
             Details: $"ObjectLevel={request.ObjectLevel}; ObjectId={request.ObjectId}; BranchId={draft.BranchId}; SelectedRootHKCardId={preflight.SelectedRoot.HKCardId}; CompositionCount={preflight.Compositions.Count}; HKSourceCount={preflight.HKSources.Count}; NormativeGapCount={preflight.NormativeGaps.Count}"), ct);
 
-        // The unique (Code, Version) index guards concurrent duplicate creation.
+        // Уникальный индекс (Code, Version) защищает от одновременного создания дубликатов.
         await _db.SaveChangesAsync(ct);
 
         return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? await ToDraftDtoAsync(reloaded, ct) : await ToDraftDtoAsync(draft, ct);
@@ -1677,8 +1677,8 @@ public class IndividualCardService
         if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
             return null;
 
-        // Reading never rebuilds or refreshes snapshots: a Draft is historical
-        // relative to its creation/last explicit refresh.
+        // Чтение никогда не пересобирает и не обновляет снапшоты: черновик историчен
+        // относительно создания или последнего явного обновления.
         return await ToDraftDtoAsync(draft, ct);
     }
 
@@ -1699,8 +1699,8 @@ public class IndividualCardService
     public async Task<IndividualCardDraftDto> RefreshDraftSourcesAsync(
         RefreshIndividualCardDraftSourcesRequest request, CancellationToken ct = default)
     {
-        // Refresh is allowed to the Draft author or any IndividualCard.EditDraft
-        // holder (with branch scope); IndividualCard.CreateDraft is NOT required.
+        // Обновление разрешено автору черновика или владельцу IndividualCard.EditDraft
+        // (с учётом ветки); IndividualCard.CreateDraft НЕ требуется.
         var scope = await ResolveActorScopeAsync(ct);
 
         var draft = await _db.IndividualCards
@@ -1720,12 +1720,12 @@ public class IndividualCardService
         var objectId = GetTargetObjectId(draft)
             ?? throw new InvalidOperationException("Черновик ИК повреждён: не указан объект цели.");
 
-        // Explicit command: a new preflight against current sources.
+        // Явная команда: новая предварительная проверка по текущим источникам.
         var preflight = await BuildPreflightAsync(
             new IndividualCardPreflightRequest(draft.ObjectLevel, objectId, request.RootHKCardId),
             demandCreateDraftPermission: false, ct);
 
-        // Rejects retain all previous snapshots unchanged.
+        // Отказы сохраняют все прежние снапшоты без изменений.
         if (preflight.SelectedRoot is null)
         {
             throw new InvalidOperationException(preflight.RootState == IndividualCardPreflightRootState.SelectionRequired
@@ -1733,7 +1733,7 @@ public class IndividualCardService
                 : "Невозможно обновить источники черновика ИК: не найдена утверждённая ХК верхнего уровня.");
         }
 
-        // The immutable branch identity of a Draft never changes on refresh.
+        // Неизменяемая ветка черновика никогда не меняется при обновлении.
         if (preflight.SelectedRoot.BranchId != draft.BranchId)
             throw new InvalidOperationException("Нельзя заменить нормативные источники черновика ИК на другую организацию.");
 
@@ -1746,15 +1746,15 @@ public class IndividualCardService
             .Select(s => s.SourceHKCardId)
             .FirstOrDefault();
 
-        // The whole replace workflow is atomic: validation happened above,
-        // so a failure after the first snapshot delete rolls everything back
-        // and the previous snapshot set is fully restored.
+        // Весь сценарий замены атомарен: проверка выполнена выше,
+        // поэтому сбой после первого удаления снапшота откатывает всё назад
+        // и прежний набор снапшотов полностью восстанавливается.
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         try
         {
-            // Replace, never merge: delete the whole previous snapshot set with
-            // deterministic bulk deletes (children first), then detach the stale
-            // tracked graph so relationship fixup cannot interfere with the new set.
+            // Замена, а не слияние: удаляем весь прежний набор снапшотов
+            // детерминированными массовыми удалениями (сначала дочерние), затем отсоединяем устаревший
+            // отслеживаемый граф, чтобы исправление связей не мешало новому набору.
             var oldCompositionIds = draft.CompositionSnapshots.Select(c => c.Id).ToList();
             var oldAggregateIds = draft.CompositionSnapshots
                 .SelectMany(c => c.Aggregates)
@@ -1812,8 +1812,8 @@ public class IndividualCardService
 
     public async Task DeleteDraftAsync(Guid individualCardId, CancellationToken ct = default)
     {
-        // Deletion is allowed to the Draft author or any IndividualCard.EditDraft
-        // holder (with branch scope); IndividualCard.CreateDraft is NOT required.
+        // Удаление разрешено автору черновика или владельцу IndividualCard.EditDraft
+        // (с учётом ветки); IndividualCard.CreateDraft НЕ требуется.
         var scope = await ResolveActorScopeAsync(ct);
 
         var draft = await _db.IndividualCards
@@ -1832,12 +1832,12 @@ public class IndividualCardService
             actorId, EntityDisplayName: $"{draft.Code} {draft.Version}",
             Details: $"Code={draft.Code}; Version={draft.Version}; ObjectLevel={draft.ObjectLevel}; ObjectId={GetTargetObjectId(draft)}; BranchId={draft.BranchId}; CreatedByUserId={draft.CreatedByUserId}; DeletedByUserId={actorId}"), ct);
 
-        // Cascade removes all snapshots; the audit row is independent and survives.
+        // Каскад удаляет все снапшоты; запись аудита независима и сохраняется.
         _db.IndividualCards.Remove(draft);
         await _db.SaveChangesAsync(ct);
     }
 
-    // ── D4: coefficients, calculation, Form ────────────────────────────────
+    // ── D4: коэффициенты, расчёт, формирование ────────────────────────────
 
     public async Task<IndividualCardCalculationDto?> GetDraftCalculationAsync(
         Guid individualCardId, CancellationToken ct = default)
@@ -1863,8 +1863,8 @@ public class IndividualCardService
             .FirstOrDefaultAsync(d => d.Id == individualCardId && d.Status == IndividualCardStatus.Draft, ct)
             ?? throw new InvalidOperationException("Черновик ИК не найден.");
 
-        // Draft author OR IndividualCard.EditDraft with branch scope; same rule
-        // as refresh/delete. IndividualCard.CreateDraft is NOT required.
+        // Автор черновика ИЛИ владелец IndividualCard.EditDraft с учётом ветки; то же правило,
+        // что при обновлении и удалении. IndividualCard.CreateDraft НЕ требуется.
         await EnsureDraftEditorAsync(draft, scope, "Недостаточно прав для работы с черновиком ИК.", ct);
 
         var query = _db.Coefficients.AsNoTracking()
@@ -1918,13 +1918,13 @@ public class IndividualCardService
         if (draft.Status != IndividualCardStatus.Draft)
             throw new InvalidOperationException("Пересчитать можно только черновик ИК.");
 
-        // Author OR IndividualCard.EditDraft with branch scope, plus the
-        // dedicated IndividualCard.RecalculateDraft right; hidden UI is not
-        // security, so every required right is checked server-side.
+        // Автор ИЛИ владелец IndividualCard.EditDraft с учётом ветки, плюс
+        // отдельное право IndividualCard.RecalculateDraft; скрытый интерфейс — не
+        // защита, поэтому все необходимые права проверяются на сервере.
         await EnsureDraftEditorAsync(draft, scope, "Недостаточно прав для изменения черновика ИК.", ct);
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardRecalculateDraft, ct);
 
-        // Coefficient selection validation.
+        // Проверка выбора коэффициентов.
         var requestedIds = request.CoefficientIds ?? new List<Guid>();
         if (requestedIds.Distinct().Count() != requestedIds.Count)
             throw new InvalidOperationException("Коэффициенты выбраны с повторами.");
@@ -1974,8 +1974,8 @@ public class IndividualCardService
                 .Where(p => p.IndividualCardId == draft.Id)
                 .ExecuteDeleteAsync(ct);
 
-            // Detach the stale tracked graph so relationship fixup cannot
-            // interfere with the replaced calculation set.
+            // Отсоединяем устаревший отслеживаемый граф, чтобы исправление связей не
+            // мешало заменённому набору расчёта.
             foreach (var stale in draft.Items.SelectMany(i => i.MaterialSnapshots).Cast<object>()
                          .Concat(draft.Items).Concat(draft.CoefficientSnapshots)
                          .Concat(draft.CalculationProblemSnapshots))
@@ -2013,8 +2013,8 @@ public class IndividualCardService
                 draft.Items.Add(item);
             }
 
-            // ALL validation problems become immutable snapshots — they must
-            // survive reloads and block Form until the next recalculation.
+            // ВСЕ проблемы валидации становятся неизменяемыми снапшотами — они должны
+            // переживать перезагрузки и блокировать формирование до следующего пересчёта.
             var problemSortOrder = 0;
             foreach (var problem in problems)
             {
@@ -2072,9 +2072,9 @@ public class IndividualCardService
         if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
             throw new UnauthorizedAccessException("Нет доступа к черновику ИК другой организации.");
 
-        // Form is blocked by D3 normative gaps or by ANY persisted calculation
-        // problem snapshot; per-item validation happens at recalculation time
-        // and its results are stored immutably.
+        // Формирование блокируется нормативными пробелами D3 или ЛЮБЫМ сохранённым
+        // снапшотом проблемы расчёта; проверка по строкам выполняется при пересчёте,
+        // а её результаты сохраняются неизменно.
         var blockers = new List<string>();
 
         if (draft.NormativeGapSnapshots.Count > 0)
@@ -2116,12 +2116,12 @@ public class IndividualCardService
             throw;
         }
 
-        // The card is Formed now; the in-memory draft already carries the full
-        // loaded graph (items, coefficient snapshots, source identities).
+        // Карта уже сформирована; черновик в памяти уже содержит полный
+        // загруженный граф (строки, снапшоты коэффициентов, идентичности источников).
         return BuildCalculationDto(draft);
     }
 
-    // ── D5: new version, comparison, archive ───────────────────────────────
+    // ── D5: новая версия, сравнение, архив ────────────────────────────────
 
     public async Task<IndividualCardActionHeaderDto?> GetIndividualCardActionHeaderAsync(
         Guid individualCardId, CancellationToken ct = default)
@@ -2195,8 +2195,8 @@ public class IndividualCardService
         var objectId = GetTargetObjectId(source)
             ?? throw new InvalidOperationException("ИК повреждена: не указан объект цели.");
 
-        // Fresh preflight of CURRENT sources — the source card's own snapshots
-        // are the "was" side, live sources are the "now" side.
+        // Свежая предварительная проверка ТЕКУЩИХ источников — собственные снапшоты
+        // исходной карты образуют сторону «было», живые источники — сторону «стало».
         var preflight = await BuildPreflightAsync(
             new IndividualCardPreflightRequest(source.ObjectLevel, objectId, request.RootHKCardId),
             demandCreateDraftPermission: false, ct);
@@ -2317,7 +2317,7 @@ public class IndividualCardService
                         b.Quantity == a.Quantity ? "Unchanged" : "Changed",
                         "Агрегат", aggregateName, $"×{b.Quantity}", $"×{a.Quantity}"));
 
-                // Node quantities under the aggregate occurrence path.
+                // Количества узлов по пути вхождения агрегата.
                 var beforeNodes = (b?.Nodes ?? Enumerable.Empty<IndividualCardNodeSnapshot>())
                     .GroupBy(n => n.NodeId).ToDictionary(g => g.Key, g => g.First());
                 var afterNodes = (a?.Nodes ?? Enumerable.Empty<IndividualCardPreflightNodeDto>())
@@ -2342,9 +2342,9 @@ public class IndividualCardService
         return changes;
     }
 
-    /// <summary>HK source diff keyed by the tree position (ObjectId path),
-    /// so the same source HKCardId in different branches is compared per
-    /// occurrence context.</summary>
+    /// <summary>Разница источников ХК с ключом по позиции дерева (путь ObjectId),
+    /// поэтому один и тот же источник HKCardId в разных ветках сравнивается по
+    /// контексту вхождения.</summary>
     private static List<IndividualCardDiffEntryDto> BuildHKSourceDiff(
         IndividualCard source, IndividualCardPreflightResult preflight)
     {
@@ -2409,7 +2409,7 @@ public class IndividualCardService
         var objectId = GetTargetObjectId(source)
             ?? throw new InvalidOperationException("ИК повреждена: не указан объект цели.");
 
-        // Fresh preflight; no latest/newest fallback, no legacy links.
+        // Свежая предварительная проверка; без откатов к «последнему/новейшему» и без легаси-связей.
         var preflight = await BuildPreflightAsync(
             new IndividualCardPreflightRequest(source.ObjectLevel, objectId, request.RootHKCardId),
             demandCreateDraftPermission: false, ct);
@@ -2421,8 +2421,8 @@ public class IndividualCardService
                 : "Невозможно создать новую версию ИК: не найдена утверждённая ХК верхнего уровня.");
         }
 
-        // A new version must live in the same branch as the source, even for a
-        // SystemAdmin.
+        // Новая версия должна находиться в той же ветке, что и источник, даже для
+        // системного администратора.
         if (preflight.SelectedRoot.BranchId != source.BranchId)
             throw new InvalidOperationException("Нельзя создать новую версию ИК по ХК другой организации.");
 
@@ -2435,8 +2435,8 @@ public class IndividualCardService
         var now = _time.GetUtcNow().UtcDateTime;
         var newRevision = source.RevisionNumber + 1;
 
-        // Deliberately NOT via public CreateDraftAsync: it rejects an existing
-        // Code, while a new version intentionally reuses the source Code.
+        // Намеренно НЕ через публичный CreateDraftAsync: он отклоняет уже существующий
+        // Code, а новая версия намеренно переиспользует Code источника.
         var draft = new IndividualCard
         {
             Id = Guid.NewGuid(),
@@ -2460,21 +2460,21 @@ public class IndividualCardService
         }
         else
         {
-            // Fallback: inherit the source snapshot identity (resolved target
-            // disappeared between preflight and creation).
+            // Запасной вариант: наследуем идентичность снапшота источника (разрешённый объект
+            // исчез между предварительной проверкой и созданием).
             draft.TargetObjectCodeSnapshot = source.TargetObjectCodeSnapshot;
             draft.TargetObjectNameSnapshot = source.TargetObjectNameSnapshot;
             draft.TargetContextSnapshot = source.TargetContextSnapshot;
         }
         ApplyTargetFk(draft, source.ObjectLevel, objectId);
 
-        // Fresh composition/HK/gap snapshots only; no calculation rows,
-        // materials, coefficient snapshots or TotalNorm are copied.
+        // Только свежие снапшоты составов, ХК и пробелов; строки расчёта,
+        // материалы, снапшоты коэффициентов и TotalNorm не копируются.
         CopyDraftSnapshots(draft, preflight, now);
 
         _db.IndividualCards.Add(draft);
-        // The audit is written against the SOURCE card: the action performed
-        // is "create a successor version of this Formed card".
+        // Аудит пишется по ИСХОДНОЙ карте: выполненное действие —
+        // «создание версии-преемника этой сформированной карты».
         await _audit.CreateLogAsync(new AuditWriteRequest(
             "IndividualCard", source.Id.ToString(), "IndividualCard.NewVersionCreated",
             actorId, EntityDisplayName: $"{source.Code} {source.Version}",
@@ -2534,7 +2534,7 @@ public class IndividualCardService
         }
     }
 
-    // ── D6: registry, unified detail, history ──────────────────────────────
+    // ── D6: реестр, единая карточка, история ──────────────────────────────
 
     public async Task<PagedResult<IndividualCardRegistryItemDto>> GetRegistryAsync(
         IndividualCardRegistryQuery query, CancellationToken ct = default)
@@ -2543,8 +2543,8 @@ public class IndividualCardService
         var scope = await ResolveActorScopeAsync(ct);
         var actorId = _currentUser.GetRequiredUserId().ToString();
 
-        // Branch scope: SystemAdmin may pick any branch; everyone else is
-        // forcibly limited to their own branch regardless of the UI filter.
+        // Область ветки: SystemAdmin может выбрать любую ветку; все остальные
+        // принудительно ограничены своей веткой независимо от фильтра интерфейса.
         var branchId = scope.IsSystemAdmin ? query.BranchId : scope.BranchId;
         var page = Math.Max(1, query.Page);
         var pageSize = Math.Clamp(query.PageSize, 1, 200);
@@ -2677,7 +2677,7 @@ public class IndividualCardService
         if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
             return [];
 
-        // Version chain: every revision of the same card code in the branch.
+        // Цепочка версий: все ревизии одного кода карты в ветке.
         var chain = await _db.IndividualCards.AsNoTracking()
             .Where(c => c.Code == card.Code && c.BranchId == card.BranchId)
             .OrderBy(c => c.RevisionNumber)
@@ -2701,7 +2701,7 @@ public class IndividualCardService
         if (!scope.IsSystemAdmin && card.BranchId != scope.BranchId)
             return null;
 
-        // Target identity is immutable snapshot data captured at creation.
+        // Идентичность целевого объекта — неизменяемые данные снапшота, зафиксированные при создании.
         var objectCode = card.TargetObjectCodeSnapshot;
         var objectName = card.TargetObjectNameSnapshot;
         var contextText = card.TargetContextSnapshot;
@@ -3209,10 +3209,10 @@ public class IndividualCardService
             .FirstOrDefaultAsync(d => d.Id == individualCardId && d.Status == IndividualCardStatus.Draft, ct);
     }
 
-    /// <summary>Occurrence-aware leaf traversal of the snapshot HK tree.
-    /// Every node occurrence reachable through a chain without normative gaps
-    /// produces its own calculation rows with factors resolved through the
-    /// actual parent occurrence path — never by global source object ids.</summary>
+    /// <summary>Обход листьев дерева снапшотов ХК с учётом вхождений.
+    /// Каждое вхождение узла, достижимое по цепочке без нормативных пробелов,
+    /// порождает собственные строки расчёта с множителями, разрешёнными по
+    /// фактическому пути родительских вхождений — никогда по глобальным id объектов.</summary>
     private async Task<(List<IndividualCardItem> Items, List<IndividualCardCalculationProblemDto> Problems,
         decimal TotalNorm, int PrimaryMaterialCount, decimal PrimaryTotal)>
         CalculateDraftRowsAsync(IndividualCard draft, decimal totalCoefficient, CancellationToken ct)
@@ -3232,12 +3232,12 @@ public class IndividualCardService
             .Select(g => g.RelatedHKCardId!.Value)
             .ToHashSet();
 
-        // Parent links store snapshot ids (ParentHKSourceSnapshotId), so the
-        // occurrence walk is keyed by snapshot identity.
+        // Родительские связи хранят id снапшотов (ParentHKSourceSnapshotId), поэтому
+        // обход вхождений ведётся по идентичности снапшота.
         var sourceBySnapshotId = draft.HKSourceSnapshots.ToDictionary(s => s.Id);
 
-        // Node-level leaf occurrences with a complete ancestor chain (the root
-        // reflects whole-card completeness and is not part of the chain check).
+        // Листовые вхождения уровня узла с полной цепочкой предков (корень
+        // отражает полноту всей карты и в проверку цепочки не входит).
         var nodeOccurrences = new List<IndividualCardHKSourceSnapshot>();
         foreach (var source in draft.HKSourceSnapshots.Where(s => s.ObjectLevel == IndividualCardObjectLevel.Node))
         {
@@ -3257,8 +3257,8 @@ public class IndividualCardService
                 nodeOccurrences.Add(source);
         }
 
-        // Snapshot quantity maps: composition by target object, aggregate by
-        // (composition, aggregate source), node by (aggregate snapshot, node source).
+        // Карты количеств по снапшотам: состав — по целевому объекту, агрегат —
+        // по (состав, источник агрегата), узел — по (снапшот агрегата, источник узла).
         var compositionByTarget = draft.CompositionSnapshots
             .GroupBy(cs => cs.TargetObjectId)
             .ToDictionary(g => g.Key, g => g.First());
@@ -3272,7 +3272,7 @@ public class IndividualCardService
             .GroupBy(x => (x.a.Id, x.n.NodeId))
             .ToDictionary(g => g.Key, g => g.First().n);
 
-        // HKCardItem rows of the node source HK cards, one bounded query.
+        // Строки HKCardItem исходных ХК узлов, один ограниченный запрос.
         var nodeHkIds = nodeOccurrences.Select(o => o.SourceHKCardId).Distinct().ToList();
         var hkItems = await _db.HKCardItems.AsNoTracking()
             .Include(i => i.Materials).ThenInclude(m => m.GsmMaterial)
@@ -3286,7 +3286,7 @@ public class IndividualCardService
 
         foreach (var nodeOcc in nodeOccurrences.OrderBy(o => o.SortOrder))
         {
-            // Structural multipliers through the actual occurrence path.
+            // Структурные множители по фактическому пути вхождений.
             var nodeQuantity = 1;
             var aggregateQuantity = 1;
             var productQuantity = 1;
@@ -3309,9 +3309,9 @@ public class IndividualCardService
                         ? p2
                         : null;
 
-                // Product occurrence: the model occurrence in a Complex tree or
-                // the root itself for an Изделие target. Aggregate target: the
-                // aggregate occurrence is the root and the composition matches it.
+                // Вхождение изделия: вхождение изделия в дереве комплекса или
+                // сам корень для цели-изделия. Для цели-агрегата:
+                // вхождение агрегата является корнем, и состав ему соответствует.
                 var productObjectId = productOcc?.SourceObjectId ?? aggregateOcc.SourceObjectId;
                 composition = compositionByTarget.GetValueOrDefault(productObjectId);
 
@@ -3383,8 +3383,8 @@ public class IndividualCardService
                         nodeOcc.SourceHKCardId, hkItem.Id, nodeSnapshot?.Id, sortOrder));
                 }
 
-                // BaseVolume = HKCardItem.Volume × HKCardItem.Quantity × Qnode ×
-                // Qaggregate × Qproduct, decimal, no intermediate rounding.
+                // Базовый объём = HKCardItem.Volume × HKCardItem.Quantity × Qnode ×
+                // Qaggregate × Qproduct, decimal, без промежуточного округления.
                 var baseVolume = hkItem.Volume * hkItem.Quantity
                     * nodeQuantity * aggregateQuantity * productQuantity;
                 var calculatedVolume = decimal.Ceiling(baseVolume * totalCoefficient);
@@ -3434,8 +3434,8 @@ public class IndividualCardService
             }
         }
 
-        // Primary totals: only Primary materials participate; each parent row
-        // contributes exactly once per material group.
+        // Итоги по основным маркам: участвуют только основные; каждая родительская строка
+        // учитывается ровно один раз на группу марок.
         var primaryTotals = items
             .SelectMany(i => i.MaterialSnapshots.Where(m => m.Category == GsmCategory.Primary)
                 .Select(m => (Item: i, Material: m)))
@@ -3474,8 +3474,8 @@ public class IndividualCardService
 
         var problems = new List<IndividualCardCalculationProblemDto>();
 
-        // Problems are read from immutable recalculation snapshots; the D3
-        // normative gap state is added live (gap-free refresh clears it).
+        // Проблемы читаются из неизменяемых снапшотов пересчёта; нормативное
+        // состояние пробелов D3 добавляется вживую (обновление без пробелов его снимает).
         foreach (var snapshot in draft.CalculationProblemSnapshots
                      .Where(p => p.Code != "IncompleteNormativeChain")
                      .OrderBy(p => p.SortOrder))
@@ -3495,9 +3495,9 @@ public class IndividualCardService
         var rows = draft.Items.OrderBy(i => i.SortOrder)
             .Select(i =>
             {
-                // Row factors resolved through the branch's node snapshot —
-                // repeated node sources under different parents carry distinct
-                // node snapshot ids, so factors stay per-branch.
+                // Множители строк разрешаются через снапшот узла ветки —
+                // повторяющиеся источники узлов под разными родителями имеют разные
+                // id снапшотов узлов, поэтому множители остаются по ветке.
                 var nodeQuantity = 0;
                 var aggregateQuantity = 0;
                 var productQuantity = 0;

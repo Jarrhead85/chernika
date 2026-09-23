@@ -8,8 +8,8 @@ public class IndividualCardHKSourceSnapshot
     public Guid IndividualCardId { get; set; }
     public IndividualCard IndividualCard { get; set; } = null!;
 
-    /// <summary>Position identity in the resolved preflight tree; repeats of the
-    /// same SourceHKCardId in different branches are distinct occurrences.</summary>
+    /// <summary>Идентичность позиции в разрешённом дереве предварительной проверки; повторы
+    /// одного SourceHKCardId в разных ветках считаются разными вхождениями.</summary>
     public Guid PreflightOccurrenceId { get; set; }
 
     public Guid? ParentHKSourceSnapshotId { get; set; }
@@ -17,8 +17,8 @@ public class IndividualCardHKSourceSnapshot
     public ICollection<IndividualCardHKSourceSnapshot> Children { get; set; }
         = new List<IndividualCardHKSourceSnapshot>();
 
-    // Scalar source reference: the HKCard may later be archived/renamed;
-    // display fields below are immutable copies captured at snapshot time.
+    // Скалярная ссылка на источник: ХК может быть позже заархивирована или переименована;
+    // поля отображения ниже — неизменяемые копии, зафиксированные в момент снапшота.
     public Guid SourceHKCardId { get; set; }
 
     public IndividualCardObjectLevel ObjectLevel { get; set; }
@@ -36,6 +36,6 @@ public class IndividualCardHKSourceSnapshot
     public int SortOrder { get; set; }
     public DateTime CapturedAt { get; set; }
 
-    /// <summary>Historical completeness flag captured from the preflight source.</summary>
+    /// <summary>Исторический признак полноты, зафиксированный из источника предварительной проверки.</summary>
     public bool IsComplete { get; set; }
 }

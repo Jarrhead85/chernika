@@ -415,7 +415,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(x => x.SupersedesIndividualCardId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            // Legacy D0 relationships preserved until a separate cleanup PR.
+            // Легаси-связи D0 сохраняются до отдельного PR по очистке.
             e.HasOne(x => x.HKCard).WithMany().HasForeignKey(x => x.HKCardId)
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.ProductComposition).WithMany().HasForeignKey(x => x.ProductCompositionId)
@@ -438,8 +438,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_IndividualCards_CreatedAt");
             e.HasIndex(x => x.FormedAt).HasDatabaseName("IX_IndividualCards_FormedAt");
             e.HasIndex(x => x.SupersedesIndividualCardId).HasDatabaseName("IX_IndividualCards_SupersedesIndividualCardId");
-            // Concurrency guard for D5: exactly one successor version per Formed
-            // source card, enforced by the database.
+            // Защита от гонок для D5: ровно одна версия-преемник на сформированную
+            // исходную карту, обеспечивается базой данных.
             e.HasIndex(x => x.SupersedesIndividualCardId)
                 .IsUnique()
                 .HasFilter("\"SupersedesIndividualCardId\" IS NOT NULL")
@@ -489,13 +489,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.SourceObjectName).HasMaxLength(500).IsRequired();
             e.Property(x => x.HKCardCode).HasMaxLength(100).IsRequired();
             e.Property(x => x.HKCardVersion).HasMaxLength(20).IsRequired();
-            // Identity of the preflight occurrence that produced this snapshot.
-            // Required: the same source HKCardId may repeat in several branches.
+            // Идентичность вхождения предварительной проверки, породившего этот снапшот.
+            // Обязательно: один и тот же источник HKCardId может повторяться в нескольких ветках.
             e.Property(x => x.PreflightOccurrenceId).IsRequired();
-            // Materialised completeness flag captured at snapshot time.
+            // Материализованный признак полноты, зафиксированный в момент снапшота.
             e.Property(x => x.IsComplete).IsRequired();
-            // Self-reference inside the snapshot tree cascades with the parent:
-            // a Restrict self-FK can break a multi-row cascade delete in PostgreSQL.
+            // Самоссылка внутри дерева снапшотов каскадируется вместе с родителем:
+            // ограничивающий self-FK может нарушить каскадное удаление нескольких строк в PostgreSQL.
             e.HasOne(x => x.Parent).WithMany(s => s.Children)
                 .HasForeignKey(x => x.ParentHKSourceSnapshotId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.IndividualCardId, x.SortOrder })
@@ -516,7 +516,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.BaseVolume).HasPrecision(18, 6);
             e.Property(x => x.CalculatedVolume).HasPrecision(18, 6);
 
-            // Legacy D0 relationship preserved until a separate cleanup PR.
+            // Легаси-связь D0 сохраняется до отдельного PR по очистке.
             e.HasOne(x => x.HKCardItem).WithMany(x => x.IndividualCardItems).HasForeignKey(x => x.HKCardItemId)
                 .OnDelete(DeleteBehavior.Restrict);
 

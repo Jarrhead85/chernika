@@ -285,7 +285,7 @@ public class CoefficientService
             .FirstAsync(ct);
     }
 
-    // ── Coefficient CRUD (C2) ─────────────────────────────────────────────
+    // ── CRUD коэффициентов (C2) ───────────────────────────────────────────
 
     private static string NormalizeCoefficientName(string value)
     {

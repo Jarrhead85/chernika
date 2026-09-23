@@ -106,7 +106,7 @@ public class IndividualCardsController : ControllerBase
         return Ok(cards.Select(IndividualCardMapper.ToListItem).ToList());
     }
 
-    // ── D2/D3: preflight and Draft workflow ───────────────────────────────
+    // ── D2/D3: предварительная проверка и работа с черновиком ──────────────
 
     [HttpPost("preflight")]
     public async Task<ActionResult<IndividualCardPreflightResult>> Preflight(
@@ -176,7 +176,7 @@ public class IndividualCardsController : ControllerBase
         }
     }
 
-    // ── D4: coefficients, calculation, Form ───────────────────────────────
+    // ── D4: коэффициенты, расчёт, формирование ────────────────────────────
 
     [HttpGet("drafts/{id:guid}/calculation")]
     public async Task<ActionResult<IndividualCardCalculationDto>> GetDraftCalculation(Guid id, CancellationToken ct)
@@ -234,7 +234,7 @@ public class IndividualCardsController : ControllerBase
         }
     }
 
-    // ── D5: new version, comparison, archive ──────────────────────────────
+    // ── D5: новая версия, сравнение, архив ────────────────────────────────
 
     [HttpGet("{id:guid}/action-header")]
     public async Task<ActionResult<IndividualCardActionHeaderDto>> GetActionHeader(Guid id, CancellationToken ct)
@@ -244,7 +244,7 @@ public class IndividualCardsController : ControllerBase
         return Ok(header);
     }
 
-    // ── D6: registry, detail, history (read-only) ─────────────────────────
+    // ── D6: реестр, карточка и история (только чтение) ─────────────────────
 
     [HttpGet("registry")]
     public async Task<ActionResult<PagedResult<IndividualCardRegistryItemDto>>> GetRegistry(
@@ -349,7 +349,7 @@ public class IndividualCardsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Legacy generation is locked in D2: preflight-based workflow replaces it.
+            // Легаси-генерация закрыта в D2: её заменяет сценарий с предварительной проверкой.
             return Conflict(new { message = ex.Message });
         }
     }

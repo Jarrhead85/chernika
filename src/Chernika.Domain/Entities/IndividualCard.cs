@@ -31,9 +31,9 @@ public class IndividualCard
     public Guid BranchId { get; set; }
     public Branch Branch { get; set; } = null!;
 
-    // Immutable target identity captured at Draft creation (D3/D5). Live
-    // renames of Complex/EquipmentModel/Aggregate/Node/EquipmentInstance must
-    // never change how a historical card displays its target.
+    // Неизменяемая идентичность целевого объекта, зафиксированная при создании черновика (D3/D5). Живые
+    // переименования Комплекса/Изделия/Агрегата/Узла/Экземпляра не должны
+    // менять отображение целевого объекта в исторической карте.
     public string TargetObjectCodeSnapshot { get; set; } = string.Empty;
     public string TargetObjectNameSnapshot { get; set; } = string.Empty;
     public string? TargetContextSnapshot { get; set; }
@@ -53,8 +53,8 @@ public class IndividualCard
 
     public string? Notes { get; set; }
 
-    // Legacy D0 fields preserved until a separate cleanup PR:
-    // legacy model was EquipmentInstance-scoped with a single HKCard/Node/ProductComposition link.
+    // Легаси-поля D0 сохраняются до отдельного PR по очистке:
+    // легаси-модель была привязана к экземпляру техники одной связью с ХК, узлом и составом изделия.
     public Guid? HKCardId { get; set; }
     public HKCard? HKCard { get; set; }
     public Guid? ProductCompositionId { get; set; }

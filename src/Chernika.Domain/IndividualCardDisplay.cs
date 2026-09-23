@@ -3,9 +3,9 @@ using Chernika.Domain.Enums;
 namespace Chernika.Domain;
 
 /// <summary>
-/// User-facing display names for IndividualCard domain concepts.
-/// EquipmentModel is always displayed as «Изделие»; the technical term
-/// «Модель техники» must never appear in user-visible texts.
+/// Отображаемые пользователю названия понятий индивидуальной карты.
+/// EquipmentModel всегда отображается как «Изделие»; технический термин
+/// «Модель техники» не должен появляться в пользовательских текстах.
 /// </summary>
 public static class IndividualCardDisplay
 {

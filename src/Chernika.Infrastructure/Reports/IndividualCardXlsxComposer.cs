@@ -30,7 +30,7 @@ public static class ReportFileNameBuilder
 /// </summary>
 public static class IndividualCardXlsxComposer
 {
-    private const int LastColumn = 18; // A..R
+    private const int LastColumn = 18; // столбцы A..R
     private const string GramFormat = "0";
     private const string CoefficientFormat = "0.00";
 
@@ -80,7 +80,7 @@ public static class IndividualCardXlsxComposer
         double[] widths =
         [
             5,   // A  № / часть label
-            28,  // B  Сборочная единица / часть value
+            28,  // B — значение сборочной единицы / части
             9,   // C  Кол-во
             21,  // D  Основные марки ГСМ
             20,  // E  Дублирующие марки ГСМ

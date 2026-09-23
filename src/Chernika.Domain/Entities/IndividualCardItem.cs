@@ -6,18 +6,18 @@ public class IndividualCardItem
     public Guid IndividualCardId { get; set; }
     public IndividualCard IndividualCard { get; set; } = null!;
 
-    // Legacy D0 field preserved until a separate cleanup PR.
+    // Легаси-поле D0 сохраняется до отдельного PR по очистке.
     public Guid? HKCardItemId { get; set; }
     public HKCardItem? HKCardItem { get; set; }
 
-    // Scalar reference into the snapshot tree of the same IndividualCard.
-    // Deliberately without an FK: node snapshots are cascade-deleted together
-    // with the card and a restrictive FK could break cascade ordering.
+    // Скалярная ссылка на дерево снапшотов той же индивидуальной карты.
+    // Намеренно без внешнего ключа: снапшоты узлов каскадно удаляются вместе
+    // с картой, а ограничивающий внешний ключ мог бы нарушить порядок каскада.
     public Guid? NodeSnapshotId { get; set; }
 
-    // Immutable D4 source identity, populated from the exact node HK
-    // occurrence snapshot and HKCardItem during recalculation. Live HKCard
-    // renames must never change what a historical row says about its source.
+    // Неизменяемая идентичность источника D4, заполняется из точного вхождения
+    // снапшота узла и HKCardItem при пересчёте. Переименования ХК в справочнике
+    // не должны менять то, что историческая строка сообщает о своём источнике.
     public Guid SourceHKSourceSnapshotId { get; set; }
     public Guid SourceHKCardId { get; set; }
     public string SourceHKCardCode { get; set; } = string.Empty;
@@ -36,7 +36,7 @@ public class IndividualCardItem
     public decimal CalculatedVolume { get; set; }
     public int SortOrder { get; set; }
 
-    // Legacy D0 field preserved until a separate cleanup PR.
+    // Легаси-поле D0 сохраняется до отдельного PR по очистке.
     public int Quantity { get; set; }
 
     public ICollection<IndividualCardItemMaterialSnapshot> MaterialSnapshots { get; set; }

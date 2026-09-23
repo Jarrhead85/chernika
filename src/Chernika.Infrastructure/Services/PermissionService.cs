@@ -128,6 +128,6 @@ public class PermissionService : IPermissionService
 
     public void InvalidateAllCache()
     {
-        // no built-in way to remove by pattern; rely on expiry
+        // встроенного способа удаления по шаблону нет; полагаемся на истечение срока
     }
 }

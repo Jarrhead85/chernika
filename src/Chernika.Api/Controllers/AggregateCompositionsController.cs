@@ -51,7 +51,7 @@ public class AggregateCompositionsController : ControllerBase
         return NoContent();
     }
 
-    // ── Nodes ───────────────────────────────────────────────────
+    // ── Узлы ────────────────────────────────────────────────────
 
     [HttpPost("{id}/nodes")]
     [Authorize(Policy = "ManageComposition")]
@@ -81,7 +81,7 @@ public class AggregateCompositionsController : ControllerBase
         return NoContent();
     }
 
-    // ── Status transitions ──────────────────────────────────────
+    // ── Переходы статусов ───────────────────────────────────────
 
     [HttpPost("{id}/submit")]
     [Authorize(Policy = "ManageComposition")]

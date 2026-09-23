@@ -23,7 +23,7 @@ public partial class ProductComposition
 
     public string? Comment { get; set; }
 
-    /// <summary>True only for the current active approved composition. Not set from UI.</summary>
+    /// <summary>Истинно только для текущего действующего утверждённого состава. Из интерфейса не задаётся.</summary>
     public bool IsActive { get; set; }
 
     public Guid? SupersedesProductCompositionId { get; set; }

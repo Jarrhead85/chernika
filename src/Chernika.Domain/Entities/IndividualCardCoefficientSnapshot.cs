@@ -6,8 +6,8 @@ public class IndividualCardCoefficientSnapshot
     public Guid IndividualCardId { get; set; }
     public IndividualCard IndividualCard { get; set; } = null!;
 
-    // Scalar source references, kept without FK per snapshot history rules:
-    // coefficients are archived/restored in C2 and history must not follow them.
+    // Скалярные ссылки на источники: внешние ключи не создаются по правилам историчности снапшотов:
+    // коэффициенты архивируются и восстанавливаются в C2, история не должна за ними следовать.
     public Guid SourceCoefficientId { get; set; }
     public Guid SourceCoefficientTypeId { get; set; }
 

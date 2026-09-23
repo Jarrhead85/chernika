@@ -12,8 +12,8 @@ public sealed record CreateIndividualCardVersionRequest(
 
 public sealed record ArchiveIndividualCardRequest(Guid IndividualCardId);
 
-/// <summary>Lightweight View-only header of a Formed/Archived card for the
-/// D5 action panel: no CreateVersion/Archive requirement, no calculation data.</summary>
+/// <summary>Облегчённая шапка сформированной или архивной карты только для просмотра
+/// для панели действий D5: без требования CreateVersion/Archive и без данных расчёта.</summary>
 public sealed record IndividualCardActionHeaderDto(
     Guid Id,
     string Code,
@@ -24,7 +24,7 @@ public sealed record IndividualCardActionHeaderDto(
     Guid BranchId,
     IndividualCardStatus Status);
 
-/// <summary>Explicit diff entry state: Added / Removed / Changed / Unchanged.</summary>
+/// <summary>Явное состояние записи различий: Added / Removed / Changed / Unchanged.</summary>
 public sealed record IndividualCardDiffEntryDto(
     string State,
     string What,
@@ -32,8 +32,8 @@ public sealed record IndividualCardDiffEntryDto(
     string? Before,
     string? After);
 
-/// <summary>Informational per-material total of the SOURCE Formed card
-/// (alternative brands are never summed into a grand total).</summary>
+/// <summary>Информационный итог по марке ГСМ исходной сформированной карты
+/// (альтернативные марки никогда не суммируются в общий итог).</summary>
 public sealed record IndividualCardPrimaryTotalComparisonDto(
     string MaterialName,
     string Gost,

@@ -6,7 +6,7 @@ public class IndividualCardNodeSnapshot
     public Guid IndividualCardAggregateSnapshotId { get; set; }
     public IndividualCardAggregateSnapshot AggregateSnapshot { get; set; } = null!;
 
-    // Scalar source reference, kept without FK per snapshot history rules.
+    // Скалярная ссылка на источник: внешний ключ не создаётся по правилам историчности снапшотов.
     public Guid NodeId { get; set; }
     public string NodeCode { get; set; } = string.Empty;
     public string NodeName { get; set; } = string.Empty;

@@ -38,7 +38,7 @@ public sealed class IndividualCardPreflightResult
     public string ObjectName { get; init; } = string.Empty;
     public string ObjectDisplayType { get; init; } = string.Empty;
 
-    /// <summary>Null until the root HK was uniquely selected or explicitly selected.</summary>
+    /// <summary>Пусто, пока корневая ХК не выбрана однозначно или явно.</summary>
     public Guid? BranchId { get; init; }
 
     public IndividualCardPreflightRootState RootState { get; init; }
@@ -67,10 +67,10 @@ public sealed record IndividualCardHKCandidateDto(
     int SortOrder);
 
 /// <summary>
-/// Constructive composition resolved by preflight. Quantity carries the
-/// multiplier of this composition row for the future D4 calculation:
-/// for a Complex target it is ComplexCompositionItem.Quantity; for other
-/// targets it is always 1 (Instance represents one concrete Изделие).
+/// Конструктивный состав, определённый предварительной проверкой. Quantity несёт
+/// множитель этой строки состава для будущего расчёта D4:
+/// для комплекса это ComplexCompositionItem.Quantity; для остальных
+/// целей всегда 1 (экземпляр представляет одно конкретное изделие).
 /// </summary>
 public sealed record IndividualCardPreflightCompositionDto(
     IndividualCardObjectLevel SourceLevel,
@@ -101,11 +101,11 @@ public sealed record IndividualCardPreflightNodeDto(
     int SortOrder);
 
 /// <summary>
-/// Resolved HK source in the preflight tree. PreflightOccurrenceId identifies
-/// a POSITION in the resolved tree: the same source HKCardId may legitimately
-/// appear in several branches (different parents), producing separate
-/// occurrences. ParentPreflightOccurrenceId always refers to an occurrence
-/// within the same preflight tree.
+/// Разрешённый источник ХК в дереве предварительной проверки. PreflightOccurrenceId задаёт
+/// ПОЗИЦИЮ в разрешённом дереве: один и тот же источник HKCardId может законно
+/// встречаться в нескольких ветках (разные родители), образуя отдельные
+/// вхождения. ParentPreflightOccurrenceId всегда ссылается на вхождение
+/// в пределах того же дерева предварительной проверки.
 /// </summary>
 public sealed record IndividualCardPreflightHKSourceDto(
     Guid PreflightOccurrenceId,

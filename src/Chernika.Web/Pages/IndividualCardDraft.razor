@@ -424,9 +424,9 @@
         _draft = await DbLock.LockedAsync(() => IndCardService.GetDraftByIdAsync(Id));
         if (_draft is null)
         {
-            // Non-Draft card: a lightweight View-only header plus the full
-            // read-only detail graph; new-version and archive actions are
-            // permission-gated independently of each other.
+            // Не черновик: облегчённая шапка только для просмотра и полный
+            // граф карточки только для чтения; действия «новая версия» и «архив»
+            // проверяются по правам независимо друг от друга.
             _actionHeader = await DbLock.LockedAsync(() => IndCardService.GetIndividualCardActionHeaderAsync(Id));
             _detail = await DbLock.LockedAsync(() => IndCardService.GetDetailAsync(Id));
             _comparison = null;
@@ -439,7 +439,7 @@
             _canCreateVersion = isFormed && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardCreateVersion));
             _canArchive = isFormed && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardArchive));
 
-            // Deep-link from the registry actions.
+            // Переход по ссылке из действий реестра.
             var action = Microsoft.AspNetCore.WebUtilities.QueryHelpers
                 .ParseQuery(new Uri(Nav.Uri).Query)
                 .TryGetValue("action", out var values) ? values.ToString() : null;
@@ -699,8 +699,8 @@
         {
             await using (await DbLock.WaitAsync())
             {
-                // Repeat preflight with the explicitly chosen root: the service
-                // must confirm admissibility before creation is enabled.
+                // Повторяем предварительную проверку с явно выбранной корневой ХК: сервис
+                // должен подтвердить допустимость до включения кнопки создания.
                 _comparison = await IndCardService.BuildNewVersionComparisonAsync(
                     new IndividualCardVersionPreflightRequest(Id, rootHKCardId));
             }

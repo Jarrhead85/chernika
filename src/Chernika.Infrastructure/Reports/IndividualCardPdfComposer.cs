@@ -122,7 +122,7 @@ public static class IndividualCardPdfComposer
         }
     }
 
-    // ── 4.2. Warning block ────────────────────────────────────────────────
+    // ── 4.2. Блок предупреждений ──────────────────────────────────────────
 
     private static void ComposeWarnings(ColumnDescriptor col, IndividualCardExportDto dto)
     {
@@ -495,7 +495,7 @@ public static class IndividualCardPdfComposer
         col.Item().PaddingTop(6).Text("Сформировал: __________________ / ____________________ / __________").FontSize(9);
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────
+    // ── вспомогательные методы ────────────────────────────────────────────
 
     private static void SectionTitle(this IContainer container, string title) =>
         container.Column(section =>

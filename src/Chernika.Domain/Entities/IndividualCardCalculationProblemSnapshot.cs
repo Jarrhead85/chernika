@@ -1,9 +1,9 @@
 namespace Chernika.Domain.Entities;
 
 /// <summary>
-/// Immutable validation problem snapshot captured during a successful Draft
-/// recalculation. History survives reloads (unlike in-memory problem lists);
-/// Form is blocked while any problem snapshot exists.
+/// Неизменяемый снапшот проблемы валидации, зафиксированный при успешном
+/// пересчёте черновика. История переживает перезагрузки (в отличие от списков проблем в памяти);
+/// Формирование блокируется, пока существует хотя бы один снапшот проблемы.
 /// </summary>
 public class IndividualCardCalculationProblemSnapshot
 {

@@ -4,8 +4,8 @@ using Chernika.Domain.Models;
 namespace Chernika.Domain.Entities;
 
 /// <summary>
-/// Immutable copy of a normative gap as it was at Draft creation/refresh time.
-/// Preserves the historical explanation of why a Draft was partial.
+/// Неизменяемая копия нормативного пробела на момент создания или обновления черновика.
+/// Сохраняет историческое объяснение, почему черновик был неполным.
 /// </summary>
 public class IndividualCardNormativeGapSnapshot
 {

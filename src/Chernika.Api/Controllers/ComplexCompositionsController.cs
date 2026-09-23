@@ -51,7 +51,7 @@ public class ComplexCompositionsController : ControllerBase
         return NoContent();
     }
 
-    // ── Items ───────────────────────────────────────────────────
+    // ── Элементы ────────────────────────────────────────────────
 
     [HttpPost("{id}/items")]
     [Authorize(Policy = "ManageComposition")]
@@ -81,7 +81,7 @@ public class ComplexCompositionsController : ControllerBase
         return NoContent();
     }
 
-    // ── Status transitions ──────────────────────────────────────
+    // ── Переходы статусов ───────────────────────────────────────
 
     [HttpPost("{id}/submit")]
     [Authorize(Policy = "ManageComposition")]

@@ -52,7 +52,7 @@ public class ProductCompositionsController : ControllerBase
         return NoContent();
     }
 
-    // ── Parts ───────────────────────────────────────────────────────────
+    // ── Части ───────────────────────────────────────────────────────────
 
     [HttpGet("parts/{partId}")]
     public async Task<ActionResult<ProductCompositionPartDto>> GetPartById(Guid partId)
@@ -90,7 +90,7 @@ public class ProductCompositionsController : ControllerBase
         return NoContent();
     }
 
-    // ── Aggregates ──────────────────────────────────────────────────────
+    // ── Агрегаты ────────────────────────────────────────────────────────
 
     [HttpGet("aggregates/{id}")]
     public async Task<ActionResult<ProductCompositionAggregateDto>> GetAggregateById(Guid id)
@@ -142,7 +142,7 @@ public class ProductCompositionsController : ControllerBase
         return NoContent();
     }
 
-    // ── Status transitions ─────────────────────────────────────────────
+    // ── Переходы статусов ──────────────────────────────────────────────
 
     [HttpPost("{id}/submit")]
     [Authorize(Policy = "ManageComposition")]

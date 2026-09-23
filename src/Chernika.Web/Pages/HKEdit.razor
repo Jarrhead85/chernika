@@ -1397,7 +1397,7 @@
             }
             catch
             {
-                // ignore — circuit may be shutting down
+                // игнорируем — circuit может завершаться
             }
         });
     }
@@ -1775,7 +1775,7 @@
         Nav.NavigateTo("/реестр-хк");
     }
 
-    // ---- searchable select helpers ----
+    // ---- вспомогательные методы поискового выбора ----
 
     private IEnumerable<AssemblyUnit> FilteredAssemblyUnits(Guid itemId)
     {
@@ -2038,7 +2038,7 @@
         _ => "—"
     };
 
-    // ---- composition methods ----
+    // ---- методы составов ----
 
     /// <summary>Допустимый уровень дочерней ХК для выбранного уровня родителя.</summary>
     private HKObjectLevel? AllowedChildLevel => selectedLevel switch

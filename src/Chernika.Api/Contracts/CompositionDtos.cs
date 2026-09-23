@@ -4,7 +4,7 @@ using Chernika.Domain.Models;
 
 namespace Chernika.Api.Contracts;
 
-// ── Aggregate Composition ────────────────────────────────────────
+// ── Состав агрегата ──────────────────────────────────────────────
 
 public record AggregateCompositionDto(
     Guid Id,
@@ -47,7 +47,7 @@ public static class AggregateCompositionMapper
         n.Quantity, n.SortOrder, n.Notes);
 }
 
-// ── Complex Composition ──────────────────────────────────────────
+// ── Состав комплекса ─────────────────────────────────────────────
 
 public record ComplexCompositionDto(
     Guid Id,

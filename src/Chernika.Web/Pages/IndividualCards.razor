@@ -306,9 +306,9 @@
     private Task OnStatusChanged(ChangeEventArgs args) { _statusFilter = args.Value?.ToString() ?? string.Empty; return ReloadFromFirstPage(); }
     private Task OnBranchChanged(ChangeEventArgs args) { _branchFilter = args.Value?.ToString() ?? string.Empty; return ReloadFromFirstPage(); }
 
-    // Date inputs give start-of-local-day values; the service applies
-    // CreatedFrom inclusive and CreatedTo as the next-day exclusive bound
-    // (the +1 day is added when building the query).
+    // Поля дат дают начало локальных суток; сервис применяет
+    // CreatedFrom включительно, а CreatedTo — как исключающую границу следующего дня
+    // (+1 день добавляется при построении запроса).
     private async Task OnCreatedFromChanged(ChangeEventArgs args)
     {
         _createdFrom = args.Value?.ToString() ?? string.Empty;

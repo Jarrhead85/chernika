@@ -10,8 +10,8 @@ public class IndividualCardCompositionSnapshot
 
     public IndividualCardObjectLevel SourceLevel { get; set; }
 
-    // Scalar source references: history must survive source archive/revision,
-    // so no FK is created to mutable composition rows.
+    // Скалярные ссылки на источники: история должна переживать архивацию и новые ревизии источника,
+    // поэтому внешние ключи на изменяемые строки составов не создаются.
     public Guid SourceCompositionId { get; set; }
     public string SourceCompositionVersion { get; set; } = string.Empty;
     public DateTime? SourceApprovedAt { get; set; }
@@ -20,7 +20,7 @@ public class IndividualCardCompositionSnapshot
     public string TargetObjectCode { get; set; } = string.Empty;
     public string TargetObjectName { get; set; } = string.Empty;
 
-    /// <summary>Row multiplier: ComplexCompositionItem.Quantity for a Complex source, otherwise 1.</summary>
+    /// <summary>Множитель строки: ComplexCompositionItem.Quantity для комплекса, иначе 1.</summary>
     public int Quantity { get; set; } = 1;
 
     public DateTime CapturedAt { get; set; }

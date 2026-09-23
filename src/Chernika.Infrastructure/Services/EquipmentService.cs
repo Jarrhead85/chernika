@@ -794,7 +794,7 @@ public class EquipmentService
         return new ReadinessRow(childId, code, name, ReadinessRow.Missing, null, null);
     }
 
-    // ── HK Registry composition readiness (B2) ──────────────────────────
+    // ── Готовность составов в реестре ХК (B2) ────────────────────────────
 
     private static int ObjectLevelToEvalLevel(HKObjectLevel level) => level switch
     {
@@ -962,9 +962,9 @@ public class EquipmentService
             };
         }
 
-        // Always use the card's own BranchId as the exact data branch.
-        // For ordinary users, IsBranchAccessible above already guaranteed it matches accessibleBranchId.
-        // For SystemAdmin, the card's BranchId is the precise branch to query.
+        // Всегда используем BranchId самой карты как точную ветку данных.
+        // Для обычных пользователей IsBranchAccessible выше уже гарантировал совпадение с accessibleBranchId.
+        // Для системного администратора BranchId карты — это точная ветка запроса.
         var dataBranchId = card.BranchId;
 
         var compositionId = await FindActiveCompositionIdAsync(card.ObjectLevel, card.ObjectId.Value, dataBranchId, ct);
@@ -999,7 +999,7 @@ public class EquipmentService
         };
     }
 
-    // ── Shared readiness core ──────────────────────────────────────────
+    // ── Общее ядро готовности ──────────────────────────────────────────
 
     private static List<ReadinessRow> EvaluateReadinessCore(
         IReadOnlyList<ReadinessChild> children,
@@ -1039,7 +1039,7 @@ public class EquipmentService
         return new ReadinessRow(childId, code, name, ReadinessRow.Missing, null, null);
     }
 
-    // ── Batch data loaders (composite key: ObjectId + BranchId) ─────────
+    // ── Пакетные загрузчики данных (составной ключ: ObjectId + BranchId) ─
 
     private async Task<IReadOnlyDictionary<ReadinessObjectBranchKey, Guid>> GetActiveComplexCompositionIdsAsync(
         IReadOnlyCollection<ReadinessObjectBranchKey> keys, CancellationToken ct)
@@ -1495,7 +1495,7 @@ public class EquipmentService
             : null;
     }
 
-    // ── Product Composition ──────────────────────────────────────────────
+    // ── Состав изделия ───────────────────────────────────────────────────
 
     public async Task<IReadOnlyList<CompositionVersionSummary>> GetProductCompositionSummariesAsync(Guid? equipmentModelId = null, CancellationToken ct = default)
     {
@@ -1886,7 +1886,7 @@ public class EquipmentService
         return true;
     }
 
-    // ── Parts ────────────────────────────────────────────────────────────
+    // ── Части ────────────────────────────────────────────────────────────
 
     public async Task<ProductCompositionPart> AddPartAsync(AddPartRequest request, CancellationToken ct = default)
     {
@@ -1991,7 +1991,7 @@ public class EquipmentService
         }
     }
 
-    // ── Aggregates ────────────────────────────────────────────────────────
+    // ── Агрегаты ──────────────────────────────────────────────────────────
 
     public async Task<ProductCompositionAggregate> AddAggregateAsync(AddProductCompositionAggregateRequest request, CancellationToken ct = default)
     {
@@ -2432,7 +2432,7 @@ public class EquipmentService
         return true;
     }
 
-    // ── AggregateComposition ───────────────────────────────────
+    // ── Состав агрегата ─────────────────────────────────────────
 
     public async Task<IReadOnlyList<CompositionVersionSummary>> GetAggregateCompositionSummariesAsync(Guid aggregateId, CancellationToken ct = default)
     {
@@ -2593,7 +2593,7 @@ public class EquipmentService
             null, null, null, x.NodeCount, null)).ToList();
     }
 
-    // ── Composition Registry ─────────────────────────────────────────────
+    // ── Реестр составов ──────────────────────────────────────────────────
 
     private const int CompositionRegistryGlobalLimit = 300;
 
@@ -3372,7 +3372,7 @@ public class EquipmentService
         return true;
     }
 
-    // ── AggregateComposition Nodes ──────────────────────────────
+    // ── Узлы состава агрегата ───────────────────────────────────
 
     public async Task<AggregateCompositionNode> AddAggregateCompositionNodeAsync(AddAggregateCompositionNodeRequest request, CancellationToken ct = default)
     {
@@ -3439,7 +3439,7 @@ public class EquipmentService
         return true;
     }
 
-    // ── Complex CRUD ────────────────────────────────────────────
+    // ── CRUD комплексов ──────────────────────────────────────────
 
     public Task<List<Complex>> GetComplexesAsync() =>
         _db.Complexes.OrderBy(c => c.Code).ToListAsync();
@@ -3573,7 +3573,7 @@ public class EquipmentService
         return true;
     }
 
-    // ── ComplexComposition ──────────────────────────────────────
+    // ── Состав комплекса ────────────────────────────────────────
 
     public async Task<IReadOnlyList<CompositionVersionSummary>> GetComplexCompositionSummariesAsync(Guid complexId, CancellationToken ct = default)
     {
@@ -3871,7 +3871,7 @@ public class EquipmentService
         return true;
     }
 
-    // ── ComplexComposition Items ────────────────────────────────
+    // ── Элементы состава комплекса ──────────────────────────────
 
     public async Task<ComplexCompositionItem> AddComplexCompositionItemAsync(AddComplexCompositionItemRequest request, CancellationToken ct = default)
     {
@@ -3937,7 +3937,7 @@ public class EquipmentService
         return true;
     }
 
-    // ── Generic composition status helper ───────────────────────
+    // ── Общий помощник статусов составов ─────────────────────────
 
     private async Task<bool> ChangeCompositionStatusInternalAsync<T>(DbSet<T> dbSet, Guid id,
         ProductCompositionStatus newStatus, string? comment, CancellationToken ct) where T : class

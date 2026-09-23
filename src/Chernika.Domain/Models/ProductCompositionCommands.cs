@@ -2,7 +2,7 @@ using Chernika.Domain.Enums;
 
 namespace Chernika.Domain.Models;
 
-// ── Product Composition commands (existing) ──────────────────────
+// ── Команды состава изделия (существующие) ───────────────────────
 
 public record CreateCompositionRequest(Guid EquipmentModelId, string? Comment);
 
@@ -20,7 +20,7 @@ public record UpdateProductCompositionAggregateRequest(Guid Id, int Quantity, in
 
 public record ChangeCompositionStatusRequest(Guid CompositionId, ProductCompositionStatus NewStatus, string? Comment);
 
-// ── Aggregate commands ──────────────────────────────────────────
+// ── Команды агрегата ────────────────────────────────────────────
 
 public record CreateAggregateRequest(string Code, string Name, string? Description);
 
@@ -36,13 +36,13 @@ public record UpdateAggregateCompositionNodeRequest(Guid Id, int Quantity, int S
 
 public record ChangeAggregateCompositionStatusRequest(Guid CompositionId, ProductCompositionStatus NewStatus, string? Comment);
 
-// ── Complex commands ───────────────────────────────────────────
+// ── Команды комплекса ───────────────────────────────────────────
 
 public record CreateComplexRequest(string Code, string Name, string? Description);
 
 public record UpdateComplexRequest(Guid Id, string Code, string Name, string? Description);
 
-// ── Complex Composition commands ────────────────────────────────
+// ── Команды состава комплекса ───────────────────────────────────
 
 public record CreateComplexCompositionRequest(Guid ComplexId, string? Comment);
 
