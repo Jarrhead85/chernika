@@ -129,13 +129,15 @@ public class CompositionWorkflowIntegrationTests
         var normAdminC = new ApplicationUser
         {
             Id = Guid.NewGuid().ToString(),
-            UserName = "normadmin_c",
+            UserName = "normadmin_c_" + Guid.NewGuid().ToString("N")[..6],
             FullName = "Тест normadmin_c",
             BranchId = branchC,
             IsActive = true
         };
-        await s.Users.CreateAsync(normAdminC);
-        await s.Users.AddToRoleAsync(normAdminC, nameof(UserRole.NormAdmin));
+        var createResult = await s.Users.CreateAsync(normAdminC);
+        Assert.True(createResult.Succeeded, string.Join("; ", createResult.Errors.Select(e => e.Description)));
+        var roleResult = await s.Users.AddToRoleAsync(normAdminC, nameof(UserRole.NormAdmin));
+        Assert.True(roleResult.Succeeded, string.Join("; ", roleResult.Errors.Select(e => e.Description)));
 
         s.User.CurrentUserId = Guid.Parse(normAdminC.Id);
         var model = new EquipmentModel { Id = Guid.NewGuid(), Index = "T-" + Guid.NewGuid().ToString("N")[..6], Name = "Изделие C" };

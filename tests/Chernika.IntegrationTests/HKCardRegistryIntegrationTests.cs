@@ -196,9 +196,11 @@ public class HKCardRegistryIntegrationTests
         Assert.DoesNotContain(branches, b => b.IsDeleted);
         Assert.Contains(branches, b => b.Id == _fixture.BranchA);
         Assert.Contains(branches, b => b.Id == _fixture.BranchB);
-        Assert.Equal(
-            new[] { _fixture.BranchA, _fixture.BranchB },
-            branches.OrderBy(b => b.Name).Select(b => b.Id).ToArray());
+        Assert.DoesNotContain(branches, b => b.Id == deletedBranch.Id);
+        // Проверяем сортировку и отсутствие удалённых записей, не полагаясь на то,
+        // что в тестовой БД есть только две организации (их создают и другие тесты).
+        var names = branches.Select(b => b.Name).ToArray();
+        Assert.Equal(names.OrderBy(n => n, StringComparer.Ordinal).ToArray(), names);
     }
 
     [Fact]

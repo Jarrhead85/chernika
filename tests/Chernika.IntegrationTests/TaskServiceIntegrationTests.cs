@@ -274,21 +274,25 @@ public class TaskServiceIntegrationTests
         await using var s = _fixture.CreateScope();
         s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
 
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+
         var taskA = (await s.Tasks.CreateAsync(new CreateWorkTaskCommand(
-            Title: "Задача в филиале А",
+            Title: "Задача в филиале А " + suffix,
             Type: WorkTaskType.HKReview,
             Priority: WorkTaskPriority.Normal,
             AssignedToUserId: _fixture.OperatorA.Id,
             BranchId: _fixture.BranchA))).Id;
 
         var taskB = (await s.Tasks.CreateAsync(new CreateWorkTaskCommand(
-            Title: "Задача в филиале Б",
+            Title: "Задача в филиале Б " + suffix,
             Type: WorkTaskType.HKReview,
             Priority: WorkTaskPriority.Normal,
             AssignedToUserId: _fixture.NormAdminB.Id,
             BranchId: _fixture.BranchB))).Id;
 
-        var paged = await s.Tasks.GetMyTasksAsync(new WorkTaskQuery { PageSize = 50 });
+        // Фильтруем по уникальному суффиксу, чтобы не зависеть от объёма
+        // задач, накопленных другими тестами (иначе задача может не попасть на первую страницу).
+        var paged = await s.Tasks.GetMyTasksAsync(new WorkTaskQuery { PageSize = 50, Text = suffix });
 
         Assert.Contains(paged.Items, t => t.Id == taskA);
         Assert.Contains(paged.Items, t => t.Id == taskB);

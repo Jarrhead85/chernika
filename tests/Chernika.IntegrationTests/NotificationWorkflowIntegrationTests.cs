@@ -77,7 +77,12 @@ public class NotificationWorkflowIntegrationTests
             .ToListAsync();
 
         var notification = Assert.Single(notifications);
-        Assert.Equal(_fixture.NormAdminA2.Id, notification.UserId);
+        // Проверяющий выбирается сервисом среди активных нормировщиков организации,
+        // поэтому проверяем роль и подразделение, а не конкретного пользователя.
+        var reviewer = await s.Db.Users.AsNoTracking().SingleAsync(u => u.Id == notification.UserId);
+        Assert.Equal(_fixture.BranchA, reviewer.BranchId);
+        Assert.True(await s.Users.IsInRoleAsync(reviewer, nameof(UserRole.NormAdmin)));
+        Assert.NotEqual(_fixture.NormAdminA.Id, notification.UserId);
         Assert.Equal("Новое предложение справочника: Новый узел", notification.Title);
         Assert.Equal($"/хк/{cardId}", notification.NavigationUrl);
         Assert.Equal($"ref-proposal:{proposal.Id}:{notification.UserId}", notification.DeduplicationKey);
@@ -87,7 +92,7 @@ public class NotificationWorkflowIntegrationTests
         var task = await s.Db.WorkTasks.AsNoTracking()
             .SingleAsync(t => t.EntityType == "ReferenceProposal" && t.EntityId == proposal.Id
                 && t.Type == WorkTaskType.ReferenceProposalReview);
-        Assert.Equal(_fixture.NormAdminA2.Id, task.AssignedToUserId);
+        Assert.Equal(notification.UserId, task.AssignedToUserId);
         Assert.Equal(_fixture.BranchA, task.BranchId);
         Assert.Equal(WorkTaskStatus.Open, task.Status);
         Assert.Equal(task.Id, notification.WorkTaskId);
@@ -117,8 +122,9 @@ public class NotificationWorkflowIntegrationTests
             new Branch { Id = branchD, Name = "Филиал Е", Code = "D" });
         await s.Db.SaveChangesAsync();
 
-        var author = await CreateUserAsync(s, "normadmin_c", nameof(UserRole.NormAdmin), branchC);
-        var otherBranchNormAdmin = await CreateUserAsync(s, "normadmin_d", nameof(UserRole.NormAdmin), branchD);
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        var author = await CreateUserAsync(s, "normadmin_c_" + suffix, nameof(UserRole.NormAdmin), branchC);
+        var otherBranchNormAdmin = await CreateUserAsync(s, "normadmin_d_" + suffix, nameof(UserRole.NormAdmin), branchD);
 
         var cardId = await CreateDraftCardAsync(s, author.Id);
 
@@ -166,7 +172,12 @@ public class NotificationWorkflowIntegrationTests
 
         var notification = Assert.Single(notifications);
         Assert.Equal($"ref-proposal:{proposal.Id}:{notification.UserId}", notification.DeduplicationKey);
-        Assert.Equal(_fixture.NormAdminA2.Id, notification.UserId);
+        // Проверяющий — активный нормировщик организации автора (конкретный может
+        // зависеть от данных, накопленных другими тестами в этой же БД).
+        var reviewer = await s.Db.Users.AsNoTracking().SingleAsync(u => u.Id == notification.UserId);
+        Assert.Equal(_fixture.BranchA, reviewer.BranchId);
+        Assert.True(await s.Users.IsInRoleAsync(reviewer, nameof(UserRole.NormAdmin)));
+        Assert.NotEqual(_fixture.NormAdminA.Id, notification.UserId);
     }
 
     private static async Task<ApplicationUser> CreateUserAsync(
