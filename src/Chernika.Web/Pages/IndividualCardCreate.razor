@@ -277,6 +277,7 @@
     {
         _objectSearch = args.Value?.ToString() ?? string.Empty;
         _searchCts?.Cancel();
+        _searchCts?.Dispose();
         var cts = new CancellationTokenSource();
         _searchCts = cts;
         try
