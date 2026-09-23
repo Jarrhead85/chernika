@@ -200,7 +200,7 @@
         {
             try
             {
-                await NotifSvc.MarkAsReadAsync(n.Id);
+                await DbLock.LockedAsync(() => NotifSvc.MarkAsReadAsync(n.Id));
             }
             catch
             {
@@ -215,7 +215,7 @@
     {
         try
         {
-            await NotifSvc.MarkAsReadAsync(id);
+            await DbLock.LockedAsync(() => NotifSvc.MarkAsReadAsync(id));
         }
         catch (Exception ex)
         {
@@ -230,7 +230,7 @@
     {
         try
         {
-            await NotifSvc.MarkAllAsReadAsync();
+            await DbLock.LockedAsync(() => NotifSvc.MarkAllAsReadAsync());
         }
         catch (Exception ex)
         {

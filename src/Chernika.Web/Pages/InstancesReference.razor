@@ -206,7 +206,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
         try
         {
             await using (await DbLock.WaitAsync())
@@ -317,14 +317,14 @@
     async Task DeleteInst(Guid id)
     {
         errorMessage = null;
-        try { var ok = await EquipService.DeleteInstanceAsync(id); if (!ok) errorMessage = "Не удалось удалить запись."; await ReloadAsync(); }
+        try { var ok = await DbLock.LockedAsync(() => EquipService.DeleteInstanceAsync(id)); if (!ok) errorMessage = "Не удалось удалить запись."; await ReloadAsync(); }
         catch (InvalidOperationException ex) { errorMessage = ex.Message; }
     }
 
     async Task RestoreInst(Guid id)
     {
         errorMessage = null;
-        try { var ok = await EquipService.RestoreInstanceAsync(id); if (!ok) errorMessage = "Не удалось восстановить запись."; await ReloadAsync(); }
+        try { var ok = await DbLock.LockedAsync(() => EquipService.RestoreInstanceAsync(id)); if (!ok) errorMessage = "Не удалось восстановить запись."; await ReloadAsync(); }
         catch (InvalidOperationException ex) { errorMessage = ex.Message; }
     }
 

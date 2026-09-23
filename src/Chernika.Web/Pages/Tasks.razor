@@ -265,9 +265,12 @@
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
         if (currentUserId != "")
         {
-            _canComplete = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskComplete);
-            _canCancel = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskCancel);
-            _canSystemConfig = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
+            await using (await DbLock.WaitAsync())
+            {
+                _canComplete = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskComplete);
+                _canCancel = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskCancel);
+                _canSystemConfig = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
+            }
         }
         _loadCts = new CancellationTokenSource();
         await LoadBranchesAsync();
@@ -398,12 +401,12 @@
         {
             if (completeTarget.WorkTaskGroupId.HasValue)
             {
-                var result = await TaskService.CompleteGroupAsync(completeTarget.Id, currentUserId, completeComment.Trim());
+                var result = await DbLock.LockedAsync(() => TaskService.CompleteGroupAsync(completeTarget.Id, currentUserId, completeComment.Trim()));
                 errorMessage = result.AlreadyCompleted ? result.Message : null;
             }
             else
             {
-                await TaskService.CompleteAsync(new CompleteWorkTaskCommand(completeTarget.Id, completeComment.Trim()));
+                await DbLock.LockedAsync(() => TaskService.CompleteAsync(new CompleteWorkTaskCommand(completeTarget.Id, completeComment.Trim())));
                 errorMessage = null;
             }
             CloseComplete();
@@ -419,7 +422,7 @@
     {
         try
         {
-            await TaskService.StartAsync(id);
+            await DbLock.LockedAsync(() => TaskService.StartAsync(id));
             await LoadAsync();
         }
         catch (Exception ex)
@@ -432,7 +435,7 @@
     {
         try
         {
-            await TaskService.CancelAsync(new CancelWorkTaskCommand(id, "Отменена пользователем"));
+            await DbLock.LockedAsync(() => TaskService.CancelAsync(new CancelWorkTaskCommand(id, "Отменена пользователем")));
             await LoadAsync();
         }
         catch (Exception ex)

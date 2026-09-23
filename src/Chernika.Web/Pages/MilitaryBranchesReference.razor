@@ -156,7 +156,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
         await ReloadAsync();
     }
 
@@ -246,9 +246,9 @@
         try
         {
             if (editing)
-                await EquipService.UpdateMilitaryBranchAsync(newBranch);
+                await DbLock.LockedAsync(() => EquipService.UpdateMilitaryBranchAsync(newBranch));
             else
-                await EquipService.CreateMilitaryBranchAsync(newBranch);
+                await DbLock.LockedAsync(() => EquipService.CreateMilitaryBranchAsync(newBranch));
             ResetForm();
             await ReloadAsync();
         }
@@ -289,7 +289,7 @@
         errorMessage = null;
         try
         {
-            await EquipService.DeleteMilitaryBranchAsync(id);
+            await DbLock.LockedAsync(() => EquipService.DeleteMilitaryBranchAsync(id));
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)
@@ -303,7 +303,7 @@
         errorMessage = null;
         try
         {
-            await EquipService.RestoreMilitaryBranchAsync(id);
+            await DbLock.LockedAsync(() => EquipService.RestoreMilitaryBranchAsync(id));
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)

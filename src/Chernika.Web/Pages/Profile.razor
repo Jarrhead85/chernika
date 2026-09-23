@@ -6,6 +6,7 @@
 @using Chernika.Infrastructure.Services
 @using Chernika.Web.Services
 @inject AccountService AccountSvc
+@inject CircuitDbLock DbLock
 @inject NavigationManager Nav
 @inject NotificationRefreshService NotifRefresh
 @inject ILogger<Profile> Logger
@@ -103,7 +104,7 @@
     {
         try
         {
-            _account = await AccountSvc.GetMyAccountAsync();
+            _account = await DbLock.LockedAsync(() => AccountSvc.GetMyAccountAsync());
             _fullName = _account.FullName ?? "";
         }
         catch (UnauthorizedAccessException ex)
@@ -210,7 +211,7 @@
         try
         {
             await using var stream = file.OpenReadStream(maxAllowedSize: 3 * 1024 * 1024);
-            await AccountSvc.UploadMyAvatarAsync(stream, file.Name, file.ContentType, file.Size);
+            await DbLock.LockedAsync(() => AccountSvc.UploadMyAvatarAsync(stream, file.Name, file.ContentType, file.Size));
             await LoadAccountAsync();
             await NotifRefresh.NotifyChangedAsync();
         }
@@ -231,7 +232,7 @@
         _avatarError = null;
         try
         {
-            await AccountSvc.DeleteMyAvatarAsync();
+            await DbLock.LockedAsync(() => AccountSvc.DeleteMyAvatarAsync());
             await LoadAccountAsync();
             await NotifRefresh.NotifyChangedAsync();
             StateHasChanged();
@@ -248,7 +249,7 @@
         _savingProfile = true;
         try
         {
-            await AccountSvc.UpdateMyProfileAsync(new UpdateMyProfileRequest { FullName = _fullName.Trim() });
+            await DbLock.LockedAsync(() => AccountSvc.UpdateMyProfileAsync(new UpdateMyProfileRequest { FullName = _fullName.Trim() }));
             await LoadAccountAsync();
         }
         catch (ArgumentException ex)
@@ -272,12 +273,12 @@
         _changingPassword = true;
         try
         {
-            await AccountSvc.ChangeMyPasswordAsync(new ChangeMyPasswordRequest
+            await DbLock.LockedAsync(() => AccountSvc.ChangeMyPasswordAsync(new ChangeMyPasswordRequest
             {
                 CurrentPassword = _currentPassword,
                 NewPassword = _newPassword,
                 ConfirmPassword = _confirmPassword,
-            });
+            }));
 
             _currentPassword = "";
             _newPassword = "";

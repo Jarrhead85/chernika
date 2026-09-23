@@ -242,12 +242,15 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canCreateComplex = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreate);
-        canCreateModel = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreate);
-        canCreateAggregate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreate);
-        canCreateVersionComplex = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion);
-        canCreateVersionModel = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion);
-        canCreateVersionAggregate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion);
+        await using (await DbLock.WaitAsync())
+        {
+            canCreateComplex = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreate);
+            canCreateModel = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreate);
+            canCreateAggregate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreate);
+            canCreateVersionComplex = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion);
+            canCreateVersionModel = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion);
+            canCreateVersionAggregate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion);
+        }
 
         if (!string.IsNullOrEmpty(LevelQuery) &&
             Enum.TryParse<CompositionRegistryLevel>(LevelQuery, true, out var parsedLevel))
@@ -470,15 +473,15 @@
             switch (row.Level)
             {
                 case CompositionRegistryLevel.Complex:
-                    var cc = await EquipService.CreateComplexCompositionAsync(new CreateComplexCompositionRequest(row.ObjectId, null));
+                    var cc = await DbLock.LockedAsync(() => EquipService.CreateComplexCompositionAsync(new CreateComplexCompositionRequest(row.ObjectId, null)));
                     Nav.NavigateTo($"/составы/комплексы/{row.ObjectId}/версии/{cc.Id}", forceLoad: true);
                     break;
                 case CompositionRegistryLevel.EquipmentModel:
-                    var pc = await EquipService.CreateCompositionDraftAsync(new CreateCompositionRequest(row.ObjectId, null));
+                    var pc = await DbLock.LockedAsync(() => EquipService.CreateCompositionDraftAsync(new CreateCompositionRequest(row.ObjectId, null)));
                     Nav.NavigateTo($"/составы/изделия/{row.ObjectId}/версии/{pc.Id}", forceLoad: true);
                     break;
                 case CompositionRegistryLevel.Aggregate:
-                    var ac = await EquipService.CreateAggregateCompositionAsync(new CreateAggregateCompositionRequest(row.ObjectId, null));
+                    var ac = await DbLock.LockedAsync(() => EquipService.CreateAggregateCompositionAsync(new CreateAggregateCompositionRequest(row.ObjectId, null)));
                     Nav.NavigateTo($"/составы/агрегаты/{row.ObjectId}/версии/{ac.Id}", forceLoad: true);
                     break;
             }
@@ -499,13 +502,13 @@
         error = null;
         try
         {
-            var (success, id, err) = row.Level switch
+            var (success, id, err) = await DbLock.LockedAsync(() => row.Level switch
             {
-                CompositionRegistryLevel.Complex => await EquipService.CreateComplexCompositionVersionAsync(row.CompositionId.Value),
-                CompositionRegistryLevel.EquipmentModel => await EquipService.CreateProductCompositionVersionAsync(row.CompositionId.Value),
-                CompositionRegistryLevel.Aggregate => await EquipService.CreateAggregateCompositionVersionAsync(row.CompositionId.Value),
-                _ => (false, null, null)
-            };
+                CompositionRegistryLevel.Complex => EquipService.CreateComplexCompositionVersionAsync(row.CompositionId.Value),
+                CompositionRegistryLevel.EquipmentModel => EquipService.CreateProductCompositionVersionAsync(row.CompositionId.Value),
+                CompositionRegistryLevel.Aggregate => EquipService.CreateAggregateCompositionVersionAsync(row.CompositionId.Value),
+                _ => Task.FromResult<(bool, Guid?, string?)>((false, null, null))
+            });
             if (success && id.HasValue)
             {
                 var url = row.Level switch

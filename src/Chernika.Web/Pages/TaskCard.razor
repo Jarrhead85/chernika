@@ -183,9 +183,12 @@
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
         if (currentUserId != "")
         {
-            _canComplete = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskComplete);
-            _canCancel = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskCancel);
-            _canSystemConfig = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
+            await using (await DbLock.WaitAsync())
+            {
+                _canComplete = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskComplete);
+                _canCancel = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.TaskCancel);
+                _canSystemConfig = await PermSvc.HasPermissionAsync(currentUserId, PermissionCodes.SystemConfig);
+            }
         }
     }
 
@@ -199,7 +202,7 @@
 
     private async Task LoadAsync(Guid requestedId, CancellationToken ct)
     {
-        Logger.LogInformation("TaskCard.LoadAsync РЅР°С‡Р°Р»Рѕ: {Id}", requestedId);
+        Logger.LogInformation("TaskCard.LoadAsync начало: {Id}", requestedId);
 
         await using (await DbLock.WaitAsync(ct))
         {
@@ -259,19 +262,19 @@
         if (task == null) return;
         if (RequiresComment && string.IsNullOrWhiteSpace(completeComment))
         {
-            errorMessage = "Р”Р»СЏ СЌС‚РѕРіРѕ С‚РёРїР° Р·Р°РґР°С‡Рё РєРѕРјРјРµРЅС‚Р°СЂРёР№ РІС‹РїРѕР»РЅРµРЅРёСЏ РѕР±СЏР·Р°С‚РµР»РµРЅ.";
+            errorMessage = "Для этого типа задачи комментарий выполнения обязателен.";
             return;
         }
         try
         {
             if (task?.WorkTaskGroupId.HasValue == true)
             {
-                var result = await TaskService.CompleteGroupAsync(Id, currentUserId, completeComment.Trim());
+                var result = await DbLock.LockedAsync(() => TaskService.CompleteGroupAsync(Id, currentUserId, completeComment.Trim()));
                 errorMessage = result.AlreadyCompleted ? result.Message : null;
             }
             else
             {
-                await TaskService.CompleteAsync(new CompleteWorkTaskCommand(Id, completeComment.Trim()));
+                await DbLock.LockedAsync(() => TaskService.CompleteAsync(new CompleteWorkTaskCommand(Id, completeComment.Trim())));
                 errorMessage = null;
             }
             showCompleteModal = false;
@@ -287,7 +290,7 @@
     {
         try
         {
-            await TaskService.StartAsync(Id);
+            await DbLock.LockedAsync(() => TaskService.StartAsync(Id));
             await LoadAsync(Id, CancellationToken.None);
         }
         catch (Exception ex)
@@ -300,7 +303,7 @@
     {
         try
         {
-            await TaskService.CancelAsync(new CancelWorkTaskCommand(Id, "РћС‚РјРµРЅРµРЅР° РїРѕР»СЊР·РѕРІР°С‚РµР»РµРј"));
+            await DbLock.LockedAsync(() => TaskService.CancelAsync(new CancelWorkTaskCommand(Id, "Отменена пользователем")));
             await LoadAsync(Id, CancellationToken.None);
         }
         catch (Exception ex)

@@ -156,7 +156,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = await Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit);
+        canEdit = await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
         await ReloadAsync();
     }
 
@@ -246,9 +246,9 @@
         try
         {
             if (editing)
-                await EquipService.UpdateEquipmentTypeAsync(newType);
+                await DbLock.LockedAsync(() => EquipService.UpdateEquipmentTypeAsync(newType));
             else
-                await EquipService.CreateEquipmentTypeAsync(newType);
+                await DbLock.LockedAsync(() => EquipService.CreateEquipmentTypeAsync(newType));
             ResetForm();
             await ReloadAsync();
         }
@@ -288,7 +288,7 @@
     {
         try
         {
-            await EquipService.DeleteEquipmentTypeAsync(id);
+            await DbLock.LockedAsync(() => EquipService.DeleteEquipmentTypeAsync(id));
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)
@@ -301,7 +301,7 @@
     {
         try
         {
-            await EquipService.RestoreEquipmentTypeAsync(id);
+            await DbLock.LockedAsync(() => EquipService.RestoreEquipmentTypeAsync(id));
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)

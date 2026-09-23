@@ -12,7 +12,7 @@
 @inject NavigationManager Nav
 @inject CircuitDbLock DbLock
 @inject AuthenticationStateProvider AuthState
-@inject AppDbContext Db
+@inject EquipmentService EquipService
 @inject ILogger<SearchPage> Logger
 @implements IDisposable
 
@@ -413,18 +413,20 @@
         await QueueSearchAsync(0, PageCurrent);
     }
 
+    /// <summary>
+    /// Определяет роль пользователя; системному администратору подгружает
+    /// список организаций для фильтра (через сервис и CircuitDbLock).
+    /// </summary>
     private async Task LoadRoleAndBranchesAsync()
     {
-        if (_isSystemAdmin)
-            return;
         var auth = await AuthState.GetAuthenticationStateAsync();
         _isSystemAdmin = auth.User.IsInRole(UserRole.SystemAdmin.ToString());
-        if (_isSystemAdmin && _branches is null)
+        if (!_isSystemAdmin || _branches is not null)
+            return;
+
+        await using (await DbLock.WaitAsync())
         {
-            var branchList = await Db.Branches.AsNoTracking()
-                .OrderBy(b => b.Name)
-                .ToListAsync();
-            _branches = branchList;
+            _branches = await EquipService.GetBranchesAsync();
         }
     }
 

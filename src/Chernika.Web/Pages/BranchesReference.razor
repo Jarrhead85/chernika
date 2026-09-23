@@ -145,7 +145,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
+        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.SystemConfig));
         await ReloadAsync();
     }
 
@@ -228,9 +228,9 @@
         try
         {
             if (editing)
-                await EquipService.UpdateBranchAsync(newBranch);
+                await DbLock.LockedAsync(() => EquipService.UpdateBranchAsync(newBranch));
             else
-                await EquipService.CreateBranchAsync(newBranch);
+                await DbLock.LockedAsync(() => EquipService.CreateBranchAsync(newBranch));
             ResetForm();
             await ReloadAsync();
         }
@@ -269,7 +269,7 @@
     async Task DeleteBranch(Guid id)
     {
         errorMessage = null;
-        var (deleted, error) = await EquipService.DeleteBranchAsync(id);
+        var (deleted, error) = await DbLock.LockedAsync(() => EquipService.DeleteBranchAsync(id));
         if (!deleted)
         {
             if (error != null)
@@ -283,7 +283,7 @@
         errorMessage = null;
         try
         {
-            await EquipService.RestoreBranchAsync(id);
+            await DbLock.LockedAsync(() => EquipService.RestoreBranchAsync(id));
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)

@@ -147,7 +147,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
         await ReloadAsync();
     }
 
@@ -230,9 +230,9 @@
         try
         {
             if (editing)
-                await GsmService.UpdateAsync(newGsm);
+                await DbLock.LockedAsync(() => GsmService.UpdateAsync(newGsm));
             else
-                await GsmService.CreateAsync(newGsm);
+                await DbLock.LockedAsync(() => GsmService.CreateAsync(newGsm));
             ResetForm();
             await ReloadAsync();
         }
@@ -273,7 +273,7 @@
         errorMessage = null;
         try
         {
-            var ok = await GsmService.DeleteAsync(id);
+            var ok = await DbLock.LockedAsync(() => GsmService.DeleteAsync(id));
             if (!ok) errorMessage = "Не удалось удалить запись. Обновите список и повторите попытку.";
             await ReloadAsync();
         }
@@ -288,7 +288,7 @@
         errorMessage = null;
         try
         {
-            var ok = await GsmService.RestoreAsync(id);
+            var ok = await DbLock.LockedAsync(() => GsmService.RestoreAsync(id));
             if (!ok) errorMessage = "Не удалось восстановить запись. Обновите список и повторите попытку.";
             await ReloadAsync();
         }

@@ -178,7 +178,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
-        _canCreate = await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        _canCreate = await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit));
         _canEdit = _canCreate;
     }
 
@@ -239,8 +239,8 @@
             if (!string.IsNullOrWhiteSpace(_newSortOrder) && int.TryParse(_newSortOrder, out var so))
                 sortOrder = so;
 
-            var created = await CoeffService.CreateCoefficientTypeAsync(
-                new CreateCoefficientTypeRequest(_newName, sortOrder));
+            var created = await DbLock.LockedAsync(() => CoeffService.CreateCoefficientTypeAsync(
+                new CreateCoefficientTypeRequest(_newName, sortOrder)));
             _newName = "";
             _newSortOrder = "";
             await LoadAsync();
@@ -279,8 +279,8 @@
                 _error = "Укажите корректный порядковый номер.";
                 return;
             }
-            await CoeffService.UpdateCoefficientTypeAsync(
-                new UpdateCoefficientTypeRequest(_editingId.Value, _editName, so));
+            await DbLock.LockedAsync(() => CoeffService.UpdateCoefficientTypeAsync(
+                new UpdateCoefficientTypeRequest(_editingId.Value, _editName, so)));
             _editingId = null;
             await LoadAsync();
             await OnChanged.InvokeAsync();
@@ -311,7 +311,7 @@
         _error = null;
         try
         {
-            await CoeffService.ArchiveCoefficientTypeAsync(id);
+            await DbLock.LockedAsync(() => CoeffService.ArchiveCoefficientTypeAsync(id));
             await LoadAsync();
             await OnChanged.InvokeAsync();
         }
@@ -326,7 +326,7 @@
         _error = null;
         try
         {
-            await CoeffService.RestoreCoefficientTypeAsync(id);
+            await DbLock.LockedAsync(() => CoeffService.RestoreCoefficientTypeAsync(id));
             await LoadAsync();
             await OnChanged.InvokeAsync();
         }

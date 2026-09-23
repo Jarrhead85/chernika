@@ -1,6 +1,8 @@
 @implements IAsyncDisposable
+@using Chernika.Web.Services
 @inject IJSRuntime JS
 @inject EquipmentService EquipService
+@inject CircuitDbLock DbLock
 
 <div class="bs-select">
     <div id="@_anchorId" class="bs-select-anchor">
@@ -157,7 +159,7 @@
     {
         try
         {
-            _branches = (await EquipService.GetBranchesAsync())
+            _branches = (await DbLock.LockedAsync(() => EquipService.GetBranchesAsync()))
                 .OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
@@ -263,7 +265,7 @@
         _creating = true;
         try
         {
-            var created = await EquipService.CreateBranchAsync(new Branch { Name = name, Description = description });
+            var created = await DbLock.LockedAsync(() => EquipService.CreateBranchAsync(new Branch { Name = name, Description = description }));
             await LoadBranchesAsync();
             if (Value != created.Id)
                 await ValueChanged.InvokeAsync(created.Id);

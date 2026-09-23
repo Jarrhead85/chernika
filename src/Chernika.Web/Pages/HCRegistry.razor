@@ -679,7 +679,7 @@
 
         foreach (var code in RegistryPermissionCodes)
         {
-            if (await Perms.HasPermissionAsync(_currentUserId, code))
+            if (await DbLock.LockedAsync(() => Perms.HasPermissionAsync(_currentUserId, code)))
                 _grantedPermissions.Add(code);
         }
     }
@@ -778,7 +778,7 @@
 
             if (contexts.Count > 0)
             {
-                _readinessSummaries = await EquipService.GetHKCompositionReadinessSummariesAsync(contexts, ct);
+                _readinessSummaries = await DbLock.LockedAsync(() => EquipService.GetHKCompositionReadinessSummariesAsync(contexts, ct));
             }
         }
         catch
@@ -1015,7 +1015,7 @@
 
     private async Task ChangeStatus(Guid id, HKCardStatus status, string comment)
     {
-        var (success, error) = await HKCardService.ChangeStatusAsync(id, status, comment);
+        var (success, error) = await DbLock.LockedAsync(() => HKCardService.ChangeStatusAsync(id, status, comment));
         if (!success)
         {
             _errorMessage = error ?? "Не удалось изменить статус.";
@@ -1074,7 +1074,7 @@
 
     private async Task CreateNewVersion(Guid id)
     {
-        var (success, newCardId, error) = await HKCardService.CreateNewVersionAsync(id);
+        var (success, newCardId, error) = await DbLock.LockedAsync(() => HKCardService.CreateNewVersionAsync(id));
         if (success && newCardId.HasValue)
             Nav.NavigateTo($"/хк/{newCardId.Value}");
         else
@@ -1084,7 +1084,7 @@
     private async Task OpenArchiveModal(Guid id)
     {
         _archiveCardId = id;
-        _archiveVersions = await HKCardService.GetVersionsAsync(id);
+        _archiveVersions = await DbLock.LockedAsync(() => HKCardService.GetVersionsAsync(id));
         _archiveReplacementCardId = _archiveVersions
             .Where(v => v.Id != id && v.Status == HKCardStatus.Approved)
             .Select(v => (Guid?)v.Id)
@@ -1117,7 +1117,7 @@
             _archiveError = "Выберите заменяющую утверждённую ХК.";
             return;
         }
-        var (success, error) = await HKCardService.ArchiveAsync(_archiveCardId, _archiveReplacementCardId, reason);
+        var (success, error) = await DbLock.LockedAsync(() => HKCardService.ArchiveAsync(_archiveCardId, _archiveReplacementCardId, reason));
         if (!success)
         {
             _archiveError = error ?? "Не удалось заархивировать ХК.";
@@ -1154,7 +1154,7 @@
             _deleteError = "Укажите причину удаления ХК.";
             return;
         }
-        var (success, error) = await HKCardService.DeleteAsync(_deleteCardId, reason);
+        var (success, error) = await DbLock.LockedAsync(() => HKCardService.DeleteAsync(_deleteCardId, reason));
         if (!success)
         {
             _deleteError = error ?? "Не удалось удалить ХК.";

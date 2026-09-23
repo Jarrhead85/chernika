@@ -509,37 +509,40 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canViewHK = await Perms.HasPermissionAsync(userId!, PermissionCodes.HKView);
-        canCreateVersion = Level switch
+        await using (await DbLock.WaitAsync())
         {
-            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion),
-            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion),
-            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion)
-        };
-        canEditDraft = Level switch
-        {
-            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexEditDraft),
-            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelEditDraft),
-            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateEditDraft)
-        };
-        canSubmit = Level switch
-        {
-            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexSubmit),
-            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelSubmit),
-            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateSubmit)
-        };
-        canReturn = Level switch
-        {
-            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexReturnForRevision),
-            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelReturnForRevision),
-            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateReturnForRevision)
-        };
-        canApprove = Level switch
-        {
-            0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexApprove),
-            1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelApprove),
-            _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateApprove)
-        };
+            canViewHK = await Perms.HasPermissionAsync(userId!, PermissionCodes.HKView);
+            canCreateVersion = Level switch
+            {
+                0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexCreateVersion),
+                1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelCreateVersion),
+                _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion)
+            };
+            canEditDraft = Level switch
+            {
+                0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexEditDraft),
+                1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelEditDraft),
+                _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateEditDraft)
+            };
+            canSubmit = Level switch
+            {
+                0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexSubmit),
+                1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelSubmit),
+                _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateSubmit)
+            };
+            canReturn = Level switch
+            {
+                0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexReturnForRevision),
+                1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelReturnForRevision),
+                _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateReturnForRevision)
+            };
+            canApprove = Level switch
+            {
+                0 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionComplexApprove),
+                1 => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionEquipmentModelApprove),
+                _ => await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateApprove)
+            };
+        }
         _loadCts = new CancellationTokenSource();
         await LoadData();
     }
@@ -718,21 +721,33 @@
             switch (Level)
             {
                 case 0:
-                    var complexResult = await EquipService.CreateComplexCompositionVersionAsync(compositionId);
+                    (bool Success, Guid? CompositionId, string? Error) complexResult;
+                    await using (await DbLock.WaitAsync())
+                    {
+                        complexResult = await EquipService.CreateComplexCompositionVersionAsync(compositionId);
+                    }
                     if (complexResult.Success && complexResult.CompositionId.HasValue)
                         Nav.NavigateTo($"/составы/комплексы/{selectedObjectId}/версии/{complexResult.CompositionId}", forceLoad: true);
                     else
                         error = complexResult.Error ?? "Не удалось создать версию.";
                     break;
                 case 1:
-                    var modelResult = await EquipService.CreateProductCompositionVersionAsync(compositionId);
+                    (bool Success, Guid? CompositionId, string? Error) modelResult;
+                    await using (await DbLock.WaitAsync())
+                    {
+                        modelResult = await EquipService.CreateProductCompositionVersionAsync(compositionId);
+                    }
                     if (modelResult.Success && modelResult.CompositionId.HasValue)
                         Nav.NavigateTo($"/составы/изделия/{selectedObjectId}/версии/{modelResult.CompositionId}", forceLoad: true);
                     else
                         error = modelResult.Error ?? "Не удалось создать версию.";
                     break;
                 default:
-                    var aggregateResult = await EquipService.CreateAggregateCompositionVersionAsync(compositionId);
+                    (bool Success, Guid? CompositionId, string? Error) aggregateResult;
+                    await using (await DbLock.WaitAsync())
+                    {
+                        aggregateResult = await EquipService.CreateAggregateCompositionVersionAsync(compositionId);
+                    }
                     if (aggregateResult.Success && aggregateResult.CompositionId.HasValue)
                         Nav.NavigateTo($"/составы/агрегаты/{selectedObjectId}/версии/{aggregateResult.CompositionId}", forceLoad: true);
                     else
@@ -761,12 +776,16 @@
         try
         {
             var ct = _loadCts?.Token ?? default;
-            var result = Level switch
+            bool result;
+            await using (await DbLock.WaitAsync(ct))
             {
-                0 => await EquipService.SubmitComplexCompositionForReviewAsync(compositionId, ct),
-                1 => await EquipService.SubmitForReviewAsync(compositionId, ct),
-                _ => await EquipService.SubmitAggregateCompositionForReviewAsync(compositionId, ct)
-            };
+                result = Level switch
+                {
+                    0 => await EquipService.SubmitComplexCompositionForReviewAsync(compositionId, ct),
+                    1 => await EquipService.SubmitForReviewAsync(compositionId, ct),
+                    _ => await EquipService.SubmitAggregateCompositionForReviewAsync(compositionId, ct)
+                };
+            }
             if (result)
                 await LoadData();
             else
@@ -789,12 +808,16 @@
         try
         {
             var ct = _loadCts?.Token ?? default;
-            var result = Level switch
+            bool result;
+            await using (await DbLock.WaitAsync(ct))
             {
-                0 => await EquipService.ReturnComplexCompositionToDraftAsync(compositionId, actionComment, ct),
-                1 => await EquipService.ReturnToDraftAsync(compositionId, actionComment, ct),
-                _ => await EquipService.ReturnAggregateCompositionToDraftAsync(compositionId, actionComment, ct)
-            };
+                result = Level switch
+                {
+                    0 => await EquipService.ReturnComplexCompositionToDraftAsync(compositionId, actionComment, ct),
+                    1 => await EquipService.ReturnToDraftAsync(compositionId, actionComment, ct),
+                    _ => await EquipService.ReturnAggregateCompositionToDraftAsync(compositionId, actionComment, ct)
+                };
+            }
             if (result)
                 await LoadData();
             else
@@ -817,12 +840,16 @@
         try
         {
             var ct = _loadCts?.Token ?? default;
-            var result = Level switch
+            bool result;
+            await using (await DbLock.WaitAsync(ct))
             {
-                0 => await EquipService.ApproveComplexCompositionAsync(compositionId, actionComment, ct),
-                1 => await EquipService.ApproveCompositionAsync(compositionId, actionComment, ct),
-                _ => await EquipService.ApproveAggregateCompositionAsync(compositionId, actionComment, ct)
-            };
+                result = Level switch
+                {
+                    0 => await EquipService.ApproveComplexCompositionAsync(compositionId, actionComment, ct),
+                    1 => await EquipService.ApproveCompositionAsync(compositionId, actionComment, ct),
+                    _ => await EquipService.ApproveAggregateCompositionAsync(compositionId, actionComment, ct)
+                };
+            }
             if (result)
                 await LoadData();
             else
@@ -845,12 +872,16 @@
         try
         {
             var ct = _loadCts?.Token ?? default;
-            var result = Level switch
+            bool result;
+            await using (await DbLock.WaitAsync(ct))
             {
-                0 => await EquipService.ArchiveComplexCompositionAsync(compositionId, ct),
-                1 => await EquipService.ArchiveCompositionAsync(compositionId, ct),
-                _ => await EquipService.ArchiveAggregateCompositionAsync(compositionId, ct)
-            };
+                result = Level switch
+                {
+                    0 => await EquipService.ArchiveComplexCompositionAsync(compositionId, ct),
+                    1 => await EquipService.ArchiveCompositionAsync(compositionId, ct),
+                    _ => await EquipService.ArchiveAggregateCompositionAsync(compositionId, ct)
+                };
+            }
             if (result)
                 await LoadData();
             else

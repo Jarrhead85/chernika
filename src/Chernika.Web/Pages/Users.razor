@@ -521,11 +521,11 @@
         resetPasswordError = null;
         try
         {
-            var result = await AccountSvc.ResetUserPasswordByAdminAsync(resetTargetId, new ResetUserPasswordByAdminRequest
+            var result = await DbLock.LockedAsync(() => AccountSvc.ResetUserPasswordByAdminAsync(resetTargetId, new ResetUserPasswordByAdminRequest
             {
                 NewPassword = resetPasswordValue,
                 ConfirmPassword = resetConfirmPassword,
-            });
+            }));
             if (!result.Success)
             {
                 resetPasswordError = result.Error ?? "Не удалось установить временный пароль.";
@@ -635,7 +635,7 @@
 
         if (isEdit)
         {
-            var (success, error) = await UserMgmt.UpdateUserAsync(editingUserId, formFullName, formPosition, formRole);
+            var (success, error) = await DbLock.LockedAsync(() => UserMgmt.UpdateUserAsync(editingUserId, formFullName, formPosition, formRole));
             if (!success) { formError = error ?? ""; return; }
         }
         else
@@ -655,7 +655,7 @@
                 branchId = parsed;
             }
 
-            var (success, error) = await UserMgmt.CreateUserAsync(formUsername, formPassword, formFullName, formPosition, formRole, branchId);
+            var (success, error) = await DbLock.LockedAsync(() => UserMgmt.CreateUserAsync(formUsername, formPassword, formFullName, formPosition, formRole, branchId));
             if (!success) { formError = error ?? ""; return; }
             formPassword = "";
         }
@@ -666,7 +666,7 @@
 
     async Task ToggleBlock(UserListItem user)
     {
-        var (success, error) = await UserMgmt.ToggleBlockAsync(user.Id);
+        var (success, error) = await DbLock.LockedAsync(() => UserMgmt.ToggleBlockAsync(user.Id));
         if (!success)
         {
             formError = error ?? "";
@@ -679,7 +679,7 @@
     async Task DeleteUser(UserListItem user)
     {
         formError = "";
-        var (success, error) = await UserMgmt.DeleteUserAsync(user.Id, "Удалено из интерфейса");
+        var (success, error) = await DbLock.LockedAsync(() => UserMgmt.DeleteUserAsync(user.Id, "Удалено из интерфейса"));
         if (!success)
         {
             formError = error ?? "";
@@ -692,7 +692,7 @@
     async Task RestoreUser(UserListItem user)
     {
         formError = "";
-        var (success, error) = await UserMgmt.RestoreUserAsync(user.Id, user.RoleName, user.BranchId);
+        var (success, error) = await DbLock.LockedAsync(() => UserMgmt.RestoreUserAsync(user.Id, user.RoleName, user.BranchId));
         if (!success)
         {
             formError = error ?? "";
@@ -720,7 +720,7 @@
         effectivePermissions = null;
         StateHasChanged();
 
-        effectivePermissions = await UserMgmt.GetEffectivePermissionsAsync(userId);
+        effectivePermissions = await DbLock.LockedAsync(() => UserMgmt.GetEffectivePermissionsAsync(userId));
         permissionsLoading = false;
         StateHasChanged();
     }
@@ -773,9 +773,9 @@
         string? error;
 
         if (grantDenyAction == "grant")
-            (result, error) = await UserMgmt.GrantPermissionAsync(permissionsUserId, grantDenyTarget.Code, grantDenyReason);
+            (result, error) = await DbLock.LockedAsync(() => UserMgmt.GrantPermissionAsync(permissionsUserId, grantDenyTarget.Code, grantDenyReason));
         else
-            (result, error) = await UserMgmt.DenyPermissionAsync(permissionsUserId, grantDenyTarget.Code, grantDenyReason);
+            (result, error) = await DbLock.LockedAsync(() => UserMgmt.DenyPermissionAsync(permissionsUserId, grantDenyTarget.Code, grantDenyReason));
 
         if (error != null)
         {
@@ -796,7 +796,7 @@
         perm.RowSaving = true;
         StateHasChanged();
 
-        var (result, error) = await UserMgmt.RevokePermissionAsync(permissionsUserId, perm.Code);
+        var (result, error) = await DbLock.LockedAsync(() => UserMgmt.RevokePermissionAsync(permissionsUserId, perm.Code));
         perm.RowSaving = false;
 
         if (error != null)

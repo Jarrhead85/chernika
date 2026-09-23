@@ -1074,25 +1074,31 @@
         var user = authState.User;
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
         isSystemAdmin = user.IsInRole("SystemAdmin");
-        if (isSystemAdmin)
+
+        // Проверки прав и чтение организаций выполняются через общий scoped DbContext,
+        // поэтому сериализуем их тем же CircuitDbLock, что и загрузку данных.
+        await using (await DbLock.WaitAsync())
         {
-            allBranches = await HKCardService.GetAllBranchesAsync();
+            if (isSystemAdmin)
+            {
+                allBranches = await HKCardService.GetAllBranchesAsync();
+            }
+            canSendToApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeSubmit)
+                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateSubmit)
+                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentSubmit)
+                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexSubmit);
+            canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
+            canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
+            canArchive = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKArchive);
+            canCreateNewVersion = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate)
+                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate)
+                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate)
+                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
+            canCreateNode = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate);
+            canCreateAggregate = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate);
+            canCreateEquipmentModel = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate);
+            canCreateComplex = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
         }
-        canSendToApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeSubmit)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateSubmit)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentSubmit)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexSubmit);
-        canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
-        canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
-        canArchive = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKArchive);
-        canCreateNewVersion = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate)
-            || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
-        canCreateNode = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate);
-        canCreateAggregate = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate);
-        canCreateEquipmentModel = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate);
-        canCreateComplex = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
 
         await using (await DbLock.WaitAsync())
         {
@@ -1193,10 +1199,13 @@
         selectedAggregateId = Guid.Empty;
         selectedNodeId = NodeId.HasValue && NodeId.Value != Guid.Empty ? NodeId.Value : Guid.Empty;
 
-        canEdit = await Perms.HasPermissionAsync(currentUserId, selectedLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
-            selectedLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
-            selectedLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
-            PermissionCodes.HKComplexEditDraft);
+        await using (await DbLock.WaitAsync())
+        {
+            canEdit = await Perms.HasPermissionAsync(currentUserId, selectedLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
+                selectedLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
+                selectedLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
+                PermissionCodes.HKComplexEditDraft);
+        }
         canQuickCreate = canEdit;
 
         if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
@@ -1315,11 +1324,16 @@
     {
         try
         {
-            var info = await HKCardService.GetAttachmentInfoAsync(cardId, ct);
-            _attachment = info is null
-                ? null
-                : new AttachmentInfo(info.Id, info.OriginalFileName, info.SizeBytes,
-                    info.UploadedByUserName, info.UploadedAt);
+            AttachmentInfo? loaded = null;
+            await using (await DbLock.WaitAsync(ct))
+            {
+                var info = await HKCardService.GetAttachmentInfoAsync(cardId, ct);
+                loaded = info is null
+                    ? null
+                    : new AttachmentInfo(info.Id, info.OriginalFileName, info.SizeBytes,
+                        info.UploadedByUserName, info.UploadedAt);
+            }
+            _attachment = loaded;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1426,7 +1440,12 @@
             errorMessage = "Сначала сохраните черновик ХК.";
             return;
         }
-        var (sent, error) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, "Отправлена на проверку");
+        bool sent;
+        string? error;
+        await using (await DbLock.WaitAsync())
+        {
+            (sent, error) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.OnReview, "Отправлена на проверку");
+        }
         if (sent)
         {
             card.Status = HKCardStatus.OnReview;
@@ -1439,7 +1458,11 @@
 
     private async Task ApproveCard()
     {
-        var (approved, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Approved, "Утверждена");
+        bool approved;
+        await using (await DbLock.WaitAsync())
+        {
+            (approved, _) = await HKCardService.ChangeStatusAsync(card.Id, HKCardStatus.Approved, "Утверждена");
+        }
         if (approved) card.Status = HKCardStatus.Approved;
     }
 
@@ -1454,12 +1477,20 @@
     {
         showReturnModal = false;
 
-        var (returned, _) = await HKCardService.ChangeStatusAsync(
-            card.Id, HKCardStatus.RevisionRequired, string.IsNullOrWhiteSpace(returnComment) ? null : returnComment.Trim());
+        bool returned;
+        await using (await DbLock.WaitAsync())
+        {
+            (returned, _) = await HKCardService.ChangeStatusAsync(
+                card.Id, HKCardStatus.RevisionRequired, string.IsNullOrWhiteSpace(returnComment) ? null : returnComment.Trim());
+        }
         if (returned)
         {
             card.Status = HKCardStatus.RevisionRequired;
-            var existing = await HKCardService.GetByIdAsync(card.Id);
+            HKCard? existing;
+            await using (await DbLock.WaitAsync())
+            {
+                existing = await HKCardService.GetByIdAsync(card.Id);
+            }
             if (existing != null)
             {
                 card = existing;
@@ -1504,7 +1535,12 @@
             }
         }
 
-        var (archived, error) = await HKCardService.ArchiveAsync(card.Id, _archiveReplacementCardId, reason);
+        bool archived;
+        string? error;
+        await using (await DbLock.WaitAsync())
+        {
+            (archived, error) = await HKCardService.ArchiveAsync(card.Id, _archiveReplacementCardId, reason);
+        }
         if (!archived)
         {
             _archiveError = error ?? "Не удалось заархивировать ХК.";
@@ -1518,7 +1554,13 @@
     private async Task CreateNewVersion()
     {
         errorMessage = null;
-        var (success, newCardId, error) = await HKCardService.CreateNewVersionAsync(card.Id);
+        bool success;
+        Guid? newCardId;
+        string? error;
+        await using (await DbLock.WaitAsync())
+        {
+            (success, newCardId, error) = await HKCardService.CreateNewVersionAsync(card.Id);
+        }
         if (!success || !newCardId.HasValue)
         {
             errorMessage = error ?? "Не удалось создать новую версию ХК.";
@@ -1578,7 +1620,11 @@
         }
         else if (!string.IsNullOrEmpty(userId))
         {
-            var user = await UserManager.FindByIdAsync(userId);
+            ApplicationUser? user;
+            await using (await DbLock.WaitAsync())
+            {
+                user = await UserManager.FindByIdAsync(userId);
+            }
             if (user?.BranchId != null)
                 card.BranchId = user.BranchId.Value;
         }
@@ -1611,14 +1657,17 @@
 
         try
         {
-            if (IsNew && _createdCardId is null)
+            await using (await DbLock.WaitAsync())
             {
-                await HKCardService.CreateAsync(card);
-                _createdCardId = card.Id;
-            }
-            else
-            {
-                await HKCardService.UpdateAsync(card);
+                if (IsNew && _createdCardId is null)
+                {
+                    await HKCardService.CreateAsync(card);
+                    _createdCardId = card.Id;
+                }
+                else
+                {
+                    await HKCardService.UpdateAsync(card);
+                }
             }
         }
         catch (ArgumentException ex)
@@ -1685,7 +1734,10 @@
             // CreateAsync не сохраняет военные ветки — фиксируем выбор после создания.
             try
             {
-                await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+                await using (await DbLock.WaitAsync())
+                {
+                    await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+                }
             }
             catch (Exception ex)
             {
@@ -1991,12 +2043,17 @@
             _addChildSearch = "";
             _availableChildCards = new();
             _pendingChild = null;
-            var paged = await HKCardService.GetFilteredAsync();
+            List<HKCardListItemDto> allCards;
+            await using (await DbLock.WaitAsync())
+            {
+                var paged = await HKCardService.GetFilteredAsync();
+                allCards = paged.Items.ToList();
+            }
             var existingChildIds = _components.Select(c => c.ChildHKCardId).ToHashSet();
             existingChildIds.UnionWith(_pendingChildCards.Select(c => c.Id));
             existingChildIds.Add(card.Id);
             var allowedChildLevel = AllowedChildLevel;
-            _availableChildCards = paged.Items
+            _availableChildCards = allCards
                 .Where(c => c.Status == HKCardStatus.Approved
                             && (allowedChildLevel is null || c.ObjectLevel == allowedChildLevel.Value)
                             && !existingChildIds.Contains(c.Id))
@@ -2030,9 +2087,12 @@
 
         try
         {
-            await HKCardService.AddComponentAsync(card.Id, _pendingChild.Id);
-            _components = await HKCardService.GetComponentsAsync(card.Id);
-            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+            await using (await DbLock.WaitAsync())
+            {
+                await HKCardService.AddComponentAsync(card.Id, _pendingChild.Id);
+                _components = await HKCardService.GetComponentsAsync(card.Id);
+                _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+            }
             _addChildOpen = false;
             _addChildSearch = "";
             _pendingChild = null;
@@ -2052,9 +2112,12 @@
     {
         try
         {
-            await HKCardService.RemoveComponentAsync(componentId);
-            _components = await HKCardService.GetComponentsAsync(card.Id);
-            _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+            await using (await DbLock.WaitAsync())
+            {
+                await HKCardService.RemoveComponentAsync(componentId);
+                _components = await HKCardService.GetComponentsAsync(card.Id);
+                _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(card.Id);
+            }
         }
         catch (Exception ex)
         {
@@ -2130,7 +2193,10 @@
         await CloseActiveDropdownAsync();
         if (!IsNew)
         {
-            await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+            await using (await DbLock.WaitAsync())
+            {
+                await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+            }
         }
         StateHasChanged();
     }
@@ -2140,7 +2206,10 @@
         selectedMilitaryBranchIds.Remove(branchId);
         if (!IsNew)
         {
-            await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+            await using (await DbLock.WaitAsync())
+            {
+                await EquipmentService.SetHKCardMilitaryBranchesAsync(card.Id, selectedMilitaryBranchIds);
+            }
         }
         StateHasChanged();
     }
@@ -2384,19 +2453,26 @@
             {
                 case QuickCreateKind.Node:
                 {
-                    var created = await EquipmentService.CreateNodeAsync(new Node
+                    Node created;
+                    await using (await DbLock.WaitAsync())
                     {
-                        Code = _qcCode.Trim(),
-                        Name = _qcName.Trim(),
-                        Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
-                    });
-                    nodes = await EquipmentService.GetNodesAsync();
+                        created = await EquipmentService.CreateNodeAsync(new Node
+                        {
+                            Code = _qcCode.Trim(),
+                            Name = _qcName.Trim(),
+                            Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
+                        });
+                        nodes = await EquipmentService.GetNodesAsync();
+                        if (IsNew)
+                        {
+                            card.Code = await HKCardService.GenerateCodeForNodeAsync(created.Id);
+                            _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(created.Id);
+                        }
+                    }
                     selectedNodeId = created.Id;
                     card.NodeId = created.Id;
                     if (IsNew)
                     {
-                        card.Code = await HKCardService.GenerateCodeForNodeAsync(created.Id);
-                        _existingActiveCard = await HKCardService.GetActiveCardForNodeAsync(created.Id);
                         _activeCardWarning = _existingActiveCard != null
                             ? $"Для узла уже есть активная ХК «{_existingActiveCard.Code}» в статусе «{TranslateStatus(_existingActiveCard.Status)}»."
                             : null;
@@ -2405,13 +2481,17 @@
                 }
                 case QuickCreateKind.AssemblyUnit:
                 {
-                    var created = await EquipmentService.CreateAssemblyUnitAsync(new AssemblyUnit
+                    AssemblyUnit created;
+                    await using (await DbLock.WaitAsync())
                     {
-                        Code = _qcCode.Trim(),
-                        Name = _qcName.Trim(),
-                        Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
-                    });
-                    assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
+                        created = await EquipmentService.CreateAssemblyUnitAsync(new AssemblyUnit
+                        {
+                            Code = _qcCode.Trim(),
+                            Name = _qcName.Trim(),
+                            Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
+                        });
+                        assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
+                    }
                     if (_quickCreateItemUiKey.HasValue)
                     {
                         var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);
@@ -2421,14 +2501,18 @@
                 }
                 case QuickCreateKind.GsmMaterial:
                 {
-                    var created = await GsmMaterialService.CreateAsync(new GsmMaterial
+                    GsmMaterial created;
+                    await using (await DbLock.WaitAsync())
                     {
-                        Name = _qcName.Trim(),
-                        Type = _qcType.Trim(),
-                        Gost = string.IsNullOrWhiteSpace(_qcGost) ? null : _qcGost.Trim(),
-                        Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
-                    });
-        gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
+                        created = await GsmMaterialService.CreateAsync(new GsmMaterial
+                        {
+                            Name = _qcName.Trim(),
+                            Type = _qcType.Trim(),
+                            Gost = string.IsNullOrWhiteSpace(_qcGost) ? null : _qcGost.Trim(),
+                            Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
+                        });
+                        gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
+                    }
                     if (_quickCreateItemUiKey.HasValue && _quickCreateCategory.HasValue)
                     {
                         var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);

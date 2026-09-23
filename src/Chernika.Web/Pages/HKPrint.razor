@@ -1,9 +1,11 @@
 @page "/печать-хк/{Id:guid}"
 @attribute [Authorize(Policy = "ViewHK")]
 @implements IDisposable
+@using Chernika.Web.Services
 @inject HKCardService HKCardService
 @inject ReportService ReportService
 @inject NavigationManager Nav
+@inject CircuitDbLock DbLock
 
 <div class="stack">
     <section class="panel">
@@ -196,9 +198,9 @@
 
         try
         {
-            var loaded = await HKCardService.GetByIdAsync(requestedId, ct);
+            var loaded = await DbLock.LockedAsync(() => HKCardService.GetByIdAsync(requestedId, ct));
             var rows = loaded != null && loaded.ObjectLevel != HKObjectLevel.Node
-                ? await HKCardService.GetAggregatedRowsAsync(loaded.Id, ct)
+                ? await DbLock.LockedAsync(() => HKCardService.GetAggregatedRowsAsync(loaded.Id, ct))
                 : new List<AggregatedRowDto>();
 
             if (!ct.IsCancellationRequested && requestedId == Id)
@@ -240,7 +242,7 @@
     async Task DownloadExcel()
     {
         if (card == null) return;
-        var cards = await HKCardService.GetAllAsync();
+        var cards = await DbLock.LockedAsync(() => HKCardService.GetAllAsync());
         var excelBytes = ReportService.GenerateHKRegistryExcel(cards);
         await JS.InvokeVoidAsync("downloadFile", "Registry_HK.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Convert.ToBase64String(excelBytes));
     }

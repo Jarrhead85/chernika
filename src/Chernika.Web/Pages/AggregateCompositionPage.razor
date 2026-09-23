@@ -355,12 +355,15 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canCreate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreate);
-        canEditDraft = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateEditDraft);
-        canSubmit = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateSubmit);
-        canApprove = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateApprove);
-        canReturn = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateReturnForRevision);
-        canCreateVersion = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion);
+        await using (await DbLock.WaitAsync())
+        {
+            canCreate = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreate);
+            canEditDraft = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateEditDraft);
+            canSubmit = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateSubmit);
+            canApprove = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateApprove);
+            canReturn = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateReturnForRevision);
+            canCreateVersion = await Perms.HasPermissionAsync(userId!, PermissionCodes.CompositionAggregateCreateVersion);
+        }
         _loadCts = new CancellationTokenSource();
         await LoadData();
         if (AggregateIdQuery.HasValue && AggregateIdQuery.Value != Guid.Empty)
@@ -428,8 +431,12 @@
     async Task CreateComposition()
     {
         if (selectedAggregateId == Guid.Empty) return;
-        var comp = await EquipService.CreateAggregateCompositionAsync(
-            new CreateAggregateCompositionRequest(selectedAggregateId, string.IsNullOrWhiteSpace(comment) ? null : comment));
+        AggregateComposition comp;
+        await using (await DbLock.WaitAsync())
+        {
+            comp = await EquipService.CreateAggregateCompositionAsync(
+                new CreateAggregateCompositionRequest(selectedAggregateId, string.IsNullOrWhiteSpace(comment) ? null : comment));
+        }
         await LoadCompositions();
         await SelectCompositionAsync(comp.Id);
     }
@@ -453,11 +460,14 @@
     async Task SaveCompositionDraft()
     {
         if (!CanEditSelectedDraft) return;
-        await EquipService.UpdateAggregateCompositionDraftAsync(
-            new UpdateAggregateCompositionDraftRequest(selectedComposition!.Id,
-                string.IsNullOrWhiteSpace(editComment) ? null : editComment,
-                editEffectiveDate?.ToUniversalTime(),
-                editExpirationDate?.ToUniversalTime()));
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.UpdateAggregateCompositionDraftAsync(
+                new UpdateAggregateCompositionDraftRequest(selectedComposition!.Id,
+                    string.IsNullOrWhiteSpace(editComment) ? null : editComment,
+                    editEffectiveDate?.ToUniversalTime(),
+                    editExpirationDate?.ToUniversalTime()));
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
     }
@@ -465,7 +475,10 @@
     async Task SubmitForReview()
     {
         if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.Draft || !canSubmit) return;
-        await EquipService.SubmitAggregateCompositionForReviewAsync(selectedComposition.Id);
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.SubmitAggregateCompositionForReviewAsync(selectedComposition.Id);
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
     }
@@ -473,8 +486,11 @@
     async Task ApproveComposition()
     {
         if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.OnReview || !canApprove) return;
-        await EquipService.ApproveAggregateCompositionAsync(selectedComposition.Id,
-            string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.ApproveAggregateCompositionAsync(selectedComposition.Id,
+                string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
     }
@@ -482,8 +498,11 @@
     async Task ReturnToDraft()
     {
         if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.OnReview || !canReturn) return;
-        await EquipService.ReturnAggregateCompositionToDraftAsync(selectedComposition.Id,
-            string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.ReturnAggregateCompositionToDraftAsync(selectedComposition.Id,
+                string.IsNullOrWhiteSpace(reviewComment) ? null : reviewComment);
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
     }
@@ -491,7 +510,10 @@
     async Task ArchiveComposition()
     {
         if (selectedComposition == null || selectedComposition.Status != ProductCompositionStatus.Approved || !canApprove) return;
-        await EquipService.ArchiveAggregateCompositionAsync(selectedComposition.Id);
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.ArchiveAggregateCompositionAsync(selectedComposition.Id);
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
     }
@@ -499,8 +521,11 @@
     async Task AddNode()
     {
         if (!CanEditSelectedDraft || newNodeId == Guid.Empty) return;
-        await EquipService.AddAggregateCompositionNodeAsync(
-            new AddAggregateCompositionNodeRequest(selectedComposition!.Id, newNodeId, newNodeQty, null));
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.AddAggregateCompositionNodeAsync(
+                new AddAggregateCompositionNodeRequest(selectedComposition!.Id, newNodeId, newNodeQty, null));
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);
         newNodeId = Guid.Empty;
@@ -521,8 +546,11 @@
     async Task SaveNodeQuantity(Guid id)
     {
         if (!CanEditSelectedDraft) return;
-        await EquipService.UpdateAggregateCompositionNodeAsync(
-            new UpdateAggregateCompositionNodeRequest(id, editNodeQty, 0, null));
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.UpdateAggregateCompositionNodeAsync(
+                new UpdateAggregateCompositionNodeRequest(id, editNodeQty, 0, null));
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition!.Id);
         editingNodeId = null;
@@ -531,7 +559,10 @@
     async Task RemoveNode(Guid id)
     {
         if (!CanEditSelectedDraft) return;
-        await EquipService.RemoveAggregateCompositionNodeAsync(id);
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.RemoveAggregateCompositionNodeAsync(id);
+        }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition!.Id);
     }
@@ -540,7 +571,10 @@
     {
         var comp = compositions.FirstOrDefault(c => c.Id == id);
         if (comp == null || comp.Status != ProductCompositionStatus.Draft || !canEditDraft) return;
-        await EquipService.DeleteAggregateCompositionDraftAsync(id);
+        await using (await DbLock.WaitAsync())
+        {
+            await EquipService.DeleteAggregateCompositionDraftAsync(id);
+        }
         compositions.RemoveAll(c => c.Id == id);
         if (selectedComposition?.Id == id) selectedComposition = null;
     }
@@ -589,7 +623,11 @@
     async Task CreateNewVersion()
     {
         if (selectedComposition == null) return;
-        var result = await EquipService.CreateAggregateCompositionVersionAsync(selectedComposition.Id);
+        (bool Success, Guid? CompositionId, string? Error) result;
+        await using (await DbLock.WaitAsync())
+        {
+            result = await EquipService.CreateAggregateCompositionVersionAsync(selectedComposition.Id);
+        }
         if (result.Success && result.CompositionId.HasValue)
             Nav.NavigateTo($"/составы/агрегаты/{selectedComposition.AggregateId}/версии/{result.CompositionId}", forceLoad: true);
     }

@@ -148,7 +148,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
         await ReloadAsync();
     }
 
@@ -232,12 +232,12 @@
         {
             if (editing)
             {
-                var ok = await EquipService.UpdateAggregateAsync(new UpdateAggregateRequest(newEntity.Id, newEntity.Code, newEntity.Name, newEntity.Description));
+                var ok = await DbLock.LockedAsync(() => EquipService.UpdateAggregateAsync(new UpdateAggregateRequest(newEntity.Id, newEntity.Code, newEntity.Name, newEntity.Description)));
                 if (!ok) throw new InvalidOperationException("Не удалось изменить запись справочника. Обновите список и повторите попытку.");
             }
             else
             {
-                await EquipService.CreateAggregateAsync(new CreateAggregateRequest(newEntity.Code, newEntity.Name, newEntity.Description));
+                await DbLock.LockedAsync(() => EquipService.CreateAggregateAsync(new CreateAggregateRequest(newEntity.Code, newEntity.Name, newEntity.Description)));
             }
             ResetForm();
             await ReloadAsync();
@@ -279,7 +279,7 @@
         errorMessage = null;
         try
         {
-            var (deleted, error) = await EquipService.DeleteAggregateAsync(id);
+            var (deleted, error) = await DbLock.LockedAsync(() => EquipService.DeleteAggregateAsync(id));
             if (!deleted && error != null)
                 errorMessage = error.Replace("\n", " ");
             await ReloadAsync();
@@ -295,7 +295,7 @@
         errorMessage = null;
         try
         {
-            var ok = await EquipService.RestoreAggregateAsync(id);
+            var ok = await DbLock.LockedAsync(() => EquipService.RestoreAggregateAsync(id));
             if (!ok) errorMessage = "Не удалось восстановить запись. Обновите список и повторите попытку.";
             await ReloadAsync();
         }

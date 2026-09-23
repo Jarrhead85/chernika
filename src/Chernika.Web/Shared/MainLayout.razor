@@ -398,7 +398,10 @@
         {
             try
             {
-                await NotifSvc.MarkAsReadAsync(n.Id);
+                await using (await DbLock.WaitAsync())
+                {
+                    await NotifSvc.MarkAsReadAsync(n.Id);
+                }
             }
             catch
             {
@@ -415,7 +418,10 @@
     {
         try
         {
-            await NotifSvc.MarkAllAsReadAsync();
+            await using (await DbLock.WaitAsync())
+            {
+                await NotifSvc.MarkAllAsReadAsync();
+            }
         }
         catch
         {
@@ -577,9 +583,12 @@
             var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             if (userId != null)
             {
-                canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
-                canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
-                canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
+                await using (await DbLock.WaitAsync())
+                {
+                    canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
+                    canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
+                    canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
+                }
             }
             await RefreshAccountDataAsync();
             await RefreshLayoutIndicatorsAsync();
@@ -596,14 +605,13 @@
     [Inject] AccountService AccountSvc { get; set; } = null!;
 
     private string? userAvatarUrl;
-    private bool _mustChangePasswordChecked;
 
     /// <summary>Аватар и флаг обязательной смены пароля текущего пользователя.</summary>
     private async Task RefreshAccountDataAsync()
     {
         try
         {
-            var account = await AccountSvc.GetMyAccountAsync();
+            var account = await DbLock.LockedAsync(() => AccountSvc.GetMyAccountAsync());
             userAvatarUrl = account.HasAvatar
                 ? $"/api/account/me/avatar/content?v={account.AvatarVersion}"
                 : null;
@@ -622,7 +630,7 @@
     {
         try
         {
-            var account = await AccountSvc.GetMyAccountAsync();
+            var account = await DbLock.LockedAsync(() => AccountSvc.GetMyAccountAsync());
             if (!account.MustChangePassword)
                 return;
 

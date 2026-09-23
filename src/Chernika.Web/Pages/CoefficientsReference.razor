@@ -234,8 +234,8 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
-        canCreateType = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
+        canCreateType = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
         await ReloadTypesAsync();
         await ReloadAsync();
     }
@@ -399,7 +399,7 @@
                     NormativeBasis = form.NormativeBasis,
                     SortOrder = (form.SortOrder ?? 0) > 0 ? (form.SortOrder ?? 1) : 1
                 };
-                await CoeffService.UpdateCoefficientAsync(updateReq);
+                await DbLock.LockedAsync(() => CoeffService.UpdateCoefficientAsync(updateReq));
             }
             else
             {
@@ -412,7 +412,7 @@
                     NormativeBasis = form.NormativeBasis,
                     SortOrder = form.SortOrder
                 };
-                await CoeffService.CreateCoefficientAsync(createReq);
+                await DbLock.LockedAsync(() => CoeffService.CreateCoefficientAsync(createReq));
             }
             ResetForm();
             await ReloadAsync();
@@ -477,7 +477,7 @@
         CancelArchiveConfirm();
         try
         {
-            await CoeffService.ArchiveCoefficientAsync(id);
+            await DbLock.LockedAsync(() => CoeffService.ArchiveCoefficientAsync(id));
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)
@@ -495,7 +495,7 @@
         errorMessage = null;
         try
         {
-            await CoeffService.RestoreCoefficientAsync(id);
+            await DbLock.LockedAsync(() => CoeffService.RestoreCoefficientAsync(id));
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)

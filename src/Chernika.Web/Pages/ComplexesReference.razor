@@ -148,7 +148,7 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await Perms.HasPermissionAsync(userId, PermissionCodes.ReferenceEdit);
+        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
         await ReloadAsync();
     }
 
@@ -232,12 +232,12 @@
         {
             if (editing)
             {
-                var ok = await EquipService.UpdateComplexAsync(new UpdateComplexRequest(newEntity.Id, newEntity.Code, newEntity.Name, newEntity.Description));
+                var ok = await DbLock.LockedAsync(() => EquipService.UpdateComplexAsync(new UpdateComplexRequest(newEntity.Id, newEntity.Code, newEntity.Name, newEntity.Description)));
                 if (!ok) throw new InvalidOperationException("Не удалось изменить запись справочника. Обновите список и повторите попытку.");
             }
             else
             {
-                await EquipService.CreateComplexAsync(new CreateComplexRequest(newEntity.Code, newEntity.Name, newEntity.Description));
+                await DbLock.LockedAsync(() => EquipService.CreateComplexAsync(new CreateComplexRequest(newEntity.Code, newEntity.Name, newEntity.Description)));
             }
             ResetForm();
             await ReloadAsync();
@@ -279,7 +279,7 @@
         errorMessage = null;
         try
         {
-            var (deleted, error) = await EquipService.DeleteComplexAsync(id);
+            var (deleted, error) = await DbLock.LockedAsync(() => EquipService.DeleteComplexAsync(id));
             if (!deleted)
             {
                 if (error != null)
@@ -298,7 +298,7 @@
         errorMessage = null;
         try
         {
-            var ok = await EquipService.RestoreComplexAsync(id);
+            var ok = await DbLock.LockedAsync(() => EquipService.RestoreComplexAsync(id));
             if (!ok) errorMessage = "Не удалось восстановить запись. Обновите список и повторите попытку.";
             await ReloadAsync();
         }
