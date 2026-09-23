@@ -1317,12 +1317,6 @@ public class IndividualCardService
         }
     }
 
-    private async Task EnsureDraftAccessibleAsync(IndividualCard draft, ActorScope scope, string notFoundMessage, CancellationToken ct)
-    {
-        if (!scope.IsSystemAdmin && draft.BranchId != scope.BranchId)
-            throw new UnauthorizedAccessException(notFoundMessage);
-    }
-
     private async Task EnsureDraftEditorAsync(
         IndividualCard draft, ActorScope scope, string deniedMessage, CancellationToken ct)
     {
@@ -1469,7 +1463,7 @@ public class IndividualCardService
             _db.AddRange(newSnapshots);
     }
 
-    private async Task<IndividualCardDraftDto> ToDraftDtoAsync(IndividualCard draft, CancellationToken ct)
+    private IndividualCardDraftDto ToDraftDto(IndividualCard draft)
     {
         var objectId = GetTargetObjectId(draft) ?? Guid.Empty;
         var objectCode = string.Empty;
@@ -1661,7 +1655,7 @@ public class IndividualCardService
         // Уникальный индекс (Code, Version) защищает от одновременного создания дубликатов.
         await _db.SaveChangesAsync(ct);
 
-        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? await ToDraftDtoAsync(reloaded, ct) : await ToDraftDtoAsync(draft, ct);
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
     }
 
     public async Task<IndividualCardDraftDto?> GetDraftByIdAsync(Guid individualCardId, CancellationToken ct = default)
@@ -1679,7 +1673,7 @@ public class IndividualCardService
 
         // Чтение никогда не пересобирает и не обновляет снапшоты: черновик историчен
         // относительно создания или последнего явного обновления.
-        return await ToDraftDtoAsync(draft, ct);
+        return ToDraftDto(draft);
     }
 
     private async Task<IndividualCard?> LoadDraftDetailedAsync(Guid individualCardId, CancellationToken ct) =>
@@ -1807,7 +1801,7 @@ public class IndividualCardService
             throw;
         }
 
-        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? await ToDraftDtoAsync(reloaded, ct) : await ToDraftDtoAsync(draft, ct);
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
     }
 
     public async Task DeleteDraftAsync(Guid individualCardId, CancellationToken ct = default)
@@ -2491,7 +2485,7 @@ public class IndividualCardService
             throw new InvalidOperationException($"Для ИК «{source.Code} {source.Version}» новая версия уже создана.");
         }
 
-        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? await ToDraftDtoAsync(reloaded, ct) : await ToDraftDtoAsync(draft, ct);
+        return (await LoadDraftDetailedAsync(draft.Id, ct)) is { } reloaded ? ToDraftDto(reloaded) : ToDraftDto(draft);
     }
 
     public async Task ArchiveIndividualCardAsync(Guid individualCardId, CancellationToken ct = default)

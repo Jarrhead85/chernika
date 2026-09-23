@@ -590,6 +590,9 @@ public class HKCardService
             throw authError ?? new UnauthorizedAccessException("Нет доступа к вложению ХК.");
         }
 
+        if (actor is null)
+            throw new UnauthorizedAccessException("Пользователь не найден.");
+
         // Поток может быть non-seekable (IBrowserFile): буферизуем с ограничением размера.
         using var buffered = new MemoryStream();
         var buffer = new byte[81920];

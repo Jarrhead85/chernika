@@ -397,7 +397,6 @@
     private Guid replaceWithAggregateId = Guid.Empty;
     private Guid? deletingPartId;
     private string? deletePartError;
-    private string? error;
 
     private bool HasEmptyState => selectedModelId != Guid.Empty && !compositions.Any();
 
@@ -513,7 +512,6 @@
             inlineAddError = null;
             editingPartId = null;
             deletePartError = null;
-            error = null;
         }
     }
 

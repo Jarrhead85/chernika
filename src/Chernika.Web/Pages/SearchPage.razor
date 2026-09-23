@@ -101,9 +101,12 @@
                                 <label class="field-label" for="branch">Организация</label>
                                 <select id="branch" class="field-select" value="@(_branchId?.ToString() ?? "")" @onchange="OnBranchChanged">
                                     <option value="">Все организации</option>
-                                    @foreach (var branch in _branches)
+                                    @if (_branches is not null)
                                     {
-                                        <option value="@branch.Id" selected="@(branch.Id == _branchId)">@branch.Name</option>
+                                        @foreach (var branch in _branches)
+                                        {
+                                            <option value="@branch.Id" selected="@(branch.Id == _branchId)">@branch.Name</option>
+                                        }
                                     }
                                 </select>
                             </div>
@@ -827,7 +830,7 @@
         return url.Count == 0 ? "/поиск" : "/поиск?" + string.Join("&", url);
     }
 
-    private static string StatusClass(string entityType, string statusKey) => entityType switch
+    private static string StatusClass(string entityType, string? statusKey) => entityType switch
     {
         "HKCard" => statusKey switch
         {

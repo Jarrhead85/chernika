@@ -1347,19 +1347,19 @@ public class EquipmentService
         var childIdsSet = childIds.Distinct().ToList();
 
         var complexes = await _db.HKCards.AsNoTracking()
-            .Where(h => childIdsSet.Contains(h.ComplexId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Where(h => h.ComplexId.HasValue && childIdsSet.Contains(h.ComplexId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
             .Select(h => new { h.ComplexId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
             .ToListAsync(ct);
         var models = await _db.HKCards.AsNoTracking()
-            .Where(h => childIdsSet.Contains(h.EquipmentModelId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Where(h => h.EquipmentModelId.HasValue && childIdsSet.Contains(h.EquipmentModelId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
             .Select(h => new { h.EquipmentModelId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
             .ToListAsync(ct);
         var aggregates = await _db.HKCards.AsNoTracking()
-            .Where(h => childIdsSet.Contains(h.AggregateId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Where(h => h.AggregateId.HasValue && childIdsSet.Contains(h.AggregateId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
             .Select(h => new { h.AggregateId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
             .ToListAsync(ct);
         var nodes = await _db.HKCards.AsNoTracking()
-            .Where(h => childIdsSet.Contains(h.NodeId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
+            .Where(h => h.NodeId.HasValue && childIdsSet.Contains(h.NodeId.Value) && (!branchId.HasValue || h.BranchId == branchId.Value))
             .Select(h => new { h.NodeId, h.Id, h.Version, h.Status, h.EffectiveDate, h.ExpirationDate })
             .ToListAsync(ct);
 
@@ -2604,7 +2604,7 @@ public class EquipmentService
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
         var search = query.SearchText?.Trim();
-        var searchLower = search?.ToLowerInvariant();
+        var searchLower = search?.ToLowerInvariant() ?? string.Empty;
         var hasSearch = !string.IsNullOrWhiteSpace(search);
         var globalSearch = hasSearch && query.SearchAllLevels;
         var safeBranchId = await GetAccessibleCompositionBranchIdAsync(query.BranchId, ct);
@@ -2678,7 +2678,7 @@ public class EquipmentService
         };
 
     private IQueryable<CompositionRegistryRow> BuildAggregateRegistryQuery(
-        string? search, string? searchLower, ProductCompositionStatus? statusFilter,
+        string? search, string searchLower, ProductCompositionStatus? statusFilter,
         CompositionPresenceFilter presence, bool showArchived, Guid? effectiveBranchId)
     {
         var compositions = _db.AggregateCompositions.AsNoTracking()
@@ -2752,7 +2752,7 @@ public class EquipmentService
     }
 
     private IQueryable<CompositionRegistryRow> BuildEquipmentModelRegistryQuery(
-        string? search, string? searchLower, ProductCompositionStatus? statusFilter,
+        string? search, string searchLower, ProductCompositionStatus? statusFilter,
         CompositionPresenceFilter presence, bool showArchived, Guid? effectiveBranchId)
     {
         var compositions = _db.ProductCompositions.AsNoTracking()
@@ -2826,7 +2826,7 @@ public class EquipmentService
     }
 
     private IQueryable<CompositionRegistryRow> BuildComplexRegistryQuery(
-        string? search, string? searchLower, ProductCompositionStatus? statusFilter,
+        string? search, string searchLower, ProductCompositionStatus? statusFilter,
         CompositionPresenceFilter presence, bool showArchived, Guid? effectiveBranchId)
     {
         var compositions = _db.ComplexCompositions.AsNoTracking()

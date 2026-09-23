@@ -277,7 +277,7 @@ app.MapPost("/api/users/{id}/reset-password",
         {
             return Results.BadRequest(new { error = ex.Message });
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Results.StatusCode(403);
         }

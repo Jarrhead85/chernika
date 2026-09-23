@@ -299,7 +299,7 @@ public class AuditService
                 break;
             case "IndividualCard":
                 var ic = await _db.IndividualCards.Where(e => ids.Contains(e.Id))
-                    .Select(e => new { e.Id, Display = e.HKCard.Code + " / " + e.EquipmentInstance.Name }).ToListAsync();
+                    .Select(e => new { e.Id, Display = e.TargetObjectCodeSnapshot + " / " + e.TargetObjectNameSnapshot }).ToListAsync();
                 foreach (var x in ic) result[x.Id] = x.Display;
                 break;
             case "GsmMaterial":

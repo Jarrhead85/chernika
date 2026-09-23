@@ -690,7 +690,7 @@ public class TaskService
         var actorId = actorUserId;
         var task = await _db.WorkTasks
             .Include(t => t.WorkTaskGroup)
-            .ThenInclude(g => g.WorkTasks)
+            .ThenInclude(g => g!.WorkTasks)
             .FirstOrDefaultAsync(t => t.Id == taskId && !t.IsDeleted, ct);
 
         if (task?.WorkTaskGroup == null)
@@ -700,7 +700,9 @@ public class TaskService
         if (group.CompletedAt.HasValue)
         {
             var names = await GetUserNamesAsync(new[] { group.CompletedByUserId }, ct);
-            var completerName = names.GetValueOrDefault(group.CompletedByUserId) ?? group.CompletedByUserId ?? "другой пользователь";
+            var completerName = group.CompletedByUserId is { } completedBy
+                ? names.GetValueOrDefault(completedBy) ?? completedBy
+                : "другой пользователь";
             return new GroupCompletionResult(true, group.CompletedByUserId, completerName, AlreadyCompleted: true,
                 $"Задача уже выполнена пользователем {completerName}.");
         }
@@ -744,8 +746,10 @@ public class TaskService
                 .FirstOrDefaultAsync(g => g.Id == group.Id, ct);
             if (existing?.CompletedAt != null)
             {
-                var completerName = (await GetUserNamesAsync(new[] { existing.CompletedByUserId }, ct))
-                    .GetValueOrDefault(existing.CompletedByUserId) ?? existing.CompletedByUserId ?? "другой пользователь";
+                var namesExisting = await GetUserNamesAsync(new[] { existing.CompletedByUserId }, ct);
+                var completerName = existing.CompletedByUserId is { } existingCompletedBy
+                    ? namesExisting.GetValueOrDefault(existingCompletedBy) ?? existingCompletedBy
+                    : "другой пользователь";
                 return new GroupCompletionResult(true, existing.CompletedByUserId, completerName, AlreadyCompleted: true,
                     $"Задача уже выполнена пользователем {completerName}.");
             }
@@ -967,7 +971,7 @@ public class TaskService
             Status = task.Status,
             Priority = task.Priority,
             CreatedByUserId = task.CreatedByUserId,
-            CreatedByUserName = names.GetValueOrDefault(task.CreatedByUserId),
+            CreatedByUserName = task.CreatedByUserId != null ? names.GetValueOrDefault(task.CreatedByUserId) : null,
             AssignedToUserId = task.AssignedToUserId,
             AssignedToUserName = task.AssignedToUserId != null ? names.GetValueOrDefault(task.AssignedToUserId) : null,
             AssignedRole = task.AssignedRole,
