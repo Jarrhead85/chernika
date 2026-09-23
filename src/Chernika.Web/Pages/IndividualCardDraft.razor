@@ -412,24 +412,23 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await using (await DbLock.WaitAsync())
-        {
-            await LoadAsync();
-        }
+        // LoadAsync сам сериализует каждое обращение к БД через CircuitDbLock;
+        // внешний захват привёл бы к дедлоку (семафор нереентерабельный).
+        await LoadAsync();
         _loading = false;
     }
 
     private async Task LoadAsync()
     {
         _error = null;
-        _draft = await IndCardService.GetDraftByIdAsync(Id);
+        _draft = await DbLock.LockedAsync(() => IndCardService.GetDraftByIdAsync(Id));
         if (_draft is null)
         {
             // Non-Draft card: a lightweight View-only header plus the full
             // read-only detail graph; new-version and archive actions are
             // permission-gated independently of each other.
-            _actionHeader = await IndCardService.GetIndividualCardActionHeaderAsync(Id);
-            _detail = await IndCardService.GetDetailAsync(Id);
+            _actionHeader = await DbLock.LockedAsync(() => IndCardService.GetIndividualCardActionHeaderAsync(Id));
+            _detail = await DbLock.LockedAsync(() => IndCardService.GetDetailAsync(Id));
             _comparison = null;
             _selectedRootHKCardId = Guid.Empty;
 
@@ -437,8 +436,8 @@
             var headerUserId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
 
             var isFormed = _actionHeader is { Status: IndividualCardStatus.Formed };
-            _canCreateVersion = isFormed && await Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardCreateVersion);
-            _canArchive = isFormed && await Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardArchive);
+            _canCreateVersion = isFormed && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardCreateVersion));
+            _canArchive = isFormed && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(headerUserId, PermissionCodes.IndividualCardArchive));
 
             // Deep-link from the registry actions.
             var action = Microsoft.AspNetCore.WebUtilities.QueryHelpers
@@ -451,20 +450,17 @@
             return;
         }
 
-        _savedCalculation = await IndCardService.GetDraftCalculationAsync(Id);
-        _detail = await IndCardService.GetDetailAsync(Id);
+        _savedCalculation = await DbLock.LockedAsync(() => IndCardService.GetDraftCalculationAsync(Id));
+        _detail = await DbLock.LockedAsync(() => IndCardService.GetDetailAsync(Id));
 
         var auth = await AuthState.GetAuthenticationStateAsync();
         var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         var isAuthor = userId != null && _draft.CreatedByUserId == userId;
         var effectiveUserId = userId ?? string.Empty;
 
-        await using (await DbLock.WaitAsync())
-        {
-            _canSelectCoefficients = isAuthor || await Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardEditDraft);
-            _canRecalculate = _canSelectCoefficients && await Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardRecalculateDraft);
-            _canForm = await Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardForm);
-        }
+        _canSelectCoefficients = isAuthor || await DbLock.LockedAsync(() => Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardEditDraft));
+        _canRecalculate = _canSelectCoefficients && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardRecalculateDraft));
+        _canForm = await DbLock.LockedAsync(() => Perms.HasPermissionAsync(effectiveUserId, PermissionCodes.IndividualCardForm));
 
         if (_draft.Status == IndividualCardStatus.Formed)
         {
@@ -499,10 +495,8 @@
     private async Task OnCoefficientSearchChanged(ChangeEventArgs args)
     {
         _coefficientSearch = args.Value?.ToString() ?? string.Empty;
-        await using (await DbLock.WaitAsync())
-        {
-            await LoadCoefficientsAsync();
-        }
+        // LoadCoefficientsAsync сам берёт CircuitDbLock; внешний захват привёл бы к дедлоку.
+        await LoadCoefficientsAsync();
         StateHasChanged();
     }
 
@@ -658,8 +652,9 @@
             await using (await DbLock.WaitAsync())
             {
                 _savedCalculation = await IndCardService.FormDraftAsync(new FormIndividualCardRequest(Id));
-                await LoadAsync();
             }
+            // LoadAsync берёт лок сам — вызывать его внутри блока нельзя.
+            await LoadAsync();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
         {

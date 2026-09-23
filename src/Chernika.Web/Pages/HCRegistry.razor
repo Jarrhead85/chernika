@@ -766,6 +766,11 @@
         }
     }
 
+    /// <summary>
+    /// Загружает сводки готовности. Вызывается только из <see cref="LoadDataAsync"/>,
+    /// который уже удерживает <c>CircuitDbLock</c>; повторный захват недопустим
+    /// (семафор нереентерабельный — иначе взаимная блокировка).
+    /// </summary>
     private async Task LoadReadinessSummariesAsync(CancellationToken ct)
     {
         _readinessSummaries = null;
@@ -778,7 +783,7 @@
 
             if (contexts.Count > 0)
             {
-                _readinessSummaries = await DbLock.LockedAsync(() => EquipService.GetHKCompositionReadinessSummariesAsync(contexts, ct));
+                _readinessSummaries = await EquipService.GetHKCompositionReadinessSummariesAsync(contexts, ct);
             }
         }
         catch

@@ -5,6 +5,11 @@ namespace Chernika.Web.Services;
 /// Все обращения к scoped <see cref="AppDbContext"/> из UI должны быть
 /// сериализованы, иначе EF Core падает с "A second operation was started".
 /// </summary>
+/// <remarks>
+/// ВНИМАНИЕ: <see cref="CircuitDbLock"/> нереентерабельный. Нельзя вызывать
+/// <c>LockedAsync</c> из кода, который уже удерживает лок через
+/// <c>DbLock.WaitAsync()</c> — это приводит к взаимной блокировке circuit.
+/// </remarks>
 public static class CircuitDbLockExtensions
 {
     /// <summary>Выполняет операцию с результатом под circuit-локом.</summary>
