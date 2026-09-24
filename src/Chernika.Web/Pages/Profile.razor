@@ -75,12 +75,17 @@
     [Parameter, SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrlQuery { get; set; }
 
     /// <summary>
-    /// Безопасный returnUrl: только один начальный слэш, без «//» и схем.
+    /// Безопасный returnUrl: только один начальный слэш локального пути.
+    /// Отбрасываются схемы, «//», обратные слэши и их URL-кодировки
+    /// (%2F/%5C) — иначе «/%2F%2Fhost» обходит проверку «//».
     /// </summary>
     private string? _safeReturnUrl =>
         string.IsNullOrEmpty(ReturnUrlQuery)
             ? null
             : ReturnUrlQuery.StartsWith("/") && !ReturnUrlQuery.StartsWith("//")
+                && !ReturnUrlQuery.Contains('\\')
+                && ReturnUrlQuery.IndexOf("%2F", StringComparison.OrdinalIgnoreCase) < 0
+                && ReturnUrlQuery.IndexOf("%5C", StringComparison.OrdinalIgnoreCase) < 0
                 ? ReturnUrlQuery
                 : null;
 
