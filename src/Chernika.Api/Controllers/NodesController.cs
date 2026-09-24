@@ -53,7 +53,8 @@ public class NodesController : ControllerBase
     [Authorize(Policy = "DeleteEquipment")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        if (!await _equip.DeleteNodeAsync(id)) return NotFound();
+        var (deleted, error) = await _equip.DeleteNodeAsync(id);
+        if (!deleted) return error != null ? Conflict(new { Error = error }) : NotFound();
         return NoContent();
     }
 }

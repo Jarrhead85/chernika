@@ -272,8 +272,8 @@
         errorMessage = null;
         try
         {
-            var ok = await DbLock.LockedAsync(() => EquipService.DeleteNodeAsync(id));
-            if (!ok) errorMessage = "Не удалось удалить запись. Обновите список и повторите попытку.";
+            var (deleted, error) = await DbLock.LockedAsync(() => EquipService.DeleteNodeAsync(id));
+            if (!deleted) errorMessage = error ?? "Не удалось удалить запись. Обновите список и повторите попытку.";
             await ReloadAsync();
         }
         catch (InvalidOperationException ex)

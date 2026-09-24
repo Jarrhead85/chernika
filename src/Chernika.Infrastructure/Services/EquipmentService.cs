@@ -116,16 +116,34 @@ public class EquipmentService
         return node;
     }
 
-    public async Task<bool> DeleteNodeAsync(Guid id)
+    public async Task<(bool Deleted, string? Error)> DeleteNodeAsync(Guid id, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
-        var n = await _db.Nodes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
-        if (n == null || n.IsDeleted) return false;
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        var n = await _db.Nodes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (n == null || n.IsDeleted) return (false, null);
+
+        // Глобальный фильтр скрывает удалённый узел из required-навигаций:
+        // не даём удалить узел, на который ссылаются живые записи.
+        var inActiveComposition = await _db.AggregateCompositionNodes
+            .AnyAsync(acn => acn.NodeId == id && acn.AggregateComposition.IsActive, ct);
+        if (inActiveComposition)
+            return (false, "Нельзя удалить: узел используется в активном составе агрегата.");
+
+        var inLiveHK = await _db.HKCards
+            .AnyAsync(h => h.NodeId == id && h.Status != HKCardStatus.Deleted, ct);
+        if (inLiveHK)
+            return (false, "Нельзя удалить: узел используется в существующей ХК.");
+
+        var inIndividualCard = await _db.IndividualCards
+            .AnyAsync(ic => ic.NodeId == id, ct);
+        if (inIndividualCard)
+            return (false, "Нельзя удалить: узел является целью индивидуальной карты.");
+
         n.IsDeleted = true;
         n.DeletedAt = _time.GetUtcNow().UtcDateTime;
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("Node", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
-        return true;
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync(new AuditWriteRequest("Node", id.ToString(), "Delete", _currentUser.GetRequiredUserId()), ct);
+        return (true, null);
     }
 
     public async Task<bool> RestoreNodeAsync(Guid id)
@@ -290,17 +308,45 @@ public class EquipmentService
             throw new InvalidOperationException("Выбранный вид техники не найден. Обновите справочник и повторите попытку.");
     }
 
-    public async Task<bool> DeleteModelAsync(Guid id)
+    public async Task<(bool Deleted, string? Error)> DeleteModelAsync(Guid id, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
-        var m = await _db.EquipmentModels.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
-        if (m == null || m.IsDeleted) return false;
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        var m = await _db.EquipmentModels.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (m == null || m.IsDeleted) return (false, null);
+
+        // Глобальный фильтр скрывает удалённое изделие из required-навигаций:
+        // не даём удалить изделие, на которое ссылаются живые записи.
+        var inActiveProductComposition = await _db.ProductCompositions
+            .AnyAsync(pc => pc.EquipmentModelId == id && pc.IsActive, ct);
+        if (inActiveProductComposition)
+            return (false, "Нельзя удалить: изделие используется в активном составе.");
+
+        var inActiveComplexComposition = await _db.ComplexCompositionItems
+            .AnyAsync(cci => cci.EquipmentModelId == id && cci.ComplexComposition.IsActive, ct);
+        if (inActiveComplexComposition)
+            return (false, "Нельзя удалить: изделие используется в активном составе комплекса.");
+
+        var inLiveHK = await _db.HKCards
+            .AnyAsync(h => h.EquipmentModelId == id && h.Status != HKCardStatus.Deleted, ct);
+        if (inLiveHK)
+            return (false, "Нельзя удалить: изделие используется в существующей ХК.");
+
+        var inIndividualCard = await _db.IndividualCards
+            .AnyAsync(ic => ic.EquipmentModelId == id, ct);
+        if (inIndividualCard)
+            return (false, "Нельзя удалить: изделие является целью индивидуальной карты.");
+
+        var inLiveInstance = await _db.EquipmentInstances
+            .AnyAsync(i => i.EquipmentModelId == id && !i.IsDeleted, ct);
+        if (inLiveInstance)
+            return (false, "Нельзя удалить: изделие используется в существующих экземплярах техники.");
+
         m.IsDeleted = true;
         m.DeletedAt = _time.GetUtcNow().UtcDateTime;
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(new AuditWriteRequest("EquipmentModel", id.ToString(), "Delete", _currentUser.GetRequiredUserId(),
-            EntityDisplayName: $"{m.Index} — {m.Name}"));
-        return true;
+            EntityDisplayName: $"{m.Index} — {m.Name}"), ct);
+        return (true, null);
     }
 
     public async Task<bool> RestoreModelAsync(Guid id)
@@ -2247,6 +2293,18 @@ public class EquipmentService
             && w.Status != WorkTaskStatus.Completed && w.Status != WorkTaskStatus.Cancelled, ct);
         if (hasUnfinishedTasks) return (false, "Невозможно архивировать организацию: с ней связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
 
+        // Исторические записи (ИК и версии составов) держат required-ссылку на
+        // организацию: их нельзя оставлять со скрытым фильтром родителем.
+        var hasIndividualCards = await _db.IndividualCards.AnyAsync(ic => ic.BranchId == id, ct);
+        if (hasIndividualCards)
+            return (false, "Невозможно архивировать организацию: с ней связаны индивидуальные карты.");
+
+        var hasCompositions = await _db.ProductCompositions.AnyAsync(c => c.BranchId == id, ct)
+            || await _db.AggregateCompositions.AnyAsync(c => c.BranchId == id, ct)
+            || await _db.ComplexCompositions.AnyAsync(c => c.BranchId == id, ct);
+        if (hasCompositions)
+            return (false, "Невозможно архивировать организацию: с ней связаны конструктивные составы.");
+
         branch.IsDeleted = true;
         branch.DeletedAt = _time.GetUtcNow().UtcDateTime;
         branch.UpdatedAt = _time.GetUtcNow().UtcDateTime;
@@ -4058,16 +4116,24 @@ public class EquipmentService
         return true;
     }
 
-    public async Task<bool> DeleteAssemblyUnitAsync(Guid id)
+    public async Task<(bool Deleted, string? Error)> DeleteAssemblyUnitAsync(Guid id, CancellationToken ct = default)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit);
-        var a = await _db.AssemblyUnits.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id);
-        if (a == null || a.IsDeleted) return false;
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+        var a = await _db.AssemblyUnits.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (a == null || a.IsDeleted) return (false, null);
+
+        // Глобальный фильтр скрывает удалённую СЕ из required-навигации HKCardItem:
+        // не даём удалить сборочную единицу, используемую в существующих ХК.
+        var inLiveHK = await _db.HKCardItems
+            .AnyAsync(i => i.AssemblyUnitId == id && i.HKCard.Status != HKCardStatus.Deleted, ct);
+        if (inLiveHK)
+            return (false, "Нельзя удалить: сборочная единица используется в существующей ХК.");
+
         a.IsDeleted = true;
         a.DeletedAt = _time.GetUtcNow().UtcDateTime;
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", id.ToString(), "Delete", _currentUser.GetRequiredUserId()));
-        return true;
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync(new AuditWriteRequest("AssemblyUnit", id.ToString(), "Delete", _currentUser.GetRequiredUserId()), ct);
+        return (true, null);
     }
 
     public async Task<bool> RestoreAssemblyUnitAsync(Guid id)

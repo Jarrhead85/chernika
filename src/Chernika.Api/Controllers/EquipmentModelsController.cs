@@ -55,8 +55,8 @@ public class EquipmentModelsController : ControllerBase
     [Authorize(Policy = "DeleteEquipment")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        var success = await _equipService.DeleteModelAsync(id);
-        if (!success) return NotFound();
+        var (deleted, error) = await _equipService.DeleteModelAsync(id);
+        if (!deleted) return error != null ? Conflict(new { Error = error }) : NotFound();
         return NoContent();
     }
 }

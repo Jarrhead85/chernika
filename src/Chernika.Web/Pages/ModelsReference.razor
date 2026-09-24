@@ -259,7 +259,7 @@
     async Task DeleteModel(Guid id)
     {
         errorMessage = null;
-        try { var ok = await DbLock.LockedAsync(() => EquipService.DeleteModelAsync(id)); if (!ok) errorMessage = "Не удалось удалить запись."; await ReloadAsync(); }
+        try { var (deleted, error) = await DbLock.LockedAsync(() => EquipService.DeleteModelAsync(id)); if (!deleted) errorMessage = error ?? "Не удалось удалить запись."; await ReloadAsync(); }
         catch (InvalidOperationException ex) { errorMessage = ex.Message; }
     }
 
