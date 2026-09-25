@@ -124,10 +124,11 @@ public class EquipmentService
 
         // Глобальный фильтр скрывает удалённый узел из required-навигаций:
         // не даём удалить узел, на который ссылаются живые записи.
-        var inActiveComposition = await _db.AggregateCompositionNodes
-            .AnyAsync(acn => acn.NodeId == id && acn.AggregateComposition.IsActive, ct);
-        if (inActiveComposition)
-            return (false, "Нельзя удалить: узел используется в активном составе агрегата.");
+        // Ссылка из любой версии состава (включая архивные) запрещает удаление.
+        var inComposition = await _db.AggregateCompositionNodes
+            .AnyAsync(acn => acn.NodeId == id, ct);
+        if (inComposition)
+            return (false, "Нельзя удалить: узел используется в конструктивном составе агрегата.");
 
         var inLiveHK = await _db.HKCards
             .AnyAsync(h => h.NodeId == id && h.Status != HKCardStatus.Deleted, ct);
@@ -316,15 +317,16 @@ public class EquipmentService
 
         // Глобальный фильтр скрывает удалённое изделие из required-навигаций:
         // не даём удалить изделие, на которое ссылаются живые записи.
-        var inActiveProductComposition = await _db.ProductCompositions
-            .AnyAsync(pc => pc.EquipmentModelId == id && pc.IsActive, ct);
-        if (inActiveProductComposition)
-            return (false, "Нельзя удалить: изделие используется в активном составе.");
+        // Ссылка из любой версии состава (включая архивные) запрещает удаление.
+        var inProductComposition = await _db.ProductCompositions
+            .AnyAsync(pc => pc.EquipmentModelId == id, ct);
+        if (inProductComposition)
+            return (false, "Нельзя удалить: изделие используется в конструктивном составе.");
 
-        var inActiveComplexComposition = await _db.ComplexCompositionItems
-            .AnyAsync(cci => cci.EquipmentModelId == id && cci.ComplexComposition.IsActive, ct);
-        if (inActiveComplexComposition)
-            return (false, "Нельзя удалить: изделие используется в активном составе комплекса.");
+        var inComplexComposition = await _db.ComplexCompositionItems
+            .AnyAsync(cci => cci.EquipmentModelId == id, ct);
+        if (inComplexComposition)
+            return (false, "Нельзя удалить: изделие используется в конструктивном составе комплекса.");
 
         var inLiveHK = await _db.HKCards
             .AnyAsync(h => h.EquipmentModelId == id && h.Status != HKCardStatus.Deleted, ct);
@@ -2286,7 +2288,7 @@ public class EquipmentService
         var hasActiveUsers = await _db.Users.AnyAsync(u => u.BranchId == id && !u.IsDeleted, ct);
         if (hasActiveUsers) return (false, "Невозможно архивировать организацию: с ней связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
 
-        var hasActiveCards = await _db.HKCards.AnyAsync(h => h.BranchId == id && h.Status != HKCardStatus.Deleted, ct);
+        var hasActiveCards = await _db.HKCards.AnyAsync(h => h.BranchId == id, ct);
         if (hasActiveCards) return (false, "Невозможно архивировать организацию: с ней связаны активные пользователи или документы.\nСначала переназначьте или деактивируйте связанные записи.");
 
         var hasUnfinishedTasks = await _db.WorkTasks.AnyAsync(w => w.BranchId == id && !w.IsDeleted
@@ -2460,9 +2462,13 @@ public class EquipmentService
 
         var a = await _db.Aggregates.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (a == null || a.IsDeleted) return (false, null);
-        var inActiveComposition = await _db.ProductCompositionAggregates
-            .AnyAsync(pca => pca.AggregateId == id && pca.ProductComposition.IsActive, ct);
-        if (inActiveComposition) return (false, "Нельзя удалить: агрегат используется в активном составе изделия.");
+        // Ссылка из любой версии состава (включая архивные) запрещает удаление:
+        // иначе глобальный фильтр скроет агрегат из required-навигации состава.
+        var inComposition = await _db.ProductCompositionAggregates
+                .AnyAsync(pca => pca.AggregateId == id, ct)
+            || await _db.AggregateCompositions
+                .AnyAsync(ac => ac.AggregateId == id, ct);
+        if (inComposition) return (false, "Нельзя удалить: агрегат используется в конструктивном составе.");
         var inApprovedHK = await _db.AggregateCompositionNodes
             .AnyAsync(acn => acn.AggregateComposition.AggregateId == id
                           && acn.AggregateComposition.IsActive
@@ -3596,9 +3602,10 @@ public class EquipmentService
 
         var c = await _db.Complexes.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (c == null || c.IsDeleted) return (false, null);
-        var inActiveComposition = await _db.ComplexCompositions
-            .AnyAsync(cc => cc.ComplexId == id && cc.IsActive, ct);
-        if (inActiveComposition) return (false, "Нельзя удалить: комплекс используется в активном составе.");
+        // Ссылка из любой версии состава (включая архивные) запрещает удаление.
+        var inComposition = await _db.ComplexCompositions
+            .AnyAsync(cc => cc.ComplexId == id, ct);
+        if (inComposition) return (false, "Нельзя удалить: комплекс используется в конструктивном составе.");
         var inApprovedHK = await _db.ComplexCompositionItems
             .AnyAsync(cci => cci.ComplexComposition.ComplexId == id
                           && cci.ComplexComposition.IsActive
@@ -4122,11 +4129,10 @@ public class EquipmentService
         var a = await _db.AssemblyUnits.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (a == null || a.IsDeleted) return (false, null);
 
-        // Глобальный фильтр скрывает удалённую СЕ из required-навигации HKCardItem:
-        // не даём удалить сборочную единицу, используемую в существующих ХК.
-        var inLiveHK = await _db.HKCardItems
-            .AnyAsync(i => i.AssemblyUnitId == id && i.HKCard.Status != HKCardStatus.Deleted, ct);
-        if (inLiveHK)
+        // Ссылка из любой строки ХК (включая удалённые карты) запрещает удаление.
+        var inHKItem = await _db.HKCardItems
+            .AnyAsync(i => i.AssemblyUnitId == id, ct);
+        if (inHKItem)
             return (false, "Нельзя удалить: сборочная единица используется в существующей ХК.");
 
         a.IsDeleted = true;

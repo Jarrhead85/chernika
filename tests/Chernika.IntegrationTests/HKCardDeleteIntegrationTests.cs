@@ -245,6 +245,67 @@ public class HKCardDeleteIntegrationTests
         return user;
     }
 
+    /// <summary>
+    /// Парный query-фильтр: подчинённые данные карты (связи состава, предложения)
+    /// скрываются вместе с удалённой ХК, но строки физически сохраняются.
+    /// Журнал переходов (HKCardStatusLog) — история — остаётся видимым.
+    /// </summary>
+    [Fact]
+    public async Task DeleteCard_HidesSubordinateData_ButKeepsRowsAndStatusLog()
+    {
+        await using var s = _fixture.CreateScope();
+
+        var parentId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
+        var childId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
+
+        var parent = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == parentId);
+        var child = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == childId);
+
+        s.Db.HKCardComponents.Add(new HKCardComponent
+        {
+            Id = Guid.NewGuid(),
+            ParentHKCardId = parent.Id,
+            ChildHKCardId = child.Id,
+            SortOrder = 1,
+            AddedAt = DateTime.UtcNow,
+            AddedByUserId = _fixture.NormAdminA.Id,
+            ChildCode = child.Code,
+            ChildVersion = child.Version,
+        });
+        s.Db.ReferenceProposals.Add(new ReferenceProposal
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = parent.Id,
+            TargetType = ProposalTargetType.Node,
+            Code = "ПР-" + Guid.NewGuid().ToString("N")[..6],
+            Name = "Предложение тест",
+            CreatedByUserId = _fixture.NormAdminA.Id,
+        });
+        await s.Db.SaveChangesAsync();
+
+        // Пока карта жива, подчинённые данные видны.
+        Assert.Single(await s.Db.HKCardComponents.AsNoTracking().Where(c => c.ParentHKCardId == parent.Id).ToListAsync());
+        Assert.Single(await s.Db.ReferenceProposals.AsNoTracking().Where(p => p.HKCardId == parent.Id).ToListAsync());
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.OperatorA.Id);
+        var (success, error) = await s.HK.DeleteAsync(parentId, "Проверка парных фильтров");
+        Assert.True(success, error);
+
+        // Парный фильтр: данные скрыты вместе с картой...
+        Assert.Empty(await s.Db.HKCardComponents.AsNoTracking().Where(c => c.ParentHKCardId == parent.Id).ToListAsync());
+        Assert.Empty(await s.Db.ReferenceProposals.AsNoTracking().Where(p => p.HKCardId == parent.Id).ToListAsync());
+
+        // ...но строки физически сохранены (soft-delete, а не физическое удаление).
+        Assert.Single(await s.Db.HKCardComponents.IgnoreQueryFilters().AsNoTracking()
+            .Where(c => c.ParentHKCardId == parent.Id).ToListAsync());
+        Assert.Single(await s.Db.ReferenceProposals.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.HKCardId == parent.Id).ToListAsync());
+
+        // История переходов обязана переживать удаление карты.
+        Assert.NotEmpty(await s.Db.HKCardStatusLogs.AsNoTracking()
+            .Where(l => l.HKCardId == parent.Id).ToListAsync());
+    }
+
     private static async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)
     {
         s.User.CurrentUserId = Guid.Parse(actorId);

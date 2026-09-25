@@ -57,6 +57,25 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     {
         base.OnModelCreating(modelBuilder);
 
+        // ── Soft-delete и обязательные навигации (Model.Validation[10622]) ──
+        //
+        // Справочники (Branch, Complex, Aggregate, Node, AssemblyUnit, GsmMaterial,
+        // EquipmentModel, EquipmentType, EquipmentInstance, MilitaryBranch) скрываются
+        // по !IsDeleted, а ссылки на них объявлены обязательными (required). Чтобы
+        // отфильтрованный родитель не «исчезал» из обязательной навигации, удаление
+        // справочника запрещено сервисом при ЛЮБОЙ ссылке (EquipmentService.Delete*Async),
+        // включая архивные версии составов и удалённые ХК. Навигации намеренно остаются
+        // required: ослабление потребовало бы nullable-FK и миграции, не отражая
+        // доменную реальность. Оставшиеся предупреждения EF 10622 по этим связям —
+        // ожидаемое поведение, а не дефект.
+        //
+        // Удаление ХК (Status = Deleted) устроено так же: подчинённые данные карты
+        // (PDF-скан, род войск, связи состава, предложения) скрыты парными фильтрами
+        // вместе с картой. Исключение — HKCardStatusLog: журнал переходов является
+        // историей и обязан переживать удаление карты (проверяется тестами
+        // HKCardDeleteIntegrationTests), поэтому для него предупреждение 10622
+        // остаётся намеренно.
+
         modelBuilder.Entity<ApplicationUser>(e =>
         {
             e.ToTable("Users");
@@ -331,6 +350,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasOne(x => x.ChildHKCard).WithMany(x => x.ChildComponents)
                 .HasForeignKey(x => x.ChildHKCardId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.ParentHKCardId, x.ChildHKCardId }).IsUnique();
+            // Парный фильтр: связь скрывается вместе с удалённой ХК с любой стороны.
+            e.HasQueryFilter(x => x.ParentHKCard.Status != Chernika.Domain.Enums.HKCardStatus.Deleted
+                && x.ChildHKCard.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 
         modelBuilder.Entity<HKCardItem>(e =>
@@ -713,6 +735,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.MilitaryBranch).WithMany()
                 .HasForeignKey(x => x.MilitaryBranchId).OnDelete(DeleteBehavior.Restrict);
+            // Парный фильтр: род войск скрывается вместе с удалённой ХК.
+            e.HasQueryFilter(x => x.HKCard.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 
         modelBuilder.Entity<HKCardAttachment>(e =>
@@ -727,6 +751,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(x => x.HKCardId).IsUnique();
             e.HasOne(x => x.HKCard).WithOne(x => x.Attachment)
                 .HasForeignKey<HKCardAttachment>(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+            // Парный фильтр: PDF-скан скрыт вместе с удалённой ХК (файл хранится,
+            // но иначе required-навигация оставалась бы required при скрытой карте).
+            e.HasQueryFilter(x => x.HKCard.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 
         modelBuilder.Entity<ReferenceProposal>(e =>
@@ -740,6 +767,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.CreatedByUserId).HasMaxLength(450).IsRequired();
             e.HasOne(x => x.HKCard).WithMany(x => x.Proposals)
                 .HasForeignKey(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+            // Парный фильтр: предложение скрывается вместе с удалённой ХК.
+            e.HasQueryFilter(x => x.HKCard.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
             e.HasIndex(x => x.HKCardId).HasDatabaseName("IX_ReferenceProposals_HKCardId");
         });
     }
