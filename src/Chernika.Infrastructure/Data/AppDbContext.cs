@@ -15,6 +15,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Node> Nodes => Set<Node>();
     public DbSet<AssemblyUnit> AssemblyUnits => Set<AssemblyUnit>();
     public DbSet<GsmMaterial> GsmMaterials => Set<GsmMaterial>();
+    public DbSet<GsmMaterialClassification> GsmMaterialClassifications => Set<GsmMaterialClassification>();
+    public DbSet<GsmMaterialRelation> GsmMaterialRelations => Set<GsmMaterialRelation>();
     public DbSet<EquipmentModel> EquipmentModels => Set<EquipmentModel>();
     public DbSet<EquipmentType> EquipmentTypes => Set<EquipmentType>();
     public DbSet<EquipmentInstance> EquipmentInstances => Set<EquipmentInstance>();
@@ -149,7 +151,60 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
             e.Property(x => x.Type).HasMaxLength(128).IsRequired();
             e.Property(x => x.Gost).HasMaxLength(128);
+
+            // ── Расширение схемы ГСМ (PR-2: expand) ──
+            // Nd/IntendedUse/Note — text (без MaxLength): НД может содержать
+            // несколько документов, примечание — произвольной длины.
+            e.Property(x => x.NatoIndex).HasMaxLength(50);
+            e.Property(x => x.InGostNomenclature).HasDefaultValue(false);
+            e.Property(x => x.SuitabilityGround).HasDefaultValue(false);
+            e.Property(x => x.SuitabilityAir).HasDefaultValue(false);
+            e.Property(x => x.SuitabilitySea).HasDefaultValue(false);
+            // Старые Type/Gost/Description остаются переходными полями до PR-6.
+
             e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<GsmMaterialClassification>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.GroupName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SubgroupName).HasMaxLength(200).IsRequired();
+            e.HasOne(x => x.GsmMaterial).WithMany(x => x.Classifications)
+                .HasForeignKey(x => x.GsmMaterialId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.GsmMaterialId);
+            // Группы и подгруппы не должны быть пустыми даже после обрезки пробелов:
+            // иначе в БД появятся фиктивные классификации.
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_GsmMaterialClassifications_GroupName", "btrim(\"GroupName\") <> ''");
+                t.HasCheckConstraint("CK_GsmMaterialClassifications_SubgroupName", "btrim(\"SubgroupName\") <> ''");
+            });
+            // Инвариант A (уникальность нормализованной тройки) и DB-защита
+            // инварианта B (единственная группа у марки) создаются в миграции
+            // выражениями lower(btrim(...)) и триггером — fluent API их не выражает.
+        });
+
+        modelBuilder.Entity<GsmMaterialRelation>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.RelationType).HasConversion<string>().HasMaxLength(32);
+            e.Property(x => x.IsDeleted).HasDefaultValue(false);
+            e.HasOne(x => x.PrimaryGsmMaterial).WithMany()
+                .HasForeignKey(x => x.PrimaryGsmMaterialId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.RelatedGsmMaterial).WithMany()
+                .HasForeignKey(x => x.RelatedGsmMaterialId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.PrimaryGsmMaterialId);
+            e.HasIndex(x => x.RelatedGsmMaterialId);
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_GsmMaterialRelations_NoSelfReference",
+                    "\"PrimaryGsmMaterialId\" <> \"RelatedGsmMaterialId\"");
+                t.HasCheckConstraint("CK_GsmMaterialRelations_RelationType",
+                    "\"RelationType\" IN ('Duplicate', 'Reserve', 'DuplicateAndReserve', 'Foreign')");
+            });
+            // Частичный уникальный индекс активной направленной пары (IsDeleted = false)
+            // и DB-защита правила Foreign создаются в миграции.
         });
 
         modelBuilder.Entity<EquipmentModel>(e =>
@@ -371,7 +426,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(x => x.Id);
             e.Property(x => x.Category).HasConversion<string>().HasMaxLength(20);
             e.HasOne(x => x.HKCardItem).WithMany(x => x.Materials).HasForeignKey(x => x.HKCardItemId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.GsmMaterial).WithMany(x => x.HKCardItemMaterials).HasForeignKey(x => x.GsmMaterialId);
+            // RESTRICT (а не CASCADE): физическое удаление марки никогда не должно
+            // стирать строки материалов из существующих ХК.
+            e.HasOne(x => x.GsmMaterial).WithMany(x => x.HKCardItemMaterials).HasForeignKey(x => x.GsmMaterialId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<HKCardStatusLog>(e =>

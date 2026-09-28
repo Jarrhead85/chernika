@@ -2593,12 +2593,25 @@ public class HKCardService
         await _db.SaveChangesAsync();
     }
 
-    public async Task RejectProposalAsync(Guid proposalId)
+    public async Task<(bool Success, string? Error)> RejectProposalAsync(Guid proposalId, CancellationToken ct = default)
     {
-        var proposal = await _db.ReferenceProposals.FindAsync(proposalId)
+        var proposal = await _db.ReferenceProposals.FindAsync(proposalId, ct)
             ?? throw new ArgumentException("Предложение не найдено.");
         if (proposal.Status != ProposalStatus.Pending)
-            throw new InvalidOperationException("Отклонить можно только предложение в статусе Ожидает.");
+            return (false, "Отклонить можно только предложение в статусе «Ожидает».");
+
+        // Физически удалять Draft-stub нельзя, если на него уже ссылается строка ХК:
+        // после усиления FK (RESTRICT) такое удаление откатило бы транзакцию, а до
+        // усиления — молча стирало материал из черновика. Возвращаем управляемый отказ
+        // и ничего не меняем: ProposalStatus остаётся «Ожидает», audit не пишется.
+        if (proposal.TargetType == ProposalTargetType.GsmMaterial && proposal.CreatedStubGsmMaterialId.HasValue)
+        {
+            var usedInItems = await _db.HKCardItems
+                .Where(i => i.Materials.Any(m => m.GsmMaterialId == proposal.CreatedStubGsmMaterialId.Value))
+                .CountAsync(ct);
+            if (usedInItems > 0)
+                return (false, "Сначала удалите марку из строки черновика ХК, затем отклоните предложение.");
+        }
 
         proposal.Status = ProposalStatus.Rejected;
         proposal.ResolvedAt = DateTime.UtcNow;
@@ -2639,6 +2652,7 @@ public class HKCardService
             EntityDisplayName = $"Предложение: {proposal.Name}"
         });
 
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(ct);
+        return (true, null);
     }
 }

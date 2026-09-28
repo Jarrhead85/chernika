@@ -170,6 +170,20 @@ public class GsmMaterialService
             .FirstOrDefaultAsync(m => m.Id == id, ct);
         if (material == null || material.IsDeleted) return false;
 
+        // Soft-delete используемой марки запрещён: глобальный фильтр скрыл бы её,
+        // и строка ХК осталась бы с «невидимым» родителем. Проверяем ЛЮБЫЕ строки
+        // независимо от статуса карты (Draft/Approved/Archived/Deleted) — берём
+        // скалярный FK, чтобы query-фильтр HKCards не скрыл исторические строки.
+        var usedInCards = await _db.HKCardItems
+            .Where(i => i.Materials.Any(m => m.GsmMaterialId == id))
+            .Select(i => i.HKCardId)
+            .Distinct()
+            .CountAsync(ct);
+        if (usedInCards > 0)
+            throw new InvalidOperationException(
+                $"Нельзя удалить марку ГСМ: она используется в существующих ХК ({usedInCards}). " +
+                "Сначала уберите марку из строк этих карт.");
+
         material.IsDeleted = true;
         material.DeletedAt = _time.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
