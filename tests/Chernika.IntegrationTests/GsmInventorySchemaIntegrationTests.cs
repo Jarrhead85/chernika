@@ -256,6 +256,18 @@ public class GsmInventorySchemaIntegrationTests
         Assert.Equal("ГОСТ 23652-79", manual.Gost);
         Assert.Equal(manualDescription, manual.Description);
         Assert.False(string.IsNullOrWhiteSpace(manual.Type));
+
+        // Явно заполненное Nd — это расхождение, которое обязано быть устранено
+        // до переключения источника истины (см. PR-2 reconciliation). Здесь же
+        // проверяем, что сверка его находит, и убираем, чтобы общая БД оставалась
+        // чистой для остальных тестов.
+        await using var s3 = _fixture.CreateScope();
+        SetRefEditor(s3);
+        var divergences = await s3.GsmMaterials.GetTransitionDivergencesAsync();
+        Assert.Contains(divergences, d => d.Id == alreadyFilled && d.NdDiffers);
+        var result = await s3.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        Assert.Contains(alreadyFilled, result.ChangedMaterialIds);
+        Assert.Empty(await s3.GsmMaterials.GetTransitionDivergencesAsync());
     }
 
     [Fact]
@@ -270,8 +282,11 @@ public class GsmInventorySchemaIntegrationTests
         // Старые читатели видят марку как прежде.
         var material = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == materialId);
         Assert.False(string.IsNullOrWhiteSpace(material.Type));
-        Assert.Null(material.Nd);
-        Assert.Null(material.IntendedUse);
+
+        // Новые поля не содержат выдуманных значений: это копия прежних
+        // (см. TRG_GsmMaterials_LegacyFieldSync), а не новый источник истины.
+        Assert.Equal(material.Gost, material.Nd);
+        Assert.Equal(material.Description, material.IntendedUse);
         Assert.False(material.InGostNomenclature);
     }
 

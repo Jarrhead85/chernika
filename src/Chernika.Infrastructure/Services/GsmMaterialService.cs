@@ -220,6 +220,155 @@ public class GsmMaterialService
         return true;
     }
 
+    // ── Reconciliation Gost/Description → Nd/IntendedUse (переходный период) ──
+
+    /// <summary>
+    /// Отчёт о расхождениях между прежними полями и их переходными копиями.
+    /// <para>
+    /// Пока источником истины является <c>Gost</c>/<c>Description</c> (их пишут
+    /// UI-сервис и API), <c>Nd</c>/<c>IntendedUse</c> не редактируются вовсе.
+    /// Расхождение всегда означает «новое поле отстало». Проверяется в том числе
+    /// правило бэкфилла <c>NULLIF(btrim(...), '')</c>, иначе «ГОСТ из одних
+    /// пробелов» и <c>Nd = ""</c> сочлись бы разными значениями.
+    /// </para>
+    /// <para>
+    /// Включает soft-deleted марки: их прежние поля тоже участвуют в переносе,
+    /// а query-фильтр не должен скрывать расхождения от проверки.
+    /// </para>
+    /// </summary>
+    public async Task<List<GsmTransitionDivergence>> GetTransitionDivergencesAsync(CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        // Отбор — надмножество расхождений: строка, где обе пары пусты, расходиться не может.
+        var candidates = await _db.GsmMaterials.IgnoreQueryFilters()
+            .Where(m => m.Nd != null || m.Gost != null || m.IntendedUse != null || m.Description != null)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var result = new List<GsmTransitionDivergence>();
+        foreach (var m in candidates)
+        {
+            var expectedNd = NormalizeLegacyText(m.Gost);
+            var expectedIntendedUse = NormalizeLegacyText(m.Description);
+
+            var ndDiffers = !string.Equals(m.Nd, expectedNd, StringComparison.Ordinal);
+            var intendedUseDiffers = !string.Equals(m.IntendedUse, expectedIntendedUse, StringComparison.Ordinal);
+            if (!ndDiffers && !intendedUseDiffers) continue;
+
+            result.Add(new GsmTransitionDivergence
+            {
+                Id = m.Id,
+                Name = m.Name,
+                Type = m.Type,
+                IsDeleted = m.IsDeleted,
+                Gost = m.Gost,
+                Nd = m.Nd,
+                NdDiffers = ndDiffers,
+                Description = m.Description,
+                IntendedUse = m.IntendedUse,
+                IntendedUseDiffers = intendedUseDiffers,
+                ExpectedNd = expectedNd,
+                ExpectedIntendedUse = expectedIntendedUse,
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Однократная сверка переходных полей: <c>Nd := NULLIF(btrim(Gost), '')</c> и
+    /// <c>IntendedUse := Description</c> для всех расходящихся марок.
+    /// <para>
+    /// ВАЖНО: операция однонаправленная и допустима только пока источником истины
+    /// остаются прежние поля. Повторять прежний бэкфилл вида
+    /// <c>WHERE "Nd" IS NULL</c> бессмысленно — он не обновляет уже заполненное
+    /// поле и не увидит расхождения. После переключения на <c>Nd</c> как на
+    /// источник истины (PR-5) этот метод, наоборот, затёр бы новые значения
+    /// старыми, поэтому он удаляется вместе с переходными полями.
+    /// </para>
+    /// <para>
+    /// Флаг <paramref name="acknowledgeLegacyIsSourceOfTruth"/> — обязательный
+    /// предохранитель от случайного вызова: пока новое поле не редактируется
+    /// штатно, выигрывает последнее сохранённое прежнее значение.
+    /// </para>
+    /// </summary>
+    public async Task<GsmTransitionReconciliation> ReconcileTransitionFieldsAsync(
+        bool acknowledgeLegacyIsSourceOfTruth, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        if (!acknowledgeLegacyIsSourceOfTruth)
+            throw new InvalidOperationException(
+                "Сверка Nd/IntendedUse перезаписывает новые поля значениями прежних. " +
+                "Подтвердите, что Nd/IntendedUse ещё не редактировались штатным UI.");
+
+        var divergences = await GetTransitionDivergencesAsync(ct);
+        if (divergences.Count == 0)
+            return new GsmTransitionReconciliation();
+
+        var ids = divergences.Select(d => d.Id).ToList();
+        var materials = await _db.GsmMaterials.IgnoreQueryFilters()
+            .Where(m => ids.Contains(m.Id))
+            .ToListAsync(ct);
+
+        var ndFixed = 0;
+        var intendedUseFixed = 0;
+        var ndCleared = 0;
+        var intendedUseCleared = 0;
+        var changedIds = new List<Guid>();
+
+        foreach (var m in materials)
+        {
+            var expectedNd = NormalizeLegacyText(m.Gost);
+            var expectedIntendedUse = NormalizeLegacyText(m.Description);
+            var changed = false;
+
+            if (!string.Equals(m.Nd, expectedNd, StringComparison.Ordinal))
+            {
+                if (m.Nd != null && expectedNd == null) ndCleared++;
+                else ndFixed++;
+                m.Nd = expectedNd;
+                changed = true;
+            }
+
+            if (!string.Equals(m.IntendedUse, expectedIntendedUse, StringComparison.Ordinal))
+            {
+                if (m.IntendedUse != null && expectedIntendedUse == null) intendedUseCleared++;
+                else intendedUseFixed++;
+                m.IntendedUse = expectedIntendedUse;
+                changed = true;
+            }
+
+            if (changed) changedIds.Add(m.Id);
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        var userId = _currentUser.GetRequiredUserId();
+        foreach (var id in changedIds)
+            await _audit.LogAsync(new AuditWriteRequest(
+                "GsmMaterial",
+                id.ToString(),
+                "ReconcileTransitionFields",
+                userId,
+                EntityDisplayName: "Сверка Nd/IntendedUse с Gost/Description"), ct);
+
+        return new GsmTransitionReconciliation
+        {
+            Inspected = await _db.GsmMaterials.IgnoreQueryFilters().CountAsync(ct),
+            NdFixed = ndFixed,
+            IntendedUseFixed = intendedUseFixed,
+            NdCleared = ndCleared,
+            IntendedUseCleared = intendedUseCleared,
+            ChangedMaterialIds = changedIds,
+        };
+    }
+
+    /// <summary>Повторяет правило бэкфилла: обрезка пробелов и пустая строка → null.</summary>
+    private static string? NormalizeLegacyText(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private static void Validate(GsmMaterial material)
     {
         material.Name = material.Name?.Trim() ?? "";
