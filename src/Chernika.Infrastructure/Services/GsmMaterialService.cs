@@ -328,10 +328,16 @@ public class GsmMaterialService
         // Отчёт перечитывается здесь, а не берётся извне: решение принимается по
         // фактическому состоянию на момент операции.
         var divergences = await FindTransitionDivergencesAsync(ct);
+
+        // Счётчик просмотренных марок берём ДО commit. Запрос после успешного
+        // commit упал бы уже после фиксации изменений, и вызывающий получил бы
+        // ошибку там, где сверка фактически выполнена.
+        var inspected = await _db.GsmMaterials.IgnoreQueryFilters().CountAsync(ct);
+
         if (divergences.Count == 0)
         {
             await tx.CommitAsync(ct);
-            return new GsmTransitionReconciliation();
+            return new GsmTransitionReconciliation { Inspected = inspected };
         }
 
         var ids = divergences.Select(d => d.Id).ToList();
@@ -381,10 +387,7 @@ public class GsmMaterialService
             // Отчёт устарел: к моменту записи расхождений уже нет. Ничего не пишем
             // и не создаём пустых записей журнала.
             await tx.CommitAsync(ct);
-            return new GsmTransitionReconciliation
-            {
-                Inspected = await _db.GsmMaterials.IgnoreQueryFilters().CountAsync(ct),
-            };
+            return new GsmTransitionReconciliation { Inspected = inspected };
         }
 
         // CreateLogAsync только добавляет запись в контекст: журнал уходит в БД тем
@@ -425,10 +428,10 @@ public class GsmMaterialService
 
         await tx.CommitAsync(ct);
 
-        // Счётчики возвращаются только после commit.
+        // Счётчики возвращаются только после commit; счётчик просмотра получен раньше.
         return new GsmTransitionReconciliation
         {
-            Inspected = await _db.GsmMaterials.IgnoreQueryFilters().CountAsync(ct),
+            Inspected = inspected,
             NdFixed = ndFixed,
             IntendedUseFixed = intendedUseFixed,
             NdCleared = ndCleared,

@@ -305,6 +305,71 @@ public class GsmReconciliationAtomicityIntegrationTests
         await ClearDivergencesAsync();
     }
 
+    // ── 7. Счётчик просмотра берётся до commit, а не после ───────────────
+
+    [Fact]
+    public async Task Reconciliation_WhenCounterQueryFails_RollsBack_InsteadOfFailingAfterCommit()
+    {
+        await ClearDivergencesAsync();
+        var id = await CreateMaterialAsync();
+        await SetNdAsync(id, "Устаревшее НД");
+
+        // Раньше счётчик просмотра выполнялся ПОСЛЕ commit: падение запроса
+        // возвращало бы вызывающему ошибку при уже записанных изменениях.
+        // Теперь запрос внутри транзакции, поэтому падение откатывает всё.
+        await using (var s = _fixture.CreateScope())
+        {
+            SetRefEditor(s);
+
+            FailingCommandInterceptor.ArmAt("SELECT count(*)", occurrence: 1);
+            try
+            {
+                await Assert.ThrowsAnyAsync<Exception>(() =>
+                    s.GsmMaterials.ReconcileTransitionFieldsAsync(
+                        GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth));
+
+                Assert.True(FailingCommandInterceptor.Fired, "Сбой запроса счётчика не сработал");
+            }
+            finally
+            {
+                FailingCommandInterceptor.Disarm();
+            }
+        }
+
+        // Откат: данные и журнала нет. На прежнем коде здесь были бы записанные
+        // значения, и проверка падала бы.
+        await using var s2 = _fixture.CreateScope();
+        var material = await s2.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == id);
+        Assert.Equal("Устаревшее НД", material.Nd);
+        Assert.False(await HasReconcileAuditAsync(id));
+
+        await ClearDivergencesAsync();
+    }
+
+    [Fact]
+    public async Task Reconciliation_ReportsInspectedCount_OnSuccess()
+    {
+        await ClearDivergencesAsync();
+        var id = await CreateMaterialAsync();
+        await SetNdAsync(id, "Устаревшее НД");
+
+        await using (var s = _fixture.CreateScope())
+        {
+            SetRefEditor(s);
+            var result = await s.GsmMaterials.ReconcileTransitionFieldsAsync(
+                GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
+
+            // Счётчик просмотра отражает реальное число марок, включая soft-deleted,
+            // и не зависит от того, что он посчитан до или после commit.
+            Assert.True(result.Inspected >= 1, "Счётчик просмотра не заполнен");
+            Assert.Equal(1, result.NdFixed);
+        }
+
+        await using var s2 = _fixture.CreateScope();
+        var fixedMaterial = await s2.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == id);
+        Assert.Equal(fixedMaterial.Gost, fixedMaterial.Nd);
+    }
+
     // ── Фикстуры данных ────────────────────────────────────────────────────
 
     private async Task<Guid> CreateMaterialAsync()
