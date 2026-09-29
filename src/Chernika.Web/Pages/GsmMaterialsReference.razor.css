@@ -1,7 +1,7 @@
-/* Сводный справочник марок ГСМ: 14 колонок не помещаются в одну таблицу без
+/* Сводный справочник марок ГСМ: 13 колонок не помещаются в одну таблицу без
    горизонтального скролла, поэтому ширина фиксируется, а переносы разрешены
-   только в текстовых колонках. На узких экранах таблица скроллится, форма
-   переносится в одну колонку. */
+   только в текстовых колонках. Горизонтальная прокрутка страницы при этом не
+   появляется — прокручивается только обёртка таблицы. */
 
 .gsmFilters {
   display: grid;
@@ -11,28 +11,20 @@
 }
 
 @media (max-width: 1400px) {
-  .gsmFilters {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
+  .gsmFilters { grid-template-columns: 1fr 1fr 1fr; }
 }
 
 @media (max-width: 1120px) {
-  .gsmFilters {
-    grid-template-columns: 1fr 1fr;
-  }
+  .gsmFilters { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 560px) {
-  .gsmFilters {
-    grid-template-columns: 1fr;
-  }
+  .gsmFilters { grid-template-columns: 1fr; }
 }
 
-/* Фиксированная ширина таблицы: колонки не «прыгают» при смене содержимого,
-   горизонтальный скролл включён штатно на узких экранах. */
 .gsmTable {
   width: 100%;
-  min-width: 1680px;
+  min-width: 1560px;
   table-layout: fixed;
 }
 
@@ -42,29 +34,24 @@
   font-size: 12px;
 }
 
-.gsmTable th:nth-child(1) { width: 84px; }   /* ID */
-.gsmTable th:nth-child(2) { width: 170px; }  /* Группа */
-.gsmTable th:nth-child(3) { width: 190px; }  /* Подгруппы */
-.gsmTable th:nth-child(4) { width: 180px; }  /* Марка */
-.gsmTable th:nth-child(5) { width: 150px; }  /* НД */
-.gsmTable th:nth-child(6) { width: 120px; }  /* Номенклатура ГОСТ */
-.gsmTable th:nth-child(7) { width: 230px; }  /* Назначение */
-.gsmTable th:nth-child(8) { width: 150px; }  /* Пригодность */
-.gsmTable th:nth-child(9) { width: 110px; }  /* НАТО */
-.gsmTable th:nth-child(10),
-.gsmTable th:nth-child(11),
-.gsmTable th:nth-child(12) { width: 170px; } /* Связи */
-.gsmTable th:nth-child(13) { width: 200px; } /* Примечание */
-.gsmTable th:nth-child(14) { width: 130px; } /* Действия */
+/* 13 колонок: ID намеренно не показывается — первая видимая «Группа ГСМ». */
+.gsmTable th:nth-child(1)  { width: 175px; } /* Группа */
+.gsmTable th:nth-child(2)  { width: 195px; } /* Подгруппы */
+.gsmTable th:nth-child(3)  { width: 185px; } /* Марка */
+.gsmTable th:nth-child(4)  { width: 155px; } /* НД */
+.gsmTable th:nth-child(5)  { width: 120px; } /* Номенклатура по ГОСТ */
+.gsmTable th:nth-child(6)  { width: 230px; } /* Назначение */
+.gsmTable th:nth-child(7)  { width: 150px; } /* Пригодность */
+.gsmTable th:nth-child(8)  { width: 110px; } /* Индекс НАТО */
+.gsmTable th:nth-child(9)  { width: 170px; } /* Дублирующие */
+.gsmTable th:nth-child(10) { width: 170px; } /* Резервные */
+.gsmTable th:nth-child(11) { width: 170px; } /* Зарубежные */
+.gsmTable th:nth-child(12) { width: 195px; } /* Общее примечание */
+.gsmTable th:nth-child(13) { width: 130px; } /* Действия */
 
 .gsmWrap {
   overflow-wrap: anywhere;
   word-break: break-word;
-}
-
-.gsmId {
-  font-size: 11px;
-  color: var(--muted);
 }
 
 .gsmSubgroups {
@@ -82,10 +69,31 @@
   gap: 2px;
 }
 
+/* ── Форма ────────────────────────────────────────────────────────────────
+   Сетка из двух колонок: пара «группа / подгруппа» поднимается наверх, чтобы
+   классификация не терялась среди полей описания. Textarea занимают по колонке,
+   а не отдельную строку на широком экране. */
+
+.gsmAddRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.gsmAddRow input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gsmAddRow .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .gsmChecks {
   display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
+  flex-direction: column;
+  gap: 6px;
   padding-top: 2px;
 }
 
@@ -101,6 +109,12 @@
 .gsmCheck input {
   width: auto;
   margin: 0;
+  flex: 0 0 auto;
+}
+
+/* Отступ между полем «Индекс НАТО» и флажком номенклатуры в той же ячейке. */
+.gsmCheckGap {
+  margin-top: 10px;
 }
 
 .gsmWide {
@@ -139,15 +153,35 @@
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  padding: 0;
+  padding: 0 2px;
+  border-radius: 8px;
 }
 
 .gsmChipX:hover {
   color: var(--bad);
 }
 
+/* Флажок удаления тега должен быть доступен с клавиатуры. */
+.gsmChipX:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gsmFieldError {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--bad);
+  line-height: 1.35;
+}
+
 .gsmError {
   grid-column: 1 / -1;
   color: var(--bad);
   font-size: 13px;
+  margin-top: 2px;
+}
+
+/* До 1120px поля перестают сдавливаться: одна колонка, но отступы сохраняются. */
+@media (max-width: 1120px) {
+  .gsmAddRow { flex-wrap: wrap; }
 }

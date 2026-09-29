@@ -1298,6 +1298,9 @@ public class HKCardService
             }
         }
 
+        await EnsureNoMultiSubgroupMaterialsAsync(
+            card.Items.SelectMany(i => i.Materials).Select(m => m.GsmMaterialId), ct);
+
         _db.HKCards.Add(card);
         await _audit.CreateLogAsync(new AuditWriteRequest(
             "HKCard",
@@ -1409,6 +1412,14 @@ public class HKCardService
 
         var incomingItems = card.Items.OrderBy(i => i.SortOrder).ToList();
         var incomingItemIds = incomingItems.Select(i => i.Id).ToHashSet();
+
+        // Переходная совместимость (вариант A §4.3 контракта ГСМ): пока
+        // legacy-потребители читают прежний Type, марка с несколькими
+        // подгруппами не имеет однозначного представления в одном поле, поэтому
+        // в строки ХК такие марки не добавляются. Проверка серверная: скрытие
+        // из списка выбора — только удобство интерфейса.
+        await EnsureNoMultiSubgroupMaterialsAsync(
+            incomingItems.SelectMany(i => i.Materials).Select(m => m.GsmMaterialId), ct);
 
         var removedItems = existing.Items.Where(i => !incomingItemIds.Contains(i.Id)).ToList();
         foreach (var item in removedItems)
@@ -2278,6 +2289,34 @@ public class HKCardService
                 Details = comment
             });
         }
+    }
+
+    /// <summary>
+    /// Запрещает использовать в строках ХК марки с несколькими подгруппами.
+    /// Переходная мера варианта A §4.3 контракта ГСМ: пока legacy-потребители
+    /// читают прежний <c>Type</c>, одна такая марка не имеет однозначного
+    /// представления. После переключения потребителей (PR-5) проверка снимается.
+    /// </summary>
+    private async Task EnsureNoMultiSubgroupMaterialsAsync(
+        IEnumerable<Guid> materialIds, CancellationToken ct)
+    {
+        var ids = materialIds.Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var multiSubgroupName = await _db.GsmMaterialClassifications
+            .AsNoTracking()
+            .Where(c => ids.Contains(c.GsmMaterialId))
+            .GroupBy(c => c.GsmMaterialId)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .Join(_db.GsmMaterials.AsNoTracking(), id => id, m => m.Id, (id, m) => m.Name)
+            .OrderBy(n => n)
+            .FirstOrDefaultAsync(ct);
+
+        if (multiSubgroupName != null)
+            throw new InvalidOperationException(
+                $"Марка «{multiSubgroupName}» указана в нескольких подгруппах и пока не может использоваться в строках ХК. " +
+                "Выберите марку с одной подгруппой.");
     }
 
     public async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)

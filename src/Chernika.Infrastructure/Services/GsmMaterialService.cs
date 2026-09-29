@@ -23,6 +23,13 @@ namespace Chernika.Infrastructure.Services;
 /// </summary>
 public class GsmMaterialService
 {
+    /// <summary>
+    /// Предел длины НД, зеркалируемого в прежний <c>Gost</c> и копируемого в
+    /// <c>IndividualCardItemMaterialSnapshots</c> (там <c>varchar(200)</c>).
+    /// Проверяется до записи, значение не усекается.
+    /// </summary>
+    private const int LegacySnapshotLengthLimit = 200;
+
     private readonly AppDbContext _db;
     private readonly AuditService _audit;
     private readonly ICurrentUserService _currentUser;
@@ -351,9 +358,14 @@ public class GsmMaterialService
             EntityDisplayName: FormatDisplayName(material)), ct);
 
         await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
 
-        return await GetEditViewCoreAsync(material.Id, ct);
+        // Ответ строится ДО commit из уже сохранённого in-memory состояния.
+        // Запрос после commit означал бы, что сбой чтения вернёт вызывающему
+        // ошибку «не удалось сохранить» при уже записанных марке и audit.
+        var view = BuildEditView(material, fields.GroupName, fields.Subgroups);
+
+        await tx.CommitAsync(ct);
+        return view;
     }
 
     /// <summary>
@@ -453,9 +465,16 @@ public class GsmMaterialService
             EntityDisplayName: FormatDisplayName(material)), ct);
 
         await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
 
-        return await GetEditViewCoreAsync(id, ct);
+        // Ответ строится ДО commit из in-memory состояния (см. CreateAsync):
+        // после commit запросов, способных превратить успешное сохранение в
+        // исключение, не выполняется.
+        var subgroupsForView = subgroupsChanged ? fields.Subgroups : existingSubgroups;
+        var groupForView = subgroupsChanged ? fields.GroupName : existingGroup;
+        var view = BuildEditView(material, groupForView, subgroupsForView);
+
+        await tx.CommitAsync(ct);
+        return view;
     }
 
     private async Task LockMaterialRowAsync(Guid id, CancellationToken ct)
@@ -616,34 +635,30 @@ public class GsmMaterialService
         return result;
     }
 
-    private async Task<GsmMaterialEditView> GetEditViewCoreAsync(Guid id, CancellationToken ct)
+    /// <summary>
+    /// Карточка марки собирается из уже сохранённой сущности и выбранного набора
+    /// классификации — БД после этого не читается. Подгруппы упорядочены так же,
+    /// как в <see cref="GetEditViewAsync"/>, чтобы ответ совпадал с последующим
+    /// чтением из БД.
+    /// </summary>
+    private static GsmMaterialEditView BuildEditView(
+        GsmMaterial material, string? groupName, IReadOnlyList<string> subgroupNames) => new()
     {
-        var material = await _db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == id, ct);
-        var classification = await _db.GsmMaterialClassifications
-            .AsNoTracking()
-            .Where(c => c.GsmMaterialId == id)
-            .OrderBy(c => c.SubgroupName)
-            .Select(c => new { c.GroupName, c.SubgroupName })
-            .ToListAsync(ct);
-
-        return new GsmMaterialEditView
-        {
-            Id = material.Id,
-            Name = material.Name,
-            IsDeleted = material.IsDeleted,
-            IsDraft = material.IsDraft,
-            Nd = material.Nd,
-            InGostNomenclature = material.InGostNomenclature,
-            IntendedUse = material.IntendedUse,
-            SuitabilityGround = material.SuitabilityGround,
-            SuitabilityAir = material.SuitabilityAir,
-            SuitabilitySea = material.SuitabilitySea,
-            NatoIndex = material.NatoIndex,
-            Note = material.Note,
-            GroupName = classification.Count == 0 ? null : classification[0].GroupName,
-            SubgroupNames = classification.Select(c => c.SubgroupName).ToList(),
-        };
-    }
+        Id = material.Id,
+        Name = material.Name,
+        IsDeleted = material.IsDeleted,
+        IsDraft = material.IsDraft,
+        Nd = material.Nd,
+        InGostNomenclature = material.InGostNomenclature,
+        IntendedUse = material.IntendedUse,
+        SuitabilityGround = material.SuitabilityGround,
+        SuitabilityAir = material.SuitabilityAir,
+        SuitabilitySea = material.SuitabilitySea,
+        NatoIndex = material.NatoIndex,
+        Note = material.Note,
+        GroupName = groupName,
+        SubgroupNames = subgroupNames.OrderBy(s => s, StringComparer.Ordinal).ToList(),
+    };
 
     // ── Нормализация и валидация ───────────────────────────────────────────
 
@@ -672,6 +687,17 @@ public class GsmMaterialService
         if (natoIndex?.Length > 50)
             throw new InvalidOperationException("Индекс НАТО должен быть не длиннее 50 символов.");
 
+        // НД зеркалируется в прежний Gost и копируется в снимок ИК, поэтому его
+        // длина ограничена САМЫМ узким из этих мест, а не длиной колонки.
+        // Предел проверяется здесь, до записи: «поймать ошибку БД и сказать
+        // не удалось» не является исправлением. Усечения нет — лишнее значение
+        // отклоняется понятным сообщением, а принятое сохраняется полностью.
+        var nd = NormalizeLegacyText(request.Nd);
+        if (nd?.Length > LegacySnapshotLengthLimit)
+            throw new InvalidOperationException(
+                $"НД не длиннее {LegacySnapshotLengthLimit} символов: прежнее поле ГОСТ и снимок ИК ограничены этой длиной. " +
+                "Укажите НД короче или дождитесь переключения потребителей на новое поле.");
+
         var group = NormalizeLegacyText(request.GroupName);
         if (group?.Length > 200)
             throw new InvalidOperationException("Группа ГСМ должна быть не длиннее 200 символов.");
@@ -692,7 +718,7 @@ public class GsmMaterialService
 
         return new NormalizedFields(
             name,
-            NormalizeLegacyText(request.Nd),
+            nd,
             request.InGostNomenclature,
             NormalizeLegacyText(request.IntendedUse),
             request.SuitabilityGround,
@@ -714,9 +740,10 @@ public class GsmMaterialService
     /// <summary>
     /// Переходные правила для legacy-колонок, которые остаются физически до PR-5:
     /// <list type="bullet">
-    /// <item><c>Type</c> = группа марки. Произвольную «первую» подгруппу не
-    /// выбираем: при нескольких подгруппах она была бы потерей данных, а группа
-    /// — единственное значение, не искажающее уровень.</item>
+    /// <item><c>Type</c> = подгруппа, первая по алфавиту. Произвольную
+    /// «первую случайную подгруппу» не выбираем: правило детерминированное.
+    /// Марки с несколькими подгруппами дополнительно запрещены в новых строках
+    /// ХК, пока не переключены legacy-потребители (вариант A §4.3).</item>
     /// <item><c>Gost</c> = <c>Nd</c>, <c>Description</c> = <c>IntendedUse</c> —
     /// зеркала для поиска, PDF/XLSX и старых ХК. Пишутся в той же транзакции из
     /// тех же данных, поэтому расхождение невозможно.</item>
@@ -730,7 +757,13 @@ public class GsmMaterialService
         material.Gost = fields.Nd;
         material.IntendedUse = fields.IntendedUse;
         material.Description = fields.IntendedUse;
-        material.Type = fields.GroupName ?? material.Type;
+        // Legacy Type = подгруппа (§4.3 контракта: SubgroupName = btrim("Type")).
+        // При нескольких подгруппах берётся первая ПО АЛФАВИТУ — правило
+        // детерминированное и документированное, а не «первая попавшаяся».
+        // Пустой набор означает «классификации нет»: исторический Type
+        // сохраняется, группа в него не пишется никогда.
+        if (fields.Subgroups.Count > 0)
+            material.Type = fields.Subgroups.OrderBy(s => s, StringComparer.Ordinal).First();
     }
 
     private static string DescribeWrite(NormalizedFields fields)

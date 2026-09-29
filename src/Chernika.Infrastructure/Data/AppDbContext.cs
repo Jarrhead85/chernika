@@ -149,8 +149,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
-            e.Property(x => x.Type).HasMaxLength(128).IsRequired();
-            e.Property(x => x.Gost).HasMaxLength(128);
+            // Переходные зеркала расширены до 256: прежние varchar(128) не вмещали
+            // ни подгруппу (до 200), ни НД, отражённые в них для legacy-потребителей.
+            // Расширение ничего не теряет и обратимо; колонки удаляются в PR-6.
+            e.Property(x => x.Type).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Gost).HasMaxLength(256);
 
             // ── Расширение схемы ГСМ (PR-2: expand) ──
             // Nd/IntendedUse/Note — text (без MaxLength): НД может содержать

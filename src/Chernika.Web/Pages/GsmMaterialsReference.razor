@@ -67,7 +67,6 @@
                     <table class="gsmTable">
                         <thead>
                             <tr>
-                                <th>ID</th>
                                 <th>Группа ГСМ</th>
                                 <th>Подгруппы ГСМ</th>
                                 <th>Марка ГСМ</th>
@@ -89,7 +88,6 @@
                                 var rowClickable = canEdit && !m.IsDeleted;
                                 <tr class="@(rowClickable ? "clickableRow" : "")" tabindex="@(rowClickable ? "0" : "-1")"
                                     @ondblclick="() => OnRowDblClick(m)" @onkeydown="(ev) => OnRowKeyDown(ev, m)">
-                                    <td class="mono gsmId">@ShortId(m.Id)</td>
                                     <td>
                                         @if (m.GroupName is null)
                                         {
@@ -180,41 +178,29 @@
         <section class="panel">
             <div class="panelHeader">
                 <h2>@(editing ? "Редактирование марки" : "Новая марка ГСМ")</h2>
-                <div class="hint">
-                    @(editing && !editingIsNew
-                        ? "Группа и подгруппы обязательны для публикации; legacy-марку можно править и без них"
-                        : "Группа и минимум одна подгруппа обязательны")
-                </div>
+                <div class="hint">@totalCount марок</div>
             </div>
             <div class="panelBody">
                 <div class="form">
-                    <div class="field"><label>Марка ГСМ <span style="color:var(--bad)">*</span></label>
-                        <input @ref="_firstField" @bind="form.Name" /></div>
-                    <div class="field"><label>НД</label>
-                        <input @bind="form.Nd" placeholder="Один или несколько документов" /></div>
-
-                    <div class="field"><label>Включена в номенклатуру по ГОСТ</label>
-                        <label class="gsmCheck"><input type="checkbox" @bind="form.InGostNomenclature" /> Да</label></div>
-                    <div class="field"><label>Индекс НАТО</label><input @bind="form.NatoIndex" /></div>
-
-                    <div class="field gsmWide"><label>Назначение и условия применения</label>
-                        <textarea @bind="form.IntendedUse" rows="2"></textarea></div>
-                    <div class="field gsmWide"><label>Общее примечание</label>
-                        <textarea @bind="form.Note" rows="2"></textarea></div>
-
-                    <div class="field gsmWide"><label>Пригодность</label>
-                        <div class="gsmChecks">
-                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilityGround" /> Наземная</label>
-                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilityAir" /> Авиационная</label>
-                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilitySea" /> Морская</label>
-                        </div>
+                    <div class="field">
+                        <label for="gsmGroup">Группа ГСМ <span class="gsmReq">*</span></label>
+                        <input id="gsmGroup" @bind="form.GroupName" />
+                        @if (groupError is not null)
+                        {
+                            <div class="gsmFieldError">@groupError</div>
+                        }
                     </div>
-
-                    <div class="field"><label>Группа ГСМ <span class="gsmReq">*</span></label>
-                        <input @bind="form.GroupName" placeholder="Одна группа на марку" /></div>
-                    <div class="field"><label>Подгруппы ГСМ <span class="gsmReq">*</span></label>
-                        <input @bind="subgroupInput" @bind:event="oninput" placeholder="Подгруппа и Enter"
-                               @onkeydown="OnSubgroupKeyDown" />
+                    <div class="field">
+                        <label for="gsmSubgroup">Подгруппа ГСМ <span class="gsmReq">*</span></label>
+                        <div class="gsmAddRow">
+                            <input id="gsmSubgroup" @bind="subgroupInput" @bind:event="oninput"
+                                   @onkeydown="OnSubgroupKeyDown" />
+                            <button type="button" class="btn ghost" @onclick="AddSubgroup">Добавить</button>
+                        </div>
+                        @if (subgroupError is not null)
+                        {
+                            <div class="gsmFieldError">@subgroupError</div>
+                        }
                     </div>
 
                     @if (formSubgroups.Count > 0)
@@ -226,16 +212,51 @@
                                 {
                                     <span class="gsmChip">
                                         @sub
-                                        <button type="button" class="gsmChipX" @onclick="() => RemoveSubgroup(sub)"
-                                                title="Убрать подгруппу">×</button>
+                                        <button type="button" class="gsmChipX"
+                                                aria-label="Убрать подгруппу @sub"
+                                                title="Убрать подгруппу @sub"
+                                                @onclick="() => RemoveSubgroup(sub)">×</button>
                                     </span>
                                 }
                             </div>
                         </div>
                     }
 
+                    <div class="field">
+                        <label for="gsmName">Марка ГСМ <span class="gsmReq">*</span></label>
+                        <input id="gsmName" @ref="_firstField" @bind="form.Name" />
+                        @if (nameError is not null)
+                        {
+                            <div class="gsmFieldError">@nameError</div>
+                        }
+                    </div>
+                    <div class="field"><label for="gsmNd">НД</label>
+                        <input id="gsmNd" @bind="form.Nd" /></div>
+
+                    <div class="field"><label for="gsmUse">Назначение и условия применения</label>
+                        <textarea id="gsmUse" @bind="form.IntendedUse" rows="2"></textarea></div>
+                    <div class="field"><label for="gsmNote">Общее примечание</label>
+                        <textarea id="gsmNote" @bind="form.Note" rows="2"></textarea></div>
+
+                    <div class="field">
+                        <label>Пригодность</label>
+                        <div class="gsmChecks">
+                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilityGround" /> Наземная</label>
+                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilityAir" /> Авиационная</label>
+                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilitySea" /> Морская</label>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="gsmNato">Индекс НАТО</label>
+                        <input id="gsmNato" @bind="form.NatoIndex" />
+                        <label class="gsmCheck gsmCheckGap">
+                            <input type="checkbox" @bind="form.InGostNomenclature" />
+                            Включена в номенклатуру по ГОСТ
+                        </label>
+                    </div>
+
                     <div class="formActions">
-                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                        <button class="btn ghost" @onclick="ResetForm">@(editing ? "Отмена" : "Очистить")</button>
                         <button class="btn primary" @onclick="SaveGsmAsync" disabled="@saving">
                             @(editing ? "Сохранить" : "Добавить")
                         </button>
@@ -257,11 +278,13 @@
     private string subgroupInput = "";
     private Guid formId;
     private bool editing = false;
-    private bool editingIsNew = true;
     private bool loading = true;
     private bool saving;
     private bool canEdit;
     private string? errorMessage;
+    private string? groupError;
+    private string? subgroupError;
+    private string? nameError;
     private string search = "";
     private int statusFilter = 0;
     private string sortBy = "Name";
@@ -277,10 +300,6 @@
     private CancellationTokenSource? _cts;
     private ElementReference _firstField;
     private bool _focusForm;
-
-    /// <summary>Идентификатор показываем вторичным текстом: полный GUID в колонке
-    /// только мешает, но он нужен для идентификации строки.</summary>
-    private static string ShortId(Guid id) => id.ToString()[..8];
 
     private bool HasActiveFilters =>
         !string.IsNullOrWhiteSpace(search)
@@ -402,11 +421,16 @@
     private async Task SaveGsmAsync()
     {
         errorMessage = null;
+        groupError = null;
+        subgroupError = null;
+        nameError = null;
         CollectSubgroups();
 
+        // Сообщения адресные: показываются под конкретным полем, а не общей
+        // подсказкой в шапке панели.
         if (string.IsNullOrWhiteSpace(form.Name))
         {
-            errorMessage = "Укажите наименование марки ГСМ.";
+            nameError = "Укажите наименование марки ГСМ.";
             return;
         }
 
@@ -414,17 +438,12 @@
         // существующей legacy-марки может её не содержать — группу не выдумываем.
         if (!editing && string.IsNullOrWhiteSpace(form.GroupName))
         {
-            errorMessage = "Укажите группу ГСМ: новая марка публикуется с одной группой и минимум одной подгруппой.";
+            groupError = "Укажите группу ГСМ: новая марка публикуется с одной группой и минимум одной подгруппой.";
             return;
         }
-        if (!editing && form.SubgroupNames.Count == 0)
+        if (form.SubgroupNames.Count == 0 && (editing || !string.IsNullOrWhiteSpace(form.GroupName)))
         {
-            errorMessage = "Укажите минимум одну подгруппу ГСМ.";
-            return;
-        }
-        if (!string.IsNullOrWhiteSpace(form.GroupName) && form.SubgroupNames.Count == 0)
-        {
-            errorMessage = "Для указанной группы нужна минимум одна подгруппа.";
+            subgroupError = "Укажите минимум одну подгруппу ГСМ.";
             return;
         }
 
@@ -443,6 +462,7 @@
         }
         catch (InvalidOperationException ex)
         {
+            // Сообщения сервиса адресны: привязываем к полю, если понимаем, о чём речь.
             errorMessage = ex.Message;
         }
         catch (Exception)
@@ -460,6 +480,9 @@
     private async Task EditGsm(GsmMaterialSummary m)
     {
         errorMessage = null;
+        groupError = null;
+        subgroupError = null;
+        nameError = null;
         GsmMaterialEditView? view = null;
         try
         {
@@ -498,7 +521,6 @@
         formSubgroups = view.SubgroupNames.ToList();
         subgroupInput = "";
         editing = true;
-        editingIsNew = !view.HasClassification;
         _focusForm = true;
     }
 
@@ -544,6 +566,8 @@
         }
     }
 
+    /// <summary>Выход из редактирования без записи в БД: форма очищается,
+    /// сохранённые значения марки не меняются.</summary>
     private void ResetForm()
     {
         form = new GsmMaterialWriteRequest();
@@ -551,8 +575,10 @@
         subgroupInput = "";
         formId = Guid.Empty;
         editing = false;
-        editingIsNew = true;
         errorMessage = null;
+        groupError = null;
+        subgroupError = null;
+        nameError = null;
     }
 
     private async Task ToggleSortDir()

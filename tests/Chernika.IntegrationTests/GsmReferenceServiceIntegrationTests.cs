@@ -111,8 +111,10 @@ public class GsmReferenceServiceIntegrationTests
         Assert.True(stored.SuitabilityAir);
         Assert.Equal("Примечание", stored.Note);
 
-        // Переходное правило для Type: группа, а не произвольная «первая подгруппа».
-        Assert.Equal("Моторные масла", stored.Type);
+        // Переходное правило: legacy Type = подгруппа, первая по алфавиту.
+        // Группа в Type не пишется — это разные уровни модели.
+        Assert.Equal("Для газовых турбин", stored.Type);
+        Assert.NotEqual("Моторные масла", stored.Type);
     }
 
     // ── 3. Классификация: замена набора и запреты ──────────────────────────
