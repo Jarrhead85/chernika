@@ -265,7 +265,7 @@ public class GsmInventorySchemaIntegrationTests
         SetRefEditor(s3);
         var divergences = await s3.GsmMaterials.GetTransitionDivergencesAsync();
         Assert.Contains(divergences, d => d.Id == alreadyFilled && d.NdDiffers);
-        var result = await s3.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        var result = await s3.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
         Assert.Contains(alreadyFilled, result.ChangedMaterialIds);
         Assert.Empty(await s3.GsmMaterials.GetTransitionDivergencesAsync());
     }

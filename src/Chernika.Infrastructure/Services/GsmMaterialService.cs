@@ -1,5 +1,6 @@
 using Chernika.Domain;
 using Chernika.Domain.Entities;
+using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
 using Chernika.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -239,7 +240,14 @@ public class GsmMaterialService
     public async Task<List<GsmTransitionDivergence>> GetTransitionDivergencesAsync(CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+        return await FindTransitionDivergencesAsync(ct);
+    }
 
+    /// <summary>Поиск расхождений без проверки прав: её выполняет вызывающий.
+    /// Сверка уже потребовала Reference.Edit, поэтому повторное требование
+    /// Reference.View изнутри связало бы две независимые проверки прав.</summary>
+    private async Task<List<GsmTransitionDivergence>> FindTransitionDivergencesAsync(CancellationToken ct)
+    {
         // Отбор — надмножество расхождений: строка, где обе пары пусты, расходиться не может.
         var candidates = await _db.GsmMaterials.IgnoreQueryFilters()
             .Where(m => m.Nd != null || m.Gost != null || m.IntendedUse != null || m.Description != null)
@@ -280,32 +288,51 @@ public class GsmMaterialService
     /// Однократная сверка переходных полей: <c>Nd := NULLIF(btrim(Gost), '')</c> и
     /// <c>IntendedUse := Description</c> для всех расходящихся марок.
     /// <para>
+    /// Данные и журнал аудита сохраняются <b>атомарно</b>: одна явная транзакция,
+    /// одна операция <c>SaveChangesAsync</c>, <c>Commit</c> — только после успеха.
+    /// Ошибка на любом шаге (в том числе при записи журнала) откатывает и данные,
+    /// и аудит, поэтому «исправленная марка без записи в журнале» невозможна.
+    /// </para>
+    /// <para>
     /// ВАЖНО: операция однонаправленная и допустима только пока источником истины
     /// остаются прежние поля. Повторять прежний бэкфилл вида
     /// <c>WHERE "Nd" IS NULL</c> бессмысленно — он не обновляет уже заполненное
-    /// поле и не увидит расхождения. После переключения на <c>Nd</c> как на
+    /// поле и не увидит расхождение. После переключения на <c>Nd</c> как на
     /// источник истины (PR-5) этот метод, наоборот, затёр бы новые значения
-    /// старыми, поэтому он удаляется вместе с переходными полями.
+    /// старыми, поэтому он удаляется вместе с переходными полями (PR-6).
     /// </para>
     /// <para>
-    /// Флаг <paramref name="acknowledgeLegacyIsSourceOfTruth"/> — обязательный
-    /// предохранитель от случайного вызова: пока новое поле не редактируется
-    /// штатно, выигрывает последнее сохранённое прежнее значение.
+    /// Параметр <paramref name="acknowledge"/> — не «гарантия», а точка отзыва:
+    /// он ссылается на <see cref="GsmLegacySourceOfTruth"/>, единственный член
+    /// которого удаляется вместе с этим методом. После удаления члена любой
+    /// оставшийся вызов перестаёт компилироваться, и запустить сверку, затирающую
+    /// новые значения, уже нельзя.
     /// </para>
     /// </summary>
     public async Task<GsmTransitionReconciliation> ReconcileTransitionFieldsAsync(
-        bool acknowledgeLegacyIsSourceOfTruth, CancellationToken ct = default)
+        GsmLegacySourceOfTruth acknowledge, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
-        if (!acknowledgeLegacyIsSourceOfTruth)
+        if (acknowledge != GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth)
             throw new InvalidOperationException(
                 "Сверка Nd/IntendedUse перезаписывает новые поля значениями прежних. " +
-                "Подтвердите, что Nd/IntendedUse ещё не редактировались штатным UI.");
+                "Допустима только пока Gost/Description остаются источником истины.");
 
-        var divergences = await GetTransitionDivergencesAsync(ct);
+        var userId = _currentUser.GetRequiredUserId();
+
+        // Всё чтение и вся запись — в одной транзакции: отчёт, повторная сверка
+        // актуальных значений, запись данных и журнала.
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        // Отчёт перечитывается здесь, а не берётся извне: решение принимается по
+        // фактическому состоянию на момент операции.
+        var divergences = await FindTransitionDivergencesAsync(ct);
         if (divergences.Count == 0)
+        {
+            await tx.CommitAsync(ct);
             return new GsmTransitionReconciliation();
+        }
 
         var ids = divergences.Select(d => d.Id).ToList();
         var materials = await _db.GsmMaterials.IgnoreQueryFilters()
@@ -317,43 +344,88 @@ public class GsmMaterialService
         var ndCleared = 0;
         var intendedUseCleared = 0;
         var changedIds = new List<Guid>();
+        var changes = new Dictionary<Guid, string>();
 
         foreach (var m in materials)
         {
+            // Значения пересчитываются по фактическому содержимому строки, а не по
+            // отчёту: если марку правили между отчётом и записью, приводим ровно к
+            // тому, что сейчас лежит в прежних полях.
             var expectedNd = NormalizeLegacyText(m.Gost);
             var expectedIntendedUse = NormalizeLegacyText(m.Description);
-            var changed = false;
+            var notes = new List<string>();
 
             if (!string.Equals(m.Nd, expectedNd, StringComparison.Ordinal))
             {
                 if (m.Nd != null && expectedNd == null) ndCleared++;
                 else ndFixed++;
+                notes.Add($"Nd: \"{m.Nd}\" → \"{expectedNd}\"");
                 m.Nd = expectedNd;
-                changed = true;
             }
 
             if (!string.Equals(m.IntendedUse, expectedIntendedUse, StringComparison.Ordinal))
             {
                 if (m.IntendedUse != null && expectedIntendedUse == null) intendedUseCleared++;
                 else intendedUseFixed++;
+                notes.Add($"IntendedUse: \"{m.IntendedUse}\" → \"{expectedIntendedUse}\"");
                 m.IntendedUse = expectedIntendedUse;
-                changed = true;
             }
 
-            if (changed) changedIds.Add(m.Id);
+            if (notes.Count == 0) continue;
+            changedIds.Add(m.Id);
+            changes[m.Id] = string.Join("; ", notes);
         }
 
-        await _db.SaveChangesAsync(ct);
+        if (changedIds.Count == 0)
+        {
+            // Отчёт устарел: к моменту записи расхождений уже нет. Ничего не пишем
+            // и не создаём пустых записей журнала.
+            await tx.CommitAsync(ct);
+            return new GsmTransitionReconciliation
+            {
+                Inspected = await _db.GsmMaterials.IgnoreQueryFilters().CountAsync(ct),
+            };
+        }
 
-        var userId = _currentUser.GetRequiredUserId();
+        // CreateLogAsync только добавляет запись в контекст: журнал уходит в БД тем
+        // же SaveChanges, что и данные, поэтому разойтись они не могут.
         foreach (var id in changedIds)
-            await _audit.LogAsync(new AuditWriteRequest(
+        {
+            var material = materials.First(m => m.Id == id);
+            await _audit.CreateLogAsync(new AuditWriteRequest(
                 "GsmMaterial",
                 id.ToString(),
                 "ReconcileTransitionFields",
                 userId,
-                EntityDisplayName: "Сверка Nd/IntendedUse с Gost/Description"), ct);
+                Details: changes[id],
+                EntityDisplayName: material.Name), ct);
+        }
 
+        await _db.SaveChangesAsync(ct);
+
+        // Контроль результата до commit: если строку успели изменить извне, наши
+        // значения оказались устаревшими. Откатываем вместо того, чтобы оставить
+        // Nd, не соответствующий Gost.
+        var verification = await _db.GsmMaterials.IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(m => changedIds.Contains(m.Id))
+            .Select(m => new { m.Id, m.Nd, m.Gost, m.IntendedUse, m.Description })
+            .ToListAsync(ct);
+
+        foreach (var row in verification)
+        {
+            if (!string.Equals(row.Nd, NormalizeLegacyText(row.Gost), StringComparison.Ordinal) ||
+                !string.Equals(row.IntendedUse, NormalizeLegacyText(row.Description), StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Сверка прервана: переходные поля марки изменились извне во время операции. " +
+                    "Повторите сверку.");
+            }
+        }
+
+        await tx.CommitAsync(ct);
+
+        // Счётчики возвращаются только после commit.
         return new GsmTransitionReconciliation
         {
             Inspected = await _db.GsmMaterials.IgnoreQueryFilters().CountAsync(ct),

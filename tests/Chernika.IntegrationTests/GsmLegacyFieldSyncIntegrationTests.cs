@@ -1,4 +1,4 @@
-﻿using Chernika.Domain;
+using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -54,7 +54,7 @@ public class GsmLegacyFieldSyncIntegrationTests
         {
             SetRefEditor(s);
             Assert.Empty(await s.GsmMaterials.GetTransitionDivergencesAsync());
-            var result = await s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+            var result = await s.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
             Assert.Equal(0, result.TotalFixed);
         }
     }
@@ -77,7 +77,7 @@ public class GsmLegacyFieldSyncIntegrationTests
         Assert.True(divergence.NdDiffers);
         Assert.Equal("ГОСТ после правки", divergence.ExpectedNd);
 
-        var result = await s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        var result = await s.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
         Assert.Equal(1, result.NdFixed);
         Assert.Contains(id, result.ChangedMaterialIds);
 
@@ -104,7 +104,7 @@ public class GsmLegacyFieldSyncIntegrationTests
         // Сверка приводит новое поле к последнему сохранённому прежнему.
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
-        await s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        await s.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
         Assert.Equal("ГОСТ обновлённый", await ReadAsync(id, m => m.Nd));
     }
 
@@ -245,7 +245,7 @@ public class GsmLegacyFieldSyncIntegrationTests
         Assert.True(byDeleted.NdDiffers);
 
         SetRefEditor(s2);
-        var result = await s2.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        var result = await s2.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
 
         Assert.Equal(2, result.NdFixed);
         Assert.Equal(1, result.IntendedUseFixed);
@@ -277,7 +277,7 @@ public class GsmLegacyFieldSyncIntegrationTests
         await ForceNdAsync(id, "Оставшееся НД");
         await using var s3 = _fixture.CreateScope();
         SetRefEditor(s3);
-        var result = await s3.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        var result = await s3.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
 
         Assert.Equal(1, result.NdCleared);
         Assert.Equal(0, result.NdFixed);
@@ -295,12 +295,12 @@ public class GsmLegacyFieldSyncIntegrationTests
         await using (var s = _fixture.CreateScope())
         {
             SetRefEditor(s);
-            await s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+            await s.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
         }
 
         await using var s2 = _fixture.CreateScope();
         SetRefEditor(s2);
-        var second = await s2.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        var second = await s2.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
 
         Assert.Equal(0, second.TotalFixed);
         Assert.Empty(second.ChangedMaterialIds);
@@ -309,7 +309,7 @@ public class GsmLegacyFieldSyncIntegrationTests
     }
 
     [Fact]
-    public async Task Reconciliation_RequiresExplicitAcknowledgement()
+    public async Task Reconciliation_RejectsUnconfirmedAcknowledgement()
     {
         var id = await CreateMaterialAsync();
         await ForceNdAsync(id, "Устаревшее НД");
@@ -317,13 +317,17 @@ public class GsmLegacyFieldSyncIntegrationTests
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
 
-        // Без явного подтверждения операция отказывает и данные не меняет:
-        // защита от запуска после переключения источника истины.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: false));
-        Assert.Contains("прежних", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Подтверждение задаётся перечислением с единственным членом, а не просто
+        // флагом: любое другое значение отвергается, а удаление члена перечисления
+        // делает оставшиеся вызовы сверки некомпилируемыми.
 
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            s.GsmMaterials.ReconcileTransitionFieldsAsync((GsmLegacySourceOfTruth)999));
+        Assert.Contains("источником истины", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Данные не тронуты, записи об успешной сверке нет.
         Assert.Equal("Устаревшее НД", await ReadAsync(id, m => m.Nd));
+        Assert.False(await HasReconcileAuditAsync(id));
 
         await ClearDivergencesAsync();
     }
@@ -336,7 +340,7 @@ public class GsmLegacyFieldSyncIntegrationTests
 
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
-        await s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        await s.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
 
         await using var s2 = _fixture.CreateScope();
         Assert.True(await s2.Db.AuditLogs.AnyAsync(a =>
@@ -377,7 +381,7 @@ public class GsmLegacyFieldSyncIntegrationTests
 
         // Сверка изменяет данные — недоступна.
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true));
+            s.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth));
 
         await ClearDivergencesAsync();
     }
@@ -455,13 +459,22 @@ public class GsmLegacyFieldSyncIntegrationTests
             $@"UPDATE ""GsmMaterials"" SET ""IntendedUse"" = {intendedUse} WHERE ""Id"" = {id}");
     }
 
+    private async Task<bool> HasReconcileAuditAsync(Guid id)
+    {
+        await using var s = _fixture.CreateScope();
+        return await s.Db.AuditLogs.AnyAsync(a =>
+            a.EntityType == "GsmMaterial"
+            && a.Action == "ReconcileTransitionFields"
+            && a.EntityId == id.ToString());
+    }
+
     /// <summary>Снимает расхождения, намеренно оставленные тестом, чтобы общая БД
     /// оставалась чистой для последующих проверок «отчёт пуст».</summary>
     private async Task ClearDivergencesAsync()
     {
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
-        await s.GsmMaterials.ReconcileTransitionFieldsAsync(acknowledgeLegacyIsSourceOfTruth: true);
+        await s.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
     }
 
     private async Task RunOldBackfillSqlAsync()
