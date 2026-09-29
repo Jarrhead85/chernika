@@ -207,6 +207,11 @@ public class CoefficientTypeIntegrationTests
         await GrantPermissionAsync(s, _fixture.GuestA.Id, PermissionCodes.ReferenceEdit);
         var created = await s.CoeffService.CreateCoefficientTypeAsync(new CreateCoefficientTypeRequest("Test " + Guid.NewGuid().ToString("N")[..4]));
         Assert.NotNull(created);
+
+        // Фикстурный пользователь — общий для всей коллекции: оставленное здесь
+        // разрешение Reference.Edit делало чужие тесты на права нестабильными
+        // (зависело от порядка выполнения). Возвращаем исходное состояние.
+        await DenyPermissionAsync(s, _fixture.GuestA.Id, PermissionCodes.ReferenceEdit);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using Chernika.Domain.Entities;
+using Chernika.Domain.Models;
 
 namespace Chernika.Api.Contracts;
 
@@ -14,9 +15,29 @@ public record AssemblyUnitDto(Guid Id, string Code, string Name, string? Descrip
 public record CreateAssemblyUnitRequest(string Code, string Name, string? Description);
 public record UpdateAssemblyUnitRequest(string Code, string Name, string? Description);
 
-public record GsmMaterialDto(Guid Id, string Name, string Type, string? Gost, string? Description);
-public record CreateGsmMaterialRequest(string Name, string Type, string? Gost, string? Description);
-public record UpdateGsmMaterialRequest(string Name, string Type, string? Gost, string? Description);
+public record GsmMaterialDto(
+    Guid Id, string Name,
+    string? Nd, bool InGostNomenclature, string? IntendedUse,
+    bool SuitabilityGround, bool SuitabilityAir, bool SuitabilitySea,
+    string? NatoIndex, string? Note,
+    string? GroupName, IReadOnlyList<string> SubgroupNames);
+
+/// <summary>
+/// Запрос записи марки. Содержит ВСЕ редактируемые поля: обновление по
+/// неполному DTO обнулило бы отсутствующие значения.
+/// </summary>
+public record GsmMaterialWriteApiRequest(
+    string Name,
+    string? Nd,
+    bool InGostNomenclature,
+    string? IntendedUse,
+    bool SuitabilityGround,
+    bool SuitabilityAir,
+    bool SuitabilitySea,
+    string? NatoIndex,
+    string? Note,
+    string? GroupName,
+    IReadOnlyList<string>? SubgroupNames);
 
 public static class BranchMapper
 {
@@ -41,9 +62,32 @@ public static class AssemblyUnitMapper
 
 public static class GsmMaterialMapper
 {
-    public static GsmMaterialDto ToDto(GsmMaterial m) => new(m.Id, m.Name, m.Type, m.Gost, m.Description);
-    public static GsmMaterial FromCreate(CreateGsmMaterialRequest r) => new() { Name = r.Name, Type = r.Type, Gost = r.Gost, Description = r.Description };
-    public static void ApplyUpdate(GsmMaterial m, UpdateGsmMaterialRequest r) { m.Name = r.Name; m.Type = r.Type; m.Gost = r.Gost; m.Description = r.Description; }
+    public static GsmMaterialDto ToDto(GsmMaterialEditView v) => new(
+        v.Id, v.Name,
+        v.Nd, v.InGostNomenclature, v.IntendedUse,
+        v.SuitabilityGround, v.SuitabilityAir, v.SuitabilitySea,
+        v.NatoIndex, v.Note,
+        v.GroupName, v.SubgroupNames);
+
+    /// <summary>
+    /// Единственная точка преобразования запроса в модель сервиса. Обновления
+    /// через мутацию загруженной сущности здесь намеренно нет: частичный DTO
+    /// обнулил бы поля, которых в запросе не было.
+    /// </summary>
+    public static GsmMaterialWriteRequest ToWriteRequest(GsmMaterialWriteApiRequest r) => new()
+    {
+        Name = r.Name,
+        Nd = r.Nd,
+        InGostNomenclature = r.InGostNomenclature,
+        IntendedUse = r.IntendedUse,
+        SuitabilityGround = r.SuitabilityGround,
+        SuitabilityAir = r.SuitabilityAir,
+        SuitabilitySea = r.SuitabilitySea,
+        NatoIndex = r.NatoIndex,
+        Note = r.Note,
+        GroupName = r.GroupName,
+        SubgroupNames = r.SubgroupNames?.ToList() ?? new List<string>(),
+    };
 }
 
 // ── Агрегат ──────────────────────────────────────────────────────

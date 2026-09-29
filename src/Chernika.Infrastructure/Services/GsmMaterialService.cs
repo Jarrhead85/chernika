@@ -7,6 +7,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Chernika.Infrastructure.Services;
 
+/// <summary>
+/// Единственная точка бизнес-логики марок ГСМ и их классификаций.
+/// <para>
+/// Источник записи — новые поля (<c>Nd</c>, <c>IntendedUse</c>,
+/// <c>GsmMaterialClassifications</c>). Прежние <c>Type</c>/<c>Gost</c>/
+/// <c>Description</c> остаются физически и поддерживаются как ЗЕРКАЛА для
+/// legacy-потребителей (поиск, PDF/XLSX, старые ХК) до PR-5, поэтому обновляются
+/// в той же транзакции из тех же данных, а не редактируются независимо.
+/// </para>
+/// <para>
+/// Справочные связи (второй справочник) здесь только читаются: методов их
+/// изменения в сервисе нет намеренно.
+/// </para>
+/// </summary>
 public class GsmMaterialService
 {
     private readonly AppDbContext _db;
@@ -29,11 +43,170 @@ public class GsmMaterialService
         _permissions = permissions;
     }
 
-    public async Task<PagedResult<GsmMaterial>> GetPagedAsync(GsmMaterialQuery query, CancellationToken ct = default)
+    // ── Чтение: сводный справочник ─────────────────────────────────────────
+
+    /// <summary>
+    /// Постраничный сводный список марок. Одна строка на <c>GsmMaterial.Id</c>:
+    /// фильтры, счётчик и пагинация считают МАРКИ, а подгруппы и связи
+    /// подгружаются отдельными ограниченными проекциями только для выбранной
+    /// страницы. Поиск по группе/подгруппе идёт через EXISTS, поэтому марка с
+    /// двумя совпавшими подгруппами не возвращается дважды.
+    /// </summary>
+    public async Task<PagedResult<GsmMaterialSummary>> GetPagedAsync(GsmMaterialQuery query, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
-        IQueryable<GsmMaterial> q = _db.GsmMaterials.Where(m => !m.IsDraft);
+        IQueryable<GsmMaterial> q = BuildBaseQuery(query, includeDrafts: query.OnlyUnclassified == true);
+
+        if (query.InGostNomenclature == true)
+            q = q.Where(m => m.InGostNomenclature);
+
+        if (query.SuitabilityAny == true)
+            q = q.Where(m => m.SuitabilityGround || m.SuitabilityAir || m.SuitabilitySea);
+
+        if (!string.IsNullOrWhiteSpace(query.NatoIndex))
+        {
+            var nato = query.NatoIndex.Trim();
+            q = q.Where(m => m.NatoIndex != null && EF.Functions.ILike(m.NatoIndex, $"%{nato}%"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.GroupName))
+        {
+            var group = query.GroupName.Trim();
+            q = q.Where(m => m.Classifications.Any(c =>
+                EF.Functions.ILike(c.GroupName, $"%{group}%")));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SubgroupName))
+        {
+            var sub = query.SubgroupName.Trim();
+            q = q.Where(m => m.Classifications.Any(c =>
+                EF.Functions.ILike(c.SubgroupName, $"%{sub}%")));
+        }
+
+        if (query.OnlyUnclassified == true)
+            q = q.Where(m => !m.Classifications.Any());
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim();
+            var pattern = $"%{term}%";
+            q = q.Where(m => EF.Functions.ILike(m.Name, pattern)
+                || (m.Nd != null && EF.Functions.ILike(m.Nd, pattern))
+                || (m.NatoIndex != null && EF.Functions.ILike(m.NatoIndex, pattern))
+                || (m.Note != null && EF.Functions.ILike(m.Note, pattern))
+                || m.Classifications.Any(c =>
+                    EF.Functions.ILike(c.GroupName, pattern)
+                    || EF.Functions.ILike(c.SubgroupName, pattern)));
+        }
+
+        var totalCount = await q.CountAsync(ct);
+
+        IOrderedQueryable<GsmMaterial> ordered = query.SortBy switch
+        {
+            "Nd" => query.SortDescending
+                ? q.OrderByDescending(m => m.Nd).ThenBy(m => m.Name)
+                : q.OrderBy(m => m.Nd).ThenBy(m => m.Name),
+            "NatoIndex" => query.SortDescending
+                ? q.OrderByDescending(m => m.NatoIndex).ThenBy(m => m.Name)
+                : q.OrderBy(m => m.NatoIndex).ThenBy(m => m.Name),
+            "Group" => query.SortDescending
+                ? q.OrderByDescending(m => m.Classifications.OrderBy(c => c.GroupName).Select(c => c.GroupName).FirstOrDefault())
+                    .ThenBy(m => m.Name)
+                : q.OrderBy(m => m.Classifications.OrderBy(c => c.GroupName).Select(c => c.GroupName).FirstOrDefault())
+                    .ThenBy(m => m.Name),
+            _ => query.SortDescending
+                ? q.OrderByDescending(m => m.Name).ThenBy(m => m.Nd)
+                : q.OrderBy(m => m.Name).ThenBy(m => m.Nd),
+        };
+
+        var page = Math.Max(query.Page, 1);
+        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+
+        var pageRows = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(m => new { m.Id, m.Name, m.IsDeleted, m.IsDraft, m.Nd, m.InGostNomenclature, m.IntendedUse, m.SuitabilityGround, m.SuitabilityAir, m.SuitabilitySea, m.NatoIndex, m.Note })
+            .ToListAsync(ct);
+
+        var pageIds = pageRows.Select(r => r.Id).ToList();
+
+        // Подгруппы отдельной ограниченной проекцией — только для страницы.
+        var classifications = await _db.GsmMaterialClassifications
+            .AsNoTracking()
+            .Where(c => pageIds.Contains(c.GsmMaterialId))
+            .OrderBy(c => c.GroupName).ThenBy(c => c.SubgroupName)
+            .Select(c => new { c.GsmMaterialId, c.GroupName, c.SubgroupName })
+            .ToListAsync(ct);
+
+        // Связи: только активные, с именами марок вместо GUID.
+        var relations = await _db.GsmMaterialRelations
+            .AsNoTracking()
+            .Where(r => !r.IsDeleted && pageIds.Contains(r.PrimaryGsmMaterialId))
+            .Select(r => new { r.PrimaryGsmMaterialId, r.RelatedGsmMaterialId, r.RelationType })
+            .ToListAsync(ct);
+
+        var relatedIds = relations.Select(r => r.RelatedGsmMaterialId).Distinct().ToList();
+        var relatedNames = await _db.GsmMaterials
+            .AsNoTracking()
+            .Where(m => relatedIds.Contains(m.Id))
+            .Select(m => new { m.Id, m.Name })
+            .ToListAsync();
+        var nameById = relatedNames.ToDictionary(x => x.Id, x => x.Name);
+
+        var items = pageRows.Select(r =>
+        {
+            var own = classifications.Where(c => c.GsmMaterialId == r.Id).ToList();
+            var ownRelations = relations.Where(x => x.PrimaryGsmMaterialId == r.Id).ToList();
+
+            List<string> Names(Func<GsmRelationType, bool> match)
+            {
+                var names = new List<string>();
+                foreach (var rel in ownRelations.Where(rel => match(rel.RelationType)))
+                {
+                    if (nameById.TryGetValue(rel.RelatedGsmMaterialId, out var name))
+                        names.Add(name);
+                }
+                return names.Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
+            }
+
+            return new GsmMaterialSummary
+            {
+                Id = r.Id,
+                Name = r.Name,
+                IsDeleted = r.IsDeleted,
+                IsDraft = r.IsDraft,
+                GroupName = own.Count == 0 ? null : own[0].GroupName,
+                SubgroupNames = own.Select(c => c.SubgroupName).ToList(),
+                Nd = r.Nd,
+                InGostNomenclature = r.InGostNomenclature,
+                IntendedUse = r.IntendedUse,
+                SuitabilityGround = r.SuitabilityGround,
+                SuitabilityAir = r.SuitabilityAir,
+                SuitabilitySea = r.SuitabilitySea,
+                NatoIndex = r.NatoIndex,
+                Note = r.Note,
+                DuplicateNames = Names(t => t == GsmRelationType.Duplicate || t == GsmRelationType.DuplicateAndReserve),
+                ReserveNames = Names(t => t == GsmRelationType.Reserve || t == GsmRelationType.DuplicateAndReserve),
+                ForeignNames = Names(t => t == GsmRelationType.Foreign),
+            };
+        }).ToList();
+
+        return new PagedResult<GsmMaterialSummary>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
+    private IQueryable<GsmMaterial> BuildBaseQuery(GsmMaterialQuery query, bool includeDrafts)
+    {
+        IQueryable<GsmMaterial> q = _db.GsmMaterials;
+
+        if (!includeDrafts)
+            q = q.Where(m => !m.IsDraft);
 
         if (query.ShowDeleted == null)
         {
@@ -48,43 +221,40 @@ public class GsmMaterialService
             q = q.Where(m => !m.IsDeleted);
         }
 
-        if (!string.IsNullOrWhiteSpace(query.Search))
-        {
-            var term = query.Search.Trim();
-            q = q.Where(m => EF.Functions.ILike(m.Name, $"%{term}%")
-                || EF.Functions.ILike(m.Type, $"%{term}%")
-                || EF.Functions.ILike(m.Gost ?? "", $"%{term}%"));
-        }
+        return q;
+    }
 
-        var totalCount = await q.CountAsync(ct);
+    /// <summary>Полная карточка марки для формы редактирования.</summary>
+    public async Task<GsmMaterialEditView?> GetEditViewAsync(Guid id, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
-        IOrderedQueryable<GsmMaterial> ordered = query.SortBy switch
-        {
-            "Type" => query.SortDescending
-                ? q.OrderByDescending(m => m.Type).ThenByDescending(m => m.Name)
-                : q.OrderBy(m => m.Type).ThenBy(m => m.Name),
-            "Gost" => query.SortDescending
-                ? q.OrderByDescending(m => m.Gost).ThenByDescending(m => m.Name)
-                : q.OrderBy(m => m.Gost).ThenBy(m => m.Name),
-            _ => query.SortDescending
-                ? q.OrderByDescending(m => m.Name).ThenByDescending(m => m.Type)
-                : q.OrderBy(m => m.Name).ThenBy(m => m.Type),
-        };
+        var material = await _db.GsmMaterials.AsNoTracking().FirstOrDefaultAsync(m => m.Id == id, ct);
+        if (material == null) return null;
 
-        var page = Math.Max(query.Page, 1);
-        var pageSize = Math.Clamp(query.PageSize, 1, 100);
-
-        var items = await ordered
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+        var classification = await _db.GsmMaterialClassifications
+            .AsNoTracking()
+            .Where(c => c.GsmMaterialId == id)
+            .OrderBy(c => c.SubgroupName)
+            .Select(c => new { c.GroupName, c.SubgroupName })
             .ToListAsync(ct);
 
-        return new PagedResult<GsmMaterial>
+        return new GsmMaterialEditView
         {
-            Items = items,
-            TotalCount = totalCount,
-            Page = page,
-            PageSize = pageSize,
+            Id = material.Id,
+            Name = material.Name,
+            IsDeleted = material.IsDeleted,
+            IsDraft = material.IsDraft,
+            Nd = material.Nd,
+            InGostNomenclature = material.InGostNomenclature,
+            IntendedUse = material.IntendedUse,
+            SuitabilityGround = material.SuitabilityGround,
+            SuitabilityAir = material.SuitabilityAir,
+            SuitabilitySea = material.SuitabilitySea,
+            NatoIndex = material.NatoIndex,
+            Note = material.Note,
+            GroupName = classification.Count == 0 ? null : classification[0].GroupName,
+            SubgroupNames = classification.Select(c => c.SubgroupName).ToList(),
         };
     }
 
@@ -104,64 +274,231 @@ public class GsmMaterialService
         if (!string.IsNullOrWhiteSpace(searchText))
         {
             var term = searchText.Trim();
-            q = q.Where(m => EF.Functions.ILike(m.Name, $"%{term}%")
-                || EF.Functions.ILike(m.Type, $"%{term}%")
-                || EF.Functions.ILike(m.Gost ?? "", $"%{term}%"));
+            var pattern = $"%{term}%";
+            q = q.Where(m => EF.Functions.ILike(m.Name, pattern)
+                || (m.Nd != null && EF.Functions.ILike(m.Nd, pattern))
+                || (m.NatoIndex != null && EF.Functions.ILike(m.NatoIndex, pattern))
+                || m.Classifications.Any(c =>
+                    EF.Functions.ILike(c.GroupName, pattern)
+                    || EF.Functions.ILike(c.SubgroupName, pattern)));
         }
 
         return await q
             .OrderBy(m => m.Name)
-            .ThenBy(m => m.Type)
+            .ThenBy(m => m.Nd)
             .Take(200)
             .ToListAsync(ct);
     }
 
-    public async Task<GsmMaterial> CreateAsync(GsmMaterial material, CancellationToken ct = default)
+    // ── Запись: марка + классификация атомарно ─────────────────────────────
+
+    /// <summary>
+    /// Создание опубликованной марки. Требуется одна группа и минимум одна
+    /// подгруппа: опубликованная марка без классификации больше не создаётся
+    /// НИ ОДНИМ путём (сервис, API, quick-create, предложение).
+    /// </summary>
+    public async Task<GsmMaterialEditView> CreateAsync(GsmMaterialWriteRequest request, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
-        Validate(material);
 
-        material.Id = Guid.NewGuid();
-        material.IsDraft = false;
-        material.IsDeleted = false;
-        material.DeletedAt = null;
+        var fields = NormalizeRequest(request);
+
+        // Обязательная классификация для новой опубликованной марки.
+        if (fields.GroupName == null)
+            throw new InvalidOperationException(
+                "Укажите группу ГСМ: новая марка публикуется с одной группой и минимум одной подгруппой.");
+        if (fields.Subgroups.Count == 0)
+            throw new InvalidOperationException(
+                "Укажите минимум одну подгруппу ГСМ.");
+
+        var material = new GsmMaterial
+        {
+            Id = Guid.NewGuid(),
+            Name = fields.Name,
+            Nd = fields.Nd,
+            InGostNomenclature = fields.InGostNomenclature,
+            IntendedUse = fields.IntendedUse,
+            SuitabilityGround = fields.SuitabilityGround,
+            SuitabilityAir = fields.SuitabilityAir,
+            SuitabilitySea = fields.SuitabilitySea,
+            NatoIndex = fields.NatoIndex,
+            Note = fields.Note,
+            IsDeleted = false,
+            IsDraft = false,
+            DeletedAt = null,
+        };
+        ApplyLegacyMirrors(material, fields);
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         _db.GsmMaterials.Add(material);
-        await _db.SaveChangesAsync(ct);
+        foreach (var subgroup in fields.Subgroups)
+        {
+            _db.GsmMaterialClassifications.Add(new GsmMaterialClassification
+            {
+                Id = Guid.NewGuid(),
+                GsmMaterialId = material.Id,
+                GroupName = fields.GroupName,
+                SubgroupName = subgroup,
+            });
+        }
 
-        await _audit.LogAsync(new AuditWriteRequest(
+        await _audit.CreateLogAsync(new AuditWriteRequest(
             "GsmMaterial",
             material.Id.ToString(),
             "Create",
             _currentUser.GetRequiredUserId(),
+            Details: DescribeWrite(fields),
             EntityDisplayName: FormatDisplayName(material)), ct);
 
-        return material;
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return await GetEditViewCoreAsync(material.Id, ct);
     }
 
-    public async Task<bool> UpdateAsync(GsmMaterial material, CancellationToken ct = default)
+    /// <summary>
+    /// Обновление марки и её классификации одной транзакцией. Родительская строка
+    /// блокируется, а набор подгрупп заменяется двухфазно (сначала удаление,
+    /// затем добавление) в той же транзакции: иначе EF может вставить раньше
+    /// удаления, и DB-триггер «одна группа у марки» отклонит промежуточное
+    /// состояние из двух разных групп.
+    /// </summary>
+    public async Task<GsmMaterialEditView?> UpdateAsync(Guid id, GsmMaterialWriteRequest request, CancellationToken ct = default)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
-        Validate(material);
 
-        var existing = await _db.GsmMaterials
-            .FirstOrDefaultAsync(m => m.Id == material.Id && !m.IsDeleted, ct);
-        if (existing == null) return false;
+        var fields = NormalizeRequest(request);
+        if (fields.GroupName != null && fields.Subgroups.Count == 0)
+            throw new InvalidOperationException("Укажите минимум одну подгруппу ГСМ.");
 
-        existing.Name = material.Name;
-        existing.Type = material.Type;
-        existing.Gost = material.Gost;
-        existing.Description = material.Description;
-        await _db.SaveChangesAsync(ct);
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
-        await _audit.LogAsync(new AuditWriteRequest(
+        // Блокировка родительской марки: сериализует параллельные правки набора
+        // подгрупп. У EF нет API для блокировки строки, поэтому это единственный
+        // прямой SQL в сервисе.
+        await LockMaterialRowAsync(id, ct);
+
+        var material = await _db.GsmMaterials
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(m => m.Id == id, ct);
+        if (material == null || material.IsDeleted)
+        {
+            await tx.CommitAsync(ct);
+            return null;
+        }
+
+        // Запрет включения в номенклатуру по ГОСТ, если марка — зарубежный
+        // аналог в активной связи. DB-триггер остаётся последней защитой.
+        if (fields.InGostNomenclature && !material.InGostNomenclature)
+            await EnsureNotForeignAnalogAsync(id, ct);
+
+        var existingClassifications = await _db.GsmMaterialClassifications
+            .Where(c => c.GsmMaterialId == id)
+            .ToListAsync(ct);
+
+        var existingGroup = existingClassifications.Count == 0
+            ? null
+            : existingClassifications[0].GroupName;
+        var existingSubgroups = existingClassifications.Select(c => c.SubgroupName).ToList();
+
+        material.Name = fields.Name;
+        material.Nd = fields.Nd;
+        material.InGostNomenclature = fields.InGostNomenclature;
+        material.IntendedUse = fields.IntendedUse;
+        material.SuitabilityGround = fields.SuitabilityGround;
+        material.SuitabilityAir = fields.SuitabilityAir;
+        material.SuitabilitySea = fields.SuitabilitySea;
+        material.NatoIndex = fields.NatoIndex;
+        material.Note = fields.Note;
+        ApplyLegacyMirrors(material, fields);
+
+        // Черновик предложения публикуется только с классификацией.
+        if (material.IsDraft && fields.GroupName != null)
+            material.IsDraft = false;
+
+        var groupChanged = !string.Equals(existingGroup, fields.GroupName, StringComparison.OrdinalIgnoreCase);
+        var subgroupsChanged = groupChanged
+            || !existingSubgroups.OrderBy(s => s, StringComparer.Ordinal)
+                .SequenceEqual(fields.Subgroups.OrderBy(s => s, StringComparer.Ordinal));
+
+        if (subgroupsChanged)
+        {
+            // Фаза 1: убрать прежний набор. При смене группы это обязательно
+            // происходит ДО добавления нового, иначе две группы сосуществуют.
+            if (existingClassifications.Count > 0)
+            {
+                _db.GsmMaterialClassifications.RemoveRange(existingClassifications);
+                await _db.SaveChangesAsync(ct);
+            }
+
+            // Фаза 2: добавить новый набор.
+            foreach (var subgroup in fields.Subgroups)
+            {
+                _db.GsmMaterialClassifications.Add(new GsmMaterialClassification
+                {
+                    Id = Guid.NewGuid(),
+                    GsmMaterialId = id,
+                    GroupName = fields.GroupName!,
+                    SubgroupName = subgroup,
+                });
+            }
+        }
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
             "GsmMaterial",
-            existing.Id.ToString(),
+            id.ToString(),
             "Update",
             _currentUser.GetRequiredUserId(),
-            EntityDisplayName: FormatDisplayName(existing)), ct);
+            Details: DescribeWrite(fields),
+            EntityDisplayName: FormatDisplayName(material)), ct);
 
-        return true;
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return await GetEditViewCoreAsync(id, ct);
     }
+
+    private async Task LockMaterialRowAsync(Guid id, CancellationToken ct)
+    {
+        await using var cmd = _db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = @"SELECT 1 FROM ""GsmMaterials"" WHERE ""Id"" = @id FOR UPDATE";
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@id";
+        p.Value = id;
+        cmd.Parameters.Add(p);
+
+        if (cmd.Connection!.State != System.Data.ConnectionState.Open)
+            await cmd.Connection.OpenAsync();
+
+        await cmd.ExecuteScalarAsync(ct);
+    }
+
+    private async Task EnsureNotForeignAnalogAsync(Guid id, CancellationToken ct)
+    {
+        var primaryIds = await _db.GsmMaterialRelations
+            .AsNoTracking()
+            .Where(r => !r.IsDeleted
+                && r.RelationType == GsmRelationType.Foreign
+                && r.RelatedGsmMaterialId == id)
+            .Select(r => r.PrimaryGsmMaterialId)
+            .ToListAsync(ct);
+
+        if (primaryIds.Count == 0) return;
+
+        var foreignName = await _db.GsmMaterials
+            .AsNoTracking()
+            .Where(m => primaryIds.Contains(m.Id))
+            .OrderBy(m => m.Name)
+            .Select(m => m.Name)
+            .FirstOrDefaultAsync(ct);
+
+        if (foreignName != null)
+            throw new InvalidOperationException(
+                $"Нельзя включить марку в номенклатуру по ГОСТ: она является зарубежным аналогом марки «{foreignName}». " +
+                "Сначала измените или удалите связь.");
+    }
+
+    // ── Soft-delete / restore ──────────────────────────────────────────────
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
     {
@@ -171,15 +508,16 @@ public class GsmMaterialService
             .FirstOrDefaultAsync(m => m.Id == id, ct);
         if (material == null || material.IsDeleted) return false;
 
-        // Soft-delete используемой марки запрещён: глобальный фильтр скрыл бы её,
-        // и строка ХК осталась бы с «невидимым» родителем. Проверяем ЛЮБЫЕ строки
-        // независимо от статуса карты (Draft/Approved/Archived/Deleted) — берём
-        // скалярный FK, чтобы query-фильтр HKCards не скрыл исторические строки.
-        var usedInCards = await _db.HKCardItems
-            .Where(i => i.Materials.Any(m => m.GsmMaterialId == id))
-            .Select(i => i.HKCardId)
+        // Прямой FK без навигации через HKCardItems: строки материалов не имеют
+        // собственного query-фильтра, поэтому видны все — независимо от статуса
+        // карты (Draft/Approved/Archived/Deleted) и скрытых родителей.
+        var usedInCards = await _db.HKCardItemMaterials
+            .Where(r => r.GsmMaterialId == id)
+            .Join(_db.HKCardItems, r => r.HKCardItemId, i => i.Id, (r, i) => new { r.Id, i.HKCardId })
+            .Select(x => x.HKCardId)
             .Distinct()
             .CountAsync(ct);
+
         if (usedInCards > 0)
             throw new InvalidOperationException(
                 $"Нельзя удалить марку ГСМ: она используется в существующих ХК ({usedInCards}). " +
@@ -221,20 +559,17 @@ public class GsmMaterialService
         return true;
     }
 
-    // ── Reconciliation Gost/Description → Nd/IntendedUse (переходный период) ──
+    // ── Отчёт незавершённости переноса legacy-полей ───────────────────────
 
     /// <summary>
-    /// Отчёт о расхождениях между прежними полями и их переходными копиями.
+    /// Диагностика незавершённости переноса <c>Gost → Nd</c> и
+    /// <c>Description → IntendedUse</c>.
     /// <para>
-    /// Пока источником истины является <c>Gost</c>/<c>Description</c> (их пишут
-    /// UI-сервис и API), <c>Nd</c>/<c>IntendedUse</c> не редактируются вовсе.
-    /// Расхождение всегда означает «новое поле отстало». Проверяется в том числе
-    /// правило бэкфилла <c>NULLIF(btrim(...), '')</c>, иначе «ГОСТ из одних
-    /// пробелов» и <c>Nd = ""</c> сочлись бы разными значениями.
-    /// </para>
-    /// <para>
-    /// Включает soft-deleted марки: их прежние поля тоже участвуют в переносе,
-    /// а query-фильтр не должен скрывать расхождения от проверки.
+    /// ВАЖНО: с момента переключения источника истины на новые поля (PR-3) это
+    /// НЕ показатель качества данных. Прежние поля теперь ведутся как зеркала и
+    /// обновляются из новых, поэтому расхождение означает лишь незакрытый хвост
+    /// переноса, а не «правильные» старые значения. Сверять по этому отчёту
+    /// после переключения нельзя.
     /// </para>
     /// </summary>
     public async Task<List<GsmTransitionDivergence>> GetTransitionDivergencesAsync(CancellationToken ct = default)
@@ -243,9 +578,6 @@ public class GsmMaterialService
         return await FindTransitionDivergencesAsync(ct);
     }
 
-    /// <summary>Поиск расхождений без проверки прав: её выполняет вызывающий.
-    /// Сверка уже потребовала Reference.Edit, поэтому повторное требование
-    /// Reference.View изнутри связало бы две независимые проверки прав.</summary>
     private async Task<List<GsmTransitionDivergence>> FindTransitionDivergencesAsync(CancellationToken ct)
     {
         // Отбор — надмножество расхождений: строка, где обе пары пусты, расходиться не может.
@@ -284,189 +616,135 @@ public class GsmMaterialService
         return result;
     }
 
-    /// <summary>
-    /// Однократная сверка переходных полей: <c>Nd := NULLIF(btrim(Gost), '')</c> и
-    /// <c>IntendedUse := Description</c> для всех расходящихся марок.
-    /// <para>
-    /// Данные и журнал аудита сохраняются <b>атомарно</b>: одна явная транзакция,
-    /// одна операция <c>SaveChangesAsync</c>, <c>Commit</c> — только после успеха.
-    /// Ошибка на любом шаге (в том числе при записи журнала) откатывает и данные,
-    /// и аудит, поэтому «исправленная марка без записи в журнале» невозможна.
-    /// </para>
-    /// <para>
-    /// ВАЖНО: операция однонаправленная и допустима только пока источником истины
-    /// остаются прежние поля. Повторять прежний бэкфилл вида
-    /// <c>WHERE "Nd" IS NULL</c> бессмысленно — он не обновляет уже заполненное
-    /// поле и не увидит расхождение. После переключения на <c>Nd</c> как на
-    /// источник истины (PR-5) этот метод, наоборот, затёр бы новые значения
-    /// старыми, поэтому он удаляется вместе с переходными полями (PR-6).
-    /// </para>
-    /// <para>
-    /// Параметр <paramref name="acknowledge"/> — не «гарантия», а точка отзыва:
-    /// он ссылается на <see cref="GsmLegacySourceOfTruth"/>, единственный член
-    /// которого удаляется вместе с этим методом. После удаления члена любой
-    /// оставшийся вызов перестаёт компилироваться, и запустить сверку, затирающую
-    /// новые значения, уже нельзя.
-    /// </para>
-    /// </summary>
-    public async Task<GsmTransitionReconciliation> ReconcileTransitionFieldsAsync(
-        GsmLegacySourceOfTruth acknowledge, CancellationToken ct = default)
+    private async Task<GsmMaterialEditView> GetEditViewCoreAsync(Guid id, CancellationToken ct)
     {
-        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
-
-        if (acknowledge != GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth)
-            throw new InvalidOperationException(
-                "Сверка Nd/IntendedUse перезаписывает новые поля значениями прежних. " +
-                "Допустима только пока Gost/Description остаются источником истины.");
-
-        var userId = _currentUser.GetRequiredUserId();
-
-        // Всё чтение и вся запись — в одной транзакции: отчёт, повторная сверка
-        // актуальных значений, запись данных и журнала.
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        // Отчёт перечитывается здесь, а не берётся извне: решение принимается по
-        // фактическому состоянию на момент операции.
-        var divergences = await FindTransitionDivergencesAsync(ct);
-
-        // Счётчик просмотренных марок берём ДО commit. Запрос после успешного
-        // commit упал бы уже после фиксации изменений, и вызывающий получил бы
-        // ошибку там, где сверка фактически выполнена.
-        var inspected = await _db.GsmMaterials.IgnoreQueryFilters().CountAsync(ct);
-
-        if (divergences.Count == 0)
-        {
-            await tx.CommitAsync(ct);
-            return new GsmTransitionReconciliation { Inspected = inspected };
-        }
-
-        var ids = divergences.Select(d => d.Id).ToList();
-        var materials = await _db.GsmMaterials.IgnoreQueryFilters()
-            .Where(m => ids.Contains(m.Id))
-            .ToListAsync(ct);
-
-        var ndFixed = 0;
-        var intendedUseFixed = 0;
-        var ndCleared = 0;
-        var intendedUseCleared = 0;
-        var changedIds = new List<Guid>();
-        var changes = new Dictionary<Guid, string>();
-
-        foreach (var m in materials)
-        {
-            // Значения пересчитываются по фактическому содержимому строки, а не по
-            // отчёту: если марку правили между отчётом и записью, приводим ровно к
-            // тому, что сейчас лежит в прежних полях.
-            var expectedNd = NormalizeLegacyText(m.Gost);
-            var expectedIntendedUse = NormalizeLegacyText(m.Description);
-            var notes = new List<string>();
-
-            if (!string.Equals(m.Nd, expectedNd, StringComparison.Ordinal))
-            {
-                if (m.Nd != null && expectedNd == null) ndCleared++;
-                else ndFixed++;
-                notes.Add($"Nd: \"{m.Nd}\" → \"{expectedNd}\"");
-                m.Nd = expectedNd;
-            }
-
-            if (!string.Equals(m.IntendedUse, expectedIntendedUse, StringComparison.Ordinal))
-            {
-                if (m.IntendedUse != null && expectedIntendedUse == null) intendedUseCleared++;
-                else intendedUseFixed++;
-                notes.Add($"IntendedUse: \"{m.IntendedUse}\" → \"{expectedIntendedUse}\"");
-                m.IntendedUse = expectedIntendedUse;
-            }
-
-            if (notes.Count == 0) continue;
-            changedIds.Add(m.Id);
-            changes[m.Id] = string.Join("; ", notes);
-        }
-
-        if (changedIds.Count == 0)
-        {
-            // Отчёт устарел: к моменту записи расхождений уже нет. Ничего не пишем
-            // и не создаём пустых записей журнала.
-            await tx.CommitAsync(ct);
-            return new GsmTransitionReconciliation { Inspected = inspected };
-        }
-
-        // CreateLogAsync только добавляет запись в контекст: журнал уходит в БД тем
-        // же SaveChanges, что и данные, поэтому разойтись они не могут.
-        foreach (var id in changedIds)
-        {
-            var material = materials.First(m => m.Id == id);
-            await _audit.CreateLogAsync(new AuditWriteRequest(
-                "GsmMaterial",
-                id.ToString(),
-                "ReconcileTransitionFields",
-                userId,
-                Details: changes[id],
-                EntityDisplayName: material.Name), ct);
-        }
-
-        await _db.SaveChangesAsync(ct);
-
-        // Контроль результата до commit: если строку успели изменить извне, наши
-        // значения оказались устаревшими. Откатываем вместо того, чтобы оставить
-        // Nd, не соответствующий Gost.
-        var verification = await _db.GsmMaterials.IgnoreQueryFilters()
+        var material = await _db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == id, ct);
+        var classification = await _db.GsmMaterialClassifications
             .AsNoTracking()
-            .Where(m => changedIds.Contains(m.Id))
-            .Select(m => new { m.Id, m.Nd, m.Gost, m.IntendedUse, m.Description })
+            .Where(c => c.GsmMaterialId == id)
+            .OrderBy(c => c.SubgroupName)
+            .Select(c => new { c.GroupName, c.SubgroupName })
             .ToListAsync(ct);
 
-        foreach (var row in verification)
+        return new GsmMaterialEditView
         {
-            if (!string.Equals(row.Nd, NormalizeLegacyText(row.Gost), StringComparison.Ordinal) ||
-                !string.Equals(row.IntendedUse, NormalizeLegacyText(row.Description), StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    "Сверка прервана: переходные поля марки изменились извне во время операции. " +
-                    "Повторите сверку.");
-            }
-        }
-
-        await tx.CommitAsync(ct);
-
-        // Счётчики возвращаются только после commit; счётчик просмотра получен раньше.
-        return new GsmTransitionReconciliation
-        {
-            Inspected = inspected,
-            NdFixed = ndFixed,
-            IntendedUseFixed = intendedUseFixed,
-            NdCleared = ndCleared,
-            IntendedUseCleared = intendedUseCleared,
-            ChangedMaterialIds = changedIds,
+            Id = material.Id,
+            Name = material.Name,
+            IsDeleted = material.IsDeleted,
+            IsDraft = material.IsDraft,
+            Nd = material.Nd,
+            InGostNomenclature = material.InGostNomenclature,
+            IntendedUse = material.IntendedUse,
+            SuitabilityGround = material.SuitabilityGround,
+            SuitabilityAir = material.SuitabilityAir,
+            SuitabilitySea = material.SuitabilitySea,
+            NatoIndex = material.NatoIndex,
+            Note = material.Note,
+            GroupName = classification.Count == 0 ? null : classification[0].GroupName,
+            SubgroupNames = classification.Select(c => c.SubgroupName).ToList(),
         };
     }
 
-    /// <summary>Повторяет правило бэкфилла: обрезка пробелов и пустая строка → null.</summary>
+    // ── Нормализация и валидация ───────────────────────────────────────────
+
+    private sealed record NormalizedFields(
+        string Name,
+        string? Nd,
+        bool InGostNomenclature,
+        string? IntendedUse,
+        bool SuitabilityGround,
+        bool SuitabilityAir,
+        bool SuitabilitySea,
+        string? NatoIndex,
+        string? Note,
+        string? GroupName,
+        List<string> Subgroups);
+
+    private static NormalizedFields NormalizeRequest(GsmMaterialWriteRequest request)
+    {
+        var name = request.Name?.Trim() ?? "";
+        if (name.Length == 0)
+            throw new InvalidOperationException("Укажите наименование марки ГСМ.");
+        if (name.Length > 256)
+            throw new InvalidOperationException("Наименование должно быть не длиннее 256 символов.");
+
+        var natoIndex = NormalizeLegacyText(request.NatoIndex);
+        if (natoIndex?.Length > 50)
+            throw new InvalidOperationException("Индекс НАТО должен быть не длиннее 50 символов.");
+
+        var group = NormalizeLegacyText(request.GroupName);
+        if (group?.Length > 200)
+            throw new InvalidOperationException("Группа ГСМ должна быть не длиннее 200 символов.");
+
+        // Подгруппы нормализуются тем же правилом, что и DB expression-index
+        // (lower(btrim(...))): пустые отбрасываются, дубли схлопываются.
+        var subgroups = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in request.SubgroupNames ?? new List<string>())
+        {
+            var value = NormalizeLegacyText(raw);
+            if (value == null) continue;
+            if (value.Length > 200)
+                throw new InvalidOperationException("Подгруппа ГСМ должна быть не длиннее 200 символов.");
+            if (seen.Add(NormalizeKey(value)))
+                subgroups.Add(value);
+        }
+
+        return new NormalizedFields(
+            name,
+            NormalizeLegacyText(request.Nd),
+            request.InGostNomenclature,
+            NormalizeLegacyText(request.IntendedUse),
+            request.SuitabilityGround,
+            request.SuitabilityAir,
+            request.SuitabilitySea,
+            natoIndex,
+            NormalizeLegacyText(request.Note),
+            group,
+            subgroups);
+    }
+
+    /// <summary>Ключ сравнения «как в БД»: обрезка пробелов и регистронезависимость.</summary>
+    private static string NormalizeKey(string value) => value.Trim().ToLowerInvariant();
+
+    /// <summary>Обрезка пробелов и пустая строка → null.</summary>
     private static string? NormalizeLegacyText(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static void Validate(GsmMaterial material)
+    /// <summary>
+    /// Переходные правила для legacy-колонок, которые остаются физически до PR-5:
+    /// <list type="bullet">
+    /// <item><c>Type</c> = группа марки. Произвольную «первую» подгруппу не
+    /// выбираем: при нескольких подгруппах она была бы потерей данных, а группа
+    /// — единственное значение, не искажающее уровень.</item>
+    /// <item><c>Gost</c> = <c>Nd</c>, <c>Description</c> = <c>IntendedUse</c> —
+    /// зеркала для поиска, PDF/XLSX и старых ХК. Пишутся в той же транзакции из
+    /// тех же данных, поэтому расхождение невозможно.</item>
+    /// </list>
+    /// У марки без классификации прежние значения не выдумываются: остаются
+    /// те, что уже были.
+    /// </summary>
+    private static void ApplyLegacyMirrors(GsmMaterial material, NormalizedFields fields)
     {
-        material.Name = material.Name?.Trim() ?? "";
-        material.Type = material.Type?.Trim() ?? "";
-        material.Gost = string.IsNullOrWhiteSpace(material.Gost) ? null : material.Gost.Trim();
-        material.Description = string.IsNullOrWhiteSpace(material.Description) ? null : material.Description.Trim();
+        material.Nd = fields.Nd;
+        material.Gost = fields.Nd;
+        material.IntendedUse = fields.IntendedUse;
+        material.Description = fields.IntendedUse;
+        material.Type = fields.GroupName ?? material.Type;
+    }
 
-        if (string.IsNullOrWhiteSpace(material.Name))
-            throw new InvalidOperationException("Укажите наименование.");
-        if (string.IsNullOrWhiteSpace(material.Type))
-            throw new InvalidOperationException("Укажите тип.");
-        if (material.Name.Length > 250)
-            throw new InvalidOperationException("Наименование должно быть не длиннее 250 символов.");
-        if (material.Type.Length > 250)
-            throw new InvalidOperationException("Тип должен быть не длиннее 250 символов.");
-        if (material.Gost?.Length > 250)
-            throw new InvalidOperationException("ГОСТ должен быть не длиннее 250 символов.");
-        if (material.Description?.Length > 2000)
-            throw new InvalidOperationException("Описание должно быть не длиннее 2000 символов.");
+    private static string DescribeWrite(NormalizedFields fields)
+    {
+        var parts = new List<string>();
+        if (fields.GroupName != null)
+            parts.Add($"Группа: \"{fields.GroupName}\"");
+        if (fields.Subgroups.Count > 0)
+            parts.Add($"Подгруппы: {string.Join(", ", fields.Subgroups)}");
+        return parts.Count > 0 ? string.Join("; ", parts) : "Классификация не задана";
     }
 
     private static string FormatDisplayName(GsmMaterial material) =>
-        string.IsNullOrWhiteSpace(material.Gost)
+        string.IsNullOrWhiteSpace(material.Nd)
             ? material.Name
-            : $"{material.Name} — {material.Gost}";
+            : $"{material.Name} — {material.Nd}";
 }

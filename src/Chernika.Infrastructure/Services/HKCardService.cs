@@ -2551,6 +2551,20 @@ public class HKCardService
         if (proposal.Status != ProposalStatus.Pending)
             throw new InvalidOperationException("Принять можно только предложение в статусе Ожидает.");
 
+        // Проверка ДО любых мутаций: предложение остаётся «Ожидает», а трекер
+        // контекста не загрязняется (контекст живёт дольше запроса в circuit).
+        if (proposal.TargetType == ProposalTargetType.GsmMaterial
+            && proposal.CreatedStubGsmMaterialId.HasValue)
+        {
+            var classified = await _db.GsmMaterialClassifications
+                .AnyAsync(c => c.GsmMaterialId == proposal.CreatedStubGsmMaterialId.Value);
+            if (!classified)
+                throw new InvalidOperationException(
+                    "Предложение нельзя принять: марка не классифицирована. " +
+                    "Укажите группу и минимум одну подгруппу в справочнике ГСМ " +
+                    "(фильтр «Без классификации»), затем примите предложение снова.");
+        }
+
         proposal.Status = ProposalStatus.Accepted;
         proposal.ResolvedAt = DateTime.UtcNow;
 
@@ -2573,6 +2587,7 @@ public class HKCardService
             case ProposalTargetType.GsmMaterial:
                 if (proposal.CreatedStubGsmMaterialId.HasValue)
                 {
+                    // Классификация проверена выше; здесь только снятие черновика.
                     var gsm = await _db.GsmMaterials.FindAsync(proposal.CreatedStubGsmMaterialId.Value);
                     if (gsm != null) gsm.IsDraft = false;
                 }

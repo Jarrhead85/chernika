@@ -1,0 +1,153 @@
+/* Сводный справочник марок ГСМ: 14 колонок не помещаются в одну таблицу без
+   горизонтального скролла, поэтому ширина фиксируется, а переносы разрешены
+   только в текстовых колонках. На узких экранах таблица скроллится, форма
+   переносится в одну колонку. */
+
+.gsmFilters {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(120px, 1fr)) minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, 1fr) auto auto;
+  gap: 8px;
+  align-items: end;
+}
+
+@media (max-width: 1400px) {
+  .gsmFilters {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
+
+@media (max-width: 1120px) {
+  .gsmFilters {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .gsmFilters {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Фиксированная ширина таблицы: колонки не «прыгают» при смене содержимого,
+   горизонтальный скролл включён штатно на узких экранах. */
+.gsmTable {
+  width: 100%;
+  min-width: 1680px;
+  table-layout: fixed;
+}
+
+.gsmTable th,
+.gsmTable td {
+  vertical-align: top;
+  font-size: 12px;
+}
+
+.gsmTable th:nth-child(1) { width: 84px; }   /* ID */
+.gsmTable th:nth-child(2) { width: 170px; }  /* Группа */
+.gsmTable th:nth-child(3) { width: 190px; }  /* Подгруппы */
+.gsmTable th:nth-child(4) { width: 180px; }  /* Марка */
+.gsmTable th:nth-child(5) { width: 150px; }  /* НД */
+.gsmTable th:nth-child(6) { width: 120px; }  /* Номенклатура ГОСТ */
+.gsmTable th:nth-child(7) { width: 230px; }  /* Назначение */
+.gsmTable th:nth-child(8) { width: 150px; }  /* Пригодность */
+.gsmTable th:nth-child(9) { width: 110px; }  /* НАТО */
+.gsmTable th:nth-child(10),
+.gsmTable th:nth-child(11),
+.gsmTable th:nth-child(12) { width: 170px; } /* Связи */
+.gsmTable th:nth-child(13) { width: 200px; } /* Примечание */
+.gsmTable th:nth-child(14) { width: 130px; } /* Действия */
+
+.gsmWrap {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.gsmId {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.gsmSubgroups {
+  overflow-wrap: anywhere;
+}
+
+.gsmMuted {
+  color: var(--muted);
+}
+
+/* Списки связей: только чтение, без кнопок редактирования. */
+.gsmRelations {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gsmChecks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-top: 2px;
+}
+
+.gsmCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  margin: 0;
+}
+
+.gsmCheck input {
+  width: auto;
+  margin: 0;
+}
+
+.gsmWide {
+  grid-column: 1 / -1;
+}
+
+.gsmReq {
+  color: var(--bad);
+}
+
+.gsmChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gsmChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(11, 18, 32, 0.55);
+  font-size: 12px;
+}
+
+[data-theme="light"] .gsmChip {
+  background: rgba(255, 255, 255, 0.70);
+}
+
+.gsmChipX {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.gsmChipX:hover {
+  color: var(--bad);
+}
+
+.gsmError {
+  grid-column: 1 / -1;
+  color: var(--bad);
+  font-size: 13px;
+}

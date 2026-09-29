@@ -137,7 +137,12 @@ public class ReferencePermissionsIntegrationTests
         s.User.CurrentUserId = Guid.Parse(_fixture.OperatorA.Id);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => s.GsmMaterials.CreateAsync(new GsmMaterial { Name = "Тестовый ГСМ", Type = "Бензин" }));
+            () => s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
+            {
+                Name = "Тестовый ГСМ",
+                GroupName = "Топлива",
+                SubgroupNames = new List<string> { "Бензин" },
+            }));
     }
 
     [Fact]
@@ -146,21 +151,27 @@ public class ReferencePermissionsIntegrationTests
         await using var s = _fixture.CreateScope();
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
 
-        var created = await s.GsmMaterials.CreateAsync(new GsmMaterial
+        var created = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
         {
             Name = $"CRUD ГСМ {Guid.NewGuid():N}",
-            Type = "Бензин",
-            Gost = "ГОСТ 123"
+            Nd = "ГОСТ 123",
+            GroupName = "Топлива",
+            SubgroupNames = new List<string> { "Бензин" },
         });
         Assert.NotEqual(Guid.Empty, created.Id);
 
-        created.Name = $"CRUD ГСМ обновлён {Guid.NewGuid():N}";
-        var updated = await s.GsmMaterials.UpdateAsync(created);
-        Assert.True(updated);
+        var updated = await s.GsmMaterials.UpdateAsync(created.Id, new GsmMaterialWriteRequest
+        {
+            Name = $"CRUD ГСМ обновлён {Guid.NewGuid():N}",
+            Nd = "ГОСТ 123",
+            GroupName = "Топлива",
+            SubgroupNames = new List<string> { "Бензин" },
+        });
+        Assert.NotNull(updated);
 
         var byId = await s.GsmMaterials.GetByIdAsync(created.Id, default);
         Assert.NotNull(byId);
-        Assert.Equal(created.Name, byId.Name);
+        Assert.Equal(updated!.Name, byId.Name);
 
         var deleted = await s.GsmMaterials.DeleteAsync(created.Id);
         Assert.True(deleted);
@@ -176,7 +187,12 @@ public class ReferencePermissionsIntegrationTests
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
 
         var name = $"Filter ГСМ {Guid.NewGuid():N}";
-        var created = await s.GsmMaterials.CreateAsync(new GsmMaterial { Name = name, Type = "Дизель" });
+        var created = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
+        {
+            Name = name,
+            GroupName = "Топлива",
+            SubgroupNames = new List<string> { "Дизельное" },
+        });
         await s.GsmMaterials.DeleteAsync(created.Id);
 
         var active = await s.GsmMaterials.GetPagedAsync(new GsmMaterialQuery { ShowDeleted = false }, default);
@@ -196,7 +212,12 @@ public class ReferencePermissionsIntegrationTests
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
 
         var name = $"Active ГСМ {Guid.NewGuid():N}";
-        var created = await s.GsmMaterials.CreateAsync(new GsmMaterial { Name = name, Type = "Масло" });
+        var created = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
+        {
+            Name = name,
+            GroupName = "Моторные масла",
+            SubgroupNames = new List<string> { "Для дизельных двигателей" },
+        });
         await s.GsmMaterials.DeleteAsync(created.Id);
 
         s.Db.GsmMaterials.Add(new GsmMaterial

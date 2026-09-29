@@ -11,49 +11,41 @@
 
 <div class="stack">
     <ReferenceBreadcrumb Group="Материалы" Current="Смазочные материалы" />
-    @if (canEdit)
-    {
-        <section class="panel">
-            <div class="panelHeader">
-                <h2>@(editing ? "Редактирование материала" : "Новый смазочный материал")</h2>
-                <div class="hint">Горюче-смазочные материалы</div>
-            </div>
-            <div class="panelBody">
-                <div class="form">
-                    <div class="field"><label>Наименование</label><input @ref="_firstField" @bind="newGsm.Name" /></div>
-                    <div class="field"><label>Тип</label><input @bind="newGsm.Type" /></div>
-                    <div class="field"><label>ГОСТ</label><input @bind="newGsm.Gost" /></div>
-                    <div class="formActions">
-                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
-                        <button class="btn primary" @onclick="SaveGsm">@(editing ? "Сохранить" : "Добавить")</button>
-                    </div>
-                    @if (!string.IsNullOrEmpty(errorMessage))
-                    {
-                        <div class="mbError">@errorMessage</div>
-                    }
-                </div>
-            </div>
-        </section>
-    }
 
     <section class="panel">
         <div class="panelHeader">
-            <h2>Список материалов</h2>
-            <div class="hint">@totalCount записей</div>
+            <h2>Список марок ГСМ</h2>
+            <div class="hint">@totalCount марок</div>
         </div>
         <div class="panelBody">
-            <div class="mbFilters">
-                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged" placeholder="Поиск по наименованию, типу, ГОСТу..." />
+            <div class="mbFilters gsmFilters">
+                <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged"
+                       placeholder="Поиск: наименование, НД, группа, подгруппа, индекс НАТО..." />
                 <select class="field-select" @bind="statusFilter" @bind:after="OnFiltersChanged">
                     <option value="0">Активные</option>
                     <option value="1">Удалённые</option>
                     <option value="2">Все</option>
                 </select>
                 <select class="field-select" @bind="sortBy" @bind:after="OnFiltersChanged">
-                    <option value="Name">Сортировка: наименование</option>
-                    <option value="Type">Сортировка: тип</option>
-                    <option value="Gost">Сортировка: ГОСТ</option>
+                    <option value="Name">Сортировка: марка</option>
+                    <option value="Group">Сортировка: группа</option>
+                    <option value="Nd">Сортировка: НД</option>
+                    <option value="NatoIndex">Сортировка: индекс НАТО</option>
                 </select>
+                <select class="field-select" @bind="onlyUnclassified" @bind:after="OnFiltersChanged">
+                    <option value="0">Все марки</option>
+                    <option value="1">Без классификации (вкл. черновики)</option>
+                </select>
+                <select class="field-select" @bind="inGost" @bind:after="OnFiltersChanged">
+                    <option value="0">Номенклатура по ГОСТ: любая</option>
+                    <option value="1">Только включённые</option>
+                </select>
+                <input class="fieldInput" @bind="groupFilter" @bind:event="oninput" @bind:after="OnFiltersChanged"
+                       placeholder="Группа" />
+                <input class="fieldInput" @bind="subgroupFilter" @bind:event="oninput" @bind:after="OnFiltersChanged"
+                       placeholder="Подгруппа" />
+                <input class="fieldInput" @bind="natoFilter" @bind:event="oninput" @bind:after="OnFiltersChanged"
+                       placeholder="Индекс НАТО" />
                 <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
                 @if (HasActiveFilters)
                 {
@@ -65,26 +57,88 @@
             {
                 <div class="loading-state">Загрузка...</div>
             }
-            else if (!gsms.Any())
+            else if (!items.Any())
             {
-                <div class="empty-state">Нет материалов</div>
+                <div class="empty-state">Марок не найдено</div>
             }
             else
             {
-                <div class="referenceTableWrap">
-                    <table>
+                <div class="tableWrap" data-scroll="contained" style="--table-max-height: 60vh;">
+                    <table class="gsmTable">
                         <thead>
-                            <tr><th>Наименование</th><th>Тип</th><th>ГОСТ</th><th>Статус</th><th>Действия</th></tr>
+                            <tr>
+                                <th>ID</th>
+                                <th>Группа ГСМ</th>
+                                <th>Подгруппы ГСМ</th>
+                                <th>Марка ГСМ</th>
+                                <th>НД</th>
+                                <th>Номенклатура по ГОСТ</th>
+                                <th>Назначение и условия применения</th>
+                                <th>Пригодность</th>
+                                <th>Индекс НАТО</th>
+                                <th>Дублирующие</th>
+                                <th>Резервные</th>
+                                <th>Зарубежные</th>
+                                <th>Общее примечание</th>
+                                <th>Действия</th>
+                            </tr>
                         </thead>
                         <tbody>
-                            @foreach (var m in gsms)
+                            @foreach (var m in items)
                             {
                                 var rowClickable = canEdit && !m.IsDeleted;
-                                <tr class="@(rowClickable ? "clickableRow" : "")" tabindex="@(rowClickable ? "0" : "-1")" @ondblclick="() => OnRowDblClick(m)" @onkeydown="(ev) => OnRowKeyDown(ev, m)">
-                                    <td>@m.Name</td>
-                                    <td>@m.Type</td>
-                                    <td>@m.Gost</td>
-                                    <td><span class="tag @(m.IsDeleted ? "bad" : "ok")">@(m.IsDeleted ? "Удалён" : "Активен")</span></td>
+                                <tr class="@(rowClickable ? "clickableRow" : "")" tabindex="@(rowClickable ? "0" : "-1")"
+                                    @ondblclick="() => OnRowDblClick(m)" @onkeydown="(ev) => OnRowKeyDown(ev, m)">
+                                    <td class="mono gsmId">@ShortId(m.Id)</td>
+                                    <td>
+                                        @if (m.GroupName is null)
+                                        {
+                                            <span class="tag warn">Без классификации</span>
+                                        }
+                                        else
+                                        {
+                                            @m.GroupName
+                                        }
+                                    </td>
+                                    <td class="gsmSubgroups">
+                                        @if (m.SubgroupNames.Count == 0)
+                                        {
+                                            <span class="gsmMuted">—</span>
+                                        }
+                                        else
+                                        {
+                                            @string.Join("; ", m.SubgroupNames)
+                                        }
+                                    </td>
+                                    <td>
+                                        @m.Name
+                                        @if (m.IsDeleted)
+                                        {
+                                            <span class="tag bad">Удалена</span>
+                                        }
+                                        @if (m.IsDraft)
+                                        {
+                                            <span class="tag warn">Черновик</span>
+                                        }
+                                    </td>
+                                    <td class="gsmWrap">@(m.Nd ?? "—")</td>
+                                    <td>
+                                        @if (m.InGostNomenclature)
+                                        {
+                                            <span class="tag ok">Да</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="tag">Нет</span>
+                                        }
+                                    </td>
+                                    <td class="gsmWrap">@(m.IntendedUse ?? "—")</td>
+                                    <td class="gsmWrap">@SuitabilityText(m)</td>
+                                    <td class="mono">@(m.NatoIndex ?? "—")</td>
+                                    <td>@RelationCell(m.DuplicateNames, m.Id)</td>
+                                    <td>@RelationCell(m.ReserveNames, m.Id)</td>
+                                    <td>@RelationCell(m.ForeignNames, m.Id)</td>
+                                    <td class="gsmWrap">@(m.Note ?? "—")</td>
                                     <td @ondblclick:stopPropagation="true">
                                         <div class="rowActions">
                                             @if (m.IsDeleted)
@@ -115,24 +169,108 @@
                         <span style="margin:0 8px">Стр. @currentPage из @totalPages</span>
                         <button class="linkBtn" @onclick="NextPage" disabled="@(currentPage >= totalPages)">Вперёд</button>
                     </div>
-                    <div class="mono">Показано @gsms.Count из @totalCount</div>
+                    <div class="mono">Показано @items.Count из @totalCount</div>
                 </div>
             }
         </div>
     </section>
+
+    @if (canEdit)
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>@(editing ? "Редактирование марки" : "Новая марка ГСМ")</h2>
+                <div class="hint">
+                    @(editing && !editingIsNew
+                        ? "Группа и подгруппы обязательны для публикации; legacy-марку можно править и без них"
+                        : "Группа и минимум одна подгруппа обязательны")
+                </div>
+            </div>
+            <div class="panelBody">
+                <div class="form">
+                    <div class="field"><label>Марка ГСМ <span style="color:var(--bad)">*</span></label>
+                        <input @ref="_firstField" @bind="form.Name" /></div>
+                    <div class="field"><label>НД</label>
+                        <input @bind="form.Nd" placeholder="Один или несколько документов" /></div>
+
+                    <div class="field"><label>Включена в номенклатуру по ГОСТ</label>
+                        <label class="gsmCheck"><input type="checkbox" @bind="form.InGostNomenclature" /> Да</label></div>
+                    <div class="field"><label>Индекс НАТО</label><input @bind="form.NatoIndex" /></div>
+
+                    <div class="field gsmWide"><label>Назначение и условия применения</label>
+                        <textarea @bind="form.IntendedUse" rows="2"></textarea></div>
+                    <div class="field gsmWide"><label>Общее примечание</label>
+                        <textarea @bind="form.Note" rows="2"></textarea></div>
+
+                    <div class="field gsmWide"><label>Пригодность</label>
+                        <div class="gsmChecks">
+                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilityGround" /> Наземная</label>
+                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilityAir" /> Авиационная</label>
+                            <label class="gsmCheck"><input type="checkbox" @bind="form.SuitabilitySea" /> Морская</label>
+                        </div>
+                    </div>
+
+                    <div class="field"><label>Группа ГСМ <span class="gsmReq">*</span></label>
+                        <input @bind="form.GroupName" placeholder="Одна группа на марку" /></div>
+                    <div class="field"><label>Подгруппы ГСМ <span class="gsmReq">*</span></label>
+                        <input @bind="subgroupInput" @bind:event="oninput" placeholder="Подгруппа и Enter"
+                               @onkeydown="OnSubgroupKeyDown" />
+                    </div>
+
+                    @if (formSubgroups.Count > 0)
+                    {
+                        <div class="field gsmWide">
+                            <label>Добавленные подгруппы</label>
+                            <div class="gsmChips">
+                                @foreach (var sub in formSubgroups)
+                                {
+                                    <span class="gsmChip">
+                                        @sub
+                                        <button type="button" class="gsmChipX" @onclick="() => RemoveSubgroup(sub)"
+                                                title="Убрать подгруппу">×</button>
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="formActions">
+                        <button class="btn ghost" @onclick="ResetForm">Очистить</button>
+                        <button class="btn primary" @onclick="SaveGsmAsync" disabled="@saving">
+                            @(editing ? "Сохранить" : "Добавить")
+                        </button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="gsmError">@errorMessage</div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
 </div>
 
 @code {
-    private List<GsmMaterial> gsms = new();
-    private GsmMaterial newGsm = new();
+    private List<GsmMaterialSummary> items = new();
+    private GsmMaterialWriteRequest form = new();
+    private List<string> formSubgroups = new();
+    private string subgroupInput = "";
+    private Guid formId;
     private bool editing = false;
+    private bool editingIsNew = true;
     private bool loading = true;
+    private bool saving;
     private bool canEdit;
     private string? errorMessage;
     private string search = "";
     private int statusFilter = 0;
     private string sortBy = "Name";
     private bool sortDesc = false;
+    private int onlyUnclassified = 0;
+    private int inGost = 0;
+    private string groupFilter = "";
+    private string subgroupFilter = "";
+    private string natoFilter = "";
     private int currentPage = 1;
     private int totalPages = 1;
     private int totalCount;
@@ -140,8 +278,18 @@
     private ElementReference _firstField;
     private bool _focusForm;
 
+    /// <summary>Идентификатор показываем вторичным текстом: полный GUID в колонке
+    /// только мешает, но он нужен для идентификации строки.</summary>
+    private static string ShortId(Guid id) => id.ToString()[..8];
+
     private bool HasActiveFilters =>
-        !string.IsNullOrWhiteSpace(search) || statusFilter != 0;
+        !string.IsNullOrWhiteSpace(search)
+        || statusFilter != 0
+        || onlyUnclassified != 0
+        || inGost != 0
+        || !string.IsNullOrWhiteSpace(groupFilter)
+        || !string.IsNullOrWhiteSpace(subgroupFilter)
+        || !string.IsNullOrWhiteSpace(natoFilter);
 
     protected override async Task OnInitializedAsync()
     {
@@ -185,27 +333,33 @@
         {
             await using (await DbLock.WaitAsync(ct))
             {
-            var result = await GsmService.GetPagedAsync(new GsmMaterialQuery
-            {
-                Page = currentPage,
-                Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
-                ShowDeleted = showDeleted,
-                SortBy = sortBy,
-                SortDescending = sortDesc,
-            }, ct);
+                var result = await GsmService.GetPagedAsync(new GsmMaterialQuery
+                {
+                    Page = currentPage,
+                    PageSize = 50,
+                    Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+                    ShowDeleted = showDeleted,
+                    SortBy = sortBy,
+                    SortDescending = sortDesc,
+                    OnlyUnclassified = onlyUnclassified == 1 ? true : null,
+                    InGostNomenclature = inGost == 1 ? true : null,
+                    GroupName = string.IsNullOrWhiteSpace(groupFilter) ? null : groupFilter.Trim(),
+                    SubgroupName = string.IsNullOrWhiteSpace(subgroupFilter) ? null : subgroupFilter.Trim(),
+                    NatoIndex = string.IsNullOrWhiteSpace(natoFilter) ? null : natoFilter.Trim(),
+                }, ct);
 
-            if (ct.IsCancellationRequested)
-                return;
+                if (ct.IsCancellationRequested)
+                    return;
 
-            gsms = result.Items.ToList();
-            totalCount = result.TotalCount;
-            totalPages = result.TotalPages;
-            if (currentPage > totalPages && totalPages > 0)
-            {
-                currentPage = totalPages;
-                await ReloadAsync();
-                return;
-            }
+                items = result.Items.ToList();
+                totalCount = result.TotalCount;
+                totalPages = result.TotalPages;
+                if (currentPage > totalPages && totalPages > 0)
+                {
+                    currentPage = totalPages;
+                    await ReloadAsync();
+                    return;
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -218,21 +372,72 @@
         }
     }
 
-    async Task SaveGsm()
+    // ── Форма ──────────────────────────────────────────────────────────────
+
+    private void OnSubgroupKeyDown(KeyboardEventArgs ev)
+    {
+        if (ev.Key != "Enter") return;
+        AddSubgroup();
+    }
+
+    private void AddSubgroup()
+    {
+        var value = subgroupInput?.Trim();
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (!formSubgroups.Any(s => string.Equals(s, value, StringComparison.OrdinalIgnoreCase)))
+            formSubgroups.Add(value);
+        subgroupInput = "";
+        errorMessage = null;
+    }
+
+    private void RemoveSubgroup(string value) =>
+        formSubgroups.RemoveAll(s => string.Equals(s, value, StringComparison.OrdinalIgnoreCase));
+
+    private void CollectSubgroups()
+    {
+        AddSubgroup();
+        form.SubgroupNames = formSubgroups.ToList();
+    }
+
+    private async Task SaveGsmAsync()
     {
         errorMessage = null;
-        if (string.IsNullOrWhiteSpace(newGsm.Name) || string.IsNullOrWhiteSpace(newGsm.Type))
+        CollectSubgroups();
+
+        if (string.IsNullOrWhiteSpace(form.Name))
         {
-            errorMessage = "Укажите наименование и тип.";
+            errorMessage = "Укажите наименование марки ГСМ.";
             return;
         }
 
+        // Новая марка публикуется сразу: классификация обязательна. Правка
+        // существующей legacy-марки может её не содержать — группу не выдумываем.
+        if (!editing && string.IsNullOrWhiteSpace(form.GroupName))
+        {
+            errorMessage = "Укажите группу ГСМ: новая марка публикуется с одной группой и минимум одной подгруппой.";
+            return;
+        }
+        if (!editing && form.SubgroupNames.Count == 0)
+        {
+            errorMessage = "Укажите минимум одну подгруппу ГСМ.";
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(form.GroupName) && form.SubgroupNames.Count == 0)
+        {
+            errorMessage = "Для указанной группы нужна минимум одна подгруппа.";
+            return;
+        }
+
+        saving = true;
         try
         {
-            if (editing)
-                await DbLock.LockedAsync(() => GsmService.UpdateAsync(newGsm));
-            else
-                await DbLock.LockedAsync(() => GsmService.CreateAsync(newGsm));
+            await using (await DbLock.WaitAsync())
+            {
+                if (editing)
+                    await GsmService.UpdateAsync(formId, form);
+                else
+                    await GsmService.CreateAsync(form);
+            }
             ResetForm();
             await ReloadAsync();
         }
@@ -243,32 +448,73 @@
         catch (Exception)
         {
             errorMessage = editing
-                ? "Не удалось изменить запись справочника. Обновите список и повторите попытку."
-                : "Не удалось создать запись справочника. Обновите список и повторите попытку.";
+                ? "Не удалось сохранить марку. Обновите список и повторите попытку."
+                : "Не удалось создать марку. Обновите список и повторите попытку.";
+        }
+        finally
+        {
+            saving = false;
         }
     }
 
-    Task EditGsm(GsmMaterial m)
+    private async Task EditGsm(GsmMaterialSummary m)
     {
-        newGsm = new GsmMaterial { Id = m.Id, Name = m.Name, Type = m.Type, Gost = m.Gost };
+        errorMessage = null;
+        GsmMaterialEditView? view = null;
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                view = await GsmService.GetEditViewAsync(m.Id);
+            }
+        }
+        catch (Exception)
+        {
+            errorMessage = "Не удалось открыть карточку марки. Обновите список и повторите попытку.";
+            return;
+        }
+
+        if (view == null)
+        {
+            errorMessage = "Марка не найдена. Обновите список.";
+            return;
+        }
+
+        formId = view.Id;
+        form = new GsmMaterialWriteRequest
+        {
+            Name = view.Name,
+            Nd = view.Nd,
+            InGostNomenclature = view.InGostNomenclature,
+            IntendedUse = view.IntendedUse,
+            SuitabilityGround = view.SuitabilityGround,
+            SuitabilityAir = view.SuitabilityAir,
+            SuitabilitySea = view.SuitabilitySea,
+            NatoIndex = view.NatoIndex,
+            Note = view.Note,
+            GroupName = view.GroupName,
+            SubgroupNames = view.SubgroupNames.ToList(),
+        };
+        formSubgroups = view.SubgroupNames.ToList();
+        subgroupInput = "";
         editing = true;
+        editingIsNew = !view.HasClassification;
         _focusForm = true;
-        return Task.CompletedTask;
     }
 
-    async Task OnRowDblClick(GsmMaterial m)
+    private async Task OnRowDblClick(GsmMaterialSummary m)
     {
         if (!canEdit || m.IsDeleted) return;
         await EditGsm(m);
     }
 
-    async Task OnRowKeyDown(KeyboardEventArgs ev, GsmMaterial m)
+    private async Task OnRowKeyDown(KeyboardEventArgs ev, GsmMaterialSummary m)
     {
         if (!canEdit || m.IsDeleted || ev.Key != "Enter") return;
         await EditGsm(m);
     }
 
-    async Task DeleteGsm(Guid id)
+    private async Task DeleteGsm(Guid id)
     {
         errorMessage = null;
         try
@@ -283,7 +529,7 @@
         }
     }
 
-    async Task RestoreGsm(Guid id)
+    private async Task RestoreGsm(Guid id)
     {
         errorMessage = null;
         try
@@ -298,41 +544,120 @@
         }
     }
 
-    void ResetForm()
+    private void ResetForm()
     {
-        newGsm = new GsmMaterial();
+        form = new GsmMaterialWriteRequest();
+        formSubgroups = new List<string>();
+        subgroupInput = "";
+        formId = Guid.Empty;
         editing = false;
+        editingIsNew = true;
         errorMessage = null;
     }
 
-    async Task ToggleSortDir()
+    private async Task ToggleSortDir()
     {
         sortDesc = !sortDesc;
         await ReloadAsync();
     }
 
-    async Task ResetFilters()
+    private async Task ResetFilters()
     {
         search = "";
         statusFilter = 0;
-        sortBy = "Name";
-        sortDesc = false;
+        onlyUnclassified = 0;
+        inGost = 0;
+        groupFilter = "";
+        subgroupFilter = "";
+        natoFilter = "";
         currentPage = 1;
         await ReloadAsync();
     }
 
-    async Task PrevPage()
+    private async Task PrevPage()
     {
         if (currentPage <= 1) return;
         currentPage--;
         await ReloadAsync();
     }
 
-    async Task NextPage()
+    private async Task NextPage()
     {
         if (currentPage >= totalPages) return;
         currentPage++;
         await ReloadAsync();
+    }
+
+    // ── Ячейки ─────────────────────────────────────────────────────────────
+
+    private static string SuitabilityText(GsmMaterialSummary m)
+    {
+        var parts = new List<string>();
+        if (m.SuitabilityGround) parts.Add("наземная");
+        if (m.SuitabilityAir) parts.Add("авиационная");
+        if (m.SuitabilitySea) parts.Add("морская");
+        return parts.Count == 0 ? "—" : string.Join(" / ", parts);
+    }
+
+    /// <summary>
+    /// Связи показываются только для чтения. Длинный список сворачивается в
+    /// счётчик с раскрытием — редактирования связи из первого справочника нет.
+    /// </summary>
+    private RenderFragment RelationCell(IReadOnlyList<string> names, Guid rowId) => builder =>
+    {
+        if (names.Count == 0)
+        {
+            builder.OpenElement(0, "span");
+            builder.AddAttribute(1, "class", "gsmMuted");
+            builder.AddContent(2, "—");
+            builder.CloseElement();
+            return;
+        }
+
+        const int limit = 2;
+        var expanded = expandedRelations.Contains(rowId);
+
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "gsmRelations");
+
+        if (expanded || names.Count <= limit)
+        {
+            builder.OpenElement(2, "div");
+            foreach (var n in names)
+            {
+                builder.OpenElement(3, "div");
+                builder.AddContent(4, n);
+                builder.CloseElement();
+            }
+            builder.CloseElement();
+        }
+        else
+        {
+            builder.OpenElement(2, "div");
+            builder.AddContent(3, string.Join("; ", names.Take(limit)));
+            builder.CloseElement();
+        }
+
+        if (names.Count > limit)
+        {
+            builder.OpenElement(2, "button");
+            builder.AddAttribute(3, "type", "button");
+            builder.AddAttribute(4, "class", "linkBtn");
+            builder.AddAttribute(5, "onclick",
+                EventCallback.Factory.Create(this, () => ToggleRelations(rowId)));
+            builder.AddContent(6, expanded ? "Свернуть" : $"Ещё {names.Count - limit}");
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
+
+    private readonly HashSet<Guid> expandedRelations = new();
+
+    private void ToggleRelations(Guid id)
+    {
+        if (!expandedRelations.Add(id))
+            expandedRelations.Remove(id);
     }
 
     public void Dispose()

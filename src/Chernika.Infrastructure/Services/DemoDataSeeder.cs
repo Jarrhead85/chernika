@@ -71,18 +71,47 @@ public static class DemoDataSeeder
             return;
         }
 
-        var gsmMaterials = new List<GsmMaterial>
+        // Демо-марки создаются классифицированными: опубликованная марка обязана
+        // иметь одну группу и минимум одну подгруппу (то же правило, что и в
+        // GsmMaterialService). Type/Gost/Description заполняются как зеркала
+        // новых полей — как это делает сервис при записи.
+        var gsmSeed = new (string Name, string Group, string Subgroup, string Nd, string? Use)[]
         {
-            new() { Id = Guid.NewGuid(), Name = "МС-20", Type = "Моторное масло", Gost = "ГОСТ 21743-76" },
-            new() { Id = Guid.NewGuid(), Name = "М-10Г2к", Type = "Моторное масло", Gost = "ГОСТ 8581-78" },
-            new() { Id = Guid.NewGuid(), Name = "SAE 30", Type = "Моторное масло", Gost = "SAE J300" },
-            new() { Id = Guid.NewGuid(), Name = "ТСп-15К", Type = "Трансмиссионное масло", Gost = "ГОСТ 23652-79" },
-            new() { Id = Guid.NewGuid(), Name = "Литол-24", Type = "Пластичная смазка", Gost = "ГОСТ 21150-87" },
-            new() { Id = Guid.NewGuid(), Name = "Mobil Delvac 1330", Type = "Моторное масло", Gost = "API CI-4" },
-            new() { Id = Guid.NewGuid(), Name = "ОЖ-40", Type = "Охлаждающая жидкость", Gost = "ГОСТ 28084-89" },
-            new() { Id = Guid.NewGuid(), Name = "ДТ-З", Type = "Топливо", Gost = "ГОСТ 305-2013" },
+            ("МС-20", "Моторные масла", "Для авиационных двигателей", "ГОСТ 21743-76", null),
+            ("М-10Г2к", "Моторные масла", "Для автомобилей и тракторов", "ГОСТ 8581-78", null),
+            ("SAE 30", "Моторные масла", "Для дизельных двигателей", "SAE J300", null),
+            ("ТСп-15К", "Трансмиссионные масла", "Для коробок передач", "ГОСТ 23652-79", null),
+            ("Литол-24", "Пластичные смазки", "Для подшипников", "ГОСТ 21150-87", null),
+            ("Mobil Delvac 1330", "Моторные масла", "Для дизельных двигателей", "API CI-4", "Для высоких нагрузок"),
+            ("ОЖ-40", "Охлаждающие жидкости", "Для систем охлаждения", "ГОСТ 28084-89", null),
+            ("ДТ-З", "Топлива", "Для дизельных двигателей", "ГОСТ 305-2013", null),
         };
+
+        var gsmMaterials = new List<GsmMaterial>();
+        var gsmClassifications = new List<GsmMaterialClassification>();
+        foreach (var row in gsmSeed)
+        {
+            var id = Guid.NewGuid();
+            gsmMaterials.Add(new GsmMaterial
+            {
+                Id = id,
+                Name = row.Name,
+                Nd = row.Nd,
+                Gost = row.Nd,
+                IntendedUse = row.Use,
+                Description = row.Use,
+                Type = row.Group,
+            });
+            gsmClassifications.Add(new GsmMaterialClassification
+            {
+                Id = Guid.NewGuid(),
+                GsmMaterialId = id,
+                GroupName = row.Group,
+                SubgroupName = row.Subgroup,
+            });
+        }
         db.GsmMaterials.AddRange(gsmMaterials);
+        db.GsmMaterialClassifications.AddRange(gsmClassifications);
 
         var nodes = new List<Node>
         {

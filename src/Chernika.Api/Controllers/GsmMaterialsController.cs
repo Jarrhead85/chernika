@@ -1,4 +1,6 @@
 using Chernika.Api.Contracts;
+using Chernika.Domain;
+using Chernika.Domain.Models;
 using Chernika.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,34 +20,43 @@ public class GsmMaterialsController : ControllerBase
     public async Task<ActionResult<List<GsmMaterialDto>>> GetAll()
     {
         var materials = await _gsmService.GetActiveForSelectionAsync();
-        return Ok(materials.Select(GsmMaterialMapper.ToDto).ToList());
+        return Ok(materials.Select(m => GsmMaterialMapper.ToDto(new GsmMaterialEditView
+        {
+            Id = m.Id,
+            Name = m.Name,
+            Nd = m.Nd,
+            InGostNomenclature = m.InGostNomenclature,
+            IntendedUse = m.IntendedUse,
+            SuitabilityGround = m.SuitabilityGround,
+            SuitabilityAir = m.SuitabilityAir,
+            SuitabilitySea = m.SuitabilitySea,
+            NatoIndex = m.NatoIndex,
+            Note = m.Note,
+        })).ToList());
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<GsmMaterialDto>> GetById(Guid id)
     {
-        var m = await _gsmService.GetByIdAsync(id);
+        var m = await _gsmService.GetEditViewAsync(id);
         if (m == null) return NotFound();
         return Ok(GsmMaterialMapper.ToDto(m));
     }
 
     [HttpPost]
     [Authorize(Policy = "CreateEquipment")]
-    public async Task<ActionResult<GsmMaterialDto>> Create([FromBody] CreateGsmMaterialRequest request)
+    public async Task<ActionResult<GsmMaterialDto>> Create([FromBody] GsmMaterialWriteApiRequest request)
     {
-        var material = GsmMaterialMapper.FromCreate(request);
-        var created = await _gsmService.CreateAsync(material);
+        var created = await _gsmService.CreateAsync(GsmMaterialMapper.ToWriteRequest(request));
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, GsmMaterialMapper.ToDto(created));
     }
 
     [HttpPut("{id}")]
     [Authorize(Policy = "EditEquipment")]
-    public async Task<ActionResult> Update(Guid id, [FromBody] UpdateGsmMaterialRequest request)
+    public async Task<ActionResult> Update(Guid id, [FromBody] GsmMaterialWriteApiRequest request)
     {
-        var m = await _gsmService.GetByIdAsync(id);
-        if (m == null) return NotFound();
-        GsmMaterialMapper.ApplyUpdate(m, request);
-        await _gsmService.UpdateAsync(m);
+        var updated = await _gsmService.UpdateAsync(id, GsmMaterialMapper.ToWriteRequest(request));
+        if (updated == null) return NotFound();
         return NoContent();
     }
 

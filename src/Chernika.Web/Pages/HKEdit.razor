@@ -843,9 +843,10 @@
                 else if (_quickCreateKind == QuickCreateKind.GsmMaterial)
                 {
                     <div class="field"><label>Наименование <span style="color:var(--bad)">*</span></label><input @bind="_qcName" class="field" placeholder="Наименование марки ГСМ" /></div>
-                    <div class="field"><label>Тип <span style="color:var(--bad)">*</span></label><input @bind="_qcType" class="field" placeholder="Тип (Основные, Дублирующие и т.д.)" /></div>
-                    <div class="field"><label>ГОСТ / ТУ</label><input @bind="_qcGost" class="field" placeholder="ГОСТ (необязательно)" /></div>
-                    <div class="field"><label>Описание</label><textarea @bind="_qcDescription" rows="2" placeholder="Описание (необязательно)"></textarea></div>
+                    <div class="field"><label>Группа ГСМ <span style="color:var(--bad)">*</span></label><input @bind="_qcGroup" class="field" placeholder="Например: Смазочные материалы" /></div>
+                    <div class="field"><label>Подгруппа ГСМ <span style="color:var(--bad)">*</span></label><input @bind="_qcSubgroup" class="field" placeholder="Например: Для смазки" /></div>
+                    <div class="field"><label>НД</label><input @bind="_qcGost" class="field" placeholder="НД (необязательно)" /></div>
+                    <div class="field"><label>Назначение и условия применения</label><textarea @bind="_qcDescription" rows="2" placeholder="Назначение (необязательно)"></textarea></div>
                 }
                 @if (_quickCreateError != null)
                 {
@@ -1042,7 +1043,8 @@
     private string _qcName = "";
     private string _qcDescription = "";
     private string _qcGost = "";
-    private string _qcType = "";
+    private string _qcGroup = "";
+    private string _qcSubgroup = "";
     private Guid? _quickCreateItemUiKey;
     private GsmCategory? _quickCreateCategory;
     private bool canQuickCreate;
@@ -2409,14 +2411,16 @@
     {
         QuickCreateKind.Node => !string.IsNullOrWhiteSpace(_qcCode) && !string.IsNullOrWhiteSpace(_qcName),
         QuickCreateKind.AssemblyUnit => !string.IsNullOrWhiteSpace(_qcCode) && !string.IsNullOrWhiteSpace(_qcName),
-        QuickCreateKind.GsmMaterial => !string.IsNullOrWhiteSpace(_qcName) && !string.IsNullOrWhiteSpace(_qcType),
+        QuickCreateKind.GsmMaterial => !string.IsNullOrWhiteSpace(_qcName)
+            && !string.IsNullOrWhiteSpace(_qcGroup)
+            && !string.IsNullOrWhiteSpace(_qcSubgroup),
         _ => false
     };
 
     private void OpenQuickCreateNode()
     {
         _quickCreateKind = QuickCreateKind.Node;
-        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcType = "";
+        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcGroup = ""; _qcSubgroup = "";
         _quickCreateError = null;
         _quickCreateItemUiKey = null;
         _quickCreateCategory = null;
@@ -2425,7 +2429,7 @@
     private void OpenQuickCreateAssemblyUnit(Guid itemUiKey)
     {
         _quickCreateKind = QuickCreateKind.AssemblyUnit;
-        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcType = "";
+        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcGroup = ""; _qcSubgroup = "";
         _quickCreateError = null;
         _quickCreateItemUiKey = itemUiKey;
         _quickCreateCategory = null;
@@ -2434,7 +2438,7 @@
     private void OpenQuickCreateGsmMaterial(Guid itemUiKey, GsmCategory category)
     {
         _quickCreateKind = QuickCreateKind.GsmMaterial;
-        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcType = "";
+        _qcCode = ""; _qcName = ""; _qcDescription = ""; _qcGost = ""; _qcGroup = ""; _qcSubgroup = "";
         _quickCreateError = null;
         _quickCreateItemUiKey = itemUiKey;
         _quickCreateCategory = category;
@@ -2515,22 +2519,26 @@
                 }
                 case QuickCreateKind.GsmMaterial:
                 {
-                    GsmMaterial created;
+                    Guid createdId;
                     await using (await DbLock.WaitAsync())
                     {
-                        created = await GsmMaterialService.CreateAsync(new GsmMaterial
+                        // Quick-create публикует марку сразу, поэтому классификация
+                        // обязательна: сервис не примет запись без группы и подгруппы.
+                        var created = await GsmMaterialService.CreateAsync(new GsmMaterialWriteRequest
                         {
                             Name = _qcName.Trim(),
-                            Type = _qcType.Trim(),
-                            Gost = string.IsNullOrWhiteSpace(_qcGost) ? null : _qcGost.Trim(),
-                            Description = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim()
+                            Nd = string.IsNullOrWhiteSpace(_qcGost) ? null : _qcGost.Trim(),
+                            IntendedUse = string.IsNullOrWhiteSpace(_qcDescription) ? null : _qcDescription.Trim(),
+                            GroupName = _qcGroup.Trim(),
+                            SubgroupNames = new List<string> { _qcSubgroup.Trim() }
                         });
+                        createdId = created.Id;
                         gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
                     }
                     if (_quickCreateItemUiKey.HasValue && _quickCreateCategory.HasValue)
                     {
                         var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);
-                        if (item != null) await AddMaterial(item, _quickCreateCategory.Value, created.Id);
+                        if (item != null) await AddMaterial(item, _quickCreateCategory.Value, createdId);
                     }
                     break;
                 }

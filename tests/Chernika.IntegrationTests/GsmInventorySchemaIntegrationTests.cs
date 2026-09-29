@@ -257,16 +257,18 @@ public class GsmInventorySchemaIntegrationTests
         Assert.Equal(manualDescription, manual.Description);
         Assert.False(string.IsNullOrWhiteSpace(manual.Type));
 
-        // Явно заполненное Nd — это расхождение, которое обязано быть устранено
-        // до переключения источника истины (см. PR-2 reconciliation). Здесь же
-        // проверяем, что сверка его находит, и убираем, чтобы общая БД оставалась
-        // чистой для остальных тестов.
+        // Явно заполненное Nd — это расхождение переноса, и отчёт его видит.
+        // Однонаправленной сверки в PR-3 больше нет, поэтому расхождение убирается
+        // напрямую, чтобы общая БД оставалась чистой для остальных тестов.
         await using var s3 = _fixture.CreateScope();
         SetRefEditor(s3);
         var divergences = await s3.GsmMaterials.GetTransitionDivergencesAsync();
         Assert.Contains(divergences, d => d.Id == alreadyFilled && d.NdDiffers);
-        var result = await s3.GsmMaterials.ReconcileTransitionFieldsAsync(GsmLegacySourceOfTruth.LegacyGostIsSourceOfTruth);
-        Assert.Contains(alreadyFilled, result.ChangedMaterialIds);
+        await s3.Db.Database.ExecuteSqlInterpolatedAsync(
+            $@"UPDATE ""GsmMaterials""
+                SET ""Nd"" = NULLIF(btrim(""Gost""), ''),
+                    ""IntendedUse"" = ""Description""
+                WHERE ""Id"" = {alreadyFilled}");
         Assert.Empty(await s3.GsmMaterials.GetTransitionDivergencesAsync());
     }
 
