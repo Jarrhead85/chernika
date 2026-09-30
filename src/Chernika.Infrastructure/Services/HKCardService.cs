@@ -1298,7 +1298,7 @@ public class HKCardService
             }
         }
 
-        await EnsureNoMultiSubgroupMaterialsAsync(
+        await EnsureHkAssignableMaterialsAsync(
             card.Items.SelectMany(i => i.Materials).Select(m => m.GsmMaterialId), ct);
 
         _db.HKCards.Add(card);
@@ -1413,62 +1413,134 @@ public class HKCardService
         var incomingItems = card.Items.OrderBy(i => i.SortOrder).ToList();
         var incomingItemIds = incomingItems.Select(i => i.Id).ToHashSet();
 
+        // Желаемое состояние фиксируется НЕЗАвисимым неизменяемым снимком ДО
+        // любых операций Remove/Add: входной граф может быть уже отслеживаемым
+        // этим же контекстом (так делает HKEdit.razor), и перечисление его
+        // коллекций после мутаций EF небезопасно.
+        var desiredItems = incomingItems
+            .Select(i => new DesiredItem(
+                i.Id,
+                i.HKCardId,
+                i.AssemblyUnitId,
+                i.Quantity,
+                i.Volume,
+                i.UnitOfMeasure,
+                i.Periodicity,
+                i.Notes,
+                i.SortOrder,
+                i.Materials.Select(m => new DesiredMaterial(m.Id, m.GsmMaterialId, m.Category)).ToList()))
+            .ToList();
+
+        // Фактически сохранённое состояние — независимая проекция из БД: в
+        // сценарии HKEdit «existing» и входной граф это один и тот же tracked
+        // объект, сравнивать их как два независимых снимка нельзя.
+        var persistedItemIds = await _db.HKCardItems
+            .AsNoTracking()
+            .Where(i => i.HKCardId == existing.Id)
+            .Select(i => i.Id)
+            .ToListAsync(ct);
+
+        var persistedMaterialRows = persistedItemIds.Count == 0
+            ? new List<PersistedMaterialKey>()
+            : await _db.HKCardItemMaterials
+                .AsNoTracking()
+                .Where(m => persistedItemIds.Contains(m.HKCardItemId))
+                .Select(m => new PersistedMaterialKey(m.Id, m.HKCardItemId, m.GsmMaterialId, m.Category))
+                .ToListAsync(ct);
+
+        var persistedMaterialIds = persistedMaterialRows.Select(m => m.Id).ToHashSet();
+        var persistedItemIdSet = persistedItemIds.ToHashSet();
+
         // Переходная совместимость (вариант A §4.3 контракта ГСМ): пока
-        // legacy-потребители читают прежний Type, марка с несколькими
-        // подгруппами не имеет однозначного представления в одном поле, поэтому
-        // в строки ХК такие марки не добавляются. Проверка серверная: скрытие
-        // из списка выбора — только удобство интерфейса.
-        await EnsureNoMultiSubgroupMaterialsAsync(
-            incomingItems.SelectMany(i => i.Materials).Select(m => m.GsmMaterialId), ct);
+        // legacy-потребители читают прежний Type, марка без ровно одной подгруппы
+        // не имеет однозначного представления. Проверяются только НОВЫЕ
+        // назначения: неизменённая историческая ссылка не должна блокировать
+        // несвязанную правку карточки. Проверка до любых мутаций.
+        //
+        // НОВЫМ назначением считается строка, которой раньше не было, ИЛИ строка
+        // с прежним Id, у которой сменилась марка или категория: смена марки при
+        // сохранённом Id — это новая привязка, а не историческая ссылка.
+        var persistedById = persistedMaterialRows.ToDictionary(m => m.Id);
+        var newAssignmentMaterialIds = desiredItems
+            .SelectMany(d => d.Materials.Select(m => (ItemId: d.Id, Material: m)))
+            .Where(x => !persistedById.TryGetValue(x.Material.Id, out var saved)
+                || saved.GsmMaterialId != x.Material.GsmMaterialId
+                || saved.Category != x.Material.Category)
+            .Select(x => x.Material.GsmMaterialId)
+            .Distinct()
+            .ToList();
+
+        await EnsureHkAssignableMaterialsAsync(newAssignmentMaterialIds, ct);
 
         var removedItems = existing.Items.Where(i => !incomingItemIds.Contains(i.Id)).ToList();
         foreach (var item in removedItems)
             _db.HKCardItems.Remove(item);
 
-        foreach (var incomingItem in incomingItems)
+        foreach (var desired in desiredItems)
         {
-            if (incomingItem.Id != Guid.Empty
-                && incomingItem.HKCardId != Guid.Empty
-                && incomingItem.HKCardId != existing.Id)
+            if (desired.Id != Guid.Empty
+                && desired.HKCardId != Guid.Empty
+                && desired.HKCardId != existing.Id)
             {
                 throw new InvalidOperationException("Обнаружена строка, не принадлежащая данной ХК.");
             }
 
-            var existingItem = existing.Items.FirstOrDefault(i => i.Id == incomingItem.Id);
+            var existingItem = desired.Id == Guid.Empty
+                ? null
+                : existing.Items.FirstOrDefault(i => i.Id == desired.Id);
+
+            // Строка, которой нет в БД, но которая уже отслеживается в графе
+            // входа (так добавляет UI), обязана быть в состоянии Added: иначе EF
+            // шлёт UPDATE несуществующей строки, а её материалы — INSERT раньше
+            // родителя, и возникает нарушение FK.
+            if (existingItem != null && !persistedItemIdSet.Contains(existingItem.Id)
+                && _db.Entry(existingItem).State != EntityState.Added)
+            {
+                _db.Entry(existingItem).State = EntityState.Added;
+            }
+
             if (existingItem != null)
             {
-                existingItem.AssemblyUnitId = incomingItem.AssemblyUnitId;
-                existingItem.Quantity = incomingItem.Quantity;
-                existingItem.Volume = incomingItem.Volume;
-                existingItem.UnitOfMeasure = incomingItem.UnitOfMeasure;
-                existingItem.Periodicity = incomingItem.Periodicity;
-                existingItem.Notes = incomingItem.Notes;
-                existingItem.SortOrder = incomingItem.SortOrder;
+                existingItem.AssemblyUnitId = desired.AssemblyUnitId;
+                existingItem.Quantity = desired.Quantity;
+                existingItem.Volume = desired.Volume;
+                existingItem.UnitOfMeasure = desired.UnitOfMeasure;
+                existingItem.Periodicity = desired.Periodicity;
+                existingItem.Notes = desired.Notes;
+                existingItem.SortOrder = desired.SortOrder;
 
-                _db.HKCardItemMaterials.RemoveRange(existingItem.Materials);
-                foreach (var mat in incomingItem.Materials)
-                {
-                    existingItem.Materials.Add(new HKCardItemMaterial
-                    {
-                        Id = Guid.NewGuid(),
-                        HKCardItemId = existingItem.Id,
-                        GsmMaterialId = mat.GsmMaterialId,
-                        Category = mat.Category
-                    });
-                }
+                SyncItemMaterialsAsync(existingItem, desired.Materials, persistedMaterialIds);
             }
             else
             {
-                incomingItem.Id = Guid.NewGuid();
-                incomingItem.HKCardId = existing.Id;
-                incomingItem.Materials = incomingItem.Materials.Select(m => new HKCardItemMaterial
+                var newItem = new HKCardItem
                 {
-                    Id = Guid.NewGuid(),
-                    HKCardItemId = incomingItem.Id,
-                    GsmMaterialId = m.GsmMaterialId,
-                    Category = m.Category
-                }).ToList();
-                _db.HKCardItems.Add(incomingItem);
+                    Id = desired.Id == Guid.Empty ? Guid.NewGuid() : desired.Id,
+                    HKCardId = existing.Id,
+                    AssemblyUnitId = desired.AssemblyUnitId,
+                    Quantity = desired.Quantity,
+                    Volume = desired.Volume,
+                    UnitOfMeasure = desired.UnitOfMeasure,
+                    Periodicity = desired.Periodicity,
+                    Notes = desired.Notes,
+                    SortOrder = desired.SortOrder,
+                };
+
+                // Материалы добавляются в коллекцию ДО Add родителя: иначе EF
+                // не видит дочерние строки при планировании вставки, шлёт INSERT
+                // строки ХК раньше материалов и получает нарушение FK.
+                foreach (var m in desired.Materials)
+                {
+                    newItem.Materials.Add(new HKCardItemMaterial
+                    {
+                        Id = m.Id == Guid.Empty ? Guid.NewGuid() : m.Id,
+                        HKCardItemId = newItem.Id,
+                        GsmMaterialId = m.GsmMaterialId,
+                        Category = m.Category,
+                    });
+                }
+
+                _db.HKCardItems.Add(newItem);
             }
         }
 
@@ -2292,31 +2364,131 @@ public class HKCardService
     }
 
     /// <summary>
-    /// Запрещает использовать в строках ХК марки с несколькими подгруппами.
-    /// Переходная мера варианта A §4.3 контракта ГСМ: пока legacy-потребители
-    /// читают прежний <c>Type</c>, одна такая марка не имеет однозначного
-    /// представления. После переключения потребителей (PR-5) проверка снимается.
+    /// Синхронизирует набор материалов строки ХК с желаемым состоянием по
+    /// устойчивым PK. Существующие строки с тем же <c>Id</c> не удаляются и не
+    /// вставляются повторно: изменённые скаляры обновляются на месте, отсутствующие
+    /// удаляются, действительно новые добавляются. Пересоздание с новым
+    /// <c>Guid</c> ломало бы внешние ссылки и аудит снимков ИК.
     /// </summary>
-    private async Task EnsureNoMultiSubgroupMaterialsAsync(
+    /// <remarks>
+    /// <paramref name="persistedMaterialIds"/> — идентификаторы строк, реально
+    /// сохранённых в БД для этой карточки (независимая проекция). Только по ним
+    /// решается, что удалять: коллекция навигации может быть уже отслеживаемой и
+    /// изменённой UI.
+    /// </remarks>
+    private void SyncItemMaterialsAsync(
+        HKCardItem item,
+        IReadOnlyList<DesiredMaterial> desired,
+        HashSet<Guid> persistedMaterialIds)
+    {
+        var desiredById = new Dictionary<Guid, DesiredMaterial>();
+        foreach (var m in desired)
+        {
+            var id = m.Id == Guid.Empty ? Guid.NewGuid() : m.Id;
+            desiredById[id] = m with { Id = id };
+        }
+
+        // Удаляются только те сохранённые строки, которых нет в желаемом
+        // состоянии. Строки, уже помеченные EF как удалённые самим UI, здесь не
+        // видны и повторно не трогаются.
+        foreach (var current in item.Materials.Where(m => persistedMaterialIds.Contains(m.Id)))
+        {
+            if (!desiredById.ContainsKey(current.Id))
+                _db.HKCardItemMaterials.Remove(current);
+        }
+
+        var currentById = item.Materials.ToDictionary(m => m.Id);
+
+        foreach (var (id, m) in desiredById)
+        {
+            if (!currentById.TryGetValue(id, out var tracked))
+            {
+                tracked = new HKCardItemMaterial { Id = id, HKCardItemId = item.Id };
+                item.Materials.Add(tracked);
+            }
+
+            tracked.GsmMaterialId = m.GsmMaterialId;
+            tracked.Category = m.Category;
+
+            // Строка, которой нет в БД, обязана быть в состоянии Added. Навигационное
+            // обнаружение EF помечает такой объект как Modified, и сохранение шлёт
+            // UPDATE несуществующей строки — DbUpdateConcurrencyException вместо INSERT.
+            if (!persistedMaterialIds.Contains(id) && _db.Entry(tracked).State != EntityState.Added)
+                _db.Entry(tracked).State = EntityState.Added;
+        }
+    }
+
+    /// <summary>
+    /// Независимый снимок желаемой строки ХК: только скаляры и идентификаторы,
+    /// без ссылок на отслеживаемые EF-объекты.
+    /// </summary>
+    private sealed record DesiredItem(
+        Guid Id,
+        Guid HKCardId,
+        Guid AssemblyUnitId,
+        int Quantity,
+        decimal Volume,
+        string? UnitOfMeasure,
+        string? Periodicity,
+        string? Notes,
+        int SortOrder,
+        List<DesiredMaterial> Materials);
+
+    private sealed record DesiredMaterial(Guid Id, Guid GsmMaterialId, GsmCategory Category);
+
+    private sealed record PersistedMaterialKey(
+        Guid Id, Guid HKCardItemId, Guid GsmMaterialId, GsmCategory Category);
+
+    /// <summary>
+    /// Запрещает использовать в строках ХК марки, у которых не ровно одна
+    /// подгруппа. Переходная мера варианта A §4.3 контракта ГСМ: пока
+    /// legacy-потребители читают прежний <c>Type</c>, такая марка не имеет
+    /// однозначного представления. После переключения потребителей (PR-5)
+    /// проверка снимается.
+    /// </summary>
+    private async Task EnsureHkAssignableMaterialsAsync(
         IEnumerable<Guid> materialIds, CancellationToken ct)
     {
         var ids = materialIds.Distinct().ToList();
         if (ids.Count == 0) return;
 
-        var multiSubgroupName = await _db.GsmMaterialClassifications
+        // Количество классификаций по марке и её название читаются одним
+        // проекционным запросом: 0 подгрупп так же недопустимо, как и несколько.
+        var rows = await _db.GsmMaterialClassifications
             .AsNoTracking()
             .Where(c => ids.Contains(c.GsmMaterialId))
             .GroupBy(c => c.GsmMaterialId)
-            .Where(g => g.Count() > 1)
-            .Select(g => g.Key)
-            .Join(_db.GsmMaterials.AsNoTracking(), id => id, m => m.Id, (id, m) => m.Name)
-            .OrderBy(n => n)
-            .FirstOrDefaultAsync(ct);
+            .Select(g => new { GsmMaterialId = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
 
-        if (multiSubgroupName != null)
-            throw new InvalidOperationException(
-                $"Марка «{multiSubgroupName}» указана в нескольких подгруппах и пока не может использоваться в строках ХК. " +
-                "Выберите марку с одной подгруппой.");
+        var countById = rows.ToDictionary(r => r.GsmMaterialId, r => r.Count);
+
+        var names = await _db.GsmMaterials
+            .AsNoTracking()
+            .Where(m => ids.Contains(m.Id))
+            .Select(m => new { m.Id, m.Name })
+            .ToListAsync(ct);
+
+        var nameById = names.ToDictionary(n => n.Id, n => n.Name);
+
+        // Порядок влияет только на текст сообщения, не на решение.
+        var rejected = ids
+            .Where(id => !countById.TryGetValue(id, out var c) || c != 1)
+            .Select(id => (Id: id, Count: countById.TryGetValue(id, out var c2) ? c2 : 0,
+                Name: nameById.TryGetValue(id, out var n) ? n : "(марка не найдена)"))
+            .OrderBy(x => x.Name, StringComparer.Ordinal)
+            .ToList();
+
+        if (rejected.Count == 0) return;
+
+        var first = rejected[0];
+        var reason = first.Count == 0
+            ? "не классифицирована (нет ни одной подгруппы)"
+            : $"указана в {first.Count} подгруппах";
+
+        throw new InvalidOperationException(
+            $"Марка «{first.Name}» {reason} и пока не может использоваться в новых строках ХК. " +
+            "Выберите марку с одной подгруппой.");
     }
 
     public async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)

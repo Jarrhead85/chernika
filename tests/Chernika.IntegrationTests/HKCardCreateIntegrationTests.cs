@@ -33,6 +33,16 @@ public class HKCardCreateIntegrationTests
         s.Db.GsmMaterials.AddRange(m1, m2, m3, m4);
         await s.Db.SaveChangesAsync();
 
+        // Переходное ограничение варианта A §4.3 контракта ГСМ: новая ссылка в
+        // строке ХК допускает только марку с РОВНО одной подгруппой. Марки,
+        // созданные напрямую в БД, классификации не имеют — добавляем её.
+        s.Db.GsmMaterialClassifications.AddRange(
+            new GsmMaterialClassification { Id = Guid.NewGuid(), GsmMaterialId = m1.Id, GroupName = "Группа теста", SubgroupName = "Подгруппа 1" },
+            new GsmMaterialClassification { Id = Guid.NewGuid(), GsmMaterialId = m2.Id, GroupName = "Группа теста", SubgroupName = "Подгруппа 2" },
+            new GsmMaterialClassification { Id = Guid.NewGuid(), GsmMaterialId = m3.Id, GroupName = "Группа теста", SubgroupName = "Подгруппа 3" },
+            new GsmMaterialClassification { Id = Guid.NewGuid(), GsmMaterialId = m4.Id, GroupName = "Группа теста", SubgroupName = "Подгруппа 4" });
+        await s.Db.SaveChangesAsync();
+
         var item = new HKCardItem
         {
             Id = Guid.NewGuid(),
