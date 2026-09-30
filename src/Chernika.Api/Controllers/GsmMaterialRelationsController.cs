@@ -71,19 +71,22 @@ public class GsmMaterialRelationsController : ControllerBase
         return Ok(GsmRelationMapper.ToDto(view));
     }
 
-    /// <summary>Марки для выбора в форме связи (опубликованные, неудалённые).</summary>
+    /// <summary>
+    /// Марки для выбора в форме связи (опубликованные, неудалённые).
+    /// <para>
+    /// Поиск выполняется на сервере по <c>search</c>; 200 — предел одной выдачи,
+    /// а не всего справочника. <c>includeIds</c> возвращает конкретные марки
+    /// (например, выбранные в редактируемой связи), даже если они не попали в
+    /// выдачу поиска. Подписи различимы: уникальности <c>Name</c> в БД нет.
+    /// </para>
+    /// </summary>
     [HttpGet("material-options")]
-    public async Task<ActionResult<List<GsmMaterialDto>>> GetMaterialOptions(
-        [FromQuery] string? search = null)
+    public async Task<ActionResult<List<GsmRelationMaterialOptionDto>>> GetMaterialOptions(
+        [FromQuery] string? search = null,
+        [FromQuery] Guid[]? includeIds = null)
     {
-        var materials = await _gsmService.GetSelectableForRelationAsync(search);
-        return Ok(materials.Select(m => GsmMaterialMapper.ToDto(new GsmMaterialEditView
-        {
-            Id = m.Id,
-            Name = m.Name,
-            Nd = m.Nd,
-            InGostNomenclature = m.InGostNomenclature,
-        })).ToList());
+        var options = await _gsmService.GetRelationMaterialOptionsAsync(search, default, includeIds);
+        return Ok(options.Select(GsmRelationMapper.ToDto).ToList());
     }
 
     [HttpPost]

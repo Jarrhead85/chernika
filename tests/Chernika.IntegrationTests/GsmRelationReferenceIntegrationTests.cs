@@ -799,8 +799,21 @@ public class GsmRelationReferenceIntegrationTests
         await using var s = _fixture.CreateScope();
         AsNormAdmin(s);
 
-        var options = await s.GsmMaterials.GetSelectableForRelationAsync();
-        var ids = options.Select(m => m.Id).ToHashSet();
+        // Поиск по имени: общая тестовая БД содержит материалы других тестов,
+        // поэтому выдача без поиска ограничена и не покрывает нужные марки.
+        var names = new[] { single, multi, legacy, deleted, draft };
+        var found = new List<GsmRelationMaterialOption>();
+        foreach (var id in names)
+        {
+            // IgnoreQueryFilters: удалённая марка скрыта обычным фильтром, а её
+            // имя нужно, чтобы проверить, что в выдачу выбора она не попадает.
+            var name = await s.Db.GsmMaterials.AsNoTracking().IgnoreQueryFilters()
+                .Where(m => m.Id == id)
+                .Select(m => m.Name).FirstAsync();
+            found.AddRange(await s.GsmMaterials.GetRelationMaterialOptionsAsync(name));
+        }
+
+        var ids = found.Select(m => m.Id).ToHashSet();
 
         Assert.Contains(single, ids);
         Assert.Contains(multi, ids);
@@ -809,8 +822,10 @@ public class GsmRelationReferenceIntegrationTests
         Assert.DoesNotContain(draft, ids);
 
         // Право создавать ссылку в строке ХК остаётся отдельным правилом.
+        var hkOptions = await s.GsmMaterials.GetRelationMaterialOptionsAsync();
         var forHk = await s.GsmMaterials.GetActiveForSelectionAsync();
         var hkIds = forHk.Select(m => m.Id).ToHashSet();
+        Assert.NotNull(hkOptions);
         Assert.Contains(single, hkIds);
         Assert.DoesNotContain(multi, hkIds);
         Assert.DoesNotContain(legacy, hkIds);
@@ -1151,16 +1166,20 @@ public class GsmRelationReferenceIntegrationTests
     // ── Фикстуры ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Строка первого справочника для марки. <c>ShowDeleted = null</c> означает
-    /// «все марки, включая удалённые»: при <c>true</c> фильтр оставляет ТОЛЬКО
-    /// удалённые, а живая марка в выдачу не попадает.
+    /// Строка первого справочника для марки. Поиск идёт по имени: общая тестовая
+    /// БД накапливает материалы других тестов, и опора на «первые 200 строк» была
+    /// бы нестабильной. <c>ShowDeleted = null</c> означает «все марки, включая
+    /// удалённые»: при <c>true</c> фильтр оставляет ТОЛЬКО удалённые.
     /// </summary>
     private async Task<GsmMaterialSummary> LoadSummaryAsync(TestScope s, Guid materialId)
     {
+        var material = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == materialId);
+
         var result = await s.GsmMaterials.GetPagedAsync(new GsmMaterialQuery
         {
             PageSize = 200,
             ShowDeleted = null,
+            Search = material.Name,
         });
 
         var row = result.Items.FirstOrDefault(m => m.Id == materialId);

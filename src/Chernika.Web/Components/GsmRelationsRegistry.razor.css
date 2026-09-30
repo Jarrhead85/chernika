@@ -1,0 +1,335 @@
+/* Второй справочник направленных связей марок ГСМ.
+   Оформление — по UI kit v2 (редакция 3): панели и контролы соседнего первого
+   справочника, общий .tableWrap, токены темы. Отдельный набор размеров для этого
+   справочника не заводится: контролы наследуют .field input/select из site.css,
+   здесь только раскладка и выравнивание. */
+
+/* ── Шапка списка ───────────────────────────────────────────────────────── */
+
+.relHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Фильтры ──────────────────────────────────────────────────────────────
+   Поля берут размеры из .field input/select (site.css), поэтому три фильтра
+   одинаковы по высоте и радиусу автоматически. Кнопки выравниваются по нижнему
+   краю строки, а не по центру. */
+
+.relFilters {
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) minmax(170px, 1fr) minmax(150px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.relFilters .field {
+  margin: 0;
+}
+
+.relFilterButtons {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+@media (max-width: 1120px) {
+  .relFilters {
+    grid-template-columns: 1fr 1fr;
+  }
+  .relFilterButtons {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .relFilters {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Таблица ──────────────────────────────────────────────────────────────
+   Горизонтальная прокрутка живёт в .tableWrap, страница не скроллится вбок.
+   Ширины колонок заданы и для th, и для td: table-layout:fixed распределяет
+   колонки по первому ряду, поэтому любая из ячеек может переносить текст, не
+   меняя ширину. */
+
+.relTable {
+  width: 100%;
+  min-width: 1080px;
+  table-layout: fixed;
+}
+
+.relTable th,
+.relTable td {
+  vertical-align: middle;   /* все ячейки по середине высоты строки */
+  font-size: 12.5px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.relTable thead th {
+  text-align: left;
+  font-weight: 650;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.relTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Сетка выравнивания по требованию приёмки. */
+.relColPrimary  { width: 23%; }  /* основная марка — слева */
+.relColRelated  { width: 25%; }  /* связанная марка — слева */
+.relColType     { width: 16%; text-align: center; } /* тип связи — по центру */
+.relColNote     { width: 18%; }  /* примечание — слева, перенос */
+.relColStatus   { width: 10%; text-align: center; } /* статус — по центру */
+.relColActions  { width: 8%;  text-align: right; }  /* действия — вправо */
+
+.relTable thead th.relColType,
+.relTable thead th.relColStatus,
+.relTable thead th.relColActions {
+  text-align: inherit;
+}
+
+.relTable td.relColType,
+.relTable td.relColStatus,
+.relTable td.relColActions {
+  text-align: inherit;
+}
+
+.relTable td.relColType .tag,
+.relTable td.relColStatus .tag {
+  display: inline-block;
+}
+
+/* Стрелка направления не слипается с названием связанной марки. */
+.relArrow {
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.relNoteCell {
+  overflow-wrap: anywhere;
+}
+
+/* Удалённая связь или связь с удалённой маркой — приглушена, но читаема. */
+.relRowMuted td {
+  color: var(--muted);
+}
+
+.relMuted {
+  color: var(--muted);
+}
+
+/* ── Действия ──────────────────────────────────────────────────────────────
+   Один компактный контейнер на строку, без разброса по ячейке. */
+
+.relActionRow {
+  display: inline-flex;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.relDanger {
+  color: var(--bad);
+}
+
+/* ── Пагинация ──────────────────────────────────────────────────────────── */
+
+.relPager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── Форма ────────────────────────────────────────────────────────────────
+   Сетка .form и контролы .field приходят из site.css: марки, тип связи и
+   примечание выглядят как поля первого справочника. */
+
+.relField {
+  /* поле-якорь выбора: позиционируется для списка вариантов */
+  position: relative;
+}
+
+.relReq {
+  color: var(--bad);
+}
+
+.relFormError {
+  grid-column: 1 / -1;
+  color: var(--bad);
+  font-size: 13px;
+}
+
+.relFieldError {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--bad);
+  line-height: 1.35;
+}
+
+.relError {
+  color: var(--bad);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+/* ── Выбор марки ──────────────────────────────────────────────────────────
+   Blazor-only вариант (без JS-interop): по UI kit редакции 3 новые popup
+   на document-level событиях — источник прошлых инцидентов, поэтому список
+   вариантов позиционируется средствами CSS внутри поля. */
+
+.relPickerAnchor {
+  position: relative;
+}
+
+.relPickerTrigger {
+  width: 100%;
+  justify-content: center;
+  border-radius: var(--radius2, 10px);
+}
+
+.relPickerSearch {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--text);
+  border-radius: var(--radius2, 10px);
+  padding: 10px;
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+}
+
+.relPickerSearch:focus {
+  border-color: rgba(79, 140, 255, .4);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .12);
+}
+
+.relPickerList {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius2, 10px);
+  box-shadow: var(--shadow);
+  padding: 4px 0;
+}
+
+.relPickerItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.relPickerItem:hover,
+.relPickerItemActive {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.relPickerEmpty {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Выбранная марка показывается тегом с явной очисткой. */
+.relChip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius2, 10px);
+  background: var(--panel2);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.relChip > span {
+  overflow-wrap: anywhere;
+}
+
+.relChipX {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 6px;
+}
+
+.relChipX:hover {
+  color: var(--bad);
+}
+
+.relChipX:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Confirm-dialog удаления связи ───────────────────────────────────────
+   Базовые .modal/.modalHeader/.modalBody/.modalFooter/.modalCloseButton берутся
+   из site.css. Ограничение ширины и типографика из UI kit (ред. 3) в site.css
+   отсутствуют, поэтому определены здесь: без них диалог подтверждения
+   превратился бы в полноразмерную форму. */
+
+.confirmDialog {
+  max-width: 420px;
+}
+
+.confirmDialog .modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirmMessage {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.confirmDetails {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Фокус ────────────────────────────────────────────────────────────────
+   Акцентная рамка и ring на клавиатурной навигации — как в site.css для полей. */
+
+.tableWrap:focus-visible,
+.relPickerTrigger:focus-visible,
+.relChipX:focus-visible,
+.relActionRow .linkBtn:focus-visible,
+.relFilterButtons .btn:focus-visible,
+.relPager .btn:focus-visible {
+  outline: none;
+  border-color: rgba(79, 140, 255, .4);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .12);
+}

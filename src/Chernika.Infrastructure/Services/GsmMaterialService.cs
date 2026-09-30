@@ -345,11 +345,173 @@ public class GsmMaterialService
                 || (m.NatoIndex != null && EF.Functions.ILike(m.NatoIndex, pattern)));
         }
 
+        // 200 — предел ОДНОЙ выдачи, а не всего справочника: поиск выполняется
+        // на сервере, поэтому любая опубликованная марка достижима вводом текста.
+        // Сортировка по имени продублирована по Id: уникальности Name нет, и без
+        // этого одноимённые марки могли бы «пропадать» между выдачами.
         return await q
             .OrderBy(m => m.Name)
-            .ThenBy(m => m.Nd)
+            .ThenBy(m => m.Id)
             .Take(RelationSelectionLimit)
             .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Варианты выбора марки для формы связи с готовыми подписями.
+    /// <para>
+    /// Считаются на сервере, поэтому подписи одинаковы в Web и API. Ключевой
+    /// момент: подпись включает НД и классификацию, потому что уникальности
+    /// <c>GsmMaterial.Name</c> нет и одноимённые марки иначе неразличимы.
+    /// Если отображаемые сведения совпали, подпись дополняется порядковым
+    /// номером среди одноимённых — выбор «первой молча» исключён на уровне
+    /// представления.
+    /// </para>
+    /// </summary>
+    public async Task<List<GsmRelationMaterialOption>> GetRelationMaterialOptionsAsync(
+        string? searchText = null,
+        CancellationToken ct = default,
+        IEnumerable<Guid>? includeIds = null)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        var include = (includeIds ?? Enumerable.Empty<Guid>())
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        var bySearch = await LoadRelationMaterialOptionsAsync(searchText, ct);
+
+        // Марки уже выбранной связи показываются всегда, даже если не попали в
+        // выдачу поиска: при правке выбор не должен «слететь».
+        if (include.Count > 0)
+        {
+            var missing = include.Where(id => bySearch.All(o => o.Id != id)).ToList();
+            if (missing.Count > 0)
+            {
+                var extra = await LoadRelationMaterialOptionsAsync(null, ct, missing);
+                bySearch.AddRange(extra);
+            }
+        }
+
+        return BuildRelationMaterialLabels(bySearch);
+    }
+
+    /// <summary>
+    /// Подписи вариантов выбора. Одинаковые отображаемые сведения получают
+    /// различающий суффикс, чтобы две одноимённые марки не выглядели
+    /// одинаковыми и выбор не был неоднозначным.
+    /// </summary>
+    private static List<GsmRelationMaterialOption> BuildRelationMaterialLabels(
+        List<GsmRelationMaterialOption> options)
+    {
+        var baseLabels = options
+            .Select(o => new { Option = o, Label = RelationMaterialOptionLabel(o) })
+            .ToList();
+
+        var duplicateCount = baseLabels
+            .GroupBy(x => x.Label, StringComparer.Ordinal)
+            .Where(g => g.Count() > 1)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+
+        var counters = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        return baseLabels.Select(x =>
+        {
+            var duplicate = duplicateCount.TryGetValue(x.Label, out var n) && n > 1;
+
+            if (!duplicate)
+            {
+                x.Option.DisplayLabel = x.Label;
+                return x.Option;
+            }
+
+            // Одноимённые и равные по прочим сведениям: различаем порядковым
+            // номером, а не молча выбираем первую.
+            counters.TryGetValue(x.Label, out var seen);
+            counters[x.Label] = seen + 1;
+            x.Option.DisplayLabel = $"{x.Label} (вариант {seen + 1})";
+            return x.Option;
+        }).ToList();
+    }
+
+    /// <summary>Базовая подпись марки: имя, НД и классификация.</summary>
+    private static string RelationMaterialOptionLabel(GsmRelationMaterialOption o)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(o.Name)) parts.Add(o.Name.Trim());
+        if (!string.IsNullOrWhiteSpace(o.Nd)) parts.Add($"НД {o.Nd.Trim()}");
+
+        if (!string.IsNullOrWhiteSpace(o.GroupName))
+        {
+            var subs = o.SubgroupNames.Count == 0
+                ? string.Empty
+                : $"/{string.Join(", ", o.SubgroupNames)}";
+            parts.Add($"{o.GroupName!.Trim()}{subs}");
+        }
+
+        if (parts.Count == 0) parts.Add("без наименования");
+
+        var label = string.Join(" — ", parts);
+        if (o.IsDeleted) label += " — удалена";
+        else if (o.IsDraft) label += " — черновик";
+        return label;
+    }
+
+    private async Task<List<GsmRelationMaterialOption>> LoadRelationMaterialOptionsAsync(
+        string? searchText, CancellationToken ct, IEnumerable<Guid>? forceIds = null)
+    {
+        IQueryable<GsmMaterial> q = _db.GsmMaterials
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(m => !m.IsDeleted && !m.IsDraft);
+
+        if (forceIds is not null)
+        {
+            var forcedIds = forceIds.ToList();
+            if (forcedIds.Count == 0) return new List<GsmRelationMaterialOption>();
+            q = q.Where(m => forcedIds.Contains(m.Id));
+        }
+        else if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var pattern = $"%{searchText.Trim()}%";
+            q = q.Where(m => EF.Functions.ILike(m.Name, pattern)
+                || (m.Nd != null && EF.Functions.ILike(m.Nd, pattern))
+                || (m.NatoIndex != null && EF.Functions.ILike(m.NatoIndex, pattern)));
+        }
+
+        // Идентификаторы марок нужны вместе с классификацией: она подгружается
+        // только для отдаваемой страницы, а не всем справочником.
+        var rows = await q
+            .OrderBy(m => m.Name)
+            .ThenBy(m => m.Id)
+            .Take(forceIds is not null ? forceIds.Count() : RelationSelectionLimit)
+            .Select(m => new { m.Id, m.Name, m.Nd, m.InGostNomenclature, m.IsDeleted, m.IsDraft })
+            .ToListAsync(ct);
+
+        var ids = rows.Select(r => r.Id).ToList();
+        var classifications = ids.Count == 0
+            ? new List<GsmClassificationRef>()
+            : (await _db.GsmMaterialClassifications
+                .AsNoTracking()
+                .Where(c => ids.Contains(c.GsmMaterialId))
+                .Select(c => new GsmClassificationRef(c.GsmMaterialId, c.GroupName, c.SubgroupName))
+                .ToListAsync(ct));
+
+        return rows.Select(m =>
+        {
+            var own = classifications.Where(c => c.GsmMaterialId == m.Id).ToList();
+            return new GsmRelationMaterialOption
+            {
+                Id = m.Id,
+                Name = m.Name,
+                Nd = m.Nd,
+                InGostNomenclature = m.InGostNomenclature,
+                IsDeleted = m.IsDeleted,
+                IsDraft = m.IsDraft,
+                GroupName = own.Count == 0 ? null : own[0].GroupName,
+                SubgroupNames = own.Select(c => c.SubgroupName).OrderBy(s => s, StringComparer.Ordinal).ToList(),
+            };
+        }).ToList();
     }
 
     /// <summary>
@@ -649,8 +811,13 @@ public class GsmMaterialService
             .AsNoTracking()
             .IgnoreQueryFilters();
 
-        if (query.ShowDeleted != true)
+        // Ровно три режима статуса. Прежняя проверка `!= true` смешивала их:
+        // «Удалённые» (true) показывали ВСЕ, а «Все» (null) — только активные.
+        //   false → только активные; true → только удалённые; null → все.
+        if (query.ShowDeleted == false)
             q = q.Where(r => !r.IsDeleted);
+        else if (query.ShowDeleted == true)
+            q = q.Where(r => r.IsDeleted);
 
         if (query.RelationType.HasValue)
             q = q.Where(r => r.RelationType == query.RelationType.Value);
@@ -677,15 +844,18 @@ public class GsmMaterialService
                 ? q.OrderByDescending(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name)
                 : q.OrderBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name),
             "Related" => query.SortDescending
-                ? q.OrderByDescending(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.PrimaryGsmMaterial.Name)
-                : q.OrderBy(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.PrimaryGsmMaterial.Name),
+                ? q.OrderByDescending(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.Id)
+                : q.OrderBy(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.Id),
             "RelationType" => query.SortDescending
-                ? q.OrderByDescending(r => r.RelationType).ThenBy(r => r.PrimaryGsmMaterial.Name)
-                : q.OrderBy(r => r.RelationType).ThenBy(r => r.PrimaryGsmMaterial.Name),
+                ? q.OrderByDescending(r => r.RelationType).ThenBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.Id)
+                : q.OrderBy(r => r.RelationType).ThenBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.Id),
             _ => query.SortDescending
-                ? q.OrderByDescending(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name)
-                : q.OrderBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name),
+                ? q.OrderByDescending(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.Id)
+                : q.OrderBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.Id),
         };
+
+        // ThenBy(Id) во всех ветках: без устойчивого tie-break страницы «прыгают»
+        // при равных именах марок, потому что уникальности Name в БД нет.
 
         var rows = await ordered
             .Skip((page - 1) * pageSize)
@@ -863,7 +1033,7 @@ public class GsmMaterialService
 
         if (relation.IsDeleted)
             throw new InvalidOperationException(
-                "Связь удалена. Восстановите её перед редактированием.");
+                "Удалённую связь изменить нельзя. Создайте новую связь для этой пары марок.");
 
         await LockMaterialsOrderedAsync(new[] { primaryId, relatedId }, ct);
 
@@ -1023,6 +1193,10 @@ public class GsmMaterialService
     /// <summary>Ссылка на марку для проверок связи: имя и признаки без EF-навигации.</summary>
     private sealed record RelationMaterialRef(
         Guid Id, string Name, bool InGostNomenclature, bool IsDeleted, bool IsDraft);
+
+    /// <summary>Строка классификации марки для подписи варианта выбора.</summary>
+    private sealed record GsmClassificationRef(
+        Guid GsmMaterialId, string GroupName, string SubgroupName);
 
     private async Task<List<RelationMaterialRef>> LoadRelationMaterialsAsync(
         IEnumerable<Guid> ids, CancellationToken ct)

@@ -117,6 +117,21 @@ public record GsmRelationListApiResponse(
     IReadOnlyList<GsmRelationDto> Items,
     int TotalCount, int Page, int PageSize, int TotalPages);
 
+/// <summary>
+/// Марка для выбора в связи. <see cref="DisplayLabel"/> различима: уникальности
+/// имени в БД нет, поэтому подпись включает НД и классификацию.
+/// </summary>
+public record GsmRelationMaterialOptionDto(
+    Guid Id,
+    string Name,
+    string DisplayLabel,
+    string? Nd,
+    bool InGostNomenclature,
+    bool IsDeleted,
+    bool IsDraft,
+    string? GroupName,
+    IReadOnlyList<string> SubgroupNames);
+
 public static class GsmRelationMapper
 {
     public static GsmRelationDto ToDto(GsmRelationSummary v) => new(
@@ -147,6 +162,17 @@ public static class GsmRelationMapper
         RelationType = ToRelationType(r.RelationType),
         Note = r.Note,
     };
+
+    public static GsmRelationMaterialOptionDto ToDto(GsmRelationMaterialOption v) => new(
+        v.Id,
+        v.Name,
+        v.DisplayLabel,
+        v.Nd,
+        v.InGostNomenclature,
+        v.IsDeleted,
+        v.IsDraft,
+        v.GroupName,
+        v.SubgroupNames);
 }
 
 // ── Агрегат ──────────────────────────────────────────────────────

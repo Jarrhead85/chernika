@@ -91,6 +91,11 @@ public sealed class GsmRelationEditView
 
 /// <summary>
 /// Марка для выбора в форме связи: имя и признаки, а не технические Guid в UI.
+/// <para>
+/// Уникальности <c>GsmMaterial.Name</c> НЕТ, поэтому одной подписи недостаточно:
+/// вариант показывает имя, НД и классификацию. Идентификатор переносится при
+/// выборе явно и не выводится.
+/// </para>
 /// </summary>
 public sealed class GsmRelationMaterialOption
 {
@@ -98,4 +103,20 @@ public sealed class GsmRelationMaterialOption
     public string Name { get; init; } = string.Empty;
     public string? Nd { get; init; }
     public bool InGostNomenclature { get; init; }
+
+    /// <summary>true, если марка soft-deleted: показать в правке, но не предлагать для новой связи.</summary>
+    public bool IsDeleted { get; init; }
+
+    /// <summary>true, если марка — черновик предложения.</summary>
+    public bool IsDraft { get; init; }
+
+    public string? GroupName { get; init; }
+    public IReadOnlyList<string> SubgroupNames { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Подпись варианта выбора. Уникальность имён не гарантирована, поэтому в
+    /// подпись входят НД и классификация; если они совпали, добавляется счётчик
+    /// одноимённых — см. <c>RelationMaterialOptionLabel</c> в сервисе.
+    /// </summary>
+    public string DisplayLabel { get; set; } = string.Empty;
 }
