@@ -434,16 +434,35 @@
             return;
         }
 
-        // Новая марка публикуется сразу: классификация обязательна. Правка
-        // существующей legacy-марки может её не содержать — группу не выдумываем.
-        if (!editing && string.IsNullOrWhiteSpace(form.GroupName))
+        // Правило совпадает с серверным (GsmMaterialService.NormalizeRequest и
+        // CreateAsync/UpdateAsync), чтобы форма не отклоняла то, что сервер примет,
+        // и наоборот:
+        //   создание опубликованной марки — группа и минимум одна подгруппа;
+        //   правка — если группа не задана и подгрупп нет, обычные поля править можно
+        //     (правка изначально неклассифицированной legacy-марки, группу не выдумываем);
+        //   если группа задана — нужна минимум одна подгруппа;
+        //   если подгруппы есть без группы — ошибка группы.
+        var hasGroup = !string.IsNullOrWhiteSpace(form.GroupName);
+        var hasSubgroups = form.SubgroupNames.Count > 0;
+
+        if (!editing && !hasGroup)
         {
             groupError = "Укажите группу ГСМ: новая марка публикуется с одной группой и минимум одной подгруппой.";
             return;
         }
-        if (form.SubgroupNames.Count == 0 && (editing || !string.IsNullOrWhiteSpace(form.GroupName)))
+        if (!editing && !hasSubgroups)
         {
             subgroupError = "Укажите минимум одну подгруппу ГСМ.";
+            return;
+        }
+        if (hasGroup && !hasSubgroups)
+        {
+            subgroupError = "Укажите минимум одну подгруппу ГСМ.";
+            return;
+        }
+        if (!hasGroup && hasSubgroups)
+        {
+            groupError = "Подгруппы указаны без группы. Укажите группу или уберите подгруппы.";
             return;
         }
 

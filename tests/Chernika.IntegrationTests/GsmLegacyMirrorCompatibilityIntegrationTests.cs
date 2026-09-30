@@ -113,6 +113,101 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         Assert.Equal("Примечание", await ReadAsync(id, m => m.Note));
     }
 
+    // ── A1: правила формы и сервиса совпадают ────────────────────────────
+
+    [Fact]
+    public async Task Update_ClassifiedMaterial_WithoutGroupAndSubgroups_IsRejected()
+    {
+        // Явное удаление классификации не поддерживается: молча терять её нельзя.
+        var id = await CreateMaterialAsync("Классифицированная", new List<string> { "Подгруппа" });
+
+        await using var s = _fixture.CreateScope();
+        SetRefEditor(s);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            s.GsmMaterials.UpdateAsync(id, new GsmMaterialWriteRequest
+            {
+                Name = "Попытка снять классификацию",
+                Nd = "ГОСТ 1",
+            }));
+
+        Assert.Contains("классификац", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Классификация на месте.
+        Assert.Equal(1, await CountClassificationsAsync(id));
+        Assert.Equal("Подгруппа", await ReadAsync(id, m => m.Type));
+    }
+
+    [Fact]
+    public async Task Update_SubgroupsWithoutGroup_IsRejected()
+    {
+        var id = await CreateLegacyMaterialAsync("Без группы " + Suffix(), "Исторический тип");
+
+        await using var s = _fixture.CreateScope();
+        SetRefEditor(s);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            s.GsmMaterials.UpdateAsync(id, new GsmMaterialWriteRequest
+            {
+                Name = "Подгруппы без группы",
+                SubgroupNames = new List<string> { "Одинокая" },
+            }));
+
+        Assert.Contains("групп", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, await CountClassificationsAsync(id));
+        Assert.Equal("Исторический тип", await ReadAsync(id, m => m.Type));
+    }
+
+    [Fact]
+    public async Task Update_GroupWithoutSubgroups_IsRejected()
+    {
+        var id = await CreateLegacyMaterialAsync("Без подгрупп " + Suffix(), "Исторический тип");
+
+        await using var s = _fixture.CreateScope();
+        SetRefEditor(s);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            s.GsmMaterials.UpdateAsync(id, new GsmMaterialWriteRequest
+            {
+                Name = "Группа без подгрупп",
+                GroupName = "Моторные масла",
+                SubgroupNames = new List<string>(),
+            }));
+
+        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, await CountClassificationsAsync(id));
+    }
+
+    [Fact]
+    public async Task Update_LegacyMaterial_CanAcquireClassification()
+    {
+        // Обратный переход разрешён: legacy-марку можно классифицировать обычной
+        // правкой, после чего она становится доступной для новых строк ХК.
+        var id = await CreateLegacyMaterialAsync("Классифицируемая " + Suffix(), "Исторический тип");
+
+        await using var s = _fixture.CreateScope();
+        SetRefEditor(s);
+
+        var result = await s.GsmMaterials.UpdateAsync(id, new GsmMaterialWriteRequest
+        {
+            Name = "Классифицируемая " + Suffix(),
+            GroupName = "Моторные масла",
+            SubgroupNames = new List<string> { "Для турбин" },
+        });
+
+        Assert.NotNull(result);
+        Assert.Equal("Моторные масла", result!.GroupName);
+        Assert.Equal(1, await CountClassificationsAsync(id));
+        Assert.Equal("Для турбин", await ReadAsync(id, m => m.Type));
+    }
+
+    private async Task<int> CountClassificationsAsync(Guid materialId)
+    {
+        await using var s = _fixture.CreateScope();
+        return await s.Db.GsmMaterialClassifications.AsNoTracking()
+            .CountAsync(c => c.GsmMaterialId == materialId);
+    }
+
     // ── §4: пределы длин переходных зеркал ───────────────────────────────
 
     [Fact]
@@ -278,11 +373,12 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             s.HK.CreateAsync(BuildCard(nodeId, unitId, multiId, singleId)));
 
-        Assert.Contains("нескольких подгруппах", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("2", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task HkUpdate_WithMultiSubgroupMaterial_IsRejected_WithClearMessage()
+    public async Task HkUpdate_ReplacingWithMultiSubgroupMaterial_IsRejected_WithClearMessage()
     {
         var singleId = await CreateMaterialAsync("Группа ХК " + Suffix(), new List<string> { "Гамма" });
         var (nodeId, unitId) = await CreateNodeAndUnitAsync();
@@ -295,8 +391,9 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
             cardId = created.Id;
         }
 
-        // Теперь у марки появляется вторая подгруппа — правка карточки обязана быть отклонена.
-        var multiId = await AddSecondSubgroupAsync(singleId, "Дельта");
+        // Целевая марка с двумя подгруппами: назначение её вместо прежней —
+        // новая ссылка, поэтому переходный gate применяется.
+        var multiId = await CreateMaterialAsync("Замена " + Suffix(), new List<string> { "Дельта", "Эпсилон" });
 
         await using var s2 = _fixture.CreateScope();
         SetRefEditor(s2);
@@ -305,7 +402,12 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         card!.Items.First().Materials.First().GsmMaterialId = multiId;
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => s2.HK.UpdateAsync(card));
-        Assert.Contains("нескольких подгруппах", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Прежняя ссылка не тронута: отказ до мутаций.
+        await using var s3 = _fixture.CreateScope();
+        Assert.True(await s3.Db.HKCardItemMaterials.AnyAsync(r => r.GsmMaterialId == singleId));
+        Assert.False(await s3.Db.HKCardItemMaterials.AnyAsync(r => r.GsmMaterialId == multiId));
     }
 
     [Fact]
@@ -323,14 +425,12 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
     }
 
     [Fact]
-    public async Task HkUpdate_WithSingleSubgroupMaterial_IsNotBlockedByGuard()
+    public async Task HkUpdate_WithSingleSubgroupMaterial_Succeeds_AndPersists()
     {
-        // Граница запрета: марка с одной подгруппой ограничением не отклоняется.
-        // Проверяется именно отсутствие отказа по подгруппам — положительный
-        // сценарий сохранения здесь недостижим по независимой причине: путь
-        // UpdateAsync падает на DbUpdateConcurrencyException при передаче
-        // карточки, отслеживаемой этим же контекстом (предсуществующий дефект,
-        // см. отчёт; ни один существующий тест UpdateAsync не вызывает).
+        // Граница запрета: марка с одной подгруппой ограничением не отклоняется,
+        // а правка действительно сохраняется. Тест требовал успеха UpdateAsync и
+        // подтверждает результат новым чтением — прежняя версия ловила
+        // InvalidOperationException и тем самым разрешала сломанное сохранение.
         var singleId = await CreateMaterialAsync("Группа ХК " + Suffix(), new List<string> { "Гамма" });
         var (nodeId, unitId) = await CreateNodeAndUnitAsync();
 
@@ -341,39 +441,22 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
             cardId = (await s.HK.CreateAsync(BuildCard(nodeId, unitId, singleId))).Id;
         }
 
-        await using var s2 = _fixture.CreateScope();
-        SetRefEditor(s2);
-        var card = await s2.HK.GetByIdAsync(cardId);
-        Assert.NotNull(card);
-        card!.Notes = "Проверка";
+        await using (var s2 = _fixture.CreateScope())
+        {
+            SetRefEditor(s2);
+            var card = await s2.HK.GetByIdAsync(cardId);
+            Assert.NotNull(card);
+            card!.Notes = "Проверка";
 
-        try
-        {
-            await s2.HK.UpdateAsync(card);
+            var updated = await s2.HK.UpdateAsync(card);
+            Assert.NotNull(updated);
         }
-        catch (InvalidOperationException ex)
-        {
-            Assert.DoesNotContain("подгруппах", ex.Message, StringComparison.OrdinalIgnoreCase);
-        }
-    }
 
-    /// <summary>Добавляет вторую подгруппу существующей марке и возвращает её Id.</summary>
-    private async Task<Guid> AddSecondSubgroupAsync(Guid materialId, string subgroup)
-    {
-        await using var s = _fixture.CreateScope();
-        var group = await s.Db.GsmMaterialClassifications
-            .Where(c => c.GsmMaterialId == materialId)
-            .Select(c => c.GroupName)
-            .FirstAsync();
-        s.Db.GsmMaterialClassifications.Add(new GsmMaterialClassification
-        {
-            Id = Guid.NewGuid(),
-            GsmMaterialId = materialId,
-            GroupName = group,
-            SubgroupName = subgroup,
-        });
-        await s.Db.SaveChangesAsync();
-        return materialId;
+        await using var s3 = _fixture.CreateScope();
+        var saved = await s3.HK.GetByIdAsync(cardId);
+        Assert.NotNull(saved);
+        Assert.Equal("Проверка", saved!.Notes);
+        Assert.Single(saved.Items.SelectMany(i => i.Materials));
     }
 
     // ── §5: нет запросов после commit ─────────────────────────────────────

@@ -468,7 +468,13 @@
                                                 }
                                                 @foreach (var mat in matsInCat)
                                                 {
-                                                    var matName = gsmMaterials.FirstOrDefault(g => g.Id == mat.GsmMaterialId)?.Name ?? "—";
+                                                    // Название берётся из объединённого набора (выбор +
+                                                    // уже сохранённые марки карточки): марка, ставшая
+                                                    // недоступной для нового выбора, не должна выглядеть
+                                                    // как «—» в существующей строке ХК.
+                                                    var matName = MaterialNames.TryGetValue(mat.GsmMaterialId, out var nm)
+                                                        ? nm
+                                                        : "—";
                                                     <div class="hki-mat-tag">
                                                         <span>@matName</span>
                                                         @if (canEdit)
@@ -1110,6 +1116,8 @@
             nodes = await EquipmentService.GetNodesAsync();
             assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
             gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
+            _materialNames = null;
+            await LoadMaterialNamesAsync(CancellationToken.None);
             allMilitaryBranches = await EquipmentService.GetMilitaryBranchesAsync();
         }
 
@@ -1142,12 +1150,15 @@
 
         _loading = true;
         errorMessage = null;
+        // Набор марок карточки сменился — кэш названий сбрасывается.
+        _materialNames = null;
 
         Logger.LogInformation("HKEdit.LoadCardAsync начало: {Id}", requestedId);
 
         try
         {
             await LoadCardAsync(requestedId, ct);
+            await LoadMaterialNamesAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -2141,6 +2152,43 @@
         }
     }
 
+    /// <summary>
+    /// Названия марок для отображения: марки, доступные для нового выбора, плюс
+    /// уже сохранённые в карточке (они могут быть исключены из выбора
+    /// переходным фильтром, но в существующей строке ХК должны оставаться
+    /// читаемыми). Старые документы из-за нового фильтра не скрываются.
+    /// </summary>
+    private Dictionary<Guid, string> MaterialNames =>
+        _materialNames ??= gsmMaterials.ToDictionary(m => m.Id, m => m.Name);
+
+    private Dictionary<Guid, string>? _materialNames;
+
+    /// <summary>
+    /// Набор названий заполняется при загрузке карточки, а не в пути отрисовки:
+    /// отображение не должно ходить в БД. Недоступные для выбора марки дочитываются
+    /// через сервис — справочный просмотр не зависит от переходного ограничения
+    /// новых назначений.
+    /// </summary>
+    private async Task LoadMaterialNamesAsync(CancellationToken ct)
+    {
+        var names = gsmMaterials.ToDictionary(m => m.Id, m => m.Name);
+
+        var missing = card.Items
+            .SelectMany(i => i.Materials)
+            .Select(m => m.GsmMaterialId)
+            .Where(id => id != Guid.Empty && !names.ContainsKey(id))
+            .Distinct()
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            foreach (var (id, name) in await GsmMaterialService.GetNamesAsync(missing, ct))
+                names[id] = name;
+        }
+
+        _materialNames = names;
+    }
+
     private IEnumerable<GsmMaterial> FilteredGsmMaterials(GsmCategory cat, HKCardItem item)
     {
         var search = _matSearch.GetValueOrDefault((item.Id, cat), "")?.Trim().ToLower() ?? "";
@@ -2534,6 +2582,8 @@
                         });
                         createdId = created.Id;
                         gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
+                        _materialNames = null;
+                        await LoadMaterialNamesAsync(CancellationToken.None);
                     }
                     if (_quickCreateItemUiKey.HasValue && _quickCreateCategory.HasValue)
                     {

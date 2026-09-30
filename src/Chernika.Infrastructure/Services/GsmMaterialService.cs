@@ -271,12 +271,55 @@ public class GsmMaterialService
         return await _db.GsmMaterials.FirstOrDefaultAsync(m => m.Id == id, ct);
     }
 
-    public async Task<List<GsmMaterial>> GetActiveForSelectionAsync(string? searchText = null, CancellationToken ct = default)
+    /// <summary>
+    /// Опубликованные марки для выбора в строках ХК.
+    /// </summary>
+    /// <remarks>
+    /// Переходное ограничение варианта A §4.3 контракта ГСМ: пока
+    /// legacy-потребители читают прежний <c>Type</c>, марка должна иметь ровно
+    /// одну подгруппу, поэтому ни 0, ни несколько подгрупп в выборе не
+    /// предлагаются. Уже сохранённые в карточке марки скрывать нельзя — они
+    /// показываются по <c>Id</c> и не требуются для выбора заново. После
+    /// переключения потребителей (PR-5) фильтр снимается.
+    /// </remarks>
+    /// <summary>
+    /// Названия марок по идентификаторам — для отображения уже сохранённых строк
+    /// ХК. Не зависит от переходного фильтра выбора: марка, уже присутствующая в
+    /// документе, остаётся читаемой даже если больше не предлагается для выбора.
+    /// </summary>
+    public async Task<Dictionary<Guid, string>> GetNamesAsync(
+        IEnumerable<Guid> ids, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        var list = ids.Distinct().ToList();
+        if (list.Count == 0) return new Dictionary<Guid, string>();
+
+        return await _db.GsmMaterials
+            .AsNoTracking()
+            .Where(m => list.Contains(m.Id))
+            .Select(m => new { m.Id, m.Name })
+            .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+    }
+
+    public async Task<List<GsmMaterial>> GetActiveForSelectionAsync(
+        string? searchText = null,
+        CancellationToken ct = default,
+        IReadOnlyCollection<Guid>? excludeIds = null)
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
 
         IQueryable<GsmMaterial> q = _db.GsmMaterials
             .Where(m => !m.IsDraft && !m.IsDeleted);
+
+        // Ровно одна строка классификации: агрегат по таблице классификаций.
+        q = q.Where(m => m.Classifications.Count() == 1);
+
+        if (excludeIds is { Count: > 0 })
+        {
+            var excluded = excludeIds.ToList();
+            q = q.Where(m => !excluded.Contains(m.Id));
+        }
 
         if (!string.IsNullOrWhiteSpace(searchText))
         {
@@ -380,8 +423,15 @@ public class GsmMaterialService
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var fields = NormalizeRequest(request);
+
+        // Правило совпадает с формой: группа без подгрупп недопустима, а правка
+        // изначально неклассифицированной legacy-марки (нет ни группы, ни
+        // подгрупп) разрешена — группу не выдумываем и прежний Type не затираем.
         if (fields.GroupName != null && fields.Subgroups.Count == 0)
             throw new InvalidOperationException("Укажите минимум одну подгруппу ГСМ.");
+        if (fields.GroupName == null && fields.Subgroups.Count > 0)
+            throw new InvalidOperationException(
+                "Подгруппы указаны без группы. Укажите группу или уберите подгруппы.");
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
@@ -413,6 +463,15 @@ public class GsmMaterialService
             : existingClassifications[0].GroupName;
         var existingSubgroups = existingClassifications.Select(c => c.SubgroupName).ToList();
 
+        // Явное удаление классификации у уже классифицированной марки — не
+        // поддерживаемая операция: продуктового решения о «возврате марки в
+        // неклассифицированные» нет, а молча терять классификацию нельзя. Правка
+        // изначально неклассифицированной legacy-марки (existingGroup == null)
+        // при этом разрешена и сюда не попадает.
+        if (existingGroup != null && fields.GroupName == null)
+            throw new InvalidOperationException(
+                "Удаление классификации марки не поддерживается. Укажите группу и подгруппу или не меняйте классификацию.");
+
         material.Name = fields.Name;
         material.Nd = fields.Nd;
         material.InGostNomenclature = fields.InGostNomenclature;
@@ -432,6 +491,25 @@ public class GsmMaterialService
         var subgroupsChanged = groupChanged
             || !existingSubgroups.OrderBy(s => s, StringComparer.Ordinal)
                 .SequenceEqual(fields.Subgroups.OrderBy(s => s, StringComparer.Ordinal));
+
+        // Переходное ограничение варианта A §4.3 контракта ГСМ: марка, уже
+        // связанная со строкой ХК, не может перестать иметь ровно одну подгруппу
+        // (в том числе стать многоподгруппной) — иначе новая привязка в ХК была бы
+        // неоднозначной. Проверка ДО удаления прежнего набора классификаций, по
+        // прямому FK без фильтров по статусам ХК: ограничение действует и на
+        // архивные, и на удалённые документы. Существующие аномалии не
+        // исправляются молча. После переключения потребителей (PR-5) снимается.
+        if (subgroupsChanged && fields.GroupName != null && fields.Subgroups.Count != 1)
+        {
+            var usedInHk = await _db.HKCardItemMaterials
+                .IgnoreQueryFilters()
+                .AnyAsync(r => r.GsmMaterialId == id, ct);
+
+            if (usedInHk)
+                throw new InvalidOperationException(
+                    "Марка используется в строках ХК, поэтому у неё должна остаться ровно одна подгруппа. " +
+                    "Сначала уберите её из строк ХК или дождитесь переключения потребителей на новую модель.");
+        }
 
         if (subgroupsChanged)
         {
