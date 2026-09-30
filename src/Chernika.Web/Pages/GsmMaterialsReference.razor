@@ -15,7 +15,14 @@
     <section class="panel">
         <div class="panelHeader">
             <h2>Список марок ГСМ</h2>
-            <div class="hint">@totalCount марок</div>
+            <div class="gsmHeaderRight">
+                <span class="hint">@totalCount марок</span>
+                @* Три колонки связей здесь только на чтение. После изменений во
+                   втором справочнике они обновляются по кнопке: DTO марки через
+                   форму связей не пишется. *@
+                <a class="btn ghost" href="/справочник-гсм-связи">Связи марок</a>
+                <button class="btn ghost" @onclick="RefreshAsync" disabled="@loading">Обновить</button>
+            </div>
         </div>
         <div class="panelBody">
             <div class="mbFilters gsmFilters">
@@ -332,6 +339,12 @@
         currentPage = 1;
         await ReloadAsync();
     }
+
+    /// <summary>
+    /// Перечитывает список вместе с read-only колонками связей. Нужен после
+    /// изменений во втором справочнике: связи здесь только отображаются.
+    /// </summary>
+    private async Task RefreshAsync() => await ReloadAsync();
 
     private async Task ReloadAsync()
     {

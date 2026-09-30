@@ -19,7 +19,10 @@ public class GsmMaterialsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<List<GsmMaterialDto>>> GetAll()
     {
-        var materials = await _gsmService.GetActiveForSelectionAsync();
+        // Справочник марок в целом, а не выбор для строк ХК: переходный фильтр
+        // «ровно одна подгруппа» (GetActiveForSelectionAsync) здесь скрыл бы
+        // legacy-марки без классификации и марки с несколькими подгруппами.
+        var materials = await _gsmService.GetSelectableForRelationAsync();
         return Ok(materials.Select(m => GsmMaterialMapper.ToDto(new GsmMaterialEditView
         {
             Id = m.Id,

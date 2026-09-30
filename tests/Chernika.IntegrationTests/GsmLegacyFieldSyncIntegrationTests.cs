@@ -51,21 +51,17 @@ public class GsmLegacyFieldSyncIntegrationTests
     }
 
     [Fact]
-    public void GsmMaterialService_Exposes_NoMethodToEditRelations()
+    public void GsmMaterialWriteRequest_DoesNotCarryRelations()
     {
-        // Второй справочник связей в PR-3 не появляется: изменений связей в
-        // модели записи марки нет, и методов их создания у сервиса тоже нет.
+        // Связи ведутся во втором справочнике (PR-4) отдельными методами сервиса.
+        // Этот тест фиксирует разделением ответственности: запись марки НЕ должна
+        // менять связи, иначе форма марки могла бы подменить справочные данные.
+        // Прежняя формулировка «у сервиса вообще нет методов связей» была границей
+        // PR-3 и снята именно этим PR.
         var writeRequest = typeof(Chernika.Domain.Models.GsmMaterialWriteRequest);
         Assert.DoesNotContain(
             writeRequest.GetProperties(),
             p => p.Name.Contains("Relation", StringComparison.OrdinalIgnoreCase));
-
-        var methods = typeof(GsmMaterialService).GetMethods();
-        Assert.DoesNotContain(methods, m =>
-            m.Name.StartsWith("AddRelation", StringComparison.Ordinal)
-            || m.Name.StartsWith("CreateRelation", StringComparison.Ordinal)
-            || m.Name.StartsWith("UpdateRelation", StringComparison.Ordinal)
-            || m.Name.StartsWith("DeleteRelation", StringComparison.Ordinal));
     }
 
     // ── 2. Зеркала legacy-полей не расходятся с новыми полями ─────────────

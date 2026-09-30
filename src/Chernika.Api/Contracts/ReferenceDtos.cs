@@ -1,4 +1,5 @@
 using Chernika.Domain.Entities;
+using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
 
 namespace Chernika.Api.Contracts;
@@ -87,6 +88,64 @@ public static class GsmMaterialMapper
         Note = r.Note,
         GroupName = r.GroupName,
         SubgroupNames = r.SubgroupNames?.ToList() ?? new List<string>(),
+    };
+}
+
+/// <summary>
+/// Связь направленных марок ГСМ для API.
+/// <para>
+/// Guid остаётся во внутреннем DTO и маршрутах, но клиент не может подделать
+/// <c>Id</c> другой связи, <c>IsDeleted</c> или признак номенклатуры: все три
+/// определяются сервером и в запрос не входят.
+/// </para>
+/// </summary>
+public record GsmRelationDto(
+    Guid Id,
+    Guid PrimaryGsmMaterialId, string PrimaryName, bool PrimaryIsDeleted,
+    Guid RelatedGsmMaterialId, string RelatedName, bool RelatedIsDeleted,
+    string RelationType, string? Note, bool IsDeleted, bool RelatedInGostNomenclature);
+
+/// <summary>Запрос записи связи. Марки — только по Guid из справочника.</summary>
+public record GsmRelationWriteApiRequest(
+    Guid PrimaryGsmMaterialId,
+    Guid RelatedGsmMaterialId,
+    string RelationType,
+    string? Note);
+
+/// <summary>Постраничная выборка связей с фильтрами.</summary>
+public record GsmRelationListApiResponse(
+    IReadOnlyList<GsmRelationDto> Items,
+    int TotalCount, int Page, int PageSize, int TotalPages);
+
+public static class GsmRelationMapper
+{
+    public static GsmRelationDto ToDto(GsmRelationSummary v) => new(
+        v.Id,
+        v.PrimaryGsmMaterialId, v.PrimaryName, v.PrimaryIsDeleted,
+        v.RelatedGsmMaterialId, v.RelatedName, v.RelatedIsDeleted,
+        v.RelationType.ToString(), v.Note, v.IsDeleted, v.RelatedInGostNomenclature);
+
+    public static GsmRelationDto ToDto(GsmRelationEditView v) => new(
+        v.Id,
+        v.PrimaryGsmMaterialId, v.PrimaryName, false,
+        v.RelatedGsmMaterialId, v.RelatedName, false,
+        v.RelationType.ToString(), v.Note, v.IsDeleted, false);
+
+    /// <summary>
+    /// Разбор типа связи. Неизвестное значение отклоняется: молчаливый откат к
+    /// значению по умолчанию записал бы чужую связь.
+    /// </summary>
+    public static GsmRelationType ToRelationType(string value) =>
+        Enum.TryParse<GsmRelationType>(value, ignoreCase: true, out var parsed)
+            ? parsed
+            : throw new ArgumentException($"Неизвестный тип связи: «{value}».");
+
+    public static GsmRelationWriteRequest ToWriteRequest(GsmRelationWriteApiRequest r) => new()
+    {
+        PrimaryGsmMaterialId = r.PrimaryGsmMaterialId,
+        RelatedGsmMaterialId = r.RelatedGsmMaterialId,
+        RelationType = ToRelationType(r.RelationType),
+        Note = r.Note,
     };
 }
 

@@ -1,0 +1,114 @@
+using Chernika.Api.Contracts;
+using Chernika.Domain;
+using Chernika.Domain.Enums;
+using Chernika.Domain.Models;
+using Chernika.Infrastructure.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Chernika.Api.Controllers;
+
+/// <summary>
+/// REST-доступ ко второму справочнику направленных связей марок ГСМ (PR-4).
+/// <para>
+/// Контроллер — только транспорт: вся бизнес-логика и все проверки пары,
+/// Foreign и мягкого удаления живут в <see cref="GsmMaterialService"/>. Отдельного
+/// хранилища или дублирующих правил здесь нет.
+/// </para>
+/// <para>
+/// Права те же, что у справочника марок: чтение требует справочной роли,
+/// запись — права редактирования. Справочник общесистемный, фильтра по BranchId
+/// нет.
+/// </para>
+/// </summary>
+[ApiController]
+[Authorize]
+[Route("api/[controller]")]
+public class GsmMaterialRelationsController : ControllerBase
+{
+    private readonly GsmMaterialService _gsmService;
+
+    public GsmMaterialRelationsController(GsmMaterialService gsmService) => _gsmService = gsmService;
+
+    /// <summary>Постраничный список связей с поиском и фильтрами.</summary>
+    [HttpGet]
+    public async Task<ActionResult<GsmRelationListApiResponse>> GetAll(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 15,
+        [FromQuery] string? search = null,
+        [FromQuery] string? relationType = null,
+        [FromQuery] Guid? primaryGsmMaterialId = null,
+        [FromQuery] bool showDeleted = false,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] bool sortDescending = false)
+    {
+        GsmRelationType? type = null;
+        if (!string.IsNullOrWhiteSpace(relationType))
+            type = GsmRelationMapper.ToRelationType(relationType);
+
+        var result = await _gsmService.GetRelationsPagedAsync(new GsmRelationQuery
+        {
+            Page = page,
+            PageSize = pageSize,
+            Search = search,
+            RelationType = type,
+            PrimaryGsmMaterialId = primaryGsmMaterialId,
+            ShowDeleted = showDeleted,
+            SortBy = sortBy,
+            SortDescending = sortDescending,
+        });
+
+        return Ok(new GsmRelationListApiResponse(
+            result.Items.Select(GsmRelationMapper.ToDto).ToList(),
+            result.TotalCount, result.Page, result.PageSize, result.TotalPages));
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<ActionResult<GsmRelationDto>> GetById(Guid id)
+    {
+        var view = await _gsmService.GetRelationEditViewAsync(id);
+        if (view == null) return NotFound();
+        return Ok(GsmRelationMapper.ToDto(view));
+    }
+
+    /// <summary>Марки для выбора в форме связи (опубликованные, неудалённые).</summary>
+    [HttpGet("material-options")]
+    public async Task<ActionResult<List<GsmMaterialDto>>> GetMaterialOptions(
+        [FromQuery] string? search = null)
+    {
+        var materials = await _gsmService.GetSelectableForRelationAsync(search);
+        return Ok(materials.Select(m => GsmMaterialMapper.ToDto(new GsmMaterialEditView
+        {
+            Id = m.Id,
+            Name = m.Name,
+            Nd = m.Nd,
+            InGostNomenclature = m.InGostNomenclature,
+        })).ToList());
+    }
+
+    [HttpPost]
+    [Authorize(Policy = "CreateEquipment")]
+    public async Task<ActionResult<GsmRelationDto>> Create([FromBody] GsmRelationWriteApiRequest request)
+    {
+        var created = await _gsmService.CreateRelationAsync(GsmRelationMapper.ToWriteRequest(request));
+        return CreatedAtAction(nameof(GetById), new { id = created.Id }, GsmRelationMapper.ToDto(created));
+    }
+
+    [HttpPut("{id:guid}")]
+    [Authorize(Policy = "EditEquipment")]
+    public async Task<ActionResult> Update(Guid id, [FromBody] GsmRelationWriteApiRequest request)
+    {
+        var updated = await _gsmService.UpdateRelationAsync(
+            id, GsmRelationMapper.ToWriteRequest(request));
+        if (updated == null) return NotFound();
+        return NoContent();
+    }
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Policy = "DeleteEquipment")]
+    public async Task<ActionResult> Delete(Guid id)
+    {
+        if (!await _gsmService.DeleteRelationAsync(id)) return NotFound();
+        return NoContent();
+    }
+}

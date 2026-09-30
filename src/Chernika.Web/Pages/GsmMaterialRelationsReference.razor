@@ -1,0 +1,562 @@
+@page "/справочник-гсм-связи"
+@attribute [Authorize(Policy = "ViewReferences")]
+@implements IDisposable
+@using Chernika.Domain
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Models
+@using Chernika.Web.Services
+@inject GsmMaterialService GsmService
+@inject AuthenticationStateProvider AuthState
+@inject IPermissionService Perms
+@inject CircuitDbLock DbLock
+
+<div class="stack">
+    <ReferenceBreadcrumb Group="Материалы" Current="Связи марок" />
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>Связи марок ГСМ</h2>
+            <div class="hint">@totalCount связей</div>
+        </div>
+        <div class="panelBody">
+            <div class="relFilters">
+                <input placeholder="Поиск: марки или примечание"
+                       value="@search"
+                       @oninput="e => search = e.Value?.ToString() ?? string.Empty"
+                       @onkeydown="OnFilterKeyDown" />
+
+                <select value="@typeFilter" @onchange="OnTypeFilterChanged">
+                    <option value="">Все типы связей</option>
+                    @foreach (var t in AllRelationTypes)
+                    {
+                        <option value="@t">@RelationTypeLabel(t)</option>
+                    }
+                </select>
+
+                <select value="@statusFilter" @onchange="OnStatusFilterChanged">
+                    <option value="0">Активные</option>
+                    <option value="1">Удалённые</option>
+                    <option value="2">Все</option>
+                </select>
+
+                <button class="btn ghost" @onclick="ToggleSortDir">
+                    @(sortDesc ? "По убыванию" : "По возрастанию")
+                </button>
+                @if (HasActiveFilters)
+                {
+                    <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                }
+            </div>
+
+            @if (errorMessage is not null)
+            {
+                <div class="relError">@errorMessage</div>
+            }
+
+            <div class="relWrap">
+                <table class="relTable">
+                    <thead>
+                        <tr>
+                            <th>Основная марка</th>
+                            <th>Связанная марка</th>
+                            <th>Тип связи</th>
+                            <th>Примечание к связи</th>
+                            <th>Статус</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (loading)
+                        {
+                            <tr><td colspan="6" class="relMuted">Загрузка…</td></tr>
+                        }
+                        else if (items.Count == 0)
+                        {
+                            <tr><td colspan="6" class="relMuted">Связи не найдены.</td></tr>
+                        }
+                        else
+                        {
+                            @foreach (var r in items)
+                            {
+                                <tr class="@RowClass(r)">
+                                    <td>
+                                        <span>@r.PrimaryName</span>
+                                        @if (r.PrimaryIsDeleted)
+                                        {
+                                            <span class="tag warn">Удалена</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        <span class="relArrow" aria-hidden="true">→</span>
+                                        <span>@r.RelatedName</span>
+                                        @if (r.RelatedIsDeleted)
+                                        {
+                                            <span class="tag warn">Удалена</span>
+                                        }
+                                    </td>
+                                    <td><span class="tag">@RelationTypeLabel(r.RelationType)</span></td>
+                                    <td class="relNote">@(string.IsNullOrWhiteSpace(r.Note) ? "—" : r.Note)</td>
+                                    <td>
+                                        @if (r.IsDeleted)
+                                        {
+                                            <span class="tag warn">Удалена</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="tag ok">Активная</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (canEdit && !r.IsDeleted)
+                                        {
+                                            <button class="linkBtn" @onclick="() => EditRelation(r)">Изменить</button>
+                                            <button class="linkBtn" style="color:var(--bad)"
+                                                    @onclick="() => DeleteRelation(r)">Удалить</button>
+                                        }
+                                        else
+                                        {
+                                            <span class="relMuted">—</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="relPager">
+                <button class="btn ghost" @onclick="PrevPage" disabled="@(currentPage <= 1)">
+                    Назад
+                </button>
+                <span>@currentPage из @totalPages</span>
+                <button class="btn ghost" @onclick="NextPage" disabled="@(currentPage >= totalPages)">
+                    Вперёд
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panelHeader">
+            <h2>@(editing ? "Редактирование связи" : "Новая связь")</h2>
+        </div>
+        <div class="panelBody">
+            <div class="relForm">
+                <div class="field">
+                    <label for="relPrimary">Основная марка <span class="relReq">*</span></label>
+                    <input id="relPrimary" @ref="_firstField" list="relPrimaryList"
+                           value="@formPrimaryName" @oninput="OnPrimaryInput" />
+                    <datalist id="relPrimaryList">
+                        @foreach (var m in materialOptions)
+                        {
+                            <option value="@m.Name">@m.Name</option>
+                        }
+                    </datalist>
+                    @if (primaryError is not null)
+                    {
+                        <div class="relFieldError">@primaryError</div>
+                    }
+                </div>
+
+                <div class="field">
+                    <label for="relRelated">Связанная марка <span class="relReq">*</span></label>
+                    <input id="relRelated" list="relRelatedList"
+                           value="@formRelatedName" @oninput="OnRelatedInput" />
+                    <datalist id="relRelatedList">
+                        @foreach (var m in materialOptions)
+                        {
+                            <option value="@m.Name">@m.Name</option>
+                        }
+                    </datalist>
+                    @if (relatedError is not null)
+                    {
+                        <div class="relFieldError">@relatedError</div>
+                    }
+                </div>
+
+                <div class="field">
+                    <label for="relType">Тип связи</label>
+                    <select id="relType" value="@((int)formType)" @onchange="OnTypeChanged">
+                        @foreach (var t in AllRelationTypes)
+                        {
+                            <option value="@((int)t)">@RelationTypeLabel(t)</option>
+                        }
+                    </select>
+                    @if (typeError is not null)
+                    {
+                        <div class="relFieldError">@typeError</div>
+                    }
+                </div>
+
+                <div class="field">
+                    <label for="relNote">Примечание к связи</label>
+                    <input id="relNote" value="@formNote" @oninput="e => formNote = e.Value?.ToString() ?? string.Empty" />
+                </div>
+
+                <div class="relFormActions">
+                    <button class="btn ghost" @onclick="ResetForm">@(editing ? "Отмена" : "Очистить")</button>
+                    <button class="btn primary" @onclick="SaveRelationAsync" disabled="@saving">
+                        @(editing ? "Сохранить" : "Добавить")
+                    </button>
+                </div>
+
+                @if (errorMessage is not null && (primaryError ?? relatedError ?? typeError) is null)
+                {
+                    <div class="relError">@errorMessage</div>
+                }
+            </div>
+        </div>
+    </section>
+</div>
+
+@code {
+    private readonly List<GsmRelationType> AllRelationTypes = new()
+    {
+        GsmRelationType.Duplicate,
+        GsmRelationType.Reserve,
+        GsmRelationType.DuplicateAndReserve,
+        GsmRelationType.Foreign,
+    };
+
+    private List<GsmRelationSummary> items = new();
+    private List<GsmMaterial> materialOptions = new();
+
+    private bool loading = true;
+    private bool saving;
+    private bool canEdit;
+    private bool editing;
+
+    private Guid formId;
+    private Guid formPrimaryId;
+    private Guid formRelatedId;
+    private string formPrimaryName = "";
+    private string formRelatedName = "";
+    private GsmRelationType formType = GsmRelationType.Duplicate;
+    private string formNote = "";
+
+    private string search = "";
+    private string typeFilter = "";
+    private int statusFilter;
+    private string sortBy = "Primary";
+    private bool sortDesc;
+    private int currentPage = 1;
+    private int totalPages = 1;
+    private int totalCount;
+
+    private string? errorMessage;
+    private string? primaryError;
+    private string? relatedError;
+    private string? typeError;
+
+    private CancellationTokenSource? _cts;
+    private ElementReference _firstField;
+    private bool _focusForm;
+
+    private bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(search)
+        || !string.IsNullOrWhiteSpace(typeFilter)
+        || statusFilter != 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        canEdit = userId != null
+            && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
+
+        await ReloadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusForm)
+        {
+            _focusForm = false;
+            await _firstField.FocusAsync();
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        loading = true;
+        errorMessage = null;
+
+        try
+        {
+            GsmRelationType? type = null;
+            if (!string.IsNullOrWhiteSpace(typeFilter)
+                && Enum.TryParse<GsmRelationType>(typeFilter, out var parsed))
+            {
+                type = parsed;
+            }
+
+            var result = await DbLock.LockedAsync(() => GsmService.GetRelationsPagedAsync(
+                new GsmRelationQuery
+                {
+                    Page = currentPage,
+                    PageSize = 15,
+                    Search = string.IsNullOrWhiteSpace(search) ? null : search,
+                    ShowDeleted = statusFilter == 0 ? false : statusFilter == 1 ? true : null,
+                    RelationType = type,
+                    SortBy = sortBy,
+                    SortDescending = sortDesc,
+                }));
+
+            // Справочник выбора марок для формы связи: опубликованные и неудалённые,
+            // независимо от количества подгрупп (ограничение «ровно одна подгруппа»
+            // относится только к новым назначениям в строки ХК).
+            var options = await DbLock.LockedAsync(() => GsmService.GetSelectableForRelationAsync());
+
+            if (ct.IsCancellationRequested) return;
+
+            items = result.Items.ToList();
+            totalCount = result.TotalCount;
+            totalPages = Math.Max(result.TotalPages, 1);
+            if (currentPage > totalPages) currentPage = totalPages;
+            materialOptions = options;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception)
+        {
+            errorMessage = "Не удалось загрузить связи. Обновите страницу и повторите попытку.";
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested) loading = false;
+        }
+    }
+
+    private async Task OnFiltersChanged()
+    {
+        currentPage = 1;
+        await ReloadAsync();
+    }
+
+    private async Task OnFilterKeyDown(KeyboardEventArgs ev)
+    {
+        if (ev.Key == "Enter") await OnFiltersChanged();
+    }
+
+    private async Task OnTypeFilterChanged(ChangeEventArgs ev)
+    {
+        typeFilter = ev.Value?.ToString() ?? "";
+        await OnFiltersChanged();
+    }
+
+    private async Task OnStatusFilterChanged(ChangeEventArgs ev)
+    {
+        statusFilter = int.TryParse(ev.Value?.ToString(), out var v) ? v : 0;
+        await OnFiltersChanged();
+    }
+
+    private async Task ToggleSortDir()
+    {
+        sortDesc = !sortDesc;
+        await ReloadAsync();
+    }
+
+    private async Task ResetFilters()
+    {
+        search = "";
+        typeFilter = "";
+        statusFilter = 0;
+        await OnFiltersChanged();
+    }
+
+    private async Task PrevPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+            await ReloadAsync();
+        }
+    }
+
+    private void OnPrimaryInput(ChangeEventArgs ev)
+    {
+        formPrimaryName = ev.Value?.ToString() ?? "";
+        formPrimaryId = ResolveMaterialId(formPrimaryName);
+        primaryError = null;
+    }
+
+    private void OnRelatedInput(ChangeEventArgs ev)
+    {
+        formRelatedName = ev.Value?.ToString() ?? "";
+        formRelatedId = ResolveMaterialId(formRelatedName);
+        relatedError = null;
+    }
+
+    private void OnTypeChanged(ChangeEventArgs ev)
+    {
+        if (int.TryParse(ev.Value?.ToString(), out var v)
+            && Enum.IsDefined(typeof(GsmRelationType), v))
+        {
+            formType = (GsmRelationType)v;
+        }
+        typeError = null;
+    }
+
+    /// <summary>
+    /// Имя марки сопоставляется со справочником выбора на клиенте только для
+    /// подсказки; итоговый Guid и все правила проверяет сервер. Произвольный
+    /// текст, не совпадающий с маркой, даёт Guid.Empty и отклоняется сервисом.
+    /// </summary>
+    private Guid ResolveMaterialId(string name)
+    {
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0) return Guid.Empty;
+
+        var match = materialOptions.FirstOrDefault(
+            m => string.Equals(m.Name, trimmed, StringComparison.OrdinalIgnoreCase));
+        return match?.Id ?? Guid.Empty;
+    }
+
+    private void EditRelation(GsmRelationSummary r)
+    {
+        ClearErrors();
+        formId = r.Id;
+        formPrimaryId = r.PrimaryGsmMaterialId;
+        formRelatedId = r.RelatedGsmMaterialId;
+        formPrimaryName = r.PrimaryName;
+        formRelatedName = r.RelatedName;
+        formType = r.RelationType;
+        formNote = r.Note ?? "";
+        editing = true;
+        _focusForm = true;
+    }
+
+    private void ResetForm()
+    {
+        formId = Guid.Empty;
+        formPrimaryId = Guid.Empty;
+        formRelatedId = Guid.Empty;
+        formPrimaryName = "";
+        formRelatedName = "";
+        formType = GsmRelationType.Duplicate;
+        formNote = "";
+        editing = false;
+        ClearErrors();
+    }
+
+    private void ClearErrors()
+    {
+        errorMessage = null;
+        primaryError = null;
+        relatedError = null;
+        typeError = null;
+    }
+
+    private async Task SaveRelationAsync()
+    {
+        ClearErrors();
+
+        if (formPrimaryId == Guid.Empty)
+        {
+            primaryError = "Выберите основную марку из справочника.";
+            return;
+        }
+        if (formRelatedId == Guid.Empty)
+        {
+            relatedError = "Выберите связанную марку из справочника.";
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            var request = new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = formPrimaryId,
+                RelatedGsmMaterialId = formRelatedId,
+                RelationType = formType,
+                Note = string.IsNullOrWhiteSpace(formNote) ? null : formNote,
+            };
+
+            await DbLock.LockedAsync(async () =>
+            {
+                if (editing)
+                    await GsmService.UpdateRelationAsync(formId, request);
+                else
+                    await GsmService.CreateRelationAsync(request);
+            });
+
+            ResetForm();
+
+            // Первый справочник показывает связи только на чтение: его проекция
+            // обновляется при перезагрузке страницы, DTO здесь не меняется.
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception)
+        {
+            errorMessage = editing
+                ? "Не удалось сохранить связь. Обновите список и повторите попытку."
+                : "Не удалось создать связь. Обновите список и повторите попытку.";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task DeleteRelation(GsmRelationSummary r)
+    {
+        ClearErrors();
+        saving = true;
+        try
+        {
+            await DbLock.LockedAsync(() => GsmService.DeleteRelationAsync(r.Id));
+            if (editing && formId == r.Id) ResetForm();
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception)
+        {
+            errorMessage = "Не удалось удалить связь. Обновите список и повторите попытку.";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private static string RowClass(GsmRelationSummary r) =>
+        r.IsDeleted || r.PrimaryIsDeleted || r.RelatedIsDeleted ? "relRowMuted" : "";
+
+    private static string RelationTypeLabel(GsmRelationType type) => type switch
+    {
+        GsmRelationType.Duplicate => "Дублирующая",
+        GsmRelationType.Reserve => "Резервная",
+        GsmRelationType.DuplicateAndReserve => "Дублирующая и резервная",
+        GsmRelationType.Foreign => "Зарубежный аналог",
+        _ => type.ToString(),
+    };
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

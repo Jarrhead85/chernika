@@ -30,6 +30,18 @@ public class GsmMaterialService
     /// </summary>
     private const int LegacySnapshotLengthLimit = 200;
 
+    /// <summary>
+    /// Предел выдачи справочника выбора марок для формы связи. Защита от
+    /// неогранированной загрузки; поиск сужает выдачу на сервере.
+    /// </summary>
+    private const int RelationSelectionLimit = 200;
+
+    /// <summary>
+    /// Предел длины примечания к связи. Поле принадлежит связи, а не марке
+    /// (<c>GsmMaterial.Note</c> — отдельное поле, здесь недоступно).
+    /// </summary>
+    private const int RelationNoteMaxLength = 1000;
+
     private readonly AppDbContext _db;
     private readonly AuditService _audit;
     private readonly ICurrentUserService _currentUser;
@@ -302,6 +314,50 @@ public class GsmMaterialService
             .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
     }
 
+    /// <summary>
+    /// Выбор марок для СПРАВОЧНЫХ СВЯЗЕЙ (второй справочник, PR-4).
+    /// <para>
+    /// Отдельный read-only метод намеренно: <see cref="GetActiveForSelectionAsync"/>
+    /// после PR-3 фильтрует марки с ровно одной подгруппой специально для строк
+    /// ХК. Ограничение «ровно одна подгруппа» к записи справочной связи отношения
+    /// не имеет, поэтому здесь предлагается любая ОПУБЛИКОВАННАЯ активная марка
+    /// независимо от количества подгрупп (0/1/2). Soft-deleted и Draft не
+    /// предлагаются никогда.
+    /// </para>
+    /// <para>
+    /// Выдача ограничена: справочник используется только для выбора в форме связи,
+    /// поэтому защищён от неограниченной загрузки.
+    /// </para>
+    /// </summary>
+    public async Task<List<GsmMaterial>> GetSelectableForRelationAsync(
+        string? searchText = null, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        IQueryable<GsmMaterial> q = _db.GsmMaterials
+            .Where(m => !m.IsDraft && !m.IsDeleted);
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var pattern = $"%{searchText.Trim()}%";
+            q = q.Where(m => EF.Functions.ILike(m.Name, pattern)
+                || (m.Nd != null && EF.Functions.ILike(m.Nd, pattern))
+                || (m.NatoIndex != null && EF.Functions.ILike(m.NatoIndex, pattern)));
+        }
+
+        return await q
+            .OrderBy(m => m.Name)
+            .ThenBy(m => m.Nd)
+            .Take(RelationSelectionLimit)
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Выбор марок для строк ХК. Переходное ограничение варианта A §4.3: пока
+    /// legacy-потребители читают прежний <c>Type</c>, в новые строки ХК допускается
+    /// только марка с РОВНО одной подгруппой. Для справочных связей действует
+    /// <see cref="GetSelectableForRelationAsync"/>.
+    /// </summary>
     public async Task<List<GsmMaterial>> GetActiveForSelectionAsync(
         string? searchText = null,
         CancellationToken ct = default,
@@ -570,6 +626,460 @@ public class GsmMaterialService
         await cmd.ExecuteScalarAsync(ct);
     }
 
+    // ── Второй справочник: направленные связи Primary → Related (PR-4) ──────
+
+    /// <summary>
+    /// Постраничный список направленных связей. Строка — одна направленная пара,
+    /// поэтому счётчик и пагинация считают СВЯЗИ. Имена марок и их признаки
+    /// удаления подтягиваются проекцией: soft-deleted марки скрыты обычным
+    /// query filter, но в истории удалённых связей имена должны оставаться
+    /// корректными.
+    /// </summary>
+    public async Task<PagedResult<GsmRelationSummary>> GetRelationsPagedAsync(
+        GsmRelationQuery query, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        // Связи не имеют query-фильтра в модели: статус задаётся явно. Но у
+        // GsmMaterial фильтр есть, поэтому навигации на марку он применяется и
+        // SKIP-ает soft-deleted марку: связь с удалённой маркой исчезла бы из
+        // истории молча. Поэтому IgnoreQueryFilters — чтобы имена оставались
+        // корректными; признак удаления отдаётся отдельным полем.
+        IQueryable<GsmMaterialRelation> q = _db.GsmMaterialRelations
+            .AsNoTracking()
+            .IgnoreQueryFilters();
+
+        if (query.ShowDeleted != true)
+            q = q.Where(r => !r.IsDeleted);
+
+        if (query.RelationType.HasValue)
+            q = q.Where(r => r.RelationType == query.RelationType.Value);
+
+        if (query.PrimaryGsmMaterialId is Guid primaryId && primaryId != Guid.Empty)
+            q = q.Where(r => r.PrimaryGsmMaterialId == primaryId);
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var pattern = $"%{query.Search.Trim()}%";
+            q = q.Where(r => EF.Functions.ILike(r.PrimaryGsmMaterial.Name, pattern)
+                || EF.Functions.ILike(r.RelatedGsmMaterial.Name, pattern)
+                || (r.Note != null && EF.Functions.ILike(r.Note, pattern)));
+        }
+
+        var totalCount = await q.CountAsync(ct);
+
+        var page = query.Page < 1 ? 1 : query.Page;
+        var pageSize = query.PageSize is < 1 or > 200 ? 15 : query.PageSize;
+
+        IOrderedQueryable<GsmMaterialRelation> ordered = query.SortBy switch
+        {
+            "Primary" => query.SortDescending
+                ? q.OrderByDescending(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name)
+                : q.OrderBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name),
+            "Related" => query.SortDescending
+                ? q.OrderByDescending(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.PrimaryGsmMaterial.Name)
+                : q.OrderBy(r => r.RelatedGsmMaterial.Name).ThenBy(r => r.PrimaryGsmMaterial.Name),
+            "RelationType" => query.SortDescending
+                ? q.OrderByDescending(r => r.RelationType).ThenBy(r => r.PrimaryGsmMaterial.Name)
+                : q.OrderBy(r => r.RelationType).ThenBy(r => r.PrimaryGsmMaterial.Name),
+            _ => query.SortDescending
+                ? q.OrderByDescending(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name)
+                : q.OrderBy(r => r.PrimaryGsmMaterial.Name).ThenBy(r => r.RelatedGsmMaterial.Name),
+        };
+
+        var rows = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(r => new
+            {
+                r.Id,
+                r.PrimaryGsmMaterialId,
+                PrimaryName = r.PrimaryGsmMaterial.Name,
+                PrimaryIsDeleted = r.PrimaryGsmMaterial.IsDeleted,
+                r.RelatedGsmMaterialId,
+                RelatedName = r.RelatedGsmMaterial.Name,
+                RelatedIsDeleted = r.RelatedGsmMaterial.IsDeleted,
+                r.RelationType,
+                r.Note,
+                r.IsDeleted,
+                RelatedInGostNomenclature = r.RelatedGsmMaterial.InGostNomenclature,
+            })
+            .ToListAsync(ct);
+
+        var items = rows.Select(r => new GsmRelationSummary
+        {
+            Id = r.Id,
+            PrimaryGsmMaterialId = r.PrimaryGsmMaterialId,
+            PrimaryName = r.PrimaryName,
+            PrimaryIsDeleted = r.PrimaryIsDeleted,
+            RelatedGsmMaterialId = r.RelatedGsmMaterialId,
+            RelatedName = r.RelatedName,
+            RelatedIsDeleted = r.RelatedIsDeleted,
+            RelationType = r.RelationType,
+            Note = r.Note,
+            IsDeleted = r.IsDeleted,
+            RelatedInGostNomenclature = r.RelatedInGostNomenclature,
+        }).ToList();
+
+        return new PagedResult<GsmRelationSummary>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
+    }
+
+    /// <summary>Карточка связи для формы. null — связи нет.</summary>
+    public async Task<GsmRelationEditView?> GetRelationEditViewAsync(
+        Guid relationId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        // Как и в списке: IgnoreQueryFilters, чтобы карточка связи читалась и у
+        // soft-deleted марок (иначе навигация вернула бы пустое имя).
+        return await _db.GsmMaterialRelations
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(r => r.Id == relationId)
+            .Select(r => new GsmRelationEditView
+            {
+                Id = r.Id,
+                PrimaryGsmMaterialId = r.PrimaryGsmMaterialId,
+                PrimaryName = r.PrimaryGsmMaterial.Name,
+                RelatedGsmMaterialId = r.RelatedGsmMaterialId,
+                RelatedName = r.RelatedGsmMaterial.Name,
+                RelationType = r.RelationType,
+                Note = r.Note,
+                IsDeleted = r.IsDeleted,
+            })
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// Создание направленной связи. Марки принимаются только по Guid и должны
+    /// существовать, быть опубликованными и неудалёнными. Связь направленная:
+    /// <c>A → B</c> и <c>B → A</c> — разные пары, но вторая активная запись той
+    /// же пары недопустима независимо от типа.
+    /// </summary>
+    public async Task<GsmRelationEditView> CreateRelationAsync(
+        GsmRelationWriteRequest request, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        var primaryId = request.PrimaryGsmMaterialId;
+        var relatedId = request.RelatedGsmMaterialId;
+
+        if (primaryId == Guid.Empty || relatedId == Guid.Empty)
+            throw new InvalidOperationException("Укажите основную и связанную марки ГСМ.");
+        if (primaryId == relatedId)
+            throw new InvalidOperationException("Марка не может быть связана сама с собой.");
+
+        var note = NormalizeRelationNote(request.Note);
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        // Гонка «создание связи ↔ soft-delete марки» закрывается единым порядком
+        // блокировок: обе марки блокируются по возрастанию Guid, затем состояние
+        // перепроверяется уже под блокировкой. Два независимых AnyAsync без
+        // блокировки защиты от гонки не дают.
+        await LockMaterialsOrderedAsync(new[] { primaryId, relatedId }, ct);
+
+        var materials = await LoadRelationMaterialsAsync(new[] { primaryId, relatedId }, ct);
+
+        EnsureRelationMaterialsUsable(materials, primaryId, relatedId);
+
+        EnsureForeignAllowed(request.RelationType, relatedId, materials);
+
+        var duplicateActive = await _db.GsmMaterialRelations
+            .AsNoTracking()
+            .AnyAsync(r => r.PrimaryGsmMaterialId == primaryId
+                && r.RelatedGsmMaterialId == relatedId
+                && !r.IsDeleted, ct);
+
+        if (duplicateActive)
+            throw new InvalidOperationException(
+                "Такая связь уже существует. Отредактируйте существующую запись — " +
+                "для одной направленной пары активна только одна связь.");
+
+        var relation = new GsmMaterialRelation
+        {
+            Id = Guid.NewGuid(),
+            PrimaryGsmMaterialId = primaryId,
+            RelatedGsmMaterialId = relatedId,
+            RelationType = request.RelationType,
+            Note = note,
+            IsDeleted = false,
+        };
+        _db.GsmMaterialRelations.Add(relation);
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "GsmMaterialRelation",
+            relation.Id.ToString(),
+            "Create",
+            _currentUser.GetRequiredUserId(),
+            Details: DescribeRelation(relation, materials),
+            EntityDisplayName: FormatRelationDisplayName(relation, materials)), ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        // Ответ строится до commit из уже сохранённого состояния: чтение после
+        // commit превратило бы успех в ложный отказ.
+        var view = BuildRelationView(relation, materials);
+
+        await tx.CommitAsync(ct);
+        return view;
+    }
+
+    /// <summary>
+    /// Изменение связи. Смена концов пары проходит те же проверки, что и
+    /// создание. Физическое удаление запрещено, связь только soft-delete.
+    /// </summary>
+    public async Task<GsmRelationEditView?> UpdateRelationAsync(
+        Guid relationId, GsmRelationWriteRequest request, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        var primaryId = request.PrimaryGsmMaterialId;
+        var relatedId = request.RelatedGsmMaterialId;
+
+        if (primaryId == Guid.Empty || relatedId == Guid.Empty)
+            throw new InvalidOperationException("Укажите основную и связанную марки ГСМ.");
+        if (primaryId == relatedId)
+            throw new InvalidOperationException("Марка не может быть связана сама с собой.");
+
+        var note = NormalizeRelationNote(request.Note);
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        var relation = await _db.GsmMaterialRelations
+            .FirstOrDefaultAsync(r => r.Id == relationId, ct);
+
+        if (relation == null)
+        {
+            await tx.CommitAsync(ct);
+            return null;
+        }
+
+        if (relation.IsDeleted)
+            throw new InvalidOperationException(
+                "Связь удалена. Восстановите её перед редактированием.");
+
+        await LockMaterialsOrderedAsync(new[] { primaryId, relatedId }, ct);
+
+        var materials = await LoadRelationMaterialsAsync(new[] { primaryId, relatedId }, ct);
+
+        EnsureRelationMaterialsUsable(materials, primaryId, relatedId);
+        EnsureForeignAllowed(request.RelationType, relatedId, materials);
+
+        // Концы пары изменились — активная запись той же пары уже должна отсутствовать.
+        var endsChanged = relation.PrimaryGsmMaterialId != primaryId
+            || relation.RelatedGsmMaterialId != relatedId;
+
+        if (endsChanged)
+        {
+            var duplicateActive = await _db.GsmMaterialRelations
+                .AsNoTracking()
+                .AnyAsync(r => r.Id != relation.Id
+                    && r.PrimaryGsmMaterialId == primaryId
+                    && r.RelatedGsmMaterialId == relatedId
+                    && !r.IsDeleted, ct);
+
+            if (duplicateActive)
+                throw new InvalidOperationException(
+                    "Такая связь уже существует. Отредактируйте существующую запись — " +
+                    "для одной направленной пары активна только одна связь.");
+        }
+
+        relation.PrimaryGsmMaterialId = primaryId;
+        relation.RelatedGsmMaterialId = relatedId;
+        relation.RelationType = request.RelationType;
+        relation.Note = note;
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "GsmMaterialRelation",
+            relation.Id.ToString(),
+            "Update",
+            _currentUser.GetRequiredUserId(),
+            Details: DescribeRelation(relation, materials),
+            EntityDisplayName: FormatRelationDisplayName(relation, materials)), ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        var view = BuildRelationView(relation, materials);
+
+        await tx.CommitAsync(ct);
+        return view;
+    }
+
+    /// <summary>
+    /// Мягкое удаление связи. Физическое удаление не выполняется. Повторный
+    /// вызов идемпотентен: уже удалённая связь возвращает false.
+    /// </summary>
+    public async Task<bool> DeleteRelationAsync(Guid relationId, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        var relation = await _db.GsmMaterialRelations
+            .FirstOrDefaultAsync(r => r.Id == relationId, ct);
+
+        if (relation == null)
+        {
+            await tx.CommitAsync(ct);
+            return false;
+        }
+
+        if (relation.IsDeleted)
+        {
+            // Идемпотентно: повторное удаление уже удалённой связи — успех без записи.
+            await tx.CommitAsync(ct);
+            return false;
+        }
+
+        var materials = await LoadRelationMaterialsAsync(
+            new[] { relation.PrimaryGsmMaterialId, relation.RelatedGsmMaterialId }, ct);
+
+        relation.IsDeleted = true;
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "GsmMaterialRelation",
+            relation.Id.ToString(),
+            "Delete",
+            _currentUser.GetRequiredUserId(),
+            Details: DescribeRelation(relation, materials),
+            EntityDisplayName: FormatRelationDisplayName(relation, materials)), ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        await tx.CommitAsync(ct);
+        return true;
+    }
+
+    /// <summary>
+    /// Блокировка строк марок в согласованном порядке (по возрастанию Guid) во
+    /// избежание взаимных блокировок. Переиспользуется всеми путями, которые
+    /// обязаны согласоваться: создание связи и soft-delete марки.
+    /// </summary>
+    private async Task LockMaterialsOrderedAsync(IEnumerable<Guid> materialIds, CancellationToken ct)
+    {
+        var ids = materialIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id).ToList();
+        if (ids.Count == 0) return;
+
+        await using var cmd = _db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = @"SELECT 1 FROM ""GsmMaterials"" WHERE ""Id"" = ANY(@ids) ORDER BY ""Id"" FOR UPDATE";
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@ids";
+        p.Value = ids.ToArray();
+        cmd.Parameters.Add(p);
+        if (cmd.Connection!.State != System.Data.ConnectionState.Open)
+            await cmd.Connection.OpenAsync(ct);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// Обе марки связи должны существовать, быть опубликованными и неудалёнными.
+    /// Проверяется при создании, правке и смене концов существующей связи.
+    /// </summary>
+    private static void EnsureRelationMaterialsUsable(
+        List<RelationMaterialRef> materials, Guid primaryId, Guid relatedId)
+    {
+        static string NameOf(Guid id, List<RelationMaterialRef> list) =>
+            list.FirstOrDefault(m => m.Id == id)?.Name ?? "марка не найдена";
+
+        if (!materials.Any(m => m.Id == primaryId))
+            throw new InvalidOperationException(
+                $"Основная марка не найдена в справочнике ГСМ: {NameOf(primaryId, materials)}.");
+        if (!materials.Any(m => m.Id == relatedId))
+            throw new InvalidOperationException(
+                $"Связанная марка не найдена в справочнике ГСМ: {NameOf(relatedId, materials)}.");
+
+        // Мягко удалённые и Draft марки для новой связи непригодны. Идентификатор
+        // в сообщении не выводится: пользователю показывается имя из справочника.
+        var unusable = materials.FirstOrDefault(m => m.IsDeleted || m.IsDraft);
+        if (unusable != null)
+            throw new InvalidOperationException(
+                $"Марка «{unusable.Name}» удалена или не опубликована и не может участвовать в связи.");
+    }
+
+    /// <summary>
+    /// Правило Foreign: связанная марка не должна быть включена в номенклатуру по
+    /// ГОСТ. Проверяется при создании, правке и смене типа на Foreign.
+    /// </summary>
+    private static void EnsureForeignAllowed(
+        GsmRelationType type, Guid relatedId, List<RelationMaterialRef> materials)
+    {
+        if (type != GsmRelationType.Foreign) return;
+
+        var related = materials.FirstOrDefault(m => m.Id == relatedId);
+        if (related == null || !related.InGostNomenclature) return;
+
+        throw new InvalidOperationException(
+            $"Марка «{related.Name}» включена в номенклатуру по ГОСТ и не может быть связана как зарубежный аналог. " +
+            "Снимите признак у марки или выберите другой тип связи.");
+    }
+
+    /// <summary>Ссылка на марку для проверок связи: имя и признаки без EF-навигации.</summary>
+    private sealed record RelationMaterialRef(
+        Guid Id, string Name, bool InGostNomenclature, bool IsDeleted, bool IsDraft);
+
+    private async Task<List<RelationMaterialRef>> LoadRelationMaterialsAsync(
+        IEnumerable<Guid> ids, CancellationToken ct)
+    {
+        var list = ids.Distinct().ToList();
+        if (list.Count == 0) return new List<RelationMaterialRef>();
+
+        var rows = await _db.GsmMaterials
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(m => list.Contains(m.Id))
+            .Select(m => new { m.Id, m.Name, m.InGostNomenclature, m.IsDeleted, m.IsDraft })
+            .ToListAsync(ct);
+
+        return rows
+            .Select(m => new RelationMaterialRef(
+                m.Id, m.Name, m.InGostNomenclature, m.IsDeleted, m.IsDraft))
+            .ToList();
+    }
+
+    private static string? NormalizeRelationNote(string? note)
+    {
+        var value = NormalizeLegacyText(note);
+        if (value != null && value.Length > RelationNoteMaxLength)
+            throw new InvalidOperationException(
+                $"Примечание к связи должно быть не длиннее {RelationNoteMaxLength} символов.");
+        return value;
+    }
+
+    private static string NameOfRelationMaterial(
+        Guid id, List<RelationMaterialRef> materials) =>
+        materials.FirstOrDefault(m => m.Id == id)?.Name ?? "марка не найдена";
+
+    private static string DescribeRelation(
+        GsmMaterialRelation relation, List<RelationMaterialRef> materials) =>
+        $"Связь: основная «{NameOfRelationMaterial(relation.PrimaryGsmMaterialId, materials)}», " +
+        $"связанная «{NameOfRelationMaterial(relation.RelatedGsmMaterialId, materials)}», " +
+        $"тип {relation.RelationType}" +
+        (string.IsNullOrWhiteSpace(relation.Note) ? "" : $", примечание: {relation.Note}");
+
+    private static string FormatRelationDisplayName(
+        GsmMaterialRelation relation, List<RelationMaterialRef> materials) =>
+        DescribeRelation(relation, materials);
+
+    private static GsmRelationEditView BuildRelationView(
+        GsmMaterialRelation relation, List<RelationMaterialRef> materials) => new()
+    {
+        Id = relation.Id,
+        PrimaryGsmMaterialId = relation.PrimaryGsmMaterialId,
+        PrimaryName = NameOfRelationMaterial(relation.PrimaryGsmMaterialId, materials),
+        RelatedGsmMaterialId = relation.RelatedGsmMaterialId,
+        RelatedName = NameOfRelationMaterial(relation.RelatedGsmMaterialId, materials),
+        RelationType = relation.RelationType,
+        Note = relation.Note,
+        IsDeleted = relation.IsDeleted,
+    };
+
     private async Task EnsureNotForeignAnalogAsync(Guid id, CancellationToken ct)
     {
         var primaryIds = await _db.GsmMaterialRelations
@@ -601,9 +1111,21 @@ public class GsmMaterialService
     {
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
+        // Тот же порядок блокировки, что и в CreateRelationAsync: блокируем
+        // строку марки ДО проверок и перепроверяем состояние под блокировкой.
+        // Без этого создание связи и soft-delete марки могут оба завершиться
+        // успешно, оставив активную связь с удалённой маркой.
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        await LockMaterialsOrderedAsync(new[] { id }, ct);
+
         var material = await _db.GsmMaterials.IgnoreQueryFilters()
             .FirstOrDefaultAsync(m => m.Id == id, ct);
-        if (material == null || material.IsDeleted) return false;
+        if (material == null || material.IsDeleted)
+        {
+            await tx.CommitAsync(ct);
+            return false;
+        }
 
         // Прямой FK без навигации через HKCardItems: строки материалов не имеют
         // собственного query-фильтра, поэтому видны все — независимо от статуса
@@ -620,17 +1142,47 @@ public class GsmMaterialService
                 $"Нельзя удалить марку ГСМ: она используется в существующих ХК ({usedInCards}). " +
                 "Сначала уберите марку из строк этих карт.");
 
+        // До открытия второго справочника марку, участвующую в АКТИВНОЙ
+        // направленной связи, удалить нельзя — ни как Primary, ни как Related,
+        // даже если в ХК ссылок нет. FK RESTRICT защищает только физическое
+        // удаление и soft-delete не ловит. Удалённые связи не блокируют.
+        var activeRelation = await _db.GsmMaterialRelations
+            .AsNoTracking()
+            .Where(r => !r.IsDeleted
+                && (r.PrimaryGsmMaterialId == id || r.RelatedGsmMaterialId == id))
+            .OrderBy(r => r.PrimaryGsmMaterialId == id ? r.RelatedGsmMaterialId : r.PrimaryGsmMaterialId)
+            .Select(r => new
+            {
+                r.Id,
+                r.RelationType,
+                PrimaryName = r.PrimaryGsmMaterial.Name,
+                RelatedName = r.RelatedGsmMaterial.Name,
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (activeRelation != null)
+        {
+            var role = activeRelation.PrimaryName == material.Name ? "основной" : "связанной";
+            throw new InvalidOperationException(
+                $"Нельзя удалить марку ГСМ: она является {role} маркой в активной связи «{activeRelation.PrimaryName} → {activeRelation.RelatedName}» " +
+                $"({activeRelation.RelationType}). Сначала измените или удалите связь.");
+        }
+
         material.IsDeleted = true;
         material.DeletedAt = _time.GetUtcNow().UtcDateTime;
-        await _db.SaveChangesAsync(ct);
 
-        await _audit.LogAsync(new AuditWriteRequest(
+        // Аудит в той же транзакции: ошибка аудита не должна оставить марку
+        // удалённой без записи в журнале.
+        await _audit.CreateLogAsync(new AuditWriteRequest(
             "GsmMaterial",
             id.ToString(),
             "Delete",
             _currentUser.GetRequiredUserId(),
             EntityDisplayName: FormatDisplayName(material)), ct);
 
+        await _db.SaveChangesAsync(ct);
+
+        await tx.CommitAsync(ct);
         return true;
     }
 
