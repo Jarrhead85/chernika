@@ -13,6 +13,193 @@
 
 <section class="panel">
     <div class="panelHeader">
+        <h2>@(editing ? "Редактирование связи" : "Новая связь")</h2>
+    </div>
+    <div class="panelBody">
+        <div class="form relForm">
+            <div class="field relField relFPrimary">
+                <label for="relPrimaryBtn">Основная марка <span class="relReq">*</span></label>
+                @* focusout висит на ЯКРЕЕ: список вариантов — нефокусируемый,
+                   поэтому событие ухода фокуса от поиска всплывает до контейнера.
+                   Варианты помечены @onmousedown:preventDefault (паттерн выбора
+                   сборочной единицы в HKEdit): фокус остаётся в строке поиска,
+                   поэтому список не закрывается раньше, чем обработан клик. *@
+                <div class="relPickerAnchor"
+                     @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Primary)"
+                     @onfocusout="OnPickerFocusOut">
+                    @if (pickerOpen == PickerSlot.Primary)
+                    {
+                        <input id="relPrimarySearch" class="relPickerSearch" autofocus
+                               value="@pickerSearch" @oninput="OnPickerSearchInput"
+                               placeholder="Начните вводить название или НД…"
+                               aria-label="Поиск основной марки" />
+                    }
+                    @if (SelectedPrimary is { } p)
+                    {
+                        @* Тег выбранной марки сам служит триггером: при правке связи
+                           селектор должен снова открываться, иначе сменить марку
+                           можно было бы только очисткой. *@
+                        <div class="relChipRow">
+                            <button type="button" class="relChip relChipTrigger" id="relPrimaryBtn"
+                                    aria-expanded="@((pickerOpen == PickerSlot.Primary).ToString().ToLowerInvariant())"
+                                    title="Изменить основную марку"
+                                    @onclick="() => TogglePicker(PickerSlot.Primary)">
+                                <span>@p.DisplayLabel</span>
+                            </button>
+                            <button type="button" class="relChipX"
+                                    aria-label="Очистить выбор основной марки"
+                                    @onclick="() => ClearSelection(PickerSlot.Primary)">×</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <button id="relPrimaryBtn" type="button" class="btn ghost relPickerTrigger"
+                                @onclick="() => TogglePicker(PickerSlot.Primary)"
+                                aria-expanded="@((pickerOpen == PickerSlot.Primary).ToString().ToLowerInvariant())">
+                            — не выбрано —
+                        </button>
+                    }
+                    @if (pickerOpen == PickerSlot.Primary)
+                    {
+                        <div class="relPickerList" role="listbox"
+                             aria-label="Варианты основной марки">
+                            @if (pickerOptions.Count == 0)
+                            {
+                                <div class="relPickerEmpty">Нет совпадений</div>
+                            }
+                            @foreach (var o in pickerOptions)
+                            {
+                                var active = highlightedId == o.Id;
+                                <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
+                                     role="option" aria-selected="@active.ToString().ToLowerInvariant()"
+                                     id="@PickerOptionId(PickerSlot.Primary, o.Id)"
+                                     @onmousedown:preventDefault="true"
+                                     @onclick="() => SelectOption(PickerSlot.Primary, o)"
+                                     @onmouseenter="() => highlightedId = o.Id">
+                                    <span>@o.DisplayLabel</span>
+                                    @if (o.InGostNomenclature)
+                                    {
+                                        <span class="tag">в номенклатуре ГОСТ</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                @if (primaryError is not null)
+                {
+                    <div class="relFieldError">@primaryError</div>
+                }
+            </div>
+
+            <div class="field relField relFRelated">
+                <label for="relRelatedBtn">Связанная марка <span class="relReq">*</span></label>
+                <div class="relPickerAnchor"
+                     @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Related)"
+                     @onfocusout="OnPickerFocusOut">
+                    @if (pickerOpen == PickerSlot.Related)
+                    {
+                        <input id="relRelatedSearch" class="relPickerSearch" autofocus
+                               value="@pickerSearch" @oninput="OnPickerSearchInput"
+                               placeholder="Начните вводить название или НД…"
+                               aria-label="Поиск связанной марки" />
+                    }
+                    @if (SelectedRelated is { } r)
+                    {
+                        <div class="relChipRow">
+                            <button type="button" class="relChip relChipTrigger" id="relRelatedBtn"
+                                    aria-expanded="@((pickerOpen == PickerSlot.Related).ToString().ToLowerInvariant())"
+                                    title="Изменить связанную марку"
+                                    @onclick="() => TogglePicker(PickerSlot.Related)">
+                                <span>@r.DisplayLabel</span>
+                            </button>
+                            <button type="button" class="relChipX"
+                                    aria-label="Очистить выбор связанной марки"
+                                    @onclick="() => ClearSelection(PickerSlot.Related)">×</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <button id="relRelatedBtn" type="button" class="btn ghost relPickerTrigger"
+                                @onclick="() => TogglePicker(PickerSlot.Related)"
+                                aria-expanded="@((pickerOpen == PickerSlot.Related).ToString().ToLowerInvariant())">
+                            — не выбрано —
+                        </button>
+                    }
+                    @if (pickerOpen == PickerSlot.Related)
+                    {
+                        <div class="relPickerList" role="listbox"
+                             aria-label="Варианты связанной марки">
+                            @if (pickerOptions.Count == 0)
+                            {
+                                <div class="relPickerEmpty">Нет совпадений</div>
+                            }
+                            @foreach (var o in pickerOptions)
+                            {
+                                var active = highlightedId == o.Id;
+                                <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
+                                     role="option" aria-selected="@active.ToString().ToLowerInvariant()"
+                                     id="@PickerOptionId(PickerSlot.Related, o.Id)"
+                                     @onmousedown:preventDefault="true"
+                                     @onclick="() => SelectOption(PickerSlot.Related, o)"
+                                     @onmouseenter="() => highlightedId = o.Id">
+                                    <span>@o.DisplayLabel</span>
+                                    @if (o.InGostNomenclature)
+                                    {
+                                        <span class="tag">в номенклатуре ГОСТ</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                @if (relatedError is not null)
+                {
+                    <div class="relFieldError">@relatedError</div>
+                }
+            </div>
+
+            <div class="field relFType">
+                <label for="relType">Тип связи</label>
+                <select id="relType" value="@((int)formType)" @onchange="OnTypeChanged">
+                    @foreach (var t in AllRelationTypes)
+                    {
+                        <option value="@((int)t)">@RelationTypeLabel(t)</option>
+                    }
+                </select>
+                @if (typeError is not null)
+                {
+                    <div class="relFieldError">@typeError</div>
+                }
+            </div>
+
+            <div class="field relFNote">
+                <label for="relNote">Примечание к связи</label>
+                @* Высота одного обычного поля: пустая форма не растягивается, но
+                   примечание остаётся растягиваемым и читаемым целиком. *@
+                <textarea id="relNote" class="relNoteInput" value="@formNote"
+                          @oninput="e => formNote = e.Value?.ToString() ?? string.Empty"></textarea>
+            </div>
+
+            <div class="relFormActions">
+                <button type="button" class="btn ghost" @onclick="ResetForm">
+                    @(editing ? "Отмена" : "Очистить")
+                </button>
+                <button type="button" class="btn primary" @onclick="SaveRelationAsync" disabled="@saving">
+                    @(editing ? "Сохранить" : "Добавить")
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(formError))
+            {
+                <div class="relFormError" role="alert">@formError</div>
+            }
+        </div>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="panelHeader">
         <h2>Связи марок ГСМ</h2>
         <div class="relHeaderRight">
             <span class="hint">@totalCount связей</span>
@@ -150,168 +337,6 @@
     </div>
 </section>
 
-<section class="panel">
-    <div class="panelHeader">
-        <h2>@(editing ? "Редактирование связи" : "Новая связь")</h2>
-    </div>
-    <div class="panelBody">
-        <div class="form">
-            <div class="field relField">
-                <label for="relPrimaryBtn">Основная марка <span class="relReq">*</span></label>
-                <div class="relPickerAnchor" @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Primary)">
-                    @if (pickerOpen == PickerSlot.Primary)
-                    {
-                        <input id="relPrimarySearch" class="relPickerSearch" autofocus
-                               value="@pickerSearch" @oninput="OnPickerSearchInput"
-                               placeholder="Начните вводить название или НД…"
-                               aria-label="Поиск основной марки" />
-                    }
-                    @if (SelectedPrimary is { } p)
-                    {
-                        <div class="relChip">
-                            <span title="@p.DisplayLabel">@p.DisplayLabel</span>
-                            <button type="button" class="relChipX"
-                                    aria-label="Очистить выбор основной марки"
-                                    @onclick="() => ClearSelection(PickerSlot.Primary)">×</button>
-                        </div>
-                    }
-                    else
-                    {
-                        <button id="relPrimaryBtn" type="button" class="btn ghost relPickerTrigger"
-                                @onclick="() => TogglePicker(PickerSlot.Primary)"
-                                aria-expanded="@((pickerOpen == PickerSlot.Primary).ToString().ToLowerInvariant())">
-                            — не выбрано —
-                        </button>
-                    }
-                    @if (pickerOpen == PickerSlot.Primary)
-                    {
-                        <div class="relPickerList" role="listbox"
-                             aria-label="Варианты основной марки"
-                             @onfocusout="OnPickerFocusOut">
-                            @if (pickerOptions.Count == 0)
-                            {
-                                <div class="relPickerEmpty">Нет совпадений</div>
-                            }
-                            @foreach (var o in pickerOptions)
-                            {
-                                var active = highlightedId == o.Id;
-                                <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
-                                     role="option" aria-selected="@active.ToString().ToLowerInvariant()"
-                                     id="@PickerOptionId(PickerSlot.Primary, o.Id)"
-                                     @onclick="() => SelectOption(PickerSlot.Primary, o)"
-                                     @onmouseenter="() => highlightedId = o.Id">
-                                    <span>@o.DisplayLabel</span>
-                                    @if (o.InGostNomenclature)
-                                    {
-                                        <span class="tag">в номенклатуре ГОСТ</span>
-                                    }
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-                @if (primaryError is not null)
-                {
-                    <div class="relFieldError">@primaryError</div>
-                }
-            </div>
-
-            <div class="field relField">
-                <label for="relRelatedBtn">Связанная марка <span class="relReq">*</span></label>
-                <div class="relPickerAnchor" @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Related)">
-                    @if (pickerOpen == PickerSlot.Related)
-                    {
-                        <input id="relRelatedSearch" class="relPickerSearch" autofocus
-                               value="@pickerSearch" @oninput="OnPickerSearchInput"
-                               placeholder="Начните вводить название или НД…"
-                               aria-label="Поиск связанной марки" />
-                    }
-                    @if (SelectedRelated is { } r)
-                    {
-                        <div class="relChip">
-                            <span title="@r.DisplayLabel">@r.DisplayLabel</span>
-                            <button type="button" class="relChipX"
-                                    aria-label="Очистить выбор связанной марки"
-                                    @onclick="() => ClearSelection(PickerSlot.Related)">×</button>
-                        </div>
-                    }
-                    else
-                    {
-                        <button id="relRelatedBtn" type="button" class="btn ghost relPickerTrigger"
-                                @onclick="() => TogglePicker(PickerSlot.Related)"
-                                aria-expanded="@((pickerOpen == PickerSlot.Related).ToString().ToLowerInvariant())">
-                            — не выбрано —
-                        </button>
-                    }
-                    @if (pickerOpen == PickerSlot.Related)
-                    {
-                        <div class="relPickerList" role="listbox"
-                             aria-label="Варианты связанной марки"
-                             @onfocusout="OnPickerFocusOut">
-                            @if (pickerOptions.Count == 0)
-                            {
-                                <div class="relPickerEmpty">Нет совпадений</div>
-                            }
-                            @foreach (var o in pickerOptions)
-                            {
-                                var active = highlightedId == o.Id;
-                                <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
-                                     role="option" aria-selected="@active.ToString().ToLowerInvariant()"
-                                     id="@PickerOptionId(PickerSlot.Related, o.Id)"
-                                     @onclick="() => SelectOption(PickerSlot.Related, o)"
-                                     @onmouseenter="() => highlightedId = o.Id">
-                                    <span>@o.DisplayLabel</span>
-                                    @if (o.InGostNomenclature)
-                                    {
-                                        <span class="tag">в номенклатуре ГОСТ</span>
-                                    }
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-                @if (relatedError is not null)
-                {
-                    <div class="relFieldError">@relatedError</div>
-                }
-            </div>
-
-            <div class="field">
-                <label for="relType">Тип связи</label>
-                <select id="relType" value="@((int)formType)" @onchange="OnTypeChanged">
-                    @foreach (var t in AllRelationTypes)
-                    {
-                        <option value="@((int)t)">@RelationTypeLabel(t)</option>
-                    }
-                </select>
-                @if (typeError is not null)
-                {
-                    <div class="relFieldError">@typeError</div>
-                }
-            </div>
-
-            <div class="field">
-                <label for="relNote">Примечание к связи</label>
-                <textarea id="relNote" rows="2" value="@formNote"
-                          @oninput="e => formNote = e.Value?.ToString() ?? string.Empty"></textarea>
-            </div>
-
-            <div class="formActions">
-                <button type="button" class="btn ghost" @onclick="ResetForm">
-                    @(editing ? "Отмена" : "Очистить")
-                </button>
-                <button type="button" class="btn primary" @onclick="SaveRelationAsync" disabled="@saving">
-                    @(editing ? "Сохранить" : "Добавить")
-                </button>
-            </div>
-
-            @if (!string.IsNullOrEmpty(formError))
-            {
-                <div class="relFormError" role="alert">@formError</div>
-            }
-        </div>
-    </div>
-</section>
 
 @if (pendingDelete is { } victim)
 {
@@ -681,13 +706,12 @@
     }
 
     /// <summary>
-    /// Закрытие по уходу фокуса из списка. Yield отдаёт управление Blazor-очереди:
-    /// без него focusout срабатывал бы раньше, чем обработается клик по варианту,
-    /// и выбор не применялся бы.
+    /// Закрытие по уходу фокуса из поля выбора. Варианты помечены
+    /// <c>@onmousedown:preventDefault</c>, поэтому фокус остаётся в строке поиска
+    /// и список не закрывается раньше, чем обработан клик по варианту.
     /// </summary>
-    private async Task OnPickerFocusOut(FocusEventArgs ev)
+    private void OnPickerFocusOut(FocusEventArgs ev)
     {
-        await Task.Yield();
         ClosePicker();
     }
 

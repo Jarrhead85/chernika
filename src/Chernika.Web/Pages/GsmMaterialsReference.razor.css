@@ -3,55 +3,120 @@
    только в текстовых колонках. Горизонтальная прокрутка страницы при этом не
    появляется — прокручивается только обёртка таблицы. */
 
+/* Фильтры: auto-fit вместо жёстких долей. Раньше колонка «Номенклатура по ГОСТ»
+   была уже своего пункта («Номенклатура по Г»), и нативный select обрезал
+   текст. Теперь минимальная ширина соответствует самому длинному пункту, а
+   при нехватке места фильтр переносится на следующую строку целиком. */
 .gsmFilters {
   display: grid;
-  grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(120px, 1fr)) minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, 1fr) auto auto;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
   gap: 8px;
   align-items: end;
 }
 
-@media (max-width: 1400px) {
-  .gsmFilters { grid-template-columns: 1fr 1fr 1fr; }
-}
-
-@media (max-width: 1120px) {
-  .gsmFilters { grid-template-columns: 1fr 1fr; }
+.gsmFilters .mbSearch {
+  grid-column: span 2;
+  min-width: 0;
 }
 
 @media (max-width: 560px) {
-  .gsmFilters { grid-template-columns: 1fr; }
+  .gsmFilters .mbSearch { grid-column: span 1; }
 }
+
+/* Высота/радиус/шрифт/focus полей фильтров — из site.css (.fieldInput,
+   .field-select); здесь только выравнивание по нижнему краю строки. */
+.gsmFilters .btn { white-space: nowrap; }
 
 .gsmTable {
   width: 100%;
-  min-width: 1560px;
+  min-width: 1680px;
   table-layout: fixed;
 }
 
 .gsmTable th,
 .gsmTable td {
-  vertical-align: top;
+  vertical-align: middle;
   font-size: 12px;
 }
 
-/* 13 колонок: ID намеренно не показывается — первая видимая «Группа ГСМ». */
-.gsmTable th:nth-child(1)  { width: 175px; } /* Группа */
-.gsmTable th:nth-child(2)  { width: 195px; } /* Подгруппы */
-.gsmTable th:nth-child(3)  { width: 185px; } /* Марка */
-.gsmTable th:nth-child(4)  { width: 155px; } /* НД */
-.gsmTable th:nth-child(5)  { width: 120px; } /* Номенклатура по ГОСТ */
-.gsmTable th:nth-child(6)  { width: 230px; } /* Назначение */
+/* Заголовки и значения в каждом столбце имеют одинаковое выравнивание:
+   по центру — текст не выглядит прижатым влево в широкой ячейке. */
+.gsmTable th,
+.gsmTable td {
+  text-align: center;
+}
+
+.gsmTable th {
+  font-weight: 650;
+  color: var(--muted);
+  /* Длинные заголовки переносятся, а не наезжают на соседнюю колонку. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+/* Вертикальные разделители между колонками — по образцу таблиц ИК
+   (.hk-items-table): тонкие, на CSS-токене, без двойной границы у края. */
+.gsmTable thead th,
+.gsmTable tbody td { border-right: 1px solid var(--line); }
+.gsmTable thead th:last-child,
+.gsmTable tbody td:last-child { border-right: 0; }
+
+/* 13 колонок: ID намеренно не показывается — первая видимая «Группа ГСМ».
+   Ширины распределены по ожидаемому содержимому, а не поровну: коротким
+   значениям (Да/Нет, индекс НАТО) достаётся меньше, длинным текстам больше. */
+.gsmTable th:nth-child(1)  { width: 150px; } /* Группа */
+.gsmTable th:nth-child(2)  { width: 170px; } /* Подгруппы */
+.gsmTable th:nth-child(3)  { width: 190px; } /* Марка */
+.gsmTable th:nth-child(4)  { width: 160px; } /* НД */
+.gsmTable th:nth-child(5)  { width: 130px; } /* Номенклатура по ГОСТ */
+.gsmTable th:nth-child(6)  { width: 250px; } /* Назначение и условия применения */
 .gsmTable th:nth-child(7)  { width: 150px; } /* Пригодность */
 .gsmTable th:nth-child(8)  { width: 110px; } /* Индекс НАТО */
 .gsmTable th:nth-child(9)  { width: 170px; } /* Дублирующие */
 .gsmTable th:nth-child(10) { width: 170px; } /* Резервные */
 .gsmTable th:nth-child(11) { width: 170px; } /* Зарубежные */
-.gsmTable th:nth-child(12) { width: 195px; } /* Общее примечание */
-.gsmTable th:nth-child(13) { width: 130px; } /* Действия */
+.gsmTable th:nth-child(12) { width: 210px; } /* Общее примечание */
+.gsmTable th:nth-child(13) { width: 150px; } /* Действия */
 
 .gsmWrap {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* Очень длинное примечание не должно превращать строку в огромный пустой блок:
+   текст ограничен пятью строками, полный — доступен по раскрытию. */
+.gsmClamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.gsmClampOpen {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+
+.gsmNoteToggle {
+  margin-top: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.gsmNoteToggle:hover { text-decoration: underline; }
+.gsmNoteToggle:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .12);
 }
 
 .gsmSubgroups {
@@ -123,6 +188,116 @@
 /* Отступ между полем «Индекс НАТО» и флажком номенклатуры в той же ячейке. */
 .gsmCheckGap {
   margin-top: 10px;
+}
+
+/* ── Форма марки ──────────────────────────────────────────────────────────
+   Сетка из 12 колонок: доли заданы по содержимому, поэтому строки не обязаны
+   иметь одинаковые ширины полей, но во всех строках совпадают высота контрола,
+   промежутки, линия подписей и линия нижних границ. */
+
+.gsmForm {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: start;
+}
+
+.gsmF3  { grid-column: span 3; }
+.gsmF4  { grid-column: span 4; }
+.gsmF5  { grid-column: span 5; }
+.gsmF12 { grid-column: span 12; }
+
+@media (max-width: 1120px) {
+  /* Три поля в строке переходят в две, потом в одну: подписи не обрезаются и
+     переключатели не накладываются друг на друга. */
+  .gsmF3,
+  .gsmF4,
+  .gsmF5 { grid-column: span 6; }
+}
+
+@media (max-width: 560px) {
+  .gsmF3,
+  .gsmF4,
+  .gsmF5,
+  .gsmF12 { grid-column: span 12; }
+}
+
+/* Поле с кнопкой внутри контура — как кнопка лупы в быстром поиске. */
+.gsmInlineField {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid rgba(32, 50, 86, .85);
+  border-radius: 10px;
+  background: rgba(11, 18, 32, .65);
+  overflow: hidden;
+}
+
+[data-theme="light"] .gsmInlineField {
+  background: rgba(255, 255, 255, .94);
+  border-color: rgba(111, 138, 178, .22);
+}
+
+.gsmInlineField:focus-within {
+  border-color: rgba(79, 140, 255, .4);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .12);
+}
+
+/* Правый отступ под кнопку: введённый текст не заезжает под неё. */
+.gsmInlineInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 10px 10px;
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+}
+
+.gsmInlineBtn {
+  flex: none;
+  border: none;
+  border-left: 1px solid var(--line);
+  background: rgba(79, 140, 255, .18);
+  color: var(--text);
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s ease;
+}
+
+.gsmInlineBtn:hover { background: rgba(79, 140, 255, .3); }
+.gsmInlineBtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(79, 140, 255, .55);
+}
+
+/* Textarea по умолчанию занимает высоту обычного поля и остаётся растягиваемым:
+   пустая форма не раздувает строку, длинный текст читается целиком. */
+.gsmAutoTextarea {
+  min-height: 41px;
+  height: 41px;
+  resize: vertical;
+  overflow: auto;
+}
+
+/* Переключатели-признаки: общий паттерн filterToggle, отдельного стиля нет. */
+.gsmToggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 41px;
+  align-items: center;
+}
+
+.gsmFormActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .gsmWide {

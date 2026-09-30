@@ -1408,11 +1408,35 @@ input:-webkit-autofill:focus {
 }
 .filterToggleMark{
   display:inline-flex;
-  width:14px;
+  align-items:center;
   justify-content:center;
+  flex:none;
+  width:16px;
+  height:16px;
+  border:1px solid var(--line);
+  border-radius:50%;
+  background:var(--panel);
   color:var(--accent);
+  font-size:11px;
   font-weight:800;
+  line-height:1;
 }
+/* Активный переключатель: та же рамка, но с заливкой. Размеры круга одинаковы
+   в обоих состояниях, поэтому текст не прыгает при переключении, а в состоянии
+   off круг виден и на светлой, и на тёмной теме. */
+.filterToggle.active .filterToggleMark{
+  border-color:var(--accent);
+  background:rgba(79,140,255,.22);
+}
+[data-theme="light"] .filterToggle.active .filterToggleMark{background:rgba(79,140,255,.16)}
+.filterToggle:hover .filterToggleMark{border-color:var(--accent)}
+.filterToggle:focus-visible{
+  outline:none;
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(79,140,255,.12);
+}
+.filterToggle:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.filterToggle:disabled .filterToggleMark{background:var(--panel2)}
 
 .registryFilterActions{
   display:flex;
