@@ -5,6 +5,8 @@
 @inject GsmMaterialService GsmService
 @inject IPermissionService Perms
 @inject CircuitDbLock DbLock
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 @* Реестр направленных связей и форма их записи. Вынесен в компонент намеренно:
    маршрут, хлебные крошки и авторизация остаются на странице-оболочке, поэтому
@@ -19,14 +21,17 @@
         <div class="form relForm">
             <div class="field relField relFPrimary">
                 <label for="relPrimaryBtn">Основная марка <span class="relReq">*</span></label>
-                @* focusout висит на ЯКРЕЕ: список вариантов — нефокусируемый,
-                   поэтому событие ухода фокуса от поиска всплывает до контейнера.
-                   Варианты помечены @onmousedown:preventDefault (паттерн выбора
-                   сборочной единицы в HKEdit): фокус остаётся в строке поиска,
-                   поэтому список не закрывается раньше, чем обработан клик. *@
-                <div class="relPickerAnchor"
-                     @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Primary)"
-                     @onfocusout="OnPickerFocusOut">
+                @* Список вариантов выносится в портал (dropdownPortal, тот же
+                   механизм, что у выбора сборочной единицы в HKEdit): панель имеет
+                   overflow:hidden и обрезала позиционированный список, из-за чего он
+                   уходил под форму. Портал также переворачивает список вверх у
+                   нижней границы экрана. Закрытие по клику вне и по Escape
+                   регистрирует JS, поэтому собственного @onfocusout здесь нет.
+                   Строка поиска остаётся снаружи списка (в HKEdit она внутри), и
+                   весь контейнер поля передаётся порталу как «не считать кликом
+                   вне» — иначе ввод в поиск закрывал бы список. *@
+                <div class="relPickerAnchor" id="@PickerAnchorId(PickerSlot.Primary)"
+                     @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Primary)">
                     @if (pickerOpen == PickerSlot.Primary)
                     {
                         <input id="relPrimarySearch" class="relPickerSearch" autofocus
@@ -61,7 +66,7 @@
                     }
                     @if (pickerOpen == PickerSlot.Primary)
                     {
-                        <div class="relPickerList" role="listbox"
+                        <div id="@PickerDropId(PickerSlot.Primary)" class="relPickerList" role="listbox"
                              aria-label="Варианты основной марки">
                             @if (pickerOptions.Count == 0)
                             {
@@ -94,9 +99,8 @@
 
             <div class="field relField relFRelated">
                 <label for="relRelatedBtn">Связанная марка <span class="relReq">*</span></label>
-                <div class="relPickerAnchor"
-                     @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Related)"
-                     @onfocusout="OnPickerFocusOut">
+                <div class="relPickerAnchor" id="@PickerAnchorId(PickerSlot.Related)"
+                     @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Related)">
                     @if (pickerOpen == PickerSlot.Related)
                     {
                         <input id="relRelatedSearch" class="relPickerSearch" autofocus
@@ -128,7 +132,7 @@
                     }
                     @if (pickerOpen == PickerSlot.Related)
                     {
-                        <div class="relPickerList" role="listbox"
+                        <div id="@PickerDropId(PickerSlot.Related)" class="relPickerList" role="listbox"
                              aria-label="Варианты связанной марки">
                             @if (pickerOptions.Count == 0)
                             {
@@ -416,6 +420,9 @@
 
     private CancellationTokenSource? _listCts;
     private CancellationTokenSource? _pickerCts;
+    private DotNetObjectReference<GsmRelationsRegistry>? _dotNetRef;
+    private string? _activeDropdownId;
+    private bool _disposed;
 
     private GsmRelationMaterialOption? SelectedPrimary => primaryId == Guid.Empty ? null : primaryOption;
     private GsmRelationMaterialOption? SelectedRelated => relatedId == Guid.Empty ? null : relatedOption;
@@ -565,23 +572,92 @@
     {
         if (pickerOpen == slot)
         {
-            ClosePicker();
+            await ClosePickerAsync();
             return;
         }
+
+        // Закрываем предыдущий список ДО открытия нового: портал умеет держать
+        // только один активный элемент.
+        await ClosePickerAsync();
 
         pickerOpen = slot;
         pickerSearch = "";
         highlightedId = null;
+        _activeDropdownId = PickerDropId(slot);
+
         await LoadPickerOptionsAsync(slot, "");
+
+        // Рендер списка должен завершиться до переноса в портал — иначе JS не
+        // найдёт элемент по id.
+        StateHasChanged();
+        await Task.Delay(50);
+        if (_disposed || pickerOpen != slot) return;
+
+        try
+        {
+            await JS.InvokeVoidAsync("dropdownPortal.attach", _activeDropdownId, PickerButtonId(slot));
+            await JS.InvokeVoidAsync(
+                "dropdownPortal.onClickOutside",
+                _activeDropdownId,
+                _dotNetRef,
+                PickerAnchorId(slot));
+            await JS.InvokeVoidAsync("dropdownPortal.onEscape", _dotNetRef);
+        }
+        catch (JSDisconnectedException)
+        {
+            // circuit завершается — состояние всё равно сбрасываем
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (JSException)
+        {
+        }
     }
 
-    private void ClosePicker()
+    /// <summary>
+    /// Закрытие списка: элемент возвращается из портала на место, состояние
+    /// сбрасывается. Вызывается и из .NET, и из JS (клик вне / Escape).
+    /// </summary>
+    private async Task ClosePickerAsync()
     {
+        if (_activeDropdownId != null)
+        {
+            var id = _activeDropdownId;
+            _activeDropdownId = null;
+            try
+            {
+                await JS.InvokeVoidAsync("dropdownPortal.detach", id);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSException)
+            {
+            }
+        }
+
         pickerOpen = null;
         pickerSearch = "";
         pickerOptions = new List<GsmRelationMaterialOption>();
         highlightedId = null;
         _pickerCts?.Cancel();
+    }
+
+    /// <summary>Вызывается из JS при клике вне списка и по Escape.</summary>
+    [JSInvokable]
+    public void CloseDropdown()
+    {
+        if (_disposed) return;
+        _ = InvokeAsync(async () =>
+        {
+            if (_disposed) return;
+            await ClosePickerAsync();
+            StateHasChanged();
+        });
     }
 
     private async Task OnPickerSearchInput(ChangeEventArgs ev)
@@ -638,7 +714,8 @@
             relatedError = null;
         }
 
-        ClosePicker();
+        // Выбор завершает работу со списком: элемент возвращается из портала.
+        _ = ClosePickerAsync();
     }
 
     private void ClearSelection(PickerSlot slot)
@@ -660,6 +737,19 @@
     private string PickerOptionId(PickerSlot slot, Guid id) =>
         $"rel-opt-{slot}-{id:N}";
 
+    private static string PickerDropId(PickerSlot slot) =>
+        slot == PickerSlot.Primary ? "relPrimaryDrop" : "relRelatedDrop";
+
+    private static string PickerButtonId(PickerSlot slot) =>
+        slot == PickerSlot.Primary ? "relPrimaryBtn" : "relRelatedBtn";
+
+    /// <summary>
+    /// Контейнер поля выбора. Клики внутри него (строка поиска, кнопка
+    /// открытия) портал не считает кликом «вне» списка.
+    /// </summary>
+    private static string PickerAnchorId(PickerSlot slot) =>
+        slot == PickerSlot.Primary ? "relPrimaryAnchor" : "relRelatedAnchor";
+
     /// <summary>
     /// Клавиатура выбора: стрелки перемещают подсветку, Enter выбирает, Escape
     /// закрывает. Реализовано без JS-interop: UI kit (ред. 3) предостерегает от
@@ -679,7 +769,10 @@
         switch (ev.Key)
         {
             case "Escape":
-                ClosePicker();
+                // Escape обрабатывается и здесь, и в JS-портале: закрытие не
+                // должно зависеть от того, где именно сейчас фокус.
+                await ClosePickerAsync();
+                StateHasChanged();
                 break;
 
             case "ArrowDown":
@@ -703,16 +796,6 @@
                 if (chosen != null) SelectOption(slot, chosen);
                 break;
         }
-    }
-
-    /// <summary>
-    /// Закрытие по уходу фокуса из поля выбора. Варианты помечены
-    /// <c>@onmousedown:preventDefault</c>, поэтому фокус остаётся в строке поиска
-    /// и список не закрывается раньше, чем обработан клик по варианту.
-    /// </summary>
-    private void OnPickerFocusOut(FocusEventArgs ev)
-    {
-        ClosePicker();
     }
 
     // ── Форма ──────────────────────────────────────────────────────────────
@@ -757,7 +840,7 @@
         formType = GsmRelationType.Duplicate;
         formNote = "";
         editing = false;
-        ClosePicker();
+        _ = ClosePickerAsync();
         ClearFormErrors();
     }
 
@@ -772,7 +855,7 @@
     private async Task SaveRelationAsync()
     {
         ClearFormErrors();
-        ClosePicker();
+        await ClosePickerAsync();
 
         if (primaryId == Guid.Empty)
         {
@@ -890,11 +973,37 @@
         _ => type.ToString(),
     };
 
-    public void Dispose()
+    protected override void OnInitialized()
     {
+        // Ссылка нужна порталу: по ней JS вызывает CloseDropdown при клике вне
+        // списка и по Escape.
+        _dotNetRef = DotNetObjectReference.Create(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
         _listCts?.Cancel();
         _listCts?.Dispose();
         _pickerCts?.Cancel();
         _pickerCts?.Dispose();
+        try
+        {
+            // Возвращает перенесённый в body список на место и снимает слушатели.
+            await JS.InvokeVoidAsync("dropdownPortal.cleanup");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (JSException)
+        {
+        }
+        finally
+        {
+            _dotNetRef?.Dispose();
+        }
     }
 }

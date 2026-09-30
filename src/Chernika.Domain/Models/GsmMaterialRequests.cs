@@ -68,6 +68,20 @@ public sealed class GsmMaterialSummary
     public bool HasClassification => GroupName is not null;
 }
 
+/// <summary>
+/// Значения, доступные в селектах фильтров первого справочника.
+/// <para>
+/// Списки приходят из справочника, чтобы фильтр предлагал только реально
+/// существующие значения. Само сравнение в запросе остаётся подстроковым.
+/// </para>
+/// </summary>
+public sealed class GsmFilterOptions
+{
+    public IReadOnlyList<string> GroupNames { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> SubgroupNames { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> NatoIndexes { get; init; } = Array.Empty<string>();
+}
+
 /// <summary>Полная карточка марки для формы редактирования.</summary>
 public sealed class GsmMaterialEditView
 {

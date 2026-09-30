@@ -51,19 +51,26 @@ window.dropdownPortal = {
     this._clearEscape();
   },
 
-  onClickOutside(dropId, dotNet) {
+  /* ignoreId — необязательный элемент, клики по которому НЕ считаются
+     «кликом вне». Нужен, когда выпадающий список вынесен в портал, а само поле
+     (строка поиска, кнопка открытия) осталось снаружи: без него ввод в строку
+     поиска закрывал бы список. Старый вызов с двумя аргументами работает как
+     прежде. */
+  onClickOutside(dropId, dotNet, ignoreId) {
     this._clearHandler();
     this._dotNet = dotNet;
 
     this._handler = (e) => {
       const el = document.getElementById(dropId);
-      if (!el || !el.contains(e.target)) {
-        this._clearHandler();
-        this._clearEscape();
-        try {
-          dotNet.invokeMethodAsync('CloseDropdown').catch(() => {});
-        } catch (_) {}
-      }
+      const ignore = ignoreId ? document.getElementById(ignoreId) : null;
+      // Клик по самому списку и по полю, его открывшему, — не закрытие.
+      if (el && (el.contains(e.target) || (ignore && ignore.contains(e.target)))) return;
+
+      this._clearHandler();
+      this._clearEscape();
+      try {
+        dotNet.invokeMethodAsync('CloseDropdown').catch(() => {});
+      } catch (_) {}
     };
 
     setTimeout(() => {

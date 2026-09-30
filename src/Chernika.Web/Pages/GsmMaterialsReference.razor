@@ -25,38 +25,73 @@
             </div>
         </div>
         <div class="panelBody">
+            @* Фильтры: подстроковый поиск, сортировка, признаки-переключатели и
+               селекты значений, которые реально есть в справочнике. Поля удалённых
+               марок здесь намеренно нет — см. примечание к таблице ниже. *@
             <div class="mbFilters gsmFilters">
                 <input class="fieldInput mbSearch" @bind="search" @bind:event="oninput" @bind:after="OnFiltersChanged"
-                       placeholder="Поиск: наименование, НД, группа, подгруппа, индекс НАТО..." />
-                <select class="field-select" @bind="statusFilter" @bind:after="OnFiltersChanged">
-                    <option value="0">Активные</option>
-                    <option value="1">Удалённые</option>
-                    <option value="2">Все</option>
-                </select>
-                <select class="field-select" @bind="sortBy" @bind:after="OnFiltersChanged">
+                       placeholder="Поиск: наименование, НД, группа, индекс НАТО..." />
+                <select class="field-select" @bind="sortBy" @bind:after="OnFiltersChanged"
+                        aria-label="Сортировка списка марок">
                     <option value="Name">Сортировка: марка</option>
                     <option value="Group">Сортировка: группа</option>
                     <option value="Nd">Сортировка: НД</option>
                     <option value="NatoIndex">Сортировка: индекс НАТО</option>
                 </select>
-                <select class="field-select" @bind="onlyUnclassified" @bind:after="OnFiltersChanged">
+                <select class="field-select" @bind="onlyUnclassified" @bind:after="OnFiltersChanged"
+                        aria-label="Отбор по наличию классификации">
                     <option value="0">Все марки</option>
                     <option value="1">Без классификации (вкл. черновики)</option>
                 </select>
-                <select class="field-select" @bind="inGost" @bind:after="OnFiltersChanged">
-                    <option value="0">Номенклатура по ГОСТ: любая</option>
-                    <option value="1">Только включённые</option>
+                <select class="field-select" @bind="groupFilter" @bind:after="OnFiltersChanged"
+                        aria-label="Фильтр по группе ГСМ">
+                    <option value="">Группа: любая</option>
+                    @foreach (var g in filterOptions.GroupNames)
+                    {
+                        <option value="@g">@g</option>
+                    }
                 </select>
-                <input class="fieldInput" @bind="groupFilter" @bind:event="oninput" @bind:after="OnFiltersChanged"
-                       placeholder="Группа" />
-                <input class="fieldInput" @bind="subgroupFilter" @bind:event="oninput" @bind:after="OnFiltersChanged"
-                       placeholder="Подгруппа" />
-                <input class="fieldInput" @bind="natoFilter" @bind:event="oninput" @bind:after="OnFiltersChanged"
-                       placeholder="Индекс НАТО" />
-                <button class="btn ghost" @onclick="ToggleSortDir">@(sortDesc ? "По убыванию" : "По возрастанию")</button>
+                <select class="field-select" @bind="subgroupFilter" @bind:after="OnFiltersChanged"
+                        aria-label="Фильтр по подгруппе ГСМ">
+                    <option value="">Подгруппа: любая</option>
+                    @foreach (var sg in filterOptions.SubgroupNames)
+                    {
+                        <option value="@sg">@sg</option>
+                    }
+                </select>
+                <select class="field-select" @bind="natoFilter" @bind:after="OnFiltersChanged"
+                        aria-label="Фильтр по индексу НАТО">
+                    <option value="">Индекс НАТО: любой</option>
+                    @foreach (var n in filterOptions.NatoIndexes)
+                    {
+                        <option value="@n">@n</option>
+                    }
+                </select>
+                @* Переключатели — тот же паттерн, что «Только мои» в Реестре ХК:
+                   класс active даёт акцентную рамку и заливку, галочка в круге
+                   дублирует состояние для скринридеров. *@
+                <div class="gsmFilterToggles" role="group" aria-label="Быстрые фильтры марок">
+                    <button type="button"
+                            class="filterToggle @(inGost == 1 ? "active" : null)"
+                            aria-pressed="@(inGost == 1)"
+                            @onclick="ToggleInGost">
+                        <span class="filterToggleMark">@(inGost == 1 ? "✓" : "")</span>
+                        Номенклатура по ГОСТ
+                    </button>
+                    <button type="button"
+                            class="filterToggle @(suitabilityAny == 1 ? "active" : null)"
+                            aria-pressed="@(suitabilityAny == 1)"
+                            @onclick="ToggleSuitabilityAny">
+                        <span class="filterToggleMark">@(suitabilityAny == 1 ? "✓" : "")</span>
+                        С пригодностью
+                    </button>
+                </div>
+                <button class="btn ghost gsmSortBtn" @onclick="ToggleSortDir">
+                    @(sortDesc ? "По убыванию" : "По возрастанию")
+                </button>
                 @if (HasActiveFilters)
                 {
-                    <button class="btn ghost" @onclick="ResetFilters">Сбросить</button>
+                    <button class="btn ghost gsmSortBtn" @onclick="ResetFilters">Сбросить</button>
                 }
             </div>
 
@@ -289,17 +324,23 @@
                         @* Тот же паттерн переключателя, что «Только мои» в Реестре ХК.
                            Общий filterToggle — отдельного третьего стиля нет. *@
                         <div class="gsmToggles" role="group" aria-labelledby="gsmSuitLabel">
-                            <button type="button" class="filterToggle" aria-pressed="@form.SuitabilityGround"
+                            <button type="button"
+                                    class="filterToggle @(form.SuitabilityGround ? "active" : null)"
+                                    aria-pressed="@form.SuitabilityGround"
                                     @onclick="() => form.SuitabilityGround = !form.SuitabilityGround">
                                 <span class="filterToggleMark">@(form.SuitabilityGround ? "✓" : "")</span>
                                 Наземная
                             </button>
-                            <button type="button" class="filterToggle" aria-pressed="@form.SuitabilityAir"
+                            <button type="button"
+                                    class="filterToggle @(form.SuitabilityAir ? "active" : null)"
+                                    aria-pressed="@form.SuitabilityAir"
                                     @onclick="() => form.SuitabilityAir = !form.SuitabilityAir">
                                 <span class="filterToggleMark">@(form.SuitabilityAir ? "✓" : "")</span>
                                 Авиационная
                             </button>
-                            <button type="button" class="filterToggle" aria-pressed="@form.SuitabilitySea"
+                            <button type="button"
+                                    class="filterToggle @(form.SuitabilitySea ? "active" : null)"
+                                    aria-pressed="@form.SuitabilitySea"
                                     @onclick="() => form.SuitabilitySea = !form.SuitabilitySea">
                                 <span class="filterToggleMark">@(form.SuitabilitySea ? "✓" : "")</span>
                                 Морская
@@ -309,7 +350,9 @@
                     <div class="field gsmF3">
                         <label id="gsmGostLabel">Включена в номенклатуру по ГОСТ</label>
                         <div class="gsmToggles" role="group" aria-labelledby="gsmGostLabel">
-                            <button type="button" class="filterToggle" aria-pressed="@form.InGostNomenclature"
+                            <button type="button"
+                                    class="filterToggle @(form.InGostNomenclature ? "active" : null)"
+                                    aria-pressed="@form.InGostNomenclature"
                                     @onclick="() => form.InGostNomenclature = !form.InGostNomenclature">
                                 <span class="filterToggleMark">@(form.InGostNomenclature ? "✓" : "")</span>
                                 В номенклатуре по ГОСТ
@@ -348,14 +391,15 @@
     private string? subgroupError;
     private string? nameError;
     private string search = "";
-    private int statusFilter = 0;
     private string sortBy = "Name";
     private bool sortDesc = false;
     private int onlyUnclassified = 0;
     private int inGost = 0;
+    private int suitabilityAny = 0;
     private string groupFilter = "";
     private string subgroupFilter = "";
     private string natoFilter = "";
+    private GsmFilterOptions filterOptions = new();
     private int currentPage = 1;
     private int totalPages = 1;
     private int totalCount;
@@ -365,12 +409,24 @@
 
     private bool HasActiveFilters =>
         !string.IsNullOrWhiteSpace(search)
-        || statusFilter != 0
         || onlyUnclassified != 0
         || inGost != 0
+        || suitabilityAny != 0
         || !string.IsNullOrWhiteSpace(groupFilter)
         || !string.IsNullOrWhiteSpace(subgroupFilter)
         || !string.IsNullOrWhiteSpace(natoFilter);
+
+    private async Task ToggleInGost()
+    {
+        inGost = inGost == 1 ? 0 : 1;
+        await OnFiltersChanged();
+    }
+
+    private async Task ToggleSuitabilityAny()
+    {
+        suitabilityAny = suitabilityAny == 1 ? 0 : 1;
+        await OnFiltersChanged();
+    }
 
     /// <summary>Примечание длиннее порога показывается свёрнутым с раскрытием.</summary>
     private const int NoteClampThreshold = 220;
@@ -422,12 +478,11 @@
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
 
-        bool? showDeleted = statusFilter switch
-        {
-            1 => true,
-            2 => null,
-            _ => false
-        };
+        // Поля фильтра удалённых марок в UI больше нет (по требованию), поэтому
+        // список показывает только действующие записи: ShowDeleted = false.
+        // Удалённые марки по-прежнему доступны для просмотра и восстановления
+        // только через прямые ссылки/API — см. примечание в отчёте.
+        const bool showDeleted = false;
 
         loading = true;
         try
@@ -444,10 +499,15 @@
                     SortDescending = sortDesc,
                     OnlyUnclassified = onlyUnclassified == 1 ? true : null,
                     InGostNomenclature = inGost == 1 ? true : null,
+                    SuitabilityAny = suitabilityAny == 1 ? true : null,
                     GroupName = string.IsNullOrWhiteSpace(groupFilter) ? null : groupFilter.Trim(),
                     SubgroupName = string.IsNullOrWhiteSpace(subgroupFilter) ? null : subgroupFilter.Trim(),
                     NatoIndex = string.IsNullOrWhiteSpace(natoFilter) ? null : natoFilter.Trim(),
                 }, ct);
+
+                // Значения для селектов берём из справочника: фильтр предлагает
+                // только реально существующие значения.
+                filterOptions = await GsmService.GetFilterOptionsAsync(ct);
 
                 if (ct.IsCancellationRequested)
                     return;
@@ -691,9 +751,9 @@
     private async Task ResetFilters()
     {
         search = "";
-        statusFilter = 0;
         onlyUnclassified = 0;
         inGost = 0;
+        suitabilityAny = 0;
         groupFilter = "";
         subgroupFilter = "";
         natoFilter = "";

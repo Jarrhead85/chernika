@@ -295,6 +295,51 @@ public class GsmMaterialService
     /// переключения потребителей (PR-5) фильтр снимается.
     /// </remarks>
     /// <summary>
+    /// Имеющиеся значения групп, подгрупп и индексов НАТО — для селектов фильтров
+    /// первого справочника.
+    /// <para>
+    /// Сами фильтры остаются подстроковыми (<c>ILike</c>): это их действующая и
+    /// покрытая тестами семантика, а список лишь предлагает выбрать значение,
+    /// которое действительно есть в справочнике.
+    /// </para>
+    /// </summary>
+    public async Task<GsmFilterOptions> GetFilterOptionsAsync(CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        var groups = await _db.GsmMaterialClassifications
+            .AsNoTracking()
+            .Select(c => c.GroupName)
+            .Distinct()
+            .OrderBy(g => g)
+            .ToListAsync(ct);
+
+        var subgroups = await _db.GsmMaterialClassifications
+            .AsNoTracking()
+            .Select(c => c.SubgroupName)
+            .Distinct()
+            .OrderBy(s => s)
+            .ToListAsync(ct);
+
+        // Пустые и пробельные индексы в справочнике не показываем: фильтровать
+        // по ним нечего.
+        var nato = await _db.GsmMaterials
+            .AsNoTracking()
+            .Where(m => m.NatoIndex != null && m.NatoIndex.Trim() != string.Empty)
+            .Select(m => m.NatoIndex!)
+            .Distinct()
+            .OrderBy(n => n)
+            .ToListAsync(ct);
+
+        return new GsmFilterOptions
+        {
+            GroupNames = groups,
+            SubgroupNames = subgroups,
+            NatoIndexes = nato,
+        };
+    }
+
+    /// <summary>
     /// Названия марок по идентификаторам — для отображения уже сохранённых строк
     /// ХК. Не зависит от переходного фильтра выбора: марка, уже присутствующая в
     /// документе, остаётся читаемой даже если больше не предлагается для выбора.
