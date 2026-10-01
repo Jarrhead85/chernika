@@ -907,35 +907,6 @@ input:-webkit-autofill:focus {
     font-style: italic;
 }
 
-/* Законсервированные права модуля ИК: заметный, но не тревожный блок без
-   действий выдачи. Показывается администратору, чтобы назначения не выглядели
-   пропавшими. */
-.permConserved {
-    margin-top: 18px;
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--muted);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--panel2) 70%, transparent);
-    padding: 12px 14px;
-}
-
-.permConservedTitle {
-    font-weight: 700;
-    color: var(--text);
-    margin-bottom: 4px;
-}
-
-.permConservedHint {
-    font-size: 12px;
-    color: var(--muted);
-    line-height: 1.45;
-    margin-bottom: 10px;
-}
-
-.permConserved .permissionsTableWrap {
-    margin-top: 0;
-}
-
 .permReason {
     margin-top: 6px;
     font-size: 11px;

@@ -28,24 +28,35 @@ namespace Chernika.Infrastructure.Services;
 public class GsmMaterialService
 {
     /// <summary>
-    /// Предел длины НД марки.
+    /// Предел длины НД марки — <b>выбранное продуктовое правило</b>, равное 1000
+    /// символам.
+    /// <para>
+    /// Это НЕ следствие 2000-символьного усечения деталей аудита
+    /// (<c>AuditService.LimitLength</c>): то ограничение относится к записи
+    /// события и не задаёт предел полю марки. Значение выбрано как достаточно
+    /// длинное для реальных нормативных обозначений и достаточно короткое,
+    /// чтобы поле ввода оставалось практичным. Случайное совпадение с лимитом
+    /// аудита не является основанием предела, и изменение лимита аудита его не
+    /// должно двигать — поэтому величина объявлена явно и покрыта тестом.
+    /// </para>
     /// <para>
     /// До PR-5 предел был 200 символов и держался на двух внешних ограничениях:
     /// прежнем зеркале <c>Gost</c> и снимке ИК (<c>varchar(200)</c>). Оба больше не
-    /// действуют: <c>Gost</c> в PR-5 перестаёт заполняться, а модуль ИК
-    /// законсервирован и новых снимков не создаёт. Собственная колонка
-    /// <c>GsmMaterial.Nd</c> — <c>text</c>, ограничения длины не имеет.
+    /// действуют: <c>Gost</c> в PR-5 перестаёт заполняться, а модуль ИК не
+    /// создаёт новых снимков. Собственная колонка <c>GsmMaterial.Nd</c> —
+    /// <c>text</c>, ограничения длины не имеет.
     /// </para>
     /// <para>
-    /// Ограничение осталось явным и проверяется ДО записи: усечения не происходит,
-    /// лишнее значение отклоняется понятным сообщением. 1000 символов — с запасом
-    /// относительно 2000-символьного усечения деталей аудита
-    /// (<c>AuditService.LimitLength</c>) и с разумной длиной поля ввода. Узкое
-    /// место осталось только в одном пути: предложение из черновика ХК, где НД
-    /// приходит в колонку <c>ReferenceProposal.Gost</c> (<c>varchar(200)</c>).
+    /// Ограничение проверяется ДО записи: усечения не происходит, лишнее
+    /// значение отклоняется понятным сообщением. Отдельно живёт технический
+    /// предел пути «предложение из черновика ХК» — 200 символов, по длине
+    /// колонки <c>ReferenceProposal.Gost</c> другой таблицы
+    /// (<c>HKCardService.ProposalGostMaxLength</c>). Это разные величины, и их
+    /// нельзя путать: справочник марок примет 1000 символов, путь предложения —
+    /// нет, о чём пользователь узнаёт из адресного отказа.
     /// </para>
     /// </summary>
-    private const int NdMaxLength = 1000;
+    public const int NdMaxLength = 1000;
 
     /// <summary>
     /// Предел выдачи справочника выбора марок для формы связи. Защита от
@@ -439,10 +450,20 @@ public class GsmMaterialService
     /// <c>DuplicateAndReserve</c> предлагается в двух категориях независимо.
     /// </para>
     /// <para>
-    /// Связь с недоступной маркой (удалённой или ещё не опубликованной) не
-    /// выбрасывается молча: она возвращается с <c>IsAddable = false</c> и причиной,
-    /// чтобы интерфейс мог объяснить недоступность. Метод ничего не пишет —
-    /// добавление выполняется только через <c>HKCardService</c> при сохранении ХК.
+    /// <c>IsAddable</c> означает ровно одно: <b>примет ли сервис ХК такое
+    /// назначение</b>. Проверяются опубликованность, отсутствие удаления и
+    /// наличие классификации (группы и подгруппы) — те же условия, что и в
+    /// <c>EnsureHkAssignableMaterialsAsync</c>. Неклассифицированная марка
+    /// связана в справочнике законно (PR-4), но в строку ХК не попадёт, поэтому
+    /// интерфейс обязан назвать её недоступной, а не предлагать к выбору.
+    /// </para>
+    /// <para>
+    /// Связь с недоступной маркой не выбрасывается молча: она возвращается с
+    /// <c>IsAddable = false</c> и причиной. Список может состоять
+    /// <b>целиком из недоступных позиций</b> — тогда он всё равно возвращается,
+    /// чтобы интерфейс показал связь и объяснил причину, а не исчез. Метод
+    /// ничего не пишет: добавление — только через <c>HKCardService</c> при
+    /// сохранении ХК.
     /// </para>
     /// </summary>
     public async Task<List<GsmRelationSuggestionSource>> GetRelatedSuggestionsAsync(
@@ -470,6 +491,7 @@ public class GsmMaterialService
                 r.RelatedGsmMaterial.Nd,
                 r.RelatedGsmMaterial.IsDeleted,
                 r.RelatedGsmMaterial.IsDraft,
+                r.RelatedGsmMaterial.Classifications.Any(),
                 r.RelationType,
                 r.Note))
             .ToListAsync(ct);
@@ -489,9 +511,7 @@ public class GsmMaterialService
                 var categories = GsmRelationCategoryMap.CategoriesFor(r.RelationType);
                 if (categories.Count == 0) continue;
 
-                var reason = r.RelatedIsDeleted
-                    ? "марка удалена"
-                    : r.RelatedIsDraft ? "марка ещё не опубликована" : null;
+                var reason = UnavailableReason(r);
 
                 if (!byRelated.TryGetValue(r.RelatedMaterialId, out var builder))
                 {
@@ -517,6 +537,20 @@ public class GsmMaterialService
         return result;
     }
 
+    /// <summary>
+    /// Причина, по которой связанная марка не может попасть в строку ХК.
+    /// Порядок значим: удаление важнее неопубликованности, неопубликованность —
+    /// важнее классификации. Две причины одновременно не возникают: удалённая
+    /// марка не может быть «неклассифицированной» в осмысле интерфейса.
+    /// </summary>
+    private static string? UnavailableReason(RelationSuggestionRow r)
+    {
+        if (r.RelatedIsDeleted) return "марка удалена";
+        if (r.RelatedIsDraft) return "марка ещё не опубликована";
+        if (!r.RelatedHasClassification) return "марка не классифицирована";
+        return null;
+    }
+
     /// <summary>Частичная проекция связи для предложения; собирается в памяти.</summary>
     private sealed record RelationSuggestionRow(
         Guid PrimaryMaterialId,
@@ -527,6 +561,7 @@ public class GsmMaterialService
         string? RelatedNd,
         bool RelatedIsDeleted,
         bool RelatedIsDraft,
+        bool RelatedHasClassification,
         GsmRelationType RelationType,
         string? Note);
 
@@ -1648,67 +1683,25 @@ public class GsmMaterialService
         return true;
     }
 
-    // ── Отчёт незавершённости переноса legacy-полей ───────────────────────
-
-    /// <summary>
-    /// Диагностика расхождения <c>Gost</c>/<c>Nd</c> и
-    /// <c>Description</c>/<c>IntendedUse</c>.
-    /// <para>
-    /// ВАЖНО, смысл отчёта изменился вместе с PR-5. Прежние поля больше не
-    /// заполняются: <c>Gost</c> и <c>Description</c> заморожены на последних
-    /// значениях и удаляются вместе с колонками в PR-6. Поэтому расхождение
-    /// теперь НОРМАЛЬНО для любой марки, изменённой после PR-5, и НЕ является ни
-    /// показателем качества данных, ни признаком незавершённого переноса.
-    /// </para>
-    /// <para>
-    /// Отчёт остаётся ради одной проверки перед PR-6: он показывает, какие марки
-    /// ещё отличаются, чтобы убедиться, что ни один действующий потребитель не
-    /// читает переходные колонки. Данные по нему пересчитывать или «чинить» нельзя.
-    /// </para>
-    /// </summary>
-    public async Task<List<GsmTransitionDivergence>> GetTransitionDivergencesAsync(CancellationToken ct = default)
-    {
-        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
-        return await FindTransitionDivergencesAsync(ct);
-    }
-
-    private async Task<List<GsmTransitionDivergence>> FindTransitionDivergencesAsync(CancellationToken ct)
-    {
-        // Отбор — надмножество расхождений: строка, где обе пары пусты, расходиться не может.
-        var candidates = await _db.GsmMaterials.IgnoreQueryFilters()
-            .Where(m => m.Nd != null || m.Gost != null || m.IntendedUse != null || m.Description != null)
-            .AsNoTracking()
-            .ToListAsync(ct);
-
-        var result = new List<GsmTransitionDivergence>();
-        foreach (var m in candidates)
-        {
-            var expectedNd = NormalizeLegacyText(m.Gost);
-            var expectedIntendedUse = NormalizeLegacyText(m.Description);
-
-            var ndDiffers = !string.Equals(m.Nd, expectedNd, StringComparison.Ordinal);
-            var intendedUseDiffers = !string.Equals(m.IntendedUse, expectedIntendedUse, StringComparison.Ordinal);
-            if (!ndDiffers && !intendedUseDiffers) continue;
-
-            result.Add(new GsmTransitionDivergence
-            {
-                Id = m.Id,
-                Name = m.Name,
-                Type = m.Type,
-                IsDeleted = m.IsDeleted,
-                Gost = m.Gost,
-                Nd = m.Nd,
-                NdDiffers = ndDiffers,
-                Description = m.Description,
-                IntendedUse = m.IntendedUse,
-                IntendedUseDiffers = intendedUseDiffers,
-                ExpectedNd = expectedNd,
-                ExpectedIntendedUse = expectedIntendedUse,
-            });
-        }
-
-        return result;
-    }
+    // ── Отчёт расхождения legacy-полей: УДАЛЁН в фазе A PR-6 ─────────────
+    //
+    // Методы GetTransitionDivergencesAsync/FindTransitionDivergencesAsync и
+    // модель GsmTransitionDivergence удалены как НЕВЕРНЫЙ критерий готовности.
+    //
+    // Прежняя идея отчёта — «0 расхождений Gost↔Nd значит, что перенос
+    // завершён» — не доказывает ничего о коде. Расхождение может быть нулевым
+    // при живом потребителе legacy-полей (если он читает и Nd, и Gost), и
+    // ненулевым при полностью переключённом коде (любая марка, изменённая после
+    // PR-5, имеет разные значения, потому что Gost/Description больше не
+    // пишутся). То есть отчёт показывал состояние ДАННЫХ, а спрашивал про
+    // КОД.
+    //
+    // Что доказывает готовность к удалению колонок: карта обращений к
+    // GsmMaterial.Type/Gost/Description по src/tests/API/Web/законсервированному
+    // ИК и тесты на каждого найденного потребителя. Карта составлена и
+    // зафиксирована в PR-6; единственный непереключённый потребитель —
+    // построение снимков ИК в IndividualCardService (AdaptToSnapshot), который
+    // компилируется и обязан быть минимально адаптирован в фазе B.
 
     /// <summary>
     /// Карточка марки собирается из уже сохранённой сущности и выбранного набора

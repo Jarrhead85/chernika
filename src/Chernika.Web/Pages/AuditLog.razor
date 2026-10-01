@@ -17,35 +17,30 @@
         <div class="panelBody">
             <div class="form" style="grid-template-columns:1fr 1fr 1fr 1fr auto">
                 <div class="field"><label>Тип сущности</label>
-                    @* Активные типы — только действующие разделы. Типы
-                       законсервированного модуля ИК (а вместе с ним коэффициенты:
-                       они применялись только в расчёте ИК) вынесены в отдельную
-                       группу «только чтение»: история записей сохранена и доступна
-                       администратору, но не выдаётся как действующий раздел. *@
+                    @* Плоский список без пометок о состоянии модуля. Журнал —
+                       исторический инструмент администратора, поэтому события
+                       прошлых лет доступны так же, как остальные; «выделения»
+                       консервации в интерфейсе не делаем. *@
                     <select @bind="filterEntityType" class="field-select">
                         <option value="">Все</option>
-                        <optgroup label="Действующие разделы">
-                            <option value="HKCard">Химмотологическая карта</option>
-                            <option value="Complex">Комплекс</option>
-                            <option value="Aggregate">Узел</option>
-                            <option value="EquipmentModel">Изделие</option>
-                            <option value="EquipmentInstance">Экземпляр техники</option>
-                            <option value="GsmMaterial">Марка ГСМ</option>
-                            <option value="AssemblyUnit">Сборочная единица</option>
-                            <option value="Branch">Организация</option>
-                            <option value="WorkTask">Задача</option>
-                            <option value="User">Пользователь</option>
-                            <option value="UserPermissionOverride">Индивидуальное полномочие</option>
-                            <option value="SecurityRepair">Конфигурация безопасности</option>
-                            <option value="ProductComposition">Состав изделия</option>
-                            <option value="AggregateComposition">Состав узла</option>
-                            <option value="ComplexComposition">Состав комплекса</option>
-                        </optgroup>
-                        <optgroup label="Законсервированный модуль (только чтение)">
-                            <option value="IndividualCard">Индивидуальная карта</option>
-                            <option value="Coefficient">Коэффициент</option>
-                            <option value="CoefficientType">Тип коэффициента</option>
-                        </optgroup>
+                        <option value="HKCard">Химмотологическая карта</option>
+                        <option value="Complex">Комплекс</option>
+                        <option value="Aggregate">Узел</option>
+                        <option value="EquipmentModel">Изделие</option>
+                        <option value="EquipmentInstance">Экземпляр техники</option>
+                        <option value="IndividualCard">Индивидуальная карта</option>
+                        <option value="GsmMaterial">Марка ГСМ</option>
+                        <option value="AssemblyUnit">Сборочная единица</option>
+                        <option value="Branch">Организация</option>
+                        <option value="Coefficient">Коэффициент</option>
+                        <option value="CoefficientType">Тип коэффициента</option>
+                        <option value="WorkTask">Задача</option>
+                        <option value="User">Пользователь</option>
+                        <option value="UserPermissionOverride">Индивидуальное полномочие</option>
+                        <option value="SecurityRepair">Конфигурация безопасности</option>
+                        <option value="ProductComposition">Состав изделия</option>
+                        <option value="AggregateComposition">Состав узла</option>
+                        <option value="ComplexComposition">Состав комплекса</option>
                     </select>
                 </div>
                 <div class="field"><label>Действие</label>

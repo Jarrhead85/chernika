@@ -2679,6 +2679,26 @@ public class HKCardService
         return null;
     }
 
+    /// <summary>
+    /// Предел длины НД для пути «предложение из черновика ХК».
+    /// <para>
+    /// Здесь НД попадает в <c>ReferenceProposal.Gost</c> — это колонка
+    /// <c>varchar(200)</c> другой таблицы, и она НЕ расширялась вместе с
+    /// <c>GsmMaterial.Nd</c> до <c>text</c> (предел марки — 1000 символов,
+    /// см. <c>GsmMaterialService.NdMaxLength</c>). Поэтому длинный НД, который
+    /// справочник марок принял бы, здесь приводил бы к ошибке PostgreSQL
+    /// <c>22001 string_data_right_truncation</c> — сырой обрыв БД вместо
+    /// понятного отказа.
+    /// </para>
+    /// <para>
+    /// Решение фазы A (схема не меняется): отклонять ДО записи, с адресным
+    /// сообщением и без усечения. Расширение колонки — отдельное решение
+    /// владельца, а не побочный эффект этого PR. Проверка не «наугад»: тот же
+    /// предел применён в конфигурации сущности, и тест сверяет оба.
+    /// </para>
+    /// </summary>
+    private const int ProposalGostMaxLength = 200;
+
     public async Task<ReferenceProposal> CreateProposalAsync(
         Guid hkCardId, ProposalTargetType targetType,
         string code, string name, string? description, string? gost, string? type,
@@ -2688,6 +2708,15 @@ public class HKCardService
             ?? throw new ArgumentException("ХК не найдена.");
         if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
             throw new InvalidOperationException("Предложения можно создавать только для черновика или карты на доработке.");
+
+        // Проверка длины ДО любых записей: иначе отказ пришлётся уже после
+        // вставки черновика, и пользователь увидит ошибку БД вместо причины.
+        if (gost is not null && gost.Trim().Length > ProposalGostMaxLength)
+            throw new InvalidOperationException(
+                "НД в предложении длиннее " + ProposalGostMaxLength + " символов. "
+                + "Этот путь ограничен длиной служебного поля предложения. "
+                + "Укажите краткий НД здесь и внесите полный НД позднее в справочнике марок ГСМ, "
+                + "где допускается до 1000 символов.");
 
         var actorId = _currentUser.GetRequiredUserId();
         var proposal = new ReferenceProposal

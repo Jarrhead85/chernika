@@ -257,25 +257,25 @@ public class GsmInventorySchemaIntegrationTests
         Assert.Equal(manualDescription, manual.Description);
         Assert.False(string.IsNullOrWhiteSpace(manual.Type));
 
-        // Явно заполненное Nd — это расхождение переноса, и отчёт его видит.
-        // Однонаправленной сверки в PR-3 больше нет, поэтому расхождение убирается
-        // напрямую, чтобы общая БД оставалась чистой для остальных тестов.
+        // Расхождение Nd↔Gost, созданное вручную, убирается напрямую, чтобы
+        // общая БД оставалась чистой для остальных тестов. Проверять его отчётом
+        // о переносе больше нельзя: отчёт удалён в фазе A PR-6 как неверный
+        // критерий — он измерял данные, а спрашивал про код. Проверка готовности
+        // к удалению колонок — карта обращений и тесты (см.
+        // GsmActiveConsumerSwitchIntegrationTests).
         await using var s3 = _fixture.CreateScope();
         SetRefEditor(s3);
-        var divergences = await s3.GsmMaterials.GetTransitionDivergencesAsync();
-        Assert.Contains(divergences, d => d.Id == alreadyFilled && d.NdDiffers);
         await s3.Db.Database.ExecuteSqlInterpolatedAsync(
             $@"UPDATE ""GsmMaterials""
                 SET ""Nd"" = NULLIF(btrim(""Gost""), ''),
                     ""IntendedUse"" = ""Description""
                 WHERE ""Id"" = {alreadyFilled}");
 
-        // Расхождение по этой марке закрыто. Общий отчёт после PR-5 может быть не
-        // пустым: переходные колонки заморожены и расходятся у любой марки,
-        // изменённой сервисом. Поэтому проверяем свою марку, а не весь список.
-        Assert.DoesNotContain(
-            await s3.GsmMaterials.GetTransitionDivergencesAsync(),
-            d => d.Id == alreadyFilled && d.NdDiffers);
+        var restored = await s3.Db.GsmMaterials.IgnoreQueryFilters().AsNoTracking()
+            .SingleAsync(m => m.Id == alreadyFilled);
+        // После выравнивания Nd повторяет Gost, а IntendedUse — Description.
+        Assert.Equal(restored.Gost, restored.Nd);
+        Assert.Equal(restored.Description, restored.IntendedUse);
     }
 
     [Fact]

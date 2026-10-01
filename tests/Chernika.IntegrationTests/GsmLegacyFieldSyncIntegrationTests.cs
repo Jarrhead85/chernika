@@ -80,13 +80,10 @@ public class GsmLegacyFieldSyncIntegrationTests
         Assert.Null(await ReadAsync(id, m => m.Gost));
         Assert.Null(await ReadAsync(id, m => m.Description));
 
-        // Отчёт о расхождении теперь показывает расхождение как НОРМАЛЬНОЕ:
-        // он больше не показатель качества данных (см. сервис).
-        await using (var s = _fixture.CreateScope())
-        {
-            SetRefEditor(s);
-            Assert.Contains(await s.GsmMaterials.GetTransitionDivergencesAsync(), d => d.Id == id);
-        }
+        // Отчёт о расхождении Gost↔Nd удалён в фазе A PR-6 как неверный
+        // критерий: он измерял состояние ДАННЫХ, а спрашивал про КОД. Проверка
+        // готовности к удалению колонок — карта обращений и тесты, см.
+        // GsmInventorySchemaIntegrationTests.
 
         // Type продолжает заполняться: колонка NOT NULL до PR-6.
         Assert.False(string.IsNullOrWhiteSpace(await ReadAsync(id, m => m.Type)));

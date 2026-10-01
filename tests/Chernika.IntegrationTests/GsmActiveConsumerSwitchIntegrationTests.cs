@@ -2,6 +2,8 @@ using Chernika.Api.Contracts;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
+using Chernika.Infrastructure.Data;
+using Chernika.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -276,6 +278,89 @@ public class GsmActiveConsumerSwitchIntegrationTests
         // Предложение осталось в статусе «Ожидает».
         var still = await s.Db.ReferenceProposals.AsNoTracking().SingleAsync(p => p.Id == proposal.Id);
         Assert.Equal(ProposalStatus.Pending, still.Status);
+    }
+
+    // ── Предел НД в пути предложения (замечание A2) ──────────────────────
+
+    [Fact]
+    public void NdLimits_DoNotDriftBetweenMaterialAndProposalColumn()
+    {
+        // Предел НД марки (1000) и предел колонки ReferenceProposal.Gost
+        // (200) — разные величины, и их нельзя выводить одно из другого. Тест
+        // сверяет фактическую конфигурацию EF с константой сервиса: если
+        // колонку расширят, тест упадёт и заставит обновить проверку, а не
+        // молча оставит путь с сырой ошибкой БД.
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=localhost;Database=configuration_probe;Username=none")
+            .Options;
+        using var ctx = new AppDbContext(options);
+
+        var gost = ctx.Model.FindEntityType(typeof(ReferenceProposal))!
+            .FindProperty(nameof(ReferenceProposal.Gost))!;
+        Assert.Equal(200, gost.GetMaxLength());
+
+        // Предел марки — выбранное продуктовое правило, а НД-колонка предложения
+        // — техническое ограничение varchar. Ровно эта разница и ломает путь.
+        Assert.Equal(1000, GsmMaterialService.NdMaxLength);
+        Assert.True(gost.GetMaxLength() < GsmMaterialService.NdMaxLength);
+    }
+
+    [Fact]
+    public async Task ReferenceProposal_RejectsLongNdBeforeDatabase_WithAddressableMessage()
+    {
+        // НД длиннее 200 символов принимается справочником марок, но этот путь
+        // ограничен колонкой ReferenceProposal.Gost varchar(200). Без проверки
+        // пользователь получил бы 22001 string_data_right_truncation — сырую
+        // ошибку PostgreSQL вместо причины.
+        var nodeId = await SeedNodeAsync();
+        var draftCardId = await SeedDraftCardAsync(nodeId);
+        var longNd = new string('Н', 201);
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => s.HK.CreateProposalAsync(
+            draftCardId, ProposalTargetType.GsmMaterial,
+            code: "MAT-" + Suffix(),
+            name: "Марка длинного НД " + Suffix(),
+            description: null, gost: longNd, type: null));
+
+        // Сообщение адресное: называет предел и говорит, где вводить полный НД.
+        Assert.Contains("200", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("1000", ex.Message, StringComparison.Ordinal);
+
+        // Ничего не записано и, главное, ничего не усечено: ни предложения, ни
+        // черновика марки.
+        Assert.False(await s.Db.ReferenceProposals.AnyAsync(p => p.HKCardId == draftCardId));
+    }
+
+    [Fact]
+    public async Task ReferenceProposal_AcceptsNdAtColumnLimit_WithoutTruncation()
+    {
+        // Граница проверки: ровно 200 символов проходят, и значение сохраняется
+        // целиком. Регресс «отрезали бы по 200» здесь ловится.
+        var nodeId = await SeedNodeAsync();
+        var draftCardId = await SeedDraftCardAsync(nodeId);
+        var nd = new string('Н', 200);
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+
+        var proposal = await s.HK.CreateProposalAsync(
+            draftCardId, ProposalTargetType.GsmMaterial,
+            code: "MAT-" + Suffix(),
+            name: "Марка НД 200 " + Suffix(),
+            description: null, gost: nd, type: null);
+
+        var stored = await s.Db.ReferenceProposals.AsNoTracking()
+            .SingleAsync(p => p.Id == proposal.Id);
+        Assert.Equal(200, stored.Gost!.Length);
+        Assert.Equal(nd, stored.Gost);
+
+        // НД переносится в черновик марки целиком.
+        var stub = await s.Db.GsmMaterials.AsNoTracking()
+            .SingleAsync(m => m.Id == proposal.CreatedStubGsmMaterialId);
+        Assert.Equal(nd, stub.Nd);
     }
 
     // ── Фикстуры ──────────────────────────────────────────────────────────

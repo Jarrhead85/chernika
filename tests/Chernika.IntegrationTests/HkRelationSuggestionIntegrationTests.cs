@@ -1,3 +1,4 @@
+using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
@@ -520,6 +521,373 @@ public class HkRelationSuggestionIntegrationTests
             .Where(r => r.HKCardItem!.HKCardId == cardId)
             .ToListAsync();
         Assert.Equal(2, rows.Count);
+    }
+
+    // ── Все связанные марки недоступны (замечание A1.1) ──────────────────
+
+    [Fact]
+    public async Task Suggestions_WhenAllRelatedAreUnavailable_StillReturnThemWithReasons()
+    {
+        // Связь видна, но ни одна связанная марка не годится для строки ХК.
+        // Список обязан вернуться: иначе интерфейс покажет «связей нет», хотя
+        // связи есть, и пользователь будет искать несуществующую ошибку в
+        // справочнике связей.
+        var (primaryId, duplicateId, _, _) = await SeedAsync();
+        await using (var setup = _fixture.CreateScope())
+        {
+            AsNormAdmin(setup);
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryId,
+                RelatedGsmMaterialId = duplicateId,
+                RelationType = GsmRelationType.Duplicate,
+            });
+
+            var material = await setup.Db.GsmMaterials.AsNoTracking()
+                .FirstAsync(m => m.Id == duplicateId);
+            setup.Db.Entry(material).State = EntityState.Modified;
+            material.IsDeleted = true;
+            await setup.Db.SaveChangesAsync();
+        }
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+
+        var source = Assert.Single(await s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }));
+        var option = Assert.Single(source.Suggestions);
+
+        Assert.False(option.IsAddable);
+        Assert.Contains("удалена", option.UnavailableReason ?? "", StringComparison.OrdinalIgnoreCase);
+        Assert.False(source.Suggestions.Any(x => x.IsAddable));
+    }
+
+    [Fact]
+    public async Task Suggestions_MixedAvailability_KeepsBothKindsInOneList()
+    {
+        var (primaryId, availableId, deletedId, _) = await SeedAsync();
+        await using (var setup = _fixture.CreateScope())
+        {
+            AsNormAdmin(setup);
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryId,
+                RelatedGsmMaterialId = availableId,
+                RelationType = GsmRelationType.Duplicate,
+            });
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryId,
+                RelatedGsmMaterialId = deletedId,
+                RelationType = GsmRelationType.Reserve,
+            });
+
+            var material = await setup.Db.GsmMaterials.AsNoTracking()
+                .FirstAsync(m => m.Id == deletedId);
+            setup.Db.Entry(material).State = EntityState.Modified;
+            material.IsDeleted = true;
+            await setup.Db.SaveChangesAsync();
+        }
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+        var source = Assert.Single(await s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }));
+
+        Assert.Equal(2, source.Suggestions.Count);
+        Assert.Single(source.Suggestions, x => x.IsAddable);
+        Assert.Single(source.Suggestions, x => !x.IsAddable);
+    }
+
+    // ── Неклассифицированный аналог (замечание A1.2) ─────────────────────
+
+    [Fact]
+    public async Task Suggestions_UnclassifiedRelated_IsNotAddable_WithReason()
+    {
+        // PR-4 допускает справочную связь с опубликованной неклассифицированной
+        // маркой, но новая строка ХК такую марку запрещает. Предложение обязано
+        // совпадать с решением сервиса ХК, иначе «Сохранить ХК» откажет там,
+        // где интерфейс назвал вариант доступным.
+        var (primaryId, _, _, _) = await SeedAsync();
+        await using (var setup = _fixture.CreateScope())
+        {
+            AsNormAdmin(setup);
+
+            // Марка без единой строки классификации: создаётся напрямую, мимо
+            // сервиса, который требует группу и подгруппу.
+            var unclassified = new GsmMaterial
+            {
+                Id = Guid.NewGuid(),
+                Name = "Без классификации " + Suffix(),
+                Nd = "НД " + Suffix(),
+                IsDraft = false,
+                IsDeleted = false,
+            };
+            setup.Db.GsmMaterials.Add(unclassified);
+            await setup.Db.SaveChangesAsync();
+
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryId,
+                RelatedGsmMaterialId = unclassified.Id,
+                RelationType = GsmRelationType.Duplicate,
+            });
+
+            await using var read = _fixture.CreateScope();
+            AsNormAdmin(read);
+            var source = Assert.Single(await read.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }));
+            var option = Assert.Single(source.Suggestions);
+
+            Assert.False(option.IsAddable);
+            Assert.Contains("не классифицирована", option.UnavailableReason ?? "", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task Suggestions_UnclassifiedRelated_VisibleInRelationRegistry_ButRejectedByHk()
+    {
+        // Полный сценарий замечания: связь видна в справочнике, но отметить её
+        // для ХК нельзя, а сервер при попытке добавить такую строку отказывает.
+        var (primaryId, _, _, _) = await SeedAsync();
+        Guid unclassifiedId;
+        await using (var setup = _fixture.CreateScope())
+        {
+            AsNormAdmin(setup);
+            var unclassified = new GsmMaterial
+            {
+                Id = Guid.NewGuid(),
+                Name = "Без классификации " + Suffix(),
+                Nd = "НД " + Suffix(),
+                IsDraft = false,
+                IsDeleted = false,
+            };
+            setup.Db.GsmMaterials.Add(unclassified);
+            await setup.Db.SaveChangesAsync();
+            unclassifiedId = unclassified.Id;
+
+            var created = await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryId,
+                RelatedGsmMaterialId = unclassifiedId,
+                RelationType = GsmRelationType.Duplicate,
+            });
+
+            // Связь создана и видна — отказ пришлось бы на другое основание.
+            var relations = await setup.GsmMaterials.GetRelationsPagedAsync(
+                new GsmRelationQuery { Page = 1, PageSize = 200 }, CancellationToken.None);
+            Assert.Contains(relations.Items, r => r.Id == created.Id);
+        }
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+        var source = Assert.Single(await s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }));
+        Assert.False(Assert.Single(source.Suggestions).IsAddable);
+
+        // Последний рубеж: сервис ХК такую марку в новую строку не пускает.
+        var (nodeId, unitId) = await SeedNodeAndUnitAsync(s);
+        var item = new HKCardItem
+        {
+            Id = Guid.NewGuid(),
+            AssemblyUnitId = unitId,
+            SortOrder = 1,
+            Quantity = 1,
+            Volume = 10,
+            UnitOfMeasure = "кг",
+        };
+        item.Materials.Add(NewMaterial(item.Id, primaryId, GsmCategory.Primary));
+        var card = new HKCard
+        {
+            Id = Guid.NewGuid(),
+            Code = "HK-" + Suffix(),
+            Version = "v" + Suffix()[..4],
+            Status = HKCardStatus.Draft,
+            ObjectLevel = HKObjectLevel.Node,
+            NodeId = nodeId,
+            BranchId = _fixture.BranchA,
+            CreatedAt = DateTime.UtcNow,
+            Items = new List<HKCardItem> { item },
+        };
+        s.Db.HKCards.Add(card);
+        await s.Db.SaveChangesAsync();
+
+        card.Items.Single().Materials.Add(NewMaterial(item.Id, unclassifiedId, GsmCategory.Duplicate));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => s.HK.UpdateAsync(card));
+        Assert.Contains("классифиц", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Сбой чтения (замечание A1.3) ─────────────────────────────────────
+
+    [Fact]
+    public async Task Suggestions_Failure_PropagatesAsException_NeverAsEmptyList()
+    {
+        // Ключевое требование A1.3: сбой чтения обязан дойти до интерфейса как
+        // ошибка, а не раствориться в пустом списке. «Связей нет» и «не удалось
+        // прочитать» — разные вещи, и интерфейс показывает их по-разному.
+        // Проверяется серверная часть: исключение доходит до вызывающего кода.
+        var (primaryId, duplicateId, _, _) = await SeedAsync();
+        await using (var setup = _fixture.CreateScope())
+        {
+            AsNormAdmin(setup);
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryId,
+                RelatedGsmMaterialId = duplicateId,
+                RelationType = GsmRelationType.Duplicate,
+            });
+        }
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+        // Контроль: при нормальных условиях список непустой — иначе тест на
+        // отказ прошёл бы на пустом результате и ничего не доказывал.
+        Assert.Single(await s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }));
+
+        // Воспроизводимый отказ: у пользователя индивидуально запрещено право
+        // Reference.View. Тот же путь, что и при обрыве БД, — метод бросает, а
+        // не возвращает пустоту. Запрет снимается в финале, чтобы общая тестовая
+        // БД осталась чистой для следующих прогонов.
+        var guestId = _fixture.GuestA.Id;
+        var existing = await s.Db.UserPermissionOverrides
+            .Where(o => o.UserId == guestId && o.PermissionCode == PermissionCodes.ReferenceView)
+            .ToListAsync();
+        s.Db.UserPermissionOverrides.RemoveRange(existing);
+        s.Db.UserPermissionOverrides.Add(new UserPermissionOverride
+        {
+            Id = Guid.NewGuid(),
+            UserId = guestId,
+            PermissionCode = PermissionCodes.ReferenceView,
+            IsGranted = false,
+            Reason = "HkRelationSuggestion: контроль отказа",
+            GrantedByUserId = _fixture.SystemAdminUser.Id,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await s.Db.SaveChangesAsync();
+        s.Permissions.InvalidateCache(guestId);
+        s.User.CurrentUserId = Guid.Parse(guestId);
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(
+                () => s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }));
+        }
+        finally
+        {
+            var added = await s.Db.UserPermissionOverrides
+                .Where(o => o.UserId == guestId
+                            && o.PermissionCode == PermissionCodes.ReferenceView
+                            && o.Reason == "HkRelationSuggestion: контроль отказа")
+                .ToListAsync();
+            s.Db.UserPermissionOverrides.RemoveRange(added);
+            await s.Db.SaveChangesAsync();
+            s.Permissions.InvalidateCache(guestId);
+        }
+    }
+
+    [Fact]
+    public async Task Suggestions_Cancellation_IsNotSwallowed_AndNotAnError()
+    {
+        // Отмена — не сбой загрузки. Сервис обязан её уважать и пробросить:
+        // перехват отмены превратил бы уход со страницы в сообщение об ошибке.
+        var (primaryId, _, _, _) = await SeedAsync();
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }, cts.Token));
+    }
+
+    // ── Повторное открытие сохранённой ХК (замечание A1.4) ───────────────
+
+    [Fact]
+    public async Task Suggestions_RecomputedForCurrentPrimarySet_AfterPrimaryReplaced()
+    {
+        // Снятие или замена основной марки пересчитывает предложения по
+        // АКТУАЛЬНОМУ набору: рекомендации удалённой марки показываться не
+        // должны.
+        var (primaryA, _, _, _) = await SeedAsync();
+        var (primaryB, relatedB, _, _) = await SeedAsync();
+        await using (var setup = _fixture.CreateScope())
+        {
+            AsNormAdmin(setup);
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryA,
+                RelatedGsmMaterialId = relatedB,
+                RelationType = GsmRelationType.Duplicate,
+            });
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryB,
+                RelatedGsmMaterialId = relatedB,
+                RelationType = GsmRelationType.Reserve,
+            });
+        }
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+
+        var forA = Assert.Single(await s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryA }));
+        Assert.Equal(new[] { GsmCategory.Duplicate }, Assert.Single(forA.Suggestions).Categories);
+
+        // Тот же набор после «замены» основной марки: категория меняется, вариант
+        // остаётся тем же — интерфейс обязан перечитать и не оставить старую
+        // отметку, указывающую на другую категорию.
+        var forB = Assert.Single(await s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryB }));
+        Assert.Equal(new[] { GsmCategory.Reserve }, Assert.Single(forB.Suggestions).Categories);
+    }
+
+    [Fact]
+    public async Task Suggestions_AlreadyConfirmedRow_IsNotOfferedAgain()
+    {
+        // Повторное открытие сохранённой ХК: марка, уже добавленная в строку,
+        // не должна предлагаться к добавлению повторно — но связь остаётся
+        // видимой, поэтому пользователь видит, откуда она взялась.
+        var (primaryId, duplicateId, _, _) = await SeedAsync();
+        await using (var setup = _fixture.CreateScope())
+        {
+            AsNormAdmin(setup);
+            await setup.GsmMaterials.CreateRelationAsync(new GsmRelationWriteRequest
+            {
+                PrimaryGsmMaterialId = primaryId,
+                RelatedGsmMaterialId = duplicateId,
+                RelationType = GsmRelationType.Duplicate,
+            });
+        }
+
+        await using var s = _fixture.CreateScope();
+        AsNormAdmin(s);
+
+        // Строка уже содержит марку в дублирующей категории.
+        var (nodeId, unitId) = await SeedNodeAndUnitAsync(s);
+        var item = new HKCardItem
+        {
+            Id = Guid.NewGuid(),
+            AssemblyUnitId = unitId,
+            SortOrder = 1,
+            Quantity = 1,
+            Volume = 10,
+            UnitOfMeasure = "кг",
+        };
+        item.Materials.Add(NewMaterial(item.Id, primaryId, GsmCategory.Primary));
+        item.Materials.Add(NewMaterial(item.Id, duplicateId, GsmCategory.Duplicate));
+        var card = await s.HK.CreateAsync(new HKCard
+        {
+            Code = "HK-" + Suffix(),
+            Version = "v" + Suffix()[..4],
+            ObjectLevel = HKObjectLevel.Node,
+            NodeId = nodeId,
+            Items = new List<HKCardItem> { item },
+        });
+
+        // Связь по-прежнему предлагается (она активна), но идемпотентность на
+        // стороне строки не даёт добавить вторую такую же строку.
+        var source = Assert.Single(await s.GsmMaterials.GetRelatedSuggestionsAsync(new[] { primaryId }));
+        var option = Assert.Single(source.Suggestions);
+        Assert.True(option.IsAddable);
+
+        var saved = await s.HK.GetByIdAsync(card.Id);
+        Assert.Equal(1, saved!.Items.Single().Materials.Count(
+            m => m.GsmMaterialId == duplicateId && m.Category == GsmCategory.Duplicate));
     }
 
     // ── Фикстуры ──────────────────────────────────────────────────────────
