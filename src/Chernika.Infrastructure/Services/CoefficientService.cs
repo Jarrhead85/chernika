@@ -6,6 +6,19 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Chernika.Infrastructure.Services;
 
+/// <summary>
+/// Корректирующие коэффициенты.
+/// <para>
+/// По инвентаризации PR-5 коэффициенты применялись <b>только</b> в расчёте
+/// индивидуальных карт: ни ХК, ни составы, ни справочники их не читают. С
+/// консервацией модуля ИК они уходят из действующего функционала вместе с ним.
+/// </para>
+/// <para>
+/// Поэтому запись закрыта той же границей модуля: прямой вызов API справочника не
+/// должен обещать действующий сценарий, которого нет. Чтение сохранено, код,
+/// данные, права и миграции — тоже.
+/// </para>
+/// </summary>
 public class CoefficientService
 {
     private readonly AppDbContext _db;
@@ -13,14 +26,22 @@ public class CoefficientService
     private readonly ICurrentUserService _currentUser;
     private readonly TimeProvider _time;
     private readonly IPermissionService _permissions;
+    private readonly IIndividualCardModuleState _module;
 
-    public CoefficientService(AppDbContext db, AuditService audit, ICurrentUserService currentUser, TimeProvider time, IPermissionService permissions)
+    public CoefficientService(
+        AppDbContext db,
+        AuditService audit,
+        ICurrentUserService currentUser,
+        TimeProvider time,
+        IPermissionService permissions,
+        IIndividualCardModuleState module)
     {
         _db = db;
         _audit = audit;
         _currentUser = currentUser;
         _time = time;
         _permissions = permissions;
+        _module = module;
     }
 
     private static string NormalizeTypeName(string value)
@@ -150,6 +171,7 @@ public class CoefficientService
     public async Task<CoefficientTypeListItemDto> CreateCoefficientTypeAsync(
         CreateCoefficientTypeRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "создание типа коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var name = NormalizeTypeName(request.Name);
@@ -181,6 +203,7 @@ public class CoefficientService
     public async Task<CoefficientTypeListItemDto> UpdateCoefficientTypeAsync(
         UpdateCoefficientTypeRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "изменение типа коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var type = await _db.CoefficientTypes.FirstOrDefaultAsync(t => t.Id == request.Id, ct)
@@ -203,6 +226,7 @@ public class CoefficientService
 
     public async Task ArchiveCoefficientTypeAsync(Guid id, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "архивирование типа коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var type = await _db.CoefficientTypes
@@ -232,6 +256,7 @@ public class CoefficientService
 
     public async Task RestoreCoefficientTypeAsync(Guid id, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "восстановление типа коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var type = await _db.CoefficientTypes.IgnoreQueryFilters()
@@ -431,6 +456,7 @@ public class CoefficientService
     public async Task<CoefficientListItemDto> CreateCoefficientAsync(
         CreateCoefficientRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "создание коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var name = NormalizeCoefficientName(request.Name);
@@ -482,6 +508,7 @@ public class CoefficientService
     public async Task<CoefficientListItemDto> UpdateCoefficientAsync(
         UpdateCoefficientRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "изменение коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var name = NormalizeCoefficientName(request.Name);
@@ -528,6 +555,7 @@ public class CoefficientService
 
     public async Task ArchiveCoefficientAsync(Guid id, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "архивирование коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var coefficient = await _db.Coefficients.IgnoreQueryFilters()
@@ -552,6 +580,7 @@ public class CoefficientService
 
     public async Task RestoreCoefficientAsync(Guid id, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "восстановление коэффициента");
         await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceEdit, ct);
 
         var coefficient = await _db.Coefficients.IgnoreQueryFilters()

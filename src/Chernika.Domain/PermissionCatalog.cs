@@ -87,4 +87,41 @@ public static class PermissionCatalog
 
     public static IReadOnlyList<string> GetAllModules() =>
         All.Select(x => x.Module).Distinct().ToList();
+
+    // ── Законсервированный модуль индивидуальных карт ──────────────────────
+    //
+    // Модуль ИК выведен из действующего функционала, но его код, записи
+    // разрешений, назначения ролей, enum/константы, политики и миграции
+    // СОХРАНЯЮТСЯ: они нужны историческим данным и возможному возврату
+    // модуля. Поэтому определения выше не удаляются и не меняются — они
+    // помечены как законсервированные и не попадают в активный список
+    // выдачи/редактирования полномочий.
+    //
+    // Удаление этих строк из каталога сделало бы исторические назначения
+    // нечитаемыми и сломало бы Identity при сверке ролей.
+
+    /// <summary>Модуль полномочий законсервированного модуля ИК.</summary>
+    public const string ConservedIndividualCardModule = "Индивидуальные карты";
+
+    /// <summary>
+    /// Коды полномочий, относящихся к законсервированному модулю ИК. Определены
+    /// по коду, а не по позиции в каталоге: новые права модуля не должны молча
+    /// попасть в активный список.
+    /// </summary>
+    public static IReadOnlySet<string> ConservedIndividualCardCodes { get; } =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            PermissionCodes.IndividualCardView,
+            PermissionCodes.IndividualCardGenerate,
+            PermissionCodes.IndividualCardCreateDraft,
+            PermissionCodes.IndividualCardEditDraft,
+            PermissionCodes.IndividualCardRecalculateDraft,
+            PermissionCodes.IndividualCardForm,
+            PermissionCodes.IndividualCardCreateVersion,
+            PermissionCodes.IndividualCardArchive,
+        };
+
+    /// <summary>Относится ли полномочие к законсервированному модулю ИК.</summary>
+    public static bool IsConserved(string code) =>
+        ConservedIndividualCardCodes.Contains(code);
 }

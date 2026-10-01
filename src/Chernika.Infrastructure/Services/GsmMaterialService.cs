@@ -430,6 +430,154 @@ public class GsmMaterialService
     }
 
     /// <summary>
+    /// Предложения связанных марок для строки ХК по её ОСНОВНЫМ маркам.
+    /// <para>
+    /// Только активные связи прямого направления <c>Primary → Related</c>:
+    /// обратная связь не выдаётся как рекомендация для исходной марки. Категории
+    /// строки выведены явным соответствием
+    /// <see cref="GsmRelationCategoryMap.CategoriesFor"/>, поэтому
+    /// <c>DuplicateAndReserve</c> предлагается в двух категориях независимо.
+    /// </para>
+    /// <para>
+    /// Связь с недоступной маркой (удалённой или ещё не опубликованной) не
+    /// выбрасывается молча: она возвращается с <c>IsAddable = false</c> и причиной,
+    /// чтобы интерфейс мог объяснить недоступность. Метод ничего не пишет —
+    /// добавление выполняется только через <c>HKCardService</c> при сохранении ХК.
+    /// </para>
+    /// </summary>
+    public async Task<List<GsmRelationSuggestionSource>> GetRelatedSuggestionsAsync(
+        IEnumerable<Guid> primaryMaterialIds, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        var ids = primaryMaterialIds.Where(id => id != Guid.Empty).Distinct().ToList();
+        var result = new List<GsmRelationSuggestionSource>();
+        if (ids.Count == 0) return result;
+
+        // primaryName: имена нужны для заголовка блока «У марки «X» есть связи».
+        var rows = await _db.GsmMaterialRelations
+            .IgnoreQueryFilters()
+            .Where(r => !r.IsDeleted && ids.Contains(r.PrimaryGsmMaterialId))
+            .OrderBy(r => r.PrimaryGsmMaterialId)
+            .ThenBy(r => r.RelatedGsmMaterial!.Name)
+            .ThenBy(r => r.RelationType)
+            .Select(r => new RelationSuggestionRow(
+                r.PrimaryGsmMaterialId,
+                r.PrimaryGsmMaterial!.Name,
+                r.PrimaryGsmMaterial.IsDeleted,
+                r.RelatedGsmMaterialId,
+                r.RelatedGsmMaterial!.Name,
+                r.RelatedGsmMaterial.Nd,
+                r.RelatedGsmMaterial.IsDeleted,
+                r.RelatedGsmMaterial.IsDraft,
+                r.RelationType,
+                r.Note))
+            .ToListAsync(ct);
+
+        foreach (var group in rows.GroupBy(r => r.PrimaryMaterialId))
+        {
+            var first = group.First();
+            // Основная марка удалена — предложение бессмысленно: рекомендация
+            // исходит от марки, которой в справочнике уже нет.
+            if (first.PrimaryIsDeleted) continue;
+
+            // Одна марка может прийти несколькими связями: категории объединяются,
+            // одинаковые варианты одной категории не множатся.
+            var byRelated = new Dictionary<Guid, GsmRelationSuggestionBuilder>();
+            foreach (var r in group)
+            {
+                var categories = GsmRelationCategoryMap.CategoriesFor(r.RelationType);
+                if (categories.Count == 0) continue;
+
+                var reason = r.RelatedIsDeleted
+                    ? "марка удалена"
+                    : r.RelatedIsDraft ? "марка ещё не опубликована" : null;
+
+                if (!byRelated.TryGetValue(r.RelatedMaterialId, out var builder))
+                {
+                    builder = new GsmRelationSuggestionBuilder(
+                        r.RelatedMaterialId, r.RelatedName, r.RelatedNd, reason);
+                    byRelated[r.RelatedMaterialId] = builder;
+                }
+
+                builder.Add(r.Note, categories, reason);
+            }
+
+            var suggestions = byRelated.Values
+                .Select(b => b.Build())
+                .Where(s => s.Categories.Count > 0)
+                .OrderBy(s => s.Name, StringComparer.Ordinal)
+                .ToList();
+            if (suggestions.Count == 0) continue;
+
+            result.Add(new GsmRelationSuggestionSource(
+                group.Key, first.PrimaryName, suggestions));
+        }
+
+        return result;
+    }
+
+    /// <summary>Частичная проекция связи для предложения; собирается в памяти.</summary>
+    private sealed record RelationSuggestionRow(
+        Guid PrimaryMaterialId,
+        string PrimaryName,
+        bool PrimaryIsDeleted,
+        Guid RelatedMaterialId,
+        string RelatedName,
+        string? RelatedNd,
+        bool RelatedIsDeleted,
+        bool RelatedIsDraft,
+        GsmRelationType RelationType,
+        string? Note);
+
+    /// <summary>
+    /// Склейка нескольких связей одной марки: категории объединяются без
+    /// повторов, примечания сохраняются. Если хоть одна связь указывает на
+    /// недоступную марку, недоступность переносится на объединённую позицию.
+    /// </summary>
+    private sealed class GsmRelationSuggestionBuilder
+    {
+        private readonly Guid _id;
+        private readonly string _name;
+        private readonly string? _nd;
+        private string? _unavailable;
+        private readonly List<GsmCategory> _categories = new();
+        private readonly List<string> _notes = new();
+
+        public GsmRelationSuggestionBuilder(Guid id, string name, string? nd, string? unavailable)
+        {
+            _id = id;
+            _name = name;
+            _nd = nd;
+            _unavailable = unavailable;
+        }
+
+        public void Add(string? note, IReadOnlyList<GsmCategory> categories, string? unavailable)
+        {
+            foreach (var c in categories)
+                if (!_categories.Contains(c))
+                    _categories.Add(c);
+
+            // Недоступность накапливается: недоступная марка остаётся
+            // недоступной, даже если вторая связь выглядит рабочей.
+            if (unavailable is not null)
+                _unavailable = _unavailable ?? unavailable;
+
+            if (!string.IsNullOrWhiteSpace(note) && !_notes.Contains(note))
+                _notes.Add(note);
+        }
+
+        public GsmRelationSuggestion Build() => new(
+            _id,
+            _name,
+            _nd,
+            _notes.Count == 0 ? null : string.Join("; ", _notes),
+            _categories.OrderBy(c => c).ToList(),
+            _unavailable is null,
+            _unavailable is null ? null : "Добавить нельзя: " + _unavailable);
+    }
+
+    /// <summary>
     /// Выбор марок для СПРАВОЧНЫХ СВЯЗЕЙ (второй справочник, PR-4).
     /// <para>
     /// Отдельный read-only метод намеренно: <see cref="GetActiveForSelectionAsync"/>

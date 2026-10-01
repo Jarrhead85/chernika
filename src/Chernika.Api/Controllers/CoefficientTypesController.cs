@@ -31,8 +31,17 @@ public class CoefficientTypesController : ControllerBase
     public async Task<ActionResult<CoefficientTypeListItemDto>> Create(
         [FromBody] CreateCoefficientTypeRequest request, CancellationToken ct)
     {
-        var created = await _svc.CreateCoefficientTypeAsync(request, ct);
-        return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+        try
+        {
+            var created = await _svc.CreateCoefficientTypeAsync(request, ct);
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Справочник законсервирован вместе с модулем ИК: контролируемый отказ,
+            // а не серверная ошибка.
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpGet("{id:guid}")]
@@ -50,23 +59,44 @@ public class CoefficientTypesController : ControllerBase
         if (id != request.Id)
             return BadRequest("Идентификатор в маршруте не совпадает с телом запроса.");
 
-        var updated = await _svc.UpdateCoefficientTypeAsync(request, ct);
-        return Ok(updated);
+        try
+        {
+            var updated = await _svc.UpdateCoefficientTypeAsync(request, ct);
+            return Ok(updated);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpPost("{id:guid}/archive")]
     [Authorize(Policy = "ManageCoefficients")]
     public async Task<ActionResult> Archive(Guid id, CancellationToken ct)
     {
-        await _svc.ArchiveCoefficientTypeAsync(id, ct);
-        return NoContent();
+        try
+        {
+            await _svc.ArchiveCoefficientTypeAsync(id, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpPost("{id:guid}/restore")]
     [Authorize(Policy = "ManageCoefficients")]
     public async Task<ActionResult> Restore(Guid id, CancellationToken ct)
     {
-        await _svc.RestoreCoefficientTypeAsync(id, ct);
-        return NoContent();
+        try
+        {
+            await _svc.RestoreCoefficientTypeAsync(id, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 }

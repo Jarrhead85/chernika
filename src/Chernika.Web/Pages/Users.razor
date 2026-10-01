@@ -251,10 +251,10 @@
                         </div>
 
                         <div class="permCounters">
-                            <span>Всего: <strong>@effectivePermissions.Permissions.Count</strong></span>
-                            <span>Разрешено: <strong>@effectivePermissions.Permissions.Count(p => p.IsEffective)</strong></span>
-                            <span>Запрещено: <strong>@effectivePermissions.Permissions.Count(p => !p.IsEffective)</strong></span>
-                            <span>С индивидуальным решением: <strong>@effectivePermissions.Permissions.Count(p => p.OverrideIsGranted != null)</strong></span>
+                            <span>Всего: <strong>@activePermissionCount</strong></span>
+                            <span>Разрешено: <strong>@grantedActivePermissionCount</strong></span>
+                            <span>Запрещено: <strong>@deniedActivePermissionCount</strong></span>
+                            <span>С индивидуальным решением: <strong>@overrideActivePermissionCount</strong></span>
                         </div>
 
                         <div class="permissionsTableWrap" tabindex="0" aria-label="Таблица полномочий пользователя">
@@ -353,6 +353,62 @@
                                 </tbody>
                             </table>
                         </div>
+
+                        @* Законсервированный модуль ИК: полномочия сохраняются, но
+                           не выдаются и не редактируются. Отдельный блок виден
+                           администратору, чтобы назначения не выглядели пропавшими. *@
+                        @if (conservedPermissions.Any())
+                        {
+                            <div class="permConserved">
+                                <div class="permConservedTitle">
+                                    Законсервированные права — модуль индивидуальных карт выведен из действующего функционала
+                                </div>
+                                <div class="permConservedHint">
+                                    Назначения ролей и индивидуальные решения сохранены без изменений и нужны историческим данным.
+                                    Модуль выключен на сервере, поэтому эти права ничего не разрешают; выдавать их заново нельзя.
+                                </div>
+                                <div class="permissionsTableWrap" tabindex="0" aria-label="Законсервированные полномочия">
+                                    <table class="permissionsTable">
+                                        <thead>
+                                            <tr>
+                                                <th>Модуль</th>
+                                                <th>Полномочие</th>
+                                                <th>Текущее состояние</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var perm in conservedPermissions)
+                                            {
+                                                <tr>
+                                                    <td><span class="tag">@perm.Module</span></td>
+                                                    <td class="permissionCell">
+                                                        <div class="permissionName">@perm.Name</div>
+                                                        <code class="permissionCode">Код системы: @perm.Code</code>
+                                                    </td>
+                                                    <td>
+                                                        @if (perm.GrantedByRole)
+                                                        {
+                                                            <span class="permissionStatus permissionStatus--granted">✓ Назначено ролью</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="permissionStatus permissionStatus--denied">× Не предоставлено</span>
+                                                        }
+                                                        @if (perm.OverrideIsGranted != null)
+                                                        {
+                                                            <div class="permSecondaryHint">
+                                                                Сохранено индивидуальное решение:
+                                                                @(perm.OverrideIsGranted == true ? "разрешено" : "запрещено")
+                                                            </div>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        }
                     }
                 </div>
             </section>
@@ -550,24 +606,57 @@
     }
 
     IEnumerable<UserEffectivePermissionDto> filteredPermissions =>
-        effectivePermissions?.Permissions.Where(p =>
-            (string.IsNullOrEmpty(permSearch) ||
-             p.Name.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
-             p.Code.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
-             p.Description.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
-             p.Module.Contains(permSearch, StringComparison.OrdinalIgnoreCase)) &&
-            (string.IsNullOrEmpty(permModuleFilter) || p.Module == permModuleFilter) &&
-            (string.IsNullOrEmpty(permStatusFilter) ||
-             (permStatusFilter == "effective" && p.IsEffective) ||
-             (permStatusFilter == "denied" && !p.IsEffective) ||
-             (permStatusFilter == "override" && p.OverrideIsGranted != null))
-        ) ?? Enumerable.Empty<UserEffectivePermissionDto>();
+        effectivePermissions?.Permissions.Where(ActivePermissionFilter) ?? Enumerable.Empty<UserEffectivePermissionDto>();
+
+    /// <summary>
+    /// Полномочия законсервированного модуля ИК: показаны отдельным read-only
+    /// блоком. Записи разрешений и назначения ролей сохраняются, но новые выдачи
+    /// и индивидуальные решения по ним не предлагаются — модуль выключен на
+    /// сервере, поэтому право ничего не разрешает.
+    /// </summary>
+    IEnumerable<UserEffectivePermissionDto> conservedPermissions =>
+        effectivePermissions?.Permissions
+            .Where(p => PermissionCatalog.IsConserved(p.Code))
+            .ToList() ?? Enumerable.Empty<UserEffectivePermissionDto>();
+
+    bool ActivePermissionFilter(UserEffectivePermissionDto p)
+    {
+        // Законсервированные права не входят в активную выдачу и не редактируются.
+        if (PermissionCatalog.IsConserved(p.Code)) return false;
+
+        return (string.IsNullOrEmpty(permSearch) ||
+                p.Name.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
+                p.Code.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
+                p.Description.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
+                p.Module.Contains(permSearch, StringComparison.OrdinalIgnoreCase)) &&
+               (string.IsNullOrEmpty(permModuleFilter) || p.Module == permModuleFilter) &&
+               (string.IsNullOrEmpty(permStatusFilter) ||
+                (permStatusFilter == "effective" && p.IsEffective) ||
+                (permStatusFilter == "denied" && !p.IsEffective) ||
+                (permStatusFilter == "override" && p.OverrideIsGranted != null));
+    }
+
+    int activePermissionCount =>
+        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code)) ?? 0;
+
+    int grantedActivePermissionCount =>
+        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code) && p.IsEffective) ?? 0;
+
+    int deniedActivePermissionCount =>
+        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code) && !p.IsEffective) ?? 0;
+
+    int overrideActivePermissionCount =>
+        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code) && p.OverrideIsGranted != null) ?? 0;
 
     protected override async Task OnInitializedAsync()
     {
         _loadCts = new CancellationTokenSource();
         await LoadUsers();
-        allModules = PermissionCatalog.GetAllModules().ToList();
+        // Модуль законсервированного модуля ИК не предлагается в фильтре: его
+        // права показаны отдельным read-only блоком ниже.
+        allModules = PermissionCatalog.GetAllModules()
+            .Where(m => m != PermissionCatalog.ConservedIndividualCardModule)
+            .ToList();
         var authState = await AuthState.GetAuthenticationStateAsync();
         canQuickCreateBranch = authState.User.IsInRole(nameof(UserRole.SystemAdmin));
     }

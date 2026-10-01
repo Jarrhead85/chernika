@@ -394,6 +394,125 @@
     color: var(--muted);
 }
 
+/* ── Предложение связанных ГСМ по строке ХК ────────────────────────────────
+   Блок идёт отдельной строкой таблицы с colspan: он привязан к строке, но не
+   ломает сетку колонок. Ничего не пишет в модель карточки — это только
+   предложение, добавление выполняется кнопкой «Добавить выбранные». */
+.hki-suggestion-row td {
+    padding: 0 12px 12px 44px;
+}
+
+.hki-suggestion {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius2, 10px);
+    background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+    padding: 10px 12px;
+    font-size: 12px;
+}
+
+.hki-suggestionLine {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+}
+
+.hki-suggestionSource {
+    display: inline-block;
+    margin-left: 6px;
+    color: var(--muted);
+}
+
+.hki-suggestionError {
+    color: var(--bad);
+}
+
+.hki-suggestionDone {
+    color: var(--muted);
+}
+
+.hki-suggestionPanel {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+}
+
+.hki-suggestionGroup + .hki-suggestionGroup {
+    margin-top: 12px;
+}
+
+.hki-suggestionGroupTitle {
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 6px;
+}
+
+.hki-suggestionCategory {
+    margin-bottom: 8px;
+}
+
+.hki-suggestionCategoryTitle {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--accent);
+    margin-bottom: 4px;
+}
+
+.hki-suggestionOption {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+
+.hki-suggestionOption:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+/* Уже добавленная в эту категорию строка и недоступная марка: показаны для
+   объяснения, но недоступны для выбора. */
+.hki-suggestionOptionAlready,
+.hki-suggestionOptionBlocked {
+    cursor: default;
+    opacity: .72;
+}
+
+.hki-suggestionName {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.hki-suggestionNd,
+.hki-suggestionNote {
+    color: var(--muted);
+}
+
+.hki-suggestionNote {
+    font-style: italic;
+}
+
+.hki-suggestionActions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.hki-suggestionHint {
+    color: var(--muted);
+    font-size: 11px;
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
 .gsm-dropdown-item {
     padding: 7px 12px;
     font-size: 13px;

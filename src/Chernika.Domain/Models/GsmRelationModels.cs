@@ -84,6 +84,66 @@ public sealed record GsmRelationHint(
     string? RelatedNd,
     GsmRelationType RelationType);
 
+/// <summary>
+/// Предложение связанных марок для строки ХК.
+/// <para>
+/// Категории выведены ЯВНЫМ соответствием <c>GsmRelationType</c> →
+/// <c>GsmCategory</c>, а не приведением имён: одна связь
+/// <c>DuplicateAndReserve</c> предлагается в двух категориях независимо, и
+/// пользователь вправе подтвердить одну, обе или ни одной.
+/// </para>
+/// </summary>
+public static class GsmRelationCategoryMap
+{
+    /// <summary>
+    /// Категории строки ХК, в которых связь этого типа может быть предложена.
+    /// Отсутствие типа в перечислении означает «не предлагать вовсе».
+    /// </summary>
+    public static IReadOnlyList<GsmCategory> CategoriesFor(GsmRelationType type) => type switch
+    {
+        GsmRelationType.Duplicate => new[] { GsmCategory.Duplicate },
+        GsmRelationType.Reserve => new[] { GsmCategory.Reserve },
+        GsmRelationType.DuplicateAndReserve => new[] { GsmCategory.Duplicate, GsmCategory.Reserve },
+        GsmRelationType.Foreign => new[] { GsmCategory.Foreign },
+        _ => Array.Empty<GsmCategory>(),
+    };
+}
+
+/// <summary>
+/// Связанная марка, предложенная пользователю в строке ХК.
+/// <para>
+/// <c>IsAddable=false</c> означает, что марку нельзя добавить (удалена или ещё не
+/// опубликована). Причина обязательна: она показывается рядом с позицией, чтобы
+/// пользователь понимал, почему действие недоступно, а не видел пустой блок.
+/// </para>
+/// </summary>
+public sealed record GsmRelationSuggestion(
+    Guid MaterialId,
+    string Name,
+    string? Nd,
+    string? Note,
+    IReadOnlyList<GsmCategory> Categories,
+    bool IsAddable,
+    string? UnavailableReason)
+{
+    /// <summary>Надпись категории для интерфейса.</summary>
+    public static string CategoryLabel(GsmCategory category) => category switch
+    {
+        GsmCategory.Duplicate => "Дублирующие",
+        GsmCategory.Reserve => "Резервные",
+        GsmCategory.Foreign => "Зарубежные",
+        _ => category.ToString(),
+    };
+}
+
+/// <summary>
+/// Предложение по одной исходной (основной) марке строки ХК.
+/// </summary>
+public sealed record GsmRelationSuggestionSource(
+    Guid PrimaryMaterialId,
+    string PrimaryName,
+    IReadOnlyList<GsmRelationSuggestion> Suggestions);
+
 /// <summary>Полная карточка связи для формы редактирования.</summary>
 public sealed class GsmRelationEditView
 {

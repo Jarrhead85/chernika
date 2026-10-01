@@ -511,15 +511,16 @@
                                                                     <div class="gsm-dropdown-group-label">@group.Key</div>
                                                                     @foreach (var mat in group)
                                                                     {
-                                                                        var hint = RelatedHint(cat, item, mat.Id);
+                                                                        @* Связи здесь не подсказываются: предложение
+                                                                               связанных ГСМ живёт отдельным блоком
+                                                                               строки и появляется сразу после
+                                                                               явного выбора основной марки. Прежняя
+                                                                               подсказка в списке category читала
+                                                                               связи, загруженные при инициализации,
+                                                                               и для марки, выбранной позже, её
+                                                                               не знала. *@
                                                                         <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMaterial(item, cat, mat.Id)">
                                                                             <span>@mat.Name</span>
-                                                                            @if (hint is not null)
-                                                                            {
-                                                                                @* Справочная связь — только подсказка: строка
-                                                                                   не добавляется и Category не меняется. *@
-                                                                                <span class="tag gsm-dropdown-hint">@hint</span>
-                                                                            }
                                                                         </div>
                                                                     }
                                                                 }
@@ -583,6 +584,143 @@
                                             }
                                         </td>
                                     </tr>
+                                    @* ── Предложение связанных ГСМ по строке ──────────────
+                                       Показывается сразу после явного выбора основной
+                                       марки, без перезагрузки страницы. Ни выбор
+                                       основной марки, ни открытие блока ничего не
+                                       добавляют в card.Items: только «Добавить
+                                       выбранные» после видимого списка. *@
+                                    @if (canEdit && (
+                                        _suggestionLoading.Contains(item.Id)
+                                        || (_suggestionErrors.TryGetValue(item.Id, out var sErr) && !string.IsNullOrEmpty(sErr))
+                                        || HasVisibleSuggestion(item)
+                                        || (suggestionAddedCount > 0 && _suggestionAddedFor == item.Id)))
+                                    {
+                                        <tr class="hki-suggestion-row">
+                                            <td colspan="11">
+                                                <div class="hki-suggestion">
+                                                    @if (_suggestionLoading.Contains(item.Id))
+                                                    {
+                                                        <div class="hki-suggestionLine">Проверяем связанные ГСМ…</div>
+                                                    }
+                                                    else if (_suggestionErrors.TryGetValue(item.Id, out var loadError) && !string.IsNullOrEmpty(loadError))
+                                                    {
+                                                        @* Ошибка чтения НЕ выдаётся за «связей нет»:
+                                                           иначе пользователь решил бы, что
+                                                           рекомендаций не существует. *@
+                                                        <div class="hki-suggestionLine hki-suggestionError" role="alert">
+                                                            <span>@loadError</span>
+                                                            <button type="button" class="linkBtn" @onclick="() => ReloadSuggestionsAsync(item)">Повторить</button>
+                                                        </div>
+                                                    }
+                                                    else if (HasVisibleSuggestion(item))
+                                                    {
+                                                        <div class="hki-suggestionLine">
+                                                            <span>
+                                                                У основной марки есть связанные ГСМ:
+                                                                @foreach (var src in SuggestionsFor(item).Where(s => s.Suggestions.Any(x => x.IsAddable)))
+                                                                {
+                                                                    <span class="hki-suggestionSource">
+                                                                        «@src.PrimaryName» — @src.Suggestions.Count(x => x.IsAddable)
+                                                                    </span>
+                                                                }
+                                                            </span>
+                                                            <button type="button" class="linkBtn"
+                                                                    @onclick="() => ToggleSuggestionOpen(item)">
+                                                                @(_suggestionOpen.Contains(item.Id) ? "Скрыть варианты" : "Посмотреть варианты")
+                                                            </button>
+                                                        </div>
+
+                                                        @if (_suggestionOpen.Contains(item.Id))
+                                                        {
+                                                            <div class="hki-suggestionPanel">
+                                                                @foreach (var src in SuggestionsFor(item))
+                                                                {
+                                                                    @* Категории без вариантов не показываются: пустая группа —
+                                                                       шум. Порядок фиксирован, а не «как сложилось». *@
+                                                                    var groups = new[] { GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign }
+                                                                        .Select(c => (
+                                                                            Category: c,
+                                                                            Options: src.Suggestions
+                                                                                .Where(x => x.Categories.Contains(c))
+                                                                                .ToList()))
+                                                                        .Where(t => t.Options.Count > 0)
+                                                                        .ToList();
+                                                                    <div class="hki-suggestionGroup">
+                                                                        <div class="hki-suggestionGroupTitle">Связано с «@src.PrimaryName»</div>
+                                                                        @foreach (var (category, options) in groups)
+                                                                        {
+                                                                            <div class="hki-suggestionCategory">
+                                                                                <div class="hki-suggestionCategoryTitle">
+                                                                                    @GsmRelationSuggestion.CategoryLabel(category)
+                                                                                </div>
+                                                                                @foreach (var o in options)
+                                                                                {
+                                                                                    var already = SuggestionAlreadyInRow(item, o.MaterialId, category);
+                                                                                    <label class="hki-suggestionOption @(already ? "hki-suggestionOptionAlready" : "") @(o.IsAddable ? "" : "hki-suggestionOptionBlocked")">
+                                                                                        <input type="checkbox"
+                                                                                               checked="@IsPicked(item.Id, o.MaterialId, category)"
+                                                                                               disabled="@(already || !o.IsAddable)"
+                                                                                               @onchange="() => ToggleSuggestionPick(item, o.MaterialId, category)" />
+                                                                                        <span class="hki-suggestionName">@o.Name</span>
+                                                                                        @if (!string.IsNullOrWhiteSpace(o.Nd))
+                                                                                        {
+                                                                                            <span class="hki-suggestionNd mono">НД: @o.Nd</span>
+                                                                                        }
+                                                                                        @if (!string.IsNullOrWhiteSpace(o.Note))
+                                                                                        {
+                                                                                            <span class="hki-suggestionNote">Примечание связи: @o.Note</span>
+                                                                                        }
+                                                                                        @if (already)
+                                                                                        {
+                                                                                            <span class="tag">Уже в строке</span>
+                                                                                        }
+                                                                                        else if (!o.IsAddable)
+                                                                                        {
+                                                                                            <span class="tag warn">@o.UnavailableReason</span>
+                                                                                        }
+                                                                                    </label>
+                                                                                }
+                                                                            </div>
+                                                                        }
+                                                                    </div>
+                                                                }
+
+                                                                <div class="hki-suggestionActions">
+                                                                    <button type="button" class="btn primary"
+                                                                            disabled="@(_suggestionPicked.Count(p => p.ItemId == item.Id) == 0)"
+                                                                            @onclick="() => ConfirmSuggestions(item)">
+                                                                        Добавить выбранные
+                                                                    </button>
+                                                                    <button type="button" class="btn ghost" @onclick="() => ToggleSuggestionOpen(item)">Отмена</button>
+                                                                    <span class="hki-suggestionHint">
+                                                                        По умолчанию ничего не отмечено. Добавленные варианты становятся обычными строками: удалить их можно только отдельным действием.
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                    }
+
+                                                    @* Подтверждение подключено отдельным блоком, а не как
+                                                       «иначе» в цепочке выше: после добавления связи в
+                                                       справочнике никуда не делись, поэтому список
+                                                       вариантов остаётся видимым и показывает их как
+                                                       «Уже в строке». Ветка-«иначе» в этом случае
+                                                       не выполнялась бы, и подтверждение не появлялось
+                                                       бы вовсе. *@
+                                                    @if (_suggestionAddedFor == item.Id && suggestionAddedCount > 0)
+                                                    {
+                                                        <div class="hki-suggestionLine hki-suggestionDone">
+                                                            <span>
+                                                                Добавлено вариантов: @suggestionAddedCount. Это обычные строки ХК — их можно удалить как любую другую строку.
+                                                            </span>
+                                                            <button type="button" class="linkBtn" @onclick="DismissSuggestionAdded">Скрыть</button>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
                                 }
                             </tbody>
                         </table>
@@ -1005,11 +1143,33 @@
     private List<GsmMaterial> gsmMaterials = new();
 
     /// <summary>
-    /// Справочные связи ГСМ по основным маркам строк: основная марка → список
-    /// связанных с типом связи. Только подсказка в списке выбора, ничего не
-    /// добавляет автоматически.
+    /// Предложения связанных марок по строкам ХК, ключ — HKCardItem.Id.
+    /// Заполняется при ЯВНОМ выборе основной марки, поэтому не зависит от
+    /// порядка загрузки страницы и не требует перезагрузки (F5).
     /// </summary>
-    private Dictionary<Guid, List<GsmRelationHint>> _relationHints = new();
+    private Dictionary<Guid, List<GsmRelationSuggestionSource>> _suggestions = new();
+
+    /// <summary>Строки, для которых предложение сейчас загружается или не удалось.</summary>
+    private Dictionary<Guid, string?> _suggestionErrors = new();
+
+    /// <summary>Открыт ли блок подтверждения для строки.</summary>
+    private HashSet<Guid> _suggestionOpen = new();
+
+    /// <summary>
+    /// Отмеченные пользователем пары (строка, марка, категория). Ключ
+    /// идемпотентности по требованию сценария: повторное подтверждение не должно
+    /// добавлять вторую строку, а та же марка в другой категории — законная.
+    /// </summary>
+    private HashSet<(Guid ItemId, Guid MaterialId, GsmCategory Category)> _suggestionPicked = new();
+
+    /// <summary>Загрузка предложений по строке идёт: повторный клик не дублирует запрос.</summary>
+    private HashSet<Guid> _suggestionLoading = new();
+
+    /// <summary>Счётчик только что добавленных вариантов — короткое подтверждение действия.</summary>
+    private int suggestionAddedCount;
+
+    /// <summary>Строка, к которой относится счётчик: подтверждение видно у нужной строки.</summary>
+    private Guid _suggestionAddedFor;
 
     private Guid? _focusItemId;
     private Dictionary<Guid, string> _auSearch = new();
@@ -1138,7 +1298,16 @@
             gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
             _materialNames = null;
             await LoadMaterialNamesAsync(CancellationToken.None);
-            _relationHints = await LoadRelationHintsAsync(CancellationToken.None);
+            // Предложения связанных ГСМ НЕ загружаются здесь: они появляются
+            // сразу после явного выбора основной марки в строке. Предзагрузка по
+            // сохранённым строкам была причиной дефекта — марка, выбранная позже,
+            // не знала своих связей до перезагрузки страницы.
+            _suggestions.Clear();
+            _suggestionErrors.Clear();
+            _suggestionOpen.Clear();
+            _suggestionPicked.Clear();
+            _suggestionLoading.Clear();
+            DismissSuggestionAdded();
             allMilitaryBranches = await EquipmentService.GetMilitaryBranchesAsync();
         }
 
@@ -1880,6 +2049,11 @@
 
     private async Task AddMaterial(HKCardItem item, GsmCategory cat, Guid materialId)
     {
+        // Выбор основной марки — единственное место, где предложение связанных
+        // марок запрашивается само. Ни выбор, ни открытие блока ничего не пишут
+        // в card.Items: только явное подтверждение пользователя.
+        var isPrimary = cat == GsmCategory.Primary;
+
         if (item.Materials.Any(m => m.GsmMaterialId == materialId && m.Category == cat)) return;
         item.Materials.Add(new HKCardItemMaterial
         {
@@ -1889,12 +2063,165 @@
             Category = cat
         });
         await CloseActiveDropdownAsync();
+
+        if (isPrimary)
+            await LoadSuggestionsForItemAsync(item, materialId);
+
         StateHasChanged();
     }
 
-    private void RemoveMaterial(HKCardItem item, HKCardItemMaterial mat)
+    /// <summary>
+    /// Загрузка предложений для строки по её основным маркам. Вызывается сразу
+    /// после явного выбора основной марки, поэтому актуальные связи читаются без
+    /// перезагрузки страницы.
+    /// <para>
+    /// Ошибка чтения НЕ подменяется сообщением «связей нет»: она попадает в
+    /// состояние строки и показывается как неблокирующее предупреждение с
+    /// повтором. Иначе пользователь решил бы, что рекомендаций нет.
+    /// </para>
+    /// </summary>
+    private async Task LoadSuggestionsForItemAsync(HKCardItem item, Guid justPickedPrimaryId)
     {
+        if (_suggestionLoading.Contains(item.Id)) return;
+
+        _suggestionLoading.Add(item.Id);
+        _suggestionErrors.Remove(item.Id);
+        StateHasChanged();
+        try
+        {
+            var primaryIds = item.Materials
+                .Where(m => m.Category == GsmCategory.Primary && m.GsmMaterialId != Guid.Empty)
+                .Select(m => m.GsmMaterialId)
+                .Distinct()
+                .ToList();
+
+            var sources = primaryIds.Count == 0
+                ? new List<GsmRelationSuggestionSource>()
+                : await GsmMaterialService.GetRelatedSuggestionsAsync(primaryIds);
+
+            // Предложения по строкам, которых больше нет (марка заменена или
+            // удалена из Primary), убираются: показывать их было бы ложью.
+            _suggestions[item.Id] = sources;
+            _suggestionPicked.RemoveWhere(p => p.ItemId == item.Id && !HasAnyPickable(sources, p));
+            _suggestionErrors[item.Id] = null;
+
+            if (sources.Count > 0 && justPickedPrimaryId != Guid.Empty)
+                _suggestionOpen.Add(item.Id);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            _suggestions.Remove(item.Id);
+            _suggestionErrors[item.Id] =
+                "Не удалось загрузить связанные ГСМ: " + ex.Message;
+        }
+        finally
+        {
+            _suggestionLoading.Remove(item.Id);
+        }
+    }
+
+    private static bool HasAnyPickable(
+        IReadOnlyList<GsmRelationSuggestionSource> sources,
+        (Guid ItemId, Guid MaterialId, GsmCategory Category) pick) =>
+        sources.Any(s => s.Suggestions.Any(x => x.MaterialId == pick.MaterialId && x.Categories.Contains(pick.Category)));
+
+    private IEnumerable<GsmRelationSuggestionSource> SuggestionsFor(HKCardItem item) =>
+        _suggestions.TryGetValue(item.Id, out var sources) ? sources : Enumerable.Empty<GsmRelationSuggestionSource>();
+
+    /// <summary>
+    /// Есть ли что предлагать. Нулевые связи и связи только с недоступными
+    /// марками не показываются: пустой блок — шум, а недоступные позиции
+    /// всё равно нельзя добавить.
+    /// </summary>
+    private bool HasVisibleSuggestion(HKCardItem item) =>
+        SuggestionsFor(item).Any(s => s.Suggestions.Any(x => x.IsAddable));
+
+    private static bool SuggestionAlreadyInRow(HKCardItem item, Guid materialId, GsmCategory category) =>
+        item.Materials.Any(m => m.GsmMaterialId == materialId && m.Category == category);
+
+    private bool IsPicked(Guid itemId, Guid materialId, GsmCategory category) =>
+        _suggestionPicked.Contains((itemId, materialId, category));
+
+    private void ToggleSuggestionPick(HKCardItem item, Guid materialId, GsmCategory category)
+    {
+        var key = (item.Id, materialId, category);
+        if (!_suggestionPicked.Add(key))
+            _suggestionPicked.Remove(key);
+    }
+
+    private void ToggleSuggestionOpen(HKCardItem item)
+    {
+        if (!_suggestionOpen.Add(item.Id))
+            _suggestionOpen.Remove(item.Id);
+    }
+
+    /// <summary>
+    /// Подтверждение выбранных вариантов. Единственное место, где предложение
+    /// превращается в строки ХК — и только в редактируемую модель карточки;
+    /// запись происходит при сохранении через HKCardService.
+    /// <para>
+    /// Идемпотентность — по (строка, марка, категория): уже имеющаяся в этой
+    /// категории строка не добавляется второй раз. «Отмена» не вызывается здесь
+    /// вовсе, поэтому отмена ничего не меняет.
+    /// </para>
+    /// </summary>
+    private void ConfirmSuggestions(HKCardItem item)
+    {
+        var added = 0;
+        foreach (var (itemId, materialId, category) in _suggestionPicked.ToList())
+        {
+            if (itemId != item.Id) continue;
+
+            if (SuggestionAlreadyInRow(item, materialId, category)) continue;
+            item.Materials.Add(new HKCardItemMaterial
+            {
+                Id = Guid.NewGuid(),
+                HKCardItemId = item.Id,
+                GsmMaterialId = materialId,
+                Category = category,
+            });
+            added++;
+        }
+
+        _suggestionPicked.RemoveWhere(p => p.ItemId == item.Id);
+        _suggestionOpen.Remove(item.Id);
+
+        if (added > 0)
+        {
+            suggestionAddedCount = added;
+            _suggestionAddedFor = item.Id;
+        }
+    }
+
+    private void DismissSuggestionAdded()
+    {
+        suggestionAddedCount = 0;
+        _suggestionAddedFor = Guid.Empty;
+    }
+
+    /// <summary>
+    /// Повторная загрузка предложений после ошибки чтения или после того, как
+    /// пользователь снял/заменил основную марку.
+    /// </summary>
+    private async Task ReloadSuggestionsAsync(HKCardItem item) =>
+        await LoadSuggestionsForItemAsync(item, Guid.Empty);
+
+    private async Task RemoveMaterial(HKCardItem item, HKCardItemMaterial mat)
+    {
+        var wasPrimary = mat.Category == GsmCategory.Primary;
         item.Materials.Remove(mat);
+
+        // Снятие или замена основной марки пересчитывает предложения: показывать
+        // рекомендации удалённой марки было бы ложью. Уже подтверждённые
+        // материалы при этом НЕ удаляются — они становятся обычными ручными
+        // строками, и удалить их можно только отдельным действием.
+        _suggestionPicked.RemoveWhere(p =>
+            p.ItemId == item.Id && p.MaterialId == mat.GsmMaterialId);
+
+        if (wasPrimary)
+            await LoadSuggestionsForItemAsync(item, Guid.Empty);
+
+        StateHasChanged();
     }
 
     private async Task ToggleObjectDropdown(string dropId, string btnId)
@@ -2211,32 +2538,6 @@
     }
 
     /// <summary>
-    /// Справочные связи по основным маркам уже сохранённых строк. Читаются после
-    /// загрузки документа, потому что новые строки без основной марки подсказок
-    /// не имеют. Ошибка чтения не должна ломать редактирование: подсказки
-    /// необязательны, поэтому возвращается пустой словарь.
-    /// </summary>
-    private async Task<Dictionary<Guid, List<GsmRelationHint>>> LoadRelationHintsAsync(CancellationToken ct)
-    {
-        var primaryIds = card.Items
-            .SelectMany(i => i.Materials)
-            .Where(m => m.Category == GsmCategory.Primary)
-            .Select(m => m.GsmMaterialId)
-            .Where(id => id != Guid.Empty)
-            .Distinct()
-            .ToList();
-        if (primaryIds.Count == 0) return new Dictionary<Guid, List<GsmRelationHint>>();
-        try
-        {
-            return await GsmMaterialService.GetRelationHintsAsync(primaryIds, ct);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
-        {
-            return new Dictionary<Guid, List<GsmRelationHint>>();
-        }
-    }
-
-    /// <summary>
     /// Марки для выпадающего списка строки ХК. Поиск идёт по названию, НД, индексу
     /// НАТО, группе и любой подгруппе — прежний <c>Type</c> больше не читается
     /// (PR-5). Уже добавленные в эту же категорию марки скрыты, как и раньше.
@@ -2279,40 +2580,10 @@
     }
 
     /// <summary>
-    /// Справочная подсказка по связи для марки в списке категории. Связь
-    /// направлена Primary → Related, поэтому подсказка строится от основной марки
-    /// той же строки. <c>DuplicateAndReserve</c> показывается и в списке
-    /// дублирующих, и в списке резервных; <c>Foreign</c> — только в своём.
-    /// Ничего не добавляет автоматически.
+    /// Заголовок блока «Связано с …»: имя исходной марки. Читается из уже
+    /// загруженного набора имён, поэтому historical-строка с удалённой маркой
+    /// показывает название, а не «—».
     /// </summary>
-    private string? RelatedHint(GsmCategory cat, HKCardItem item, Guid candidateId)
-    {
-        if (_relationHints.Count == 0) return null;
-
-        foreach (var primaryId in item.Materials
-                     .Where(m => m.Category == GsmCategory.Primary)
-                     .Select(m => m.GsmMaterialId))
-        {
-            if (!_relationHints.TryGetValue(primaryId, out var hints)) continue;
-            foreach (var h in hints)
-            {
-                if (h.RelatedMaterialId != candidateId) continue;
-                var visible = (cat, h.RelationType) switch
-                {
-                    (GsmCategory.Duplicate, GsmRelationType.DuplicateAndReserve) => "дублирующая к " + PrimaryLabel(primaryId),
-                    (GsmCategory.Reserve, GsmRelationType.DuplicateAndReserve) => "резервная к " + PrimaryLabel(primaryId),
-                    (GsmCategory.Duplicate, GsmRelationType.Duplicate) => "дублирующая к " + PrimaryLabel(primaryId),
-                    (GsmCategory.Reserve, GsmRelationType.Reserve) => "резервная к " + PrimaryLabel(primaryId),
-                    (GsmCategory.Foreign, GsmRelationType.Foreign) => "зарубежный аналог к " + PrimaryLabel(primaryId),
-                    _ => null,
-                };
-                if (visible is not null) return visible;
-            }
-        }
-
-        return null;
-    }
-
     private string PrimaryLabel(Guid primaryId) =>
         MaterialNames.TryGetValue(primaryId, out var name) ? name : "основной марке";
 

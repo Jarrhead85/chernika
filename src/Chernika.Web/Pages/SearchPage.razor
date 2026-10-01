@@ -157,49 +157,13 @@
                             </div>
                         </div>
                     }
-                    else if (_entityType == "IndividualCard")
-                    {
-                        <div class="searchDateGrid">
-                            <div class="field">
-                                <label class="field-label" for="icStatus">Статус ИК</label>
-                                <select id="icStatus" class="field-select" value="@(_icStatus?.ToString() ?? "")" @onchange="OnICStatusChanged">
-                                    <option value="">Любой</option>
-                                    @foreach (var (value, label) in ICStatusOptions)
-                                    {
-                                        <option value="@value" selected="@(value == (_icStatus?.ToString() ?? ""))">@label</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="field">
-                                <label class="field-label" for="icLevel">Уровень объекта</label>
-                                <select id="icLevel" class="field-select" value="@(_icObjectLevel?.ToString() ?? "")" @onchange="OnICLevelChanged">
-                                    <option value="">Любой</option>
-                                    @foreach (var (value, label) in ICLevelOptions)
-                                    {
-                                        <option value="@value" selected="@(value == (_icObjectLevel?.ToString() ?? ""))">@label</option>
-                                    }
-                                </select>
-                            </div>
-                        </div>
-                        <div class="searchDateGrid">
-                            <div class="field">
-                                <label class="field-label" for="icFormed">Состояние формирования</label>
-                                <select id="icFormed" class="field-select" value="@(_icIsFormed?.ToString() ?? "")" @onchange="OnICFormedChanged">
-                                    <option value="">Любое</option>
-                                    <option value="true" selected="@(_icIsFormed == true)">Сформирована</option>
-                                    <option value="false" selected="@(_icIsFormed == false)">Не сформирована</option>
-                                </select>
-                            </div>
-                            <div class="field">
-                                <label class="field-label" for="icCoefficients">Наличие применённых коэффициентов</label>
-                                <select id="icCoefficients" class="field-select" value="@(_icHasCoefficients?.ToString() ?? "")" @onchange="OnICCoefficientsChanged">
-                                    <option value="">Любое</option>
-                                    <option value="true" selected="@(_icHasCoefficients == true)">Есть</option>
-                                    <option value="false" selected="@(_icHasCoefficients == false)">Нет</option>
-                                </select>
-                            </div>
-                        </div>
-                    }
+                    @* Панель фильтров ИК удалена вместе с типом из списка. Она была
+                       достижима в обход интерфейса — через ?entityType=IndividualCard
+                       в адресной строке — и показывала фильтры, которые ничего не
+                       уточняют: выдачи ИК в действующем поиске нет. Параметры
+                       icStatus/icObjectLevel по-прежнему принимаются и передаются в
+                       SearchQuery ради совместимости контракта API, но на выдачу
+                       не влияют. *@
                     else if (_entityType == "WorkTask")
                     {
                         <div class="searchDateGrid">
@@ -857,6 +821,8 @@
     // Индивидуальная карта исключена: модуль ИК законсервирован и в действующую
     // поисковую выдачу не входит (IndividualCardModuleGuard). Исторические ИК
     // открываются по прямой ссылке.
+    // Коэффициент исключён по той же причине: он применялся только в расчёте ИК
+    // и не используется ни одним действующим разделом (см. отчёт PR-5).
     private static IReadOnlyList<(string Value, string Label)> EntityTypeOptions =>
     [
         ("", "Все"),
@@ -868,7 +834,6 @@
         ("AssemblyUnit", "Сборочная единица"),
         ("EquipmentInstance", "Экземпляр изделия"),
         ("GsmMaterial", "Марка ГСМ"),
-        ("Coefficient", "Коэффициент"),
         ("WorkTask", "Задача"),
     ];
 
@@ -879,20 +844,12 @@
             ("", "Показать во всех связанных данных"),
             ("ReferenceOnly", "Показать только в справочнике ГСМ"),
             ("HKOnly", "Показать только в ХК"),
-            ("ICOnly", "Показать только в ИК"),
-        ],
-        "Coefficient" =>
-        [
-            ("", "Показать во всех связанных данных"),
-            ("ReferenceOnly", "Показать только коэффициенты"),
-            ("ICOnly", "Показать только в ИК"),
         ],
         _ =>
         [
             ("", "Показать во всех связанных данных"),
             ("ReferenceOnly", "Показать только в справочнике"),
             ("HKOnly", "Показать только в ХК"),
-            ("ICOnly", "Показать только в ИК"),
         ],
     };
 

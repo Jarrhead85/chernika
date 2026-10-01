@@ -22,6 +22,18 @@ public class SearchService
     /// <summary>Фиксированный размер страницы глобального поиска.</summary>
     private const int GlobalSearchPageSize = 50;
 
+    /// <summary>
+    /// Коэффициенты не входят в действующую поисковую выдачу: они применялись
+    /// ТОЛЬКО в расчёте ИК (ни ХК, ни составы, ни справочники их не читают), а
+    /// модуль ИК законсервирован вместе с ними. Ветка выдачи сохранена целиком —
+    /// это точка включения при возврате модуля, а не «забытый» поиск.
+    /// <para>
+    /// Объявлено полем, а не <c>const</c>: с <c>const</c> компилятор увидел бы
+    /// недостижимую ветку и потребовал бы удалить сохранённый код выдачи.
+    /// </para>
+    /// </summary>
+    private static readonly bool CanSearchCoefficients = false;
+
     public SearchService(
         AppDbContext db,
         ICurrentUserService currentUser,
@@ -335,15 +347,9 @@ public class SearchService
         bool Wanted(params string[] types) => wanted is null || types.Any(wanted.Contains);
 
         var canHK = Wanted("HKCard") && await _permissions.HasPermissionAsync(scope.UserId, Chernika.Domain.PermissionCodes.HKView);
-        // Индивидуальные карты выведены из действующего функционала и в поисковой
-        // выдаче не участвуют (см. IndividualCardModuleGuard). Исторические ИК
-        // остаются доступны по прямой ссылке. Фильтры IndividualCardStatus и
-        // IndividualCardObjectLevel в SearchQuery сохранены ради совместимости
-        // контракта API, но на результат больше не влияют.
-        const bool canIC = false;
         var canReference = Wanted(
                 "Complex", "EquipmentModel", "Aggregate", "Node", "AssemblyUnit",
-                "EquipmentInstance", "GsmMaterial", "Coefficient")
+                "EquipmentInstance", "GsmMaterial")
             && await _permissions.HasPermissionAsync(scope.UserId, Chernika.Domain.PermissionCodes.ReferenceView);
         var canTask = Wanted("WorkTask") &&
                       (await _permissions.HasPermissionAsync(scope.UserId, Chernika.Domain.PermissionCodes.TaskView) ||
@@ -365,7 +371,7 @@ public class SearchService
         // ── Зависимые «якоря»: марки ГСМ и сборочные единицы по тексту ─────
         var materialIds = new List<Guid>();
         var unitIds = new List<Guid>();
-        if (hasText && (canHK || canIC || canReference))
+        if (hasText && (canHK || canReference))
         {
             materialIds = await _db.GsmMaterials.AsNoTracking()
                 .Where(m => !m.IsDraft && !m.IsDeleted)
@@ -745,8 +751,10 @@ public class SearchService
                 }
             }
 
-            if (Wanted("Coefficient"))
+            if (CanSearchCoefficients)
             {
+                // Ветка недостижима: canCoefficients жёстко false. Сохранена вместе
+                // с сохранённым модулем и вернётся при его возобновлении.
                 var rows = await _db.Coefficients.AsNoTracking()
                     .Where(k => !k.IsDeleted && k.IsActive)
                     .Where(k => !hasText ||
@@ -771,12 +779,15 @@ public class SearchService
             }
         }
 
-        // ── Индивидуальные карты ────────────────────────────────────────────
-        // Модуль ИК законсервирован и в действующую поисковую выдачу не входит:
-        // canIC жёстко false, запросы к ИК не выполняются. Исторические карты
-        // остаются доступны по прямой ссылке. Ветка оставлена пустой намеренно,
-        // чтобы исключение было видно в коде, а не выглядело забытым поиском.
-        _ = canIC;
+        // ── Законсервированный модуль ───────────────────────────────────────
+        // Модуль ИК выведен из действующего функционала и в поисковую выдачу не
+        // входит: ветки выдачи ИК удалены вместе с её включением в прошлом PR-5,
+        // запросы к ИК не выполняются. Коэффициенты исключены вместе с ним
+        // (CanSearchCoefficients) — они применялись только в расчёте ИК, и их
+        // ветка сохранена как точка включения. Исторические карты остаются
+        // доступны по прямой ссылке. Фильтры
+        // IndividualCardStatus/IndividualCardObjectLevel в SearchQuery сохранены
+        // ради совместимости контракта API, но на результат не влияют.
 
         // ── Задачи ────────────────────────────────────────────────────────
         if (canTask)

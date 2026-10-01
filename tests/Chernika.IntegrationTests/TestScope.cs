@@ -28,6 +28,7 @@ public sealed class TestScope : IAsyncDisposable
         GsmMaterials = scope.ServiceProvider.GetRequiredService<GsmMaterialService>();
         IndividualCardModule = scope.ServiceProvider.GetRequiredService<TestIndividualCardModuleState>();
         IndividualCards = scope.ServiceProvider.GetRequiredService<IndividualCardService>();
+        Reports = scope.ServiceProvider.GetRequiredService<ReportService>();
     }
 
     public FakeCurrentUser User { get; }
@@ -47,6 +48,9 @@ public sealed class TestScope : IAsyncDisposable
     public TestIndividualCardModuleState IndividualCardModule { get; }
 
     public IndividualCardService IndividualCards { get; }
+
+    /// <summary>Нужен для проверки контроллеров API отчётов законсервированного модуля.</summary>
+    public ReportService Reports { get; }
 
     public async ValueTask DisposeAsync()
     {

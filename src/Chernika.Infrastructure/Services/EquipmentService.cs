@@ -138,7 +138,7 @@ public class EquipmentService
         var inIndividualCard = await _db.IndividualCards
             .AnyAsync(ic => ic.NodeId == id, ct);
         if (inIndividualCard)
-            return (false, "Нельзя удалить: узел является целью индивидуальной карты.");
+            return (false, "Нельзя удалить: узел является целью исторической индивидуальной карты.");
 
         n.IsDeleted = true;
         n.DeletedAt = _time.GetUtcNow().UtcDateTime;
@@ -336,7 +336,7 @@ public class EquipmentService
         var inIndividualCard = await _db.IndividualCards
             .AnyAsync(ic => ic.EquipmentModelId == id, ct);
         if (inIndividualCard)
-            return (false, "Нельзя удалить: изделие является целью индивидуальной карты.");
+            return (false, "Нельзя удалить: изделие является целью исторической индивидуальной карты.");
 
         var inLiveInstance = await _db.EquipmentInstances
             .AnyAsync(i => i.EquipmentModelId == id && !i.IsDeleted, ct);
@@ -2299,7 +2299,7 @@ public class EquipmentService
         // организацию: их нельзя оставлять со скрытым фильтром родителем.
         var hasIndividualCards = await _db.IndividualCards.AnyAsync(ic => ic.BranchId == id, ct);
         if (hasIndividualCards)
-            return (false, "Невозможно архивировать организацию: с ней связаны индивидуальные карты.");
+            return (false, "Невозможно архивировать организацию: с ней связаны исторические индивидуальные карты.");
 
         var hasCompositions = await _db.ProductCompositions.AnyAsync(c => c.BranchId == id, ct)
             || await _db.AggregateCompositions.AnyAsync(c => c.BranchId == id, ct)

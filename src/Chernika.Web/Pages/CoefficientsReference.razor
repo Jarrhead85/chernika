@@ -10,9 +10,21 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
+@inject IIndividualCardModuleState IndividualCardModule
 
+@* Справочник законсервирован вместе с модулем ИК: коэффициенты применялись
+   только в расчёте индивидуальных карт. Маршрут и данные сохранены, запись
+   закрыта той же границей, поэтому canEdit здесь требует включённого модуля и
+   форма/действия исчезают сами. *@
 <div class="stack">
     <ReferenceBreadcrumb Group="Классификаторы" Current="Коэффициенты" />
+
+    @if (!IndividualCardModule.IsEnabled)
+    {
+        <IndividualCardConservedNotice
+            Title="Справочник законсервирован"
+            Body="Коэффициенты применялись только в расчёте индивидуальных карт, модуль которых выведен из действующего функционала проекта. Справочник доступен только для чтения: создание, изменение и архивирование отключены на уровне сервера." />
+    }
 
     @if (canEdit)
     {
@@ -234,8 +246,13 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        canEdit = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
-        canCreateType = userId != null && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
+        // Право Reference.Edit само по себе больше не даёт возможности записи:
+        // справочник законсервирован вместе с модулем ИК. Форма создания и
+        // действия правки/архивирования исчезают, список остаётся читаемым.
+        var mayEdit = userId != null
+            && await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId!, PermissionCodes.ReferenceEdit));
+        canEdit = mayEdit && IndividualCardModule.IsEnabled;
+        canCreateType = canEdit;
         await ReloadTypesAsync();
         await ReloadAsync();
     }
