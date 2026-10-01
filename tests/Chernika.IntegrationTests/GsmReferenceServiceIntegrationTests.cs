@@ -79,7 +79,7 @@ public class GsmReferenceServiceIntegrationTests
     }
 
     [Fact]
-    public async Task Create_StoresOneGroupAndManySubgroups_AndLegacyMirrors()
+    public async Task Create_StoresOneGroupAndManySubgroups_AndLeavesLegacyColumnsEmpty()
     {
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
@@ -104,14 +104,18 @@ public class GsmReferenceServiceIntegrationTests
 
         var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
         Assert.Equal("ГОСТ 21743-76", stored.Nd);
-        Assert.Equal("ГОСТ 21743-76", stored.Gost);
         Assert.Equal("Для турбинных двигателей", stored.IntendedUse);
-        Assert.Equal("Для турбинных двигателей", stored.Description);
         Assert.Equal("F-35", stored.NatoIndex);
         Assert.True(stored.SuitabilityAir);
         Assert.Equal("Примечание", stored.Note);
 
+        // PR-5: Gost/Description больше не заполняются — действующих читателей
+        // у переходных колонок не осталось, они удаляются в PR-6.
+        Assert.Null(stored.Gost);
+        Assert.Null(stored.Description);
+
         // Переходное правило: legacy Type = подгруппа, первая по алфавиту.
+        // Колонка NOT NULL до PR-6, поэтому заполнение продолжается.
         // Группа в Type не пишется — это разные уровни модели.
         Assert.Equal("Для газовых турбин", stored.Type);
         Assert.NotEqual("Моторные масла", stored.Type);

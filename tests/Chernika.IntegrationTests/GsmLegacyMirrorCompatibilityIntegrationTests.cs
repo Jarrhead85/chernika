@@ -208,7 +208,12 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
             .CountAsync(c => c.GsmMaterialId == materialId);
     }
 
-    // ── §4: пределы длин переходных зеркал ───────────────────────────────
+    // ── §4: длина НД ──────────────────────────────────────────────────────
+    //
+    // До PR-5 предел 200 символов держался на двух внешних ограничениях: прежнем
+    // зеркале Gost (varchar(128), позже 256) и снимке ИК (varchar(200)). Оба
+    // перестали действовать: Gost в PR-5 не заполняется, модуль ИК законсервирован
+    // и новых снимков не создаёт. Собственная колонка Nd — text.
 
     [Fact]
     public async Task Nd_LongerThanLegacyColumn_IsAccepted_AndStoredWithoutTruncation()
@@ -230,14 +235,19 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
 
         var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
         Assert.Equal(longNd, stored.Nd);
-        Assert.Equal(longNd, stored.Gost);
+
+        // Переходное зеркало не заполняется, поэтому скрытого переполнения
+        // прежнего varchar(256) здесь быть не может.
+        Assert.Null(stored.Gost);
     }
 
     [Theory]
-    [InlineData(128)]  // ровно прежний предел: проходило и раньше
-    [InlineData(129)]  // первый символ сверх прежнего предела: раньше падало в БД
-    [InlineData(200)]  // предел снимка ИК
-    public async Task Nd_AtLegacyBoundaries_IsAccepted_AndMirroredLosslessly(int length)
+    [InlineData(128)]  // ровно прежний предел Type
+    [InlineData(129)]  // первый символ сверх прежнего предела
+    [InlineData(200)]  // прежний предел снимка ИК
+    [InlineData(201)]  // прежний предел +1: раньше отклонялось, теперь принимается
+    [InlineData(1000)] // ровно текущий предел действующего поля
+    public async Task Nd_IsAcceptedUpToCurrentLimit_AndStoredWithoutTruncation(int length)
     {
         var nd = new string('Н', length);
 
@@ -254,15 +264,15 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
 
         var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
         Assert.Equal(nd, stored.Nd);
-        Assert.Equal(nd, stored.Gost);
+        Assert.Null(stored.Gost);
     }
 
     [Fact]
-    public async Task Nd_ExactlyAtSnapshotLimit_IsAccepted()
+    public async Task Nd_ExactlyAtCurrentLimit_IsAccepted()
     {
-        // Граница: ровно 200 символов — предельное допустимое значение, 201
+        // Граница: ровно 1000 символов — предельное допустимое значение, 1001
         // отклоняется (отдельный тест). Усечения на границе быть не должно.
-        var atLimit = new string('Д', 200);
+        var atLimit = new string('Д', 1000);
 
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
@@ -277,16 +287,15 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
 
         var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
         Assert.Equal(atLimit, stored.Nd);
-        Assert.Equal(atLimit, stored.Gost);
     }
 
     [Fact]
-    public async Task Nd_LongerThanSnapshotLimit_IsRejectedBeforeWrite_WithClearMessage()
+    public async Task Nd_LongerThanCurrentLimit_IsRejectedBeforeWrite_WithClearMessage()
     {
-        // Снимок ИК — varchar(200) и по требованию не расширяется. Значение
-        // длиннее лимита отклоняется ДО записи понятным сообщением, а не падает
-        // на уровне БД.
-        var tooLong = new string('Б', 201);
+        // Предел проверяется сервисом ДО записи понятным сообщением, а не падает
+        // на уровне БД, и значение при этом НЕ усекается.
+        var tooLong = new string('Б', 1001);
+        var name = "Слишком длинное НД " + Suffix();
 
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
@@ -294,15 +303,14 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
             {
-                Name = "Слишком длинное НД " + Suffix(),
+                Name = name,
                 Nd = tooLong,
                 GroupName = "Моторные масла",
                 SubgroupNames = new List<string> { "Для турбин" },
             }));
 
-        Assert.Contains("200", ex.Message, StringComparison.Ordinal);
-        Assert.False(await s.Db.GsmMaterials.AnyAsync(m => m.Name == "Слишком длинное НД " + Suffix()
-            || m.Nd == tooLong));
+        Assert.Contains("1000", ex.Message, StringComparison.Ordinal);
+        Assert.False(await s.Db.GsmMaterials.AnyAsync(m => m.Name == name || m.Nd == tooLong));
     }
 
     [Theory]
@@ -348,21 +356,27 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
     }
 
     [Fact]
-    public async Task LegacyColumns_WereWidenedTo256()
+    public async Task LegacyColumns_WereWidenedTo256_AndNdIsUnboundedText()
     {
         await using var s = _fixture.CreateScope();
         Assert.Equal("256", await ColumnLengthAsync(s, "GsmMaterials", "Type"));
         Assert.Equal("256", await ColumnLengthAsync(s, "GsmMaterials", "Gost"));
 
-        // Снимки ИК не расширялись: под них и выбран предел НД в 200.
+        // Снимки ИК не расширялись, но они больше не пишутся: модуль ИК
+        // законсервирован и новых карт не создаёт. Действующее поле НД —
+        // Nd, у него ограничения длины нет вовсе.
         Assert.Equal("200", await ColumnLengthAsync(s, "IndividualCardItemMaterialSnapshots", "Gost"));
+        Assert.Null(await ColumnLengthAsync(s, "GsmMaterials", "Nd"));
     }
 
-    // ── §3: мультиподгруппные марки запрещены в новых строках ХК ──────────
+    // ── §3: мультиподгруппные марки разрешены в новых строках ХК (PR-5) ────
 
     [Fact]
-    public async Task HkCreate_WithMultiSubgroupMaterial_IsRejected_WithClearMessage()
+    public async Task HkCreate_WithMultiSubgroupMaterial_IsAccepted()
     {
+        // Переходный запрет PR-3 снят: несколько подгрупп больше не блокируют
+        // новое назначение, потому что действующие потребители читают Nd и
+        // классификацию, а не прежний Type.
         var multiId = await CreateMaterialAsync("Группа ХК", new List<string> { "Альфа", "Бета" });
         var singleId = await CreateMaterialAsync("Группа ХК", new List<string> { "Гамма" });
 
@@ -370,15 +384,15 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         await using var s = _fixture.CreateScope();
         SetRefEditor(s);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            s.HK.CreateAsync(BuildCard(nodeId, unitId, multiId, singleId)));
+        var created = await s.HK.CreateAsync(BuildCard(nodeId, unitId, multiId, singleId));
 
-        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("2", ex.Message, StringComparison.Ordinal);
+        Assert.NotNull(created);
+        Assert.True(await s.Db.HKCardItemMaterials.AnyAsync(r => r.GsmMaterialId == multiId));
+        Assert.True(await s.Db.HKCardItemMaterials.AnyAsync(r => r.GsmMaterialId == singleId));
     }
 
     [Fact]
-    public async Task HkUpdate_ReplacingWithMultiSubgroupMaterial_IsRejected_WithClearMessage()
+    public async Task HkUpdate_ReplacingWithMultiSubgroupMaterial_IsAccepted()
     {
         var singleId = await CreateMaterialAsync("Группа ХК " + Suffix(), new List<string> { "Гамма" });
         var (nodeId, unitId) = await CreateNodeAndUnitAsync();
@@ -391,23 +405,25 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
             cardId = created.Id;
         }
 
-        // Целевая марка с двумя подгруппами: назначение её вместо прежней —
-        // новая ссылка, поэтому переходный gate применяется.
         var multiId = await CreateMaterialAsync("Замена " + Suffix(), new List<string> { "Дельта", "Эпсилон" });
 
         await using var s2 = _fixture.CreateScope();
         SetRefEditor(s2);
         var card = await s2.HK.GetByIdAsync(cardId);
         Assert.NotNull(card);
-        card!.Items.First().Materials.First().GsmMaterialId = multiId;
+        var row = card!.Items.First().Materials.First();
+        var originalRowId = row.Id;
+        row.GsmMaterialId = multiId;
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => s2.HK.UpdateAsync(card));
-        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
+        var updated = await s2.HK.UpdateAsync(card);
+        Assert.NotNull(updated);
 
-        // Прежняя ссылка не тронута: отказ до мутаций.
+        // Ссылка заменена, а идентификатор строки ХК прежний: правка не
+        // пересоздаёт строку и не трогает её категорию.
         await using var s3 = _fixture.CreateScope();
-        Assert.True(await s3.Db.HKCardItemMaterials.AnyAsync(r => r.GsmMaterialId == singleId));
-        Assert.False(await s3.Db.HKCardItemMaterials.AnyAsync(r => r.GsmMaterialId == multiId));
+        var saved = await s3.Db.HKCardItemMaterials.AsNoTracking()
+            .SingleAsync(r => r.Id == originalRowId);
+        Assert.Equal(multiId, saved.GsmMaterialId);
     }
 
     [Fact]

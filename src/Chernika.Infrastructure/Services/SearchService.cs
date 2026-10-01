@@ -152,12 +152,20 @@ public class SearchService
             });
         }
 
+        // Марка ГСМ: одна строка на марку. Совпадение по группе или любой из
+        // подгрупп идёт через EXISTS (Any), поэтому марка с несколькими
+        // совпавшими подгруппами не размножается. Прежние Type/Gost больше не
+        // читаются: источник истины — Nd и GsmMaterialClassifications.
         var materials = await _db.GsmMaterials
             .Include(m => m.HKCardItemMaterials).ThenInclude(mim => mim.HKCardItem).ThenInclude(hi => hi.HKCard)
+            .Include(m => m.Classifications)
             .Where(m => !m.IsDraft &&
                         (EF.Functions.ILike(m.Name, qPattern) ||
-                        EF.Functions.ILike(m.Type, qPattern) ||
-                        EF.Functions.ILike(m.Gost ?? "", qPattern)))
+                        EF.Functions.ILike(m.Nd ?? "", qPattern) ||
+                        EF.Functions.ILike(m.IntendedUse ?? "", qPattern) ||
+                        m.Classifications.Any(c =>
+                            EF.Functions.ILike(c.GroupName, qPattern) ||
+                            EF.Functions.ILike(c.SubgroupName, qPattern))))
             .Take(maxResults)
             .ToListAsync();
 
@@ -171,7 +179,11 @@ public class SearchService
                 EntityTypeDisplay = "Марка ГСМ",
                 EntityId = mat.Id,
                 Title = mat.Name,
-                Subtitle = $"{mat.Type} ({mat.Gost})",
+                Subtitle = GsmMaterialSubtitle(
+                    mat.Nd,
+                    mat.Classifications.Select(c => c.GroupName),
+                    mat.Classifications.Select(c => c.SubgroupName)),
+
                 ContextInfo = hk != null ? $"Применяется в ХК: {hk.Code}" : "",
                 Url = hk != null ? $"/хк/{hk.Id}" : "/состав-изделия"
             });
@@ -257,6 +269,36 @@ public class SearchService
 
     private sealed record ActorScope(bool IsSystemAdmin, Guid? UserBranchId, string UserId);
 
+    /// <summary>
+    /// Подпись строки поиска по марке ГСМ: группа, подгруппы и НД. Несколько
+    /// подгрупп перечисляются в одной строке — марка в выдаче не размножается.
+    /// </summary>
+    private static string GsmMaterialSubtitle(
+        string? nd, IEnumerable<string?> groupNames, IEnumerable<string?> subgroupNames)
+    {
+        var groups = groupNames.Where(g => !string.IsNullOrWhiteSpace(g))
+            .Select(g => g!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(g => g, StringComparer.Ordinal)
+            .ToList();
+        var subgroups = subgroupNames.Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
+
+        var head = groups.Count switch
+        {
+            0 => "Без классификации",
+            1 => groups[0],
+            _ => string.Join(" / ", groups),
+        };
+        if (subgroups.Count > 0)
+            head = $"{head}: {string.Join(", ", subgroups)}";
+
+        return string.IsNullOrWhiteSpace(nd) ? head : $"{head} ({nd.Trim()})";
+    }
+
     public async Task<SearchPageDto> SearchAsync(SearchQuery query, CancellationToken ct = default)
     {
         var page = Math.Max(1, query.Page);
@@ -273,7 +315,10 @@ public class SearchService
             query.HasAttachment is not null ||
             query.TaskStatus is not null ||
             query.TaskPriority is not null ||
-            query.BranchId is not null;
+            query.BranchId is not null ||
+            // Фильтры ИК оставлены в контракте, но результатов они не меняют.
+            query.IndividualCardStatus is not null ||
+            query.IndividualCardObjectLevel is not null;
 
         // Полностью пустая страница не выполняет ни один запрос.
         if (!hasText && !hasFilters)
@@ -290,7 +335,12 @@ public class SearchService
         bool Wanted(params string[] types) => wanted is null || types.Any(wanted.Contains);
 
         var canHK = Wanted("HKCard") && await _permissions.HasPermissionAsync(scope.UserId, Chernika.Domain.PermissionCodes.HKView);
-        var canIC = Wanted("IndividualCard") && await _permissions.HasPermissionAsync(scope.UserId, Chernika.Domain.PermissionCodes.IndividualCardView);
+        // Индивидуальные карты выведены из действующего функционала и в поисковой
+        // выдаче не участвуют (см. IndividualCardModuleGuard). Исторические ИК
+        // остаются доступны по прямой ссылке. Фильтры IndividualCardStatus и
+        // IndividualCardObjectLevel в SearchQuery сохранены ради совместимости
+        // контракта API, но на результат больше не влияют.
+        const bool canIC = false;
         var canReference = Wanted(
                 "Complex", "EquipmentModel", "Aggregate", "Node", "AssemblyUnit",
                 "EquipmentInstance", "GsmMaterial", "Coefficient")
@@ -320,9 +370,11 @@ public class SearchService
             materialIds = await _db.GsmMaterials.AsNoTracking()
                 .Where(m => !m.IsDraft && !m.IsDeleted)
                 .Where(m => EF.Functions.ILike(m.Name, pattern, @"\") ||
-                            EF.Functions.ILike(m.Type, pattern, @"\") ||
-                            EF.Functions.ILike(m.Gost ?? "", pattern, @"\") ||
-                            EF.Functions.ILike(m.Description ?? "", pattern, @"\"))
+                            EF.Functions.ILike(m.Nd ?? "", pattern, @"\") ||
+                            EF.Functions.ILike(m.IntendedUse ?? "", pattern, @"\") ||
+                            m.Classifications.Any(c =>
+                                EF.Functions.ILike(c.GroupName, pattern, @"\") ||
+                                EF.Functions.ILike(c.SubgroupName, pattern, @"\")))
                 .OrderBy(m => m.Name)
                 .Take(ExtendedLimit)
                 .Select(m => m.Id)
@@ -654,28 +706,40 @@ public class SearchService
 
             if (Wanted("GsmMaterial"))
             {
+                // Одна строка на марку: проекция читает классификации, но не
+                // соединяет таблицу, поэтому совпадение по двум подгруппам не
+                // даёт двух кандидатов.
                 var rows = await _db.GsmMaterials.AsNoTracking()
                     .Where(m => !m.IsDraft && !m.IsDeleted)
                     .Where(m => !hasText ||
                                 EF.Functions.ILike(m.Name, pattern, @"\") ||
-                                EF.Functions.ILike(m.Type, pattern, @"\") ||
-                                EF.Functions.ILike(m.Gost ?? "", pattern, @"\") ||
-                                EF.Functions.ILike(m.Description ?? "", pattern, @"\"))
+                                EF.Functions.ILike(m.Nd ?? "", pattern, @"\") ||
+                                EF.Functions.ILike(m.IntendedUse ?? "", pattern, @"\") ||
+                                m.Classifications.Any(c =>
+                                    EF.Functions.ILike(c.GroupName, pattern, @"\") ||
+                                    EF.Functions.ILike(c.SubgroupName, pattern, @"\")))
                     .OrderBy(m => m.Name)
                     .Take(ExtendedLimit)
                     .Select(m => new
                     {
-                        m.Id, m.Name, m.Type, m.Gost, m.Description,
+                        m.Id, m.Name, m.Nd,
+                        Classifications = m.Classifications
+                            .OrderBy(c => c.GroupName).ThenBy(c => c.SubgroupName)
+                            .Select(c => new { c.GroupName, c.SubgroupName })
+                            .ToList(),
                     })
                     .ToListAsync(ct);
                 foreach (var m in rows)
                 {
                     candidates.Add(new CandidateRow(
                         "GsmMaterial", m.Id, m.Name,
-                        string.IsNullOrEmpty(m.Gost) ? m.Type : $"{m.Type} ({m.Gost})",
+                        GsmMaterialSubtitle(
+                            m.Nd,
+                            m.Classifications.Select(c => c.GroupName),
+                            m.Classifications.Select(c => c.SubgroupName)),
                         m.Name, null, "GsmMaterial", null, null, null,
-                        !string.IsNullOrEmpty(m.Gost) && hasText && m.Gost.Contains(text, StringComparison.OrdinalIgnoreCase)
-                            ? $"Совпадение: ГОСТ/ТУ {m.Gost}"
+                        !string.IsNullOrEmpty(m.Nd) && hasText && m.Nd.Contains(text, StringComparison.OrdinalIgnoreCase)
+                            ? "Совпадение: нормативные документы"
                             : "Совпадение: реквизиты марки ГСМ",
                         0));
                 }
@@ -707,73 +771,12 @@ public class SearchService
             }
         }
 
-        // ── Индивидуальные карты: прямой + зависимый поиск ────────────────
-        if (canIC)
-        {
-            var ic = IndividualCardsQuery(query, scope, branchFilter, from, to);
-
-            var icDirect = await ic
-                .Where(c => EF.Functions.ILike(c.Code, pattern, @"\") ||
-                            EF.Functions.ILike(c.Version, pattern, @"\") ||
-                            EF.Functions.ILike(c.Notes ?? "", pattern, @"\") ||
-                            EF.Functions.ILike(c.TargetObjectCodeSnapshot, pattern, @"\") ||
-                            EF.Functions.ILike(c.TargetObjectNameSnapshot, pattern, @"\") ||
-                            EF.Functions.ILike(c.TargetContextSnapshot ?? "", pattern, @"\"))
-                .OrderByDescending(c => c.CreatedAt)
-                .Take(ExtendedLimit)
-                .Select(c => new
-                {
-                    c.Id, c.Code, c.Version, c.Status, c.BranchId, c.CreatedAt,
-                    c.TargetObjectCodeSnapshot, c.TargetObjectNameSnapshot,
-                })
-                .ToListAsync(ct);
-            foreach (var c in icDirect)
-            {
-                candidates.Add(new CandidateRow(
-                    "IndividualCard", c.Id,
-                    $"{c.TargetObjectCodeSnapshot} — {c.TargetObjectNameSnapshot}",
-                    $"{c.Code} (v{c.Version})",
-                    c.Code, c.Version, c.Status.ToString(), c.BranchId, c.CreatedAt, null,
-                    "Совпадение: реквизиты ИК", 0));
-            }
-
-            var directIds = icDirect.Select(d => d.Id).ToHashSet();
-            if (hasText)
-            {
-                var icDependent = await ic
-                    .Where(c => !directIds.Contains(c.Id))
-                    .Where(c => c.Items.Any(i => i.MaterialSnapshots.Any(ms =>
-                                    EF.Functions.ILike(ms.MaterialName, pattern, @"\") ||
-                                    EF.Functions.ILike(ms.Gost ?? "", pattern, @"\"))) ||
-                                c.Items.Any(i => EF.Functions.ILike(i.AssemblyUnitCode, pattern, @"\") ||
-                                                 EF.Functions.ILike(i.AssemblyUnitName ?? "", pattern, @"\")) ||
-                                c.Items.Any(i => EF.Functions.ILike(i.SourceHKCardCode, pattern, @"\") ||
-                                                 EF.Functions.ILike(i.SourceHKCardVersion ?? "", pattern, @"\")) ||
-                                c.HKSourceSnapshots.Any(h => EF.Functions.ILike(h.HKCardCode, pattern, @"\")) ||
-                                c.HKSourceSnapshots.Any(h => EF.Functions.ILike(h.SourceObjectCode, pattern, @"\") ||
-                                                             EF.Functions.ILike(h.SourceObjectName, pattern, @"\")) ||
-                                c.CoefficientSnapshots.Any(cs =>
-                                    EF.Functions.ILike(cs.CoefficientName, pattern, @"\") ||
-                                    EF.Functions.ILike(cs.CoefficientTypeName, pattern, @"\")))
-                    .OrderByDescending(c => c.CreatedAt)
-                    .Take(ExtendedLimit)
-                    .Select(c => new
-                    {
-                        c.Id, c.Code, c.Version, c.Status, c.BranchId, c.CreatedAt,
-                        c.TargetObjectCodeSnapshot, c.TargetObjectNameSnapshot,
-                    })
-                    .ToListAsync(ct);
-                foreach (var c in icDependent)
-                {
-                    candidates.Add(new CandidateRow(
-                        "IndividualCard", c.Id,
-                        $"{c.TargetObjectCodeSnapshot} — {c.TargetObjectNameSnapshot}",
-                        $"{c.Code} (v{c.Version})",
-                        c.Code, c.Version, c.Status.ToString(), c.BranchId, c.CreatedAt, null,
-                        "Совпадение: данные состава или источников ИК", 1));
-                }
-            }
-        }
+        // ── Индивидуальные карты ────────────────────────────────────────────
+        // Модуль ИК законсервирован и в действующую поисковую выдачу не входит:
+        // canIC жёстко false, запросы к ИК не выполняются. Исторические карты
+        // остаются доступны по прямой ссылке. Ветка оставлена пустой намеренно,
+        // чтобы исключение было видно в коде, а не выглядело забытым поиском.
+        _ = canIC;
 
         // ── Задачи ────────────────────────────────────────────────────────
         if (canTask)
@@ -880,6 +883,11 @@ public class SearchService
         return q;
     }
 
+    /// <summary>
+    /// Проекция ИК для расширенного поиска. Сохранена вместе с кодом
+    /// законсервированного модуля: сейчас не вызывается (выдача ИК отключена),
+    /// но потребуется при возобновлении модуля, поэтому не удаляется.
+    /// </summary>
     private IQueryable<IndividualCard> IndividualCardsQuery(
         SearchQuery query,
         ActorScope scope,

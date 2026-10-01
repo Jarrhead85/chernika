@@ -826,8 +826,10 @@ public class GsmRelationReferenceIntegrationTests
         var forHk = await s.GsmMaterials.GetActiveForSelectionAsync();
         var hkIds = forHk.Select(m => m.Id).ToHashSet();
         Assert.NotNull(hkOptions);
+        // Выбор для ХК: требуется классификация, но число подгрупп больше не
+        // ограничено одной (PR-5 снял переходный запрет PR-3).
         Assert.Contains(single, hkIds);
-        Assert.DoesNotContain(multi, hkIds);
+        Assert.Contains(multi, hkIds);
         Assert.DoesNotContain(legacy, hkIds);
     }
 

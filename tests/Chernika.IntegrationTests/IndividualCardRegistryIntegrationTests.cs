@@ -339,9 +339,10 @@ public class IndividualCardRegistryIntegrationTests
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
-        var (_, _, _, _, _, _) = await CreateCardAsync(s, formed: true);
-        var (_, modelB, _, _, _, _) = await CreateCardAsync(s);
-        var (_, _, _, _, _, _) = await CreateCardAsync(s);
+        var (formedId, _, _, _, _, _) = await CreateCardAsync(s, formed: true);
+        var (draftB, modelB, _, _, _, _) = await CreateCardAsync(s);
+        var (draftC, _, _, _, _, _) = await CreateCardAsync(s);
+        var own = new[] { formedId, draftB, draftC };
 
         // Status filter + paging.
         var page1 = await s.IndividualCards.GetRegistryAsync(
@@ -360,11 +361,20 @@ public class IndividualCardRegistryIntegrationTests
             new IndividualCardRegistryQuery(ObjectLevel: IndividualCardObjectLevel.EquipmentModel));
         Assert.Contains(models.Items, i => i.ObjectCode == "EM-" || i.ObjectCode.StartsWith("EM-"));
 
-        // Sort by Code ascending.
+        // Sort by Code ascending. Проверяем порядок ТОЛЬКО своих карт: общая тестовая
+        // БД содержит чужие коды, а порядок строк разных коллаций между PostgreSQL
+        // и .NET не обязан совпадать. У своих карт различается только ASCII-суффикс,
+        // поэтому сравнение по Ordinal однозначно.
         var sorted = await s.IndividualCards.GetRegistryAsync(
-            new IndividualCardRegistryQuery(SortBy: "Code", SortDescending: false, PageSize: 50));
-        var codes = sorted.Items.Select(i => i.Code).ToList();
-        Assert.Equal(codes.OrderBy(c => c).ToList(), codes);
+            new IndividualCardRegistryQuery(SortBy: "Code", SortDescending: false, PageSize: 200));
+        var ownCodes = sorted.Items
+            .Where(i => own.Contains(i.Id))
+            .Select(i => i.Code)
+            .ToList();
+        Assert.Equal(3, ownCodes.Count);
+        Assert.Equal(
+            ownCodes.OrderBy(c => c, StringComparer.Ordinal).ToList(),
+            ownCodes);
         _ = modelB;
     }
 

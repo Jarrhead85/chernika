@@ -10,11 +10,15 @@ namespace Chernika.Infrastructure.Services;
 /// <summary>
 /// Единственная точка бизнес-логики марок ГСМ и их классификаций.
 /// <para>
-/// Источник записи — новые поля (<c>Nd</c>, <c>IntendedUse</c>,
-/// <c>GsmMaterialClassifications</c>). Прежние <c>Type</c>/<c>Gost</c>/
-/// <c>Description</c> остаются физически и поддерживаются как ЗЕРКАЛА для
-/// legacy-потребителей (поиск, PDF/XLSX, старые ХК) до PR-5, поэтому обновляются
-/// в той же транзакции из тех же данных, а не редактируются независимо.
+/// Источник записи и чтения — новые поля (<c>Nd</c>, <c>IntendedUse</c>,
+/// <c>GsmMaterialClassifications</c>). Активные потребители (ХК, поиск, аудит,
+/// API, Web) переключены на них в PR-5.
+/// </para>
+/// <para>
+/// Прежние <c>Type</c>/<c>Gost</c>/<c>Description</c> остаются физически до PR-6.
+/// <c>Gost</c> и <c>Description</c> больше не пишутся: действующих читателей у них
+/// не осталось. <c>Type</c> — исключение: колонка NOT NULL, поэтому до PR-6
+/// продолжает заполняться детерминированным значением подгруппы.
 /// </para>
 /// <para>
 /// Справочные связи (второй справочник) здесь только читаются: методов их
@@ -24,11 +28,24 @@ namespace Chernika.Infrastructure.Services;
 public class GsmMaterialService
 {
     /// <summary>
-    /// Предел длины НД, зеркалируемого в прежний <c>Gost</c> и копируемого в
-    /// <c>IndividualCardItemMaterialSnapshots</c> (там <c>varchar(200)</c>).
-    /// Проверяется до записи, значение не усекается.
+    /// Предел длины НД марки.
+    /// <para>
+    /// До PR-5 предел был 200 символов и держался на двух внешних ограничениях:
+    /// прежнем зеркале <c>Gost</c> и снимке ИК (<c>varchar(200)</c>). Оба больше не
+    /// действуют: <c>Gost</c> в PR-5 перестаёт заполняться, а модуль ИК
+    /// законсервирован и новых снимков не создаёт. Собственная колонка
+    /// <c>GsmMaterial.Nd</c> — <c>text</c>, ограничения длины не имеет.
+    /// </para>
+    /// <para>
+    /// Ограничение осталось явным и проверяется ДО записи: усечения не происходит,
+    /// лишнее значение отклоняется понятным сообщением. 1000 символов — с запасом
+    /// относительно 2000-символьного усечения деталей аудита
+    /// (<c>AuditService.LimitLength</c>) и с разумной длиной поля ввода. Узкое
+    /// место осталось только в одном пути: предложение из черновика ХК, где НД
+    /// приходит в колонку <c>ReferenceProposal.Gost</c> (<c>varchar(200)</c>).
+    /// </para>
     /// </summary>
-    private const int LegacySnapshotLengthLimit = 200;
+    private const int NdMaxLength = 1000;
 
     /// <summary>
     /// Предел выдачи справочника выбора марок для формы связи. Защита от
@@ -343,6 +360,12 @@ public class GsmMaterialService
     /// Названия марок по идентификаторам — для отображения уже сохранённых строк
     /// ХК. Не зависит от переходного фильтра выбора: марка, уже присутствующая в
     /// документе, остаётся читаемой даже если больше не предлагается для выбора.
+    /// <para>
+    /// Запрос идёт <c>IgnoreQueryFilters</c>: у <c>GsmMaterial</c> есть глобальный
+    /// фильтр по мягкому удалению, и с ним историческая строка ХК показывала бы
+    /// «—» вместо названия удалённой марки. Название отображается, пометка об
+    /// удалении — дело вызывающего.
+    /// </para>
     /// </summary>
     public async Task<Dictionary<Guid, string>> GetNamesAsync(
         IEnumerable<Guid> ids, CancellationToken ct = default)
@@ -353,10 +376,57 @@ public class GsmMaterialService
         if (list.Count == 0) return new Dictionary<Guid, string>();
 
         return await _db.GsmMaterials
+            .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(m => list.Contains(m.Id))
             .Select(m => new { m.Id, m.Name })
             .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+    }
+
+    /// <summary>
+    /// Справочные подсказки по связям для формы ХК: для каждой исходной марки —
+    /// список связанных марок с типом связи.
+    /// <para>
+    /// Направление связи читается в прямом виде (Primary → Related): подсказка
+    /// показывается пользователю в соответствующем списке категории, но НИЧЕГО не
+    /// добавляет в строки ХК и не меняет их <c>Category</c>. Выбор остаётся за
+    /// пользователем (PR-5 §3.3).
+    /// </para>
+    /// </summary>
+    public async Task<Dictionary<Guid, List<GsmRelationHint>>> GetRelationHintsAsync(
+        IEnumerable<Guid> primaryMaterialIds, CancellationToken ct = default)
+    {
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReferenceView, ct);
+
+        var ids = primaryMaterialIds.Where(id => id != Guid.Empty).Distinct().ToList();
+        var result = new Dictionary<Guid, List<GsmRelationHint>>();
+        if (ids.Count == 0) return result;
+
+        var rows = await _db.GsmMaterialRelations
+            .AsNoTracking()
+            .Where(r => !r.IsDeleted && ids.Contains(r.PrimaryGsmMaterialId))
+            .OrderBy(r => r.PrimaryGsmMaterialId)
+            .ThenBy(r => r.RelationType)
+            .ThenBy(r => r.RelatedGsmMaterial!.Name)
+            .Select(r => new GsmRelationHint(
+                r.PrimaryGsmMaterialId,
+                r.RelatedGsmMaterialId,
+                r.RelatedGsmMaterial!.Name,
+                r.RelatedGsmMaterial.Nd,
+                r.RelationType))
+            .ToListAsync(ct);
+
+        foreach (var row in rows)
+        {
+            if (!result.TryGetValue(row.PrimaryMaterialId, out var list))
+            {
+                list = new List<GsmRelationHint>();
+                result[row.PrimaryMaterialId] = list;
+            }
+            list.Add(row);
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -560,10 +630,19 @@ public class GsmMaterialService
     }
 
     /// <summary>
-    /// Выбор марок для строк ХК. Переходное ограничение варианта A §4.3: пока
-    /// legacy-потребители читают прежний <c>Type</c>, в новые строки ХК допускается
-    /// только марка с РОВНО одной подгруппой. Для справочных связей действует
-    /// <see cref="GetSelectableForRelationAsync"/>.
+    /// Выбор марок для строк ХК.
+    /// <para>
+    /// Требование к марке — опубликована, не удалена и КЛАССИФИЦИРОВАНА (хотя бы
+    /// одна подгруппа). Переходное ограничение PR-3 «ровно одна подгруппа» снято в
+    /// PR-5 вместе с переключением активных потребителей на <c>Nd</c> и
+    /// классификации: прежнее правило существовало только потому, что прежний
+    /// <c>Type</c> хранил одну подгруппу и не мог их различить.
+    /// </para>
+    /// <para>
+    /// Legacy-марка без классификации по-прежнему не предлагается для новой
+    /// строки: группа из прежнего <c>Type</c> не выдумывается. Уже сохранённые
+    /// исторические строки при этом не перепроверяются.
+    /// </para>
     /// </summary>
     public async Task<List<GsmMaterial>> GetActiveForSelectionAsync(
         string? searchText = null,
@@ -575,8 +654,10 @@ public class GsmMaterialService
         IQueryable<GsmMaterial> q = _db.GsmMaterials
             .Where(m => !m.IsDraft && !m.IsDeleted);
 
-        // Ровно одна строка классификации: агрегат по таблице классификаций.
-        q = q.Where(m => m.Classifications.Count() == 1);
+        // Минимум одна подгруппа: EXISTS, а не счётчик — несколько подгрупп
+        // теперь разрешены, неограниченное их число ограничивается правилами
+        // сервиса записи.
+        q = q.Where(m => m.Classifications.Any());
 
         if (excludeIds is { Count: > 0 })
         {
@@ -597,6 +678,9 @@ public class GsmMaterialService
         }
 
         return await q
+            // Классификация нужна выпадающему списку ХК: группировка и поиск идут
+            // по ней, а не по прежнему Type.
+            .Include(m => m.Classifications)
             .OrderBy(m => m.Name)
             .ThenBy(m => m.Nd)
             .Take(200)
@@ -755,24 +839,13 @@ public class GsmMaterialService
             || !existingSubgroups.OrderBy(s => s, StringComparer.Ordinal)
                 .SequenceEqual(fields.Subgroups.OrderBy(s => s, StringComparer.Ordinal));
 
-        // Переходное ограничение варианта A §4.3 контракта ГСМ: марка, уже
-        // связанная со строкой ХК, не может перестать иметь ровно одну подгруппу
-        // (в том числе стать многоподгруппной) — иначе новая привязка в ХК была бы
-        // неоднозначной. Проверка ДО удаления прежнего набора классификаций, по
-        // прямому FK без фильтров по статусам ХК: ограничение действует и на
-        // архивные, и на удалённые документы. Существующие аномалии не
-        // исправляются молча. После переключения потребителей (PR-5) снимается.
-        if (subgroupsChanged && fields.GroupName != null && fields.Subgroups.Count != 1)
-        {
-            var usedInHk = await _db.HKCardItemMaterials
-                .IgnoreQueryFilters()
-                .AnyAsync(r => r.GsmMaterialId == id, ct);
-
-            if (usedInHk)
-                throw new InvalidOperationException(
-                    "Марка используется в строках ХК, поэтому у неё должна остаться ровно одна подгруппа. " +
-                    "Сначала уберите её из строк ХК или дождитесь переключения потребителей на новую модель.");
-        }
+        // Переходное ограничение варианта A §4.3 контракта ГСМ СНЯТО в PR-5.
+        // Раньше марка, связанная со строкой ХК, не могла перестать иметь ровно
+        // одну подгруппу: прежний Type хранил одну подгруппу и не различал их. Теперь
+        // действующие потребители работают с Nd и классификацией, поэтому у
+        // используемой в ХК марки набор подгрупп можно менять так же, как у
+        // свободной. Существующие строки ХК при этом не трогаются: их Category и
+        // GsmMaterialId остаются прежними.
 
         if (subgroupsChanged)
         {
@@ -1430,14 +1503,19 @@ public class GsmMaterialService
     // ── Отчёт незавершённости переноса legacy-полей ───────────────────────
 
     /// <summary>
-    /// Диагностика незавершённости переноса <c>Gost → Nd</c> и
-    /// <c>Description → IntendedUse</c>.
+    /// Диагностика расхождения <c>Gost</c>/<c>Nd</c> и
+    /// <c>Description</c>/<c>IntendedUse</c>.
     /// <para>
-    /// ВАЖНО: с момента переключения источника истины на новые поля (PR-3) это
-    /// НЕ показатель качества данных. Прежние поля теперь ведутся как зеркала и
-    /// обновляются из новых, поэтому расхождение означает лишь незакрытый хвост
-    /// переноса, а не «правильные» старые значения. Сверять по этому отчёту
-    /// после переключения нельзя.
+    /// ВАЖНО, смысл отчёта изменился вместе с PR-5. Прежние поля больше не
+    /// заполняются: <c>Gost</c> и <c>Description</c> заморожены на последних
+    /// значениях и удаляются вместе с колонками в PR-6. Поэтому расхождение
+    /// теперь НОРМАЛЬНО для любой марки, изменённой после PR-5, и НЕ является ни
+    /// показателем качества данных, ни признаком незавершённого переноса.
+    /// </para>
+    /// <para>
+    /// Отчёт остаётся ради одной проверки перед PR-6: он показывает, какие марки
+    /// ещё отличаются, чтобы убедиться, что ни один действующий потребитель не
+    /// читает переходные колонки. Данные по нему пересчитывать или «чинить» нельзя.
     /// </para>
     /// </summary>
     public async Task<List<GsmTransitionDivergence>> GetTransitionDivergencesAsync(CancellationToken ct = default)
@@ -1536,16 +1614,14 @@ public class GsmMaterialService
         if (natoIndex?.Length > 50)
             throw new InvalidOperationException("Индекс НАТО должен быть не длиннее 50 символов.");
 
-        // НД зеркалируется в прежний Gost и копируется в снимок ИК, поэтому его
-        // длина ограничена САМЫМ узким из этих мест, а не длиной колонки.
-        // Предел проверяется здесь, до записи: «поймать ошибку БД и сказать
-        // не удалось» не является исправлением. Усечения нет — лишнее значение
-        // отклоняется понятным сообщением, а принятое сохраняется полностью.
+        // НД хранится в собственной колонке text. Предел проверяется здесь, до
+        // записи: «поймать ошибку БД и сказать не удалось» не является исправлением.
+        // Усечения нет — лишнее значение отклоняется понятным сообщением, а
+        // принятое сохраняется полностью.
         var nd = NormalizeLegacyText(request.Nd);
-        if (nd?.Length > LegacySnapshotLengthLimit)
+        if (nd?.Length > NdMaxLength)
             throw new InvalidOperationException(
-                $"НД не длиннее {LegacySnapshotLengthLimit} символов: прежнее поле ГОСТ и снимок ИК ограничены этой длиной. " +
-                "Укажите НД короче или дождитесь переключения потребителей на новое поле.");
+                $"НД не длиннее {NdMaxLength} символов. Укажите НД короче.");
 
         var group = NormalizeLegacyText(request.GroupName);
         if (group?.Length > 200)
@@ -1587,25 +1663,32 @@ public class GsmMaterialService
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
-    /// Переходные правила для legacy-колонок, которые остаются физически до PR-5:
+    /// Переходные правила для legacy-колонок, которые остаются физически до PR-6.
     /// <list type="bullet">
-    /// <item><c>Type</c> = подгруппа, первая по алфавиту. Произвольную
-    /// «первую случайную подгруппу» не выбираем: правило детерминированное.
-    /// Марки с несколькими подгруппами дополнительно запрещены в новых строках
-    /// ХК, пока не переключены legacy-потребители (вариант A §4.3).</item>
-    /// <item><c>Gost</c> = <c>Nd</c>, <c>Description</c> = <c>IntendedUse</c> —
-    /// зеркала для поиска, PDF/XLSX и старых ХК. Пишутся в той же транзакции из
-    /// тех же данных, поэтому расхождение невозможно.</item>
+    /// <item><c>Type</c> = подгруппа, первая по алфавиту. Колонка физически NOT
+    /// NULL, поэтому её заполнение прекратить нельзя до PR-6 — это явное
+    /// исключение из «полного отказа от записи в legacy-поля». Значение
+    /// детерминированное, произвольная группа или фиктивный тип не подставляются.
+    /// При нескольких подгруппах берётся первая ПО АЛФАВИТУ.</item>
+    /// <item><c>Gost</c> и <c>Description</c> больше НЕ пишутся: после PR-5 ни
+    /// один действующий потребитель их не читает. Их прежние значения остаются в
+    /// базе как есть и удаляются вместе с колонками в PR-6. Это также убирает
+    /// скрытое переполнение: прежнее <c>Gost</c> — <c>varchar(256)</c>, а
+    /// <c>Nd</c> — <c>text</c>.</item>
     /// </list>
     /// У марки без классификации прежние значения не выдумываются: остаются
     /// те, что уже были.
+    /// <para>
+    /// Триггер <c>TRG_GsmMaterials_LegacyFieldSync</c> остаётся до PR-6 как
+    /// страховка для отката на старую версию приложения: он срабатывает только
+    /// когда <c>Nd</c>/<c>IntendedUse</c> явно не менялись, а значит не может
+    /// переписать новое значение, записанное сервисом.
+    /// </para>
     /// </summary>
     private static void ApplyLegacyMirrors(GsmMaterial material, NormalizedFields fields)
     {
         material.Nd = fields.Nd;
-        material.Gost = fields.Nd;
         material.IntendedUse = fields.IntendedUse;
-        material.Description = fields.IntendedUse;
         // Legacy Type = подгруппа (§4.3 контракта: SubgroupName = btrim("Type")).
         // При нескольких подгруппах берётся первая ПО АЛФАВИТУ — правило
         // детерминированное и документированное, а не «первая попавшаяся».

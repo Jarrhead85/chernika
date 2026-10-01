@@ -64,24 +64,36 @@ public class GsmLegacyFieldSyncIntegrationTests
             p => p.Name.Contains("Relation", StringComparison.OrdinalIgnoreCase));
     }
 
-    // ── 2. Зеркала legacy-полей не расходятся с новыми полями ─────────────
+    // ── 2. Legacy-поля больше не заполняются сервисом ──────────────────────
 
     [Fact]
-    public async Task SaveAsync_WritesLegacyMirrors_AndReportStaysEmpty()
+    public async Task SaveAsync_WritesNewFields_AndLeavesLegacyColumnsEmpty()
     {
         var id = await CreateMaterialAsync("ГОСТ 21743-76", "Для турбинных двигателей");
 
-        // Зеркала выставлены при создании.
+        // Источник истины записан полностью.
         Assert.Equal("ГОСТ 21743-76", await ReadAsync(id, m => m.Nd));
-        Assert.Equal("ГОСТ 21743-76", await ReadAsync(id, m => m.Gost));
         Assert.Equal("Для турбинных двигателей", await ReadAsync(id, m => m.IntendedUse));
-        Assert.Equal("Для турбинных двигателей", await ReadAsync(id, m => m.Description));
 
-        await AssertNoDivergenceForAsync(id);
+        // PR-5: Gost/Description больше не пишутся — действующих читателей у них
+        // не осталось, а колонки удаляются вместе с ними в PR-6.
+        Assert.Null(await ReadAsync(id, m => m.Gost));
+        Assert.Null(await ReadAsync(id, m => m.Description));
+
+        // Отчёт о расхождении теперь показывает расхождение как НОРМАЛЬНОЕ:
+        // он больше не показатель качества данных (см. сервис).
+        await using (var s = _fixture.CreateScope())
+        {
+            SetRefEditor(s);
+            Assert.Contains(await s.GsmMaterials.GetTransitionDivergencesAsync(), d => d.Id == id);
+        }
+
+        // Type продолжает заполняться: колонка NOT NULL до PR-6.
+        Assert.False(string.IsNullOrWhiteSpace(await ReadAsync(id, m => m.Type)));
     }
 
     [Fact]
-    public async Task UpdateAsync_KeepsMirrorsInSync_AndDoesNotLoseFields()
+    public async Task UpdateAsync_DoesNotTouchLegacyColumns_AndDoesNotLoseFields()
     {
         var id = await CreateMaterialAsync("ГОСТ 21743-76", "Для турбинных двигателей");
 
@@ -111,14 +123,14 @@ public class GsmLegacyFieldSyncIntegrationTests
         }
 
         Assert.Equal("ГОСТ 12345-99", await ReadAsync(id, m => m.Nd));
-        Assert.Equal("ГОСТ 12345-99", await ReadAsync(id, m => m.Gost));
         Assert.Equal("Для турбинных двигателей", await ReadAsync(id, m => m.IntendedUse));
-        Assert.Equal("Для турбинных двигателей", await ReadAsync(id, m => m.Description));
         Assert.Equal("Примечание сохранённое", await ReadAsync(id, m => m.Note));
         Assert.Equal("A-00", await ReadAsync(id, m => m.NatoIndex));
         Assert.True(await ReadAsync(id, m => m.SuitabilityGround));
 
-        await AssertNoDivergenceForAsync(id);
+        // Переходные колонки остались пустыми: правка НД их не «подтянула».
+        Assert.Null(await ReadAsync(id, m => m.Gost));
+        Assert.Null(await ReadAsync(id, m => m.Description));
     }
 
     // ── 3. Переходный триггер не перетирает явные новые значения ───────────
@@ -257,15 +269,6 @@ public class GsmLegacyFieldSyncIntegrationTests
         }
 
         return created.Id;
-    }
-
-    /// <summary>Отчёт о переносе проверяем по своей марке: общая БД намеренно
-    /// содержит расхождения, созданные тестами переходного триггера.</summary>
-    private async Task AssertNoDivergenceForAsync(Guid id)
-    {
-        await using var s = _fixture.CreateScope();
-        SetRefEditor(s);
-        Assert.DoesNotContain(await s.GsmMaterials.GetTransitionDivergencesAsync(), d => d.Id == id);
     }
 
     // Каждый помощник меняет ровно одно поле. ExecuteSqlInterpolated превращает

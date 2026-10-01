@@ -7,10 +7,18 @@ using Xunit;
 namespace Chernika.IntegrationTests;
 
 /// <summary>
-/// A2 — переходное ограничение варианта A §4.3: пока legacy-потребители читают
-/// прежний <c>Type</c>, новая строка ХК допускает только марку с РОВНО ОДНОЙ
-/// подгруппой. Проверки серверные; исторические ссылки при этом не должны
-/// блокировать несвязанную правку карточки.
+/// Граница классификации для новых строк ХК.
+/// <para>
+/// После PR-5 требование сформулировано как «хотя бы одна подгруппа»: несколько
+/// подгрупп больше не блокируют новое назначение, потому что действующие
+/// потребители переключены на <c>Nd</c> и классификацию, а прежний переходный
+/// запрет «ровно одна подгруппа» (вариант A §4.3) снят.
+/// </para>
+/// <para>
+/// Марка без классификации по-прежнему недопустима для новой строки: группа из
+/// прежнего <c>Type</c> не выдумывается. Проверки серверные; исторические ссылки
+/// не блокируют несвязанную правку карточки и не перепроверяются.
+/// </para>
 /// </summary>
 [Collection("Database")]
 public class GsmHkTransitionGateIntegrationTests
@@ -29,7 +37,7 @@ public class GsmHkTransitionGateIntegrationTests
     public async Task HkCreate_WithUnclassifiedMaterial_IsRejected()
     {
         // Неклассифицированная марка (0 подгрупп) не имеет представления в
-        // прежнем Type — новая ссылка на неё запрещена.
+        // Nd/классификации — новая ссылка на неё запрещена.
         var materialId = await CreateLegacyMaterialAsync("Без классификации " + Suffix());
         var (nodeId, unitId) = await CreateNodeAndUnitAsync();
 
@@ -39,7 +47,7 @@ public class GsmHkTransitionGateIntegrationTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             s.HK.CreateAsync(BuildCard(nodeId, unitId, materialId)));
 
-        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("не классифицирована", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -57,18 +65,20 @@ public class GsmHkTransitionGateIntegrationTests
     }
 
     [Fact]
-    public async Task HkCreate_WithMultiSubgroupMaterial_IsRejected()
+    public async Task HkCreate_WithMultiSubgroupMaterial_IsAccepted()
     {
+        // PR-5: переходный запрет «ровно одна подгруппа» снят. Классифицированная
+        // марка с несколькими подгруппами — обычное назначение в новую строку ХК.
         var materialId = await CreateMaterialAsync("Две подгруппы " + Suffix(), new List<string> { "Альфа", "Бета" });
         var (nodeId, unitId) = await CreateNodeAndUnitAsync();
 
         await using var s = _fixture.CreateScope();
         AsNormAdmin(s);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            s.HK.CreateAsync(BuildCard(nodeId, unitId, materialId)));
+        var created = await s.HK.CreateAsync(BuildCard(nodeId, unitId, materialId));
 
-        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(created);
+        Assert.True(await s.Db.HKCardItemMaterials.AnyAsync(r => r.GsmMaterialId == materialId));
     }
 
     // ── 2. Обновление: новое назначение проверяется, история — нет ─────────
@@ -166,10 +176,10 @@ public class GsmHkTransitionGateIntegrationTests
     // ── 3. Список выбора не предлагает недопустимые марки ──────────────────
 
     [Fact]
-    public async Task SelectionList_ExcludesZeroAndMultipleSubgroupMaterials()
+    public async Task SelectionList_ExcludesUnclassified_AndKeepsAnySubgroupCount()
     {
         var singleId = await CreateMaterialAsync("Доступная " + Suffix(), new List<string> { "Подгруппа" });
-        var multiId = await CreateMaterialAsync("Недоступная много " + Suffix(), new List<string> { "Альфа", "Бета" });
+        var multiId = await CreateMaterialAsync("Доступная много " + Suffix(), new List<string> { "Альфа", "Бета" });
         var legacyId = await CreateLegacyMaterialAsync("Недоступная без класса " + Suffix());
 
         await using var s = _fixture.CreateScope();
@@ -179,8 +189,13 @@ public class GsmHkTransitionGateIntegrationTests
         var ids = list.Select(m => m.Id).ToHashSet();
 
         Assert.Contains(singleId, ids);
-        Assert.DoesNotContain(multiId, ids);
+        // PR-5: несколько подгрупп больше не мешают выбору.
+        Assert.Contains(multiId, ids);
         Assert.DoesNotContain(legacyId, ids);
+
+        // Классификация подгружена: выпадающий список ХК группирует по ней.
+        var multi = list.First(m => m.Id == multiId);
+        Assert.Equal(2, multi.Classifications.Count);
     }
 
     [Fact]
@@ -197,11 +212,14 @@ public class GsmHkTransitionGateIntegrationTests
         Assert.Contains(singleId, list.Select(m => m.Id));
     }
 
-    // ── 4. Создание второй подгруппы у используемой марки запрещено ────────
+    // ── 4. Классификация используемой в ХК марки больше не ограничена ──────
 
     [Fact]
-    public async Task GsmUpdate_AddingSecondSubgroupToHkUsedMaterial_IsRejected()
+    public async Task GsmUpdate_AddingSecondSubgroupToHkUsedMaterial_IsAllowed()
     {
+        // PR-5: переходное ограничение снято. Несколько подгрупп у марки, уже
+        // используемой в ХК, больше не мешают — действующие потребители читают
+        // Nd и классификацию, а не прежний Type.
         var materialId = await CreateMaterialAsync("Используемая " + Suffix(), new List<string> { "Альфа" });
         var (nodeId, unitId) = await CreateNodeAndUnitAsync();
         await CreateCardAsync(nodeId, unitId, materialId);
@@ -209,19 +227,19 @@ public class GsmHkTransitionGateIntegrationTests
         await using var s = _fixture.CreateScope();
         AsNormAdmin(s);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            s.GsmMaterials.UpdateAsync(materialId, new GsmMaterialWriteRequest
-            {
-                Name = "Используемая " + Suffix(),
-                GroupName = "Группа",
-                SubgroupNames = new List<string> { "Альфа", "Бета" },
-            }));
+        var view = await s.GsmMaterials.UpdateAsync(materialId, new GsmMaterialWriteRequest
+        {
+            Name = "Используемая " + Suffix(),
+            GroupName = "Группа",
+            SubgroupNames = new List<string> { "Альфа", "Бета" },
+        });
 
-        Assert.Contains("подгрупп", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(view);
+        Assert.Equal(2, view!.SubgroupNames.Count);
 
-        // Прежний набор не тронут.
+        // Строка ХК при этом не меняется: Id материала и категория прежние.
         await using var s2 = _fixture.CreateScope();
-        var rows = await s2.Db.GsmMaterialClassifications.AsNoTracking()
+        var rows = await s2.Db.HKCardItemMaterials.AsNoTracking()
             .Where(c => c.GsmMaterialId == materialId).ToListAsync();
         Assert.Single(rows);
     }
@@ -229,9 +247,6 @@ public class GsmHkTransitionGateIntegrationTests
     [Fact]
     public async Task GsmUpdate_AddingSecondSubgroupToUnusedMaterial_IsAllowed()
     {
-        // Запрет распространяется только на реально используемые марки: у свободной
-        // марки несколько подгрупп допустимы (переходное правило ограничивает
-        // новые ссылки в ХК, а не саму классификацию).
         var materialId = await CreateMaterialAsync("Свободная " + Suffix(), new List<string> { "Альфа" });
 
         await using var s = _fixture.CreateScope();

@@ -62,7 +62,7 @@ public static class MaterialCategorizer
             .ToList();
 
     private static GsmMaterialRefDto ToMaterialRef(HKCardItemMaterial m) =>
-        new(m.GsmMaterialId, m.GsmMaterial.Name, m.GsmMaterial.Type, m.GsmMaterial.Gost);
+        GsmMaterialRefFactory.Create(m);
 }
 
 public static class IndividualCardMapper

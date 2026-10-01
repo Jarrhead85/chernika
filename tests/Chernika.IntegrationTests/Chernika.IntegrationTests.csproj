@@ -23,6 +23,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Chernika.Domain\Chernika.Domain.csproj" />
     <ProjectReference Include="..\..\src\Chernika.Infrastructure\Chernika.Infrastructure.csproj" />
+    <!-- Ссылка на API нужна для проверки карточного контракта: GsmMaterialRefDto
+         и мапперы ХК — действующий публичный контракт, который после PR-5
+         переведён с Type/Gost на Nd и классификацию. -->
+    <ProjectReference Include="..\..\src\Chernika.Api\Chernika.Api.csproj" />
   </ItemGroup>
 
 </Project>

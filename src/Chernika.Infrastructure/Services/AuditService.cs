@@ -303,8 +303,14 @@ public class AuditService
                 foreach (var x in ic) result[x.Id] = x.Display;
                 break;
             case "GsmMaterial":
+                // В журнале аудита марка показывается с АКТУАЛЬНЫМ НД из Nd.
+                // Прежний Gost с PR-5 не заполняется и читать его нельзя.
                 var gm = await _db.GsmMaterials.Where(e => ids.Contains(e.Id))
-                    .Select(e => new { e.Id, Display = e.Name }).ToListAsync();
+                    .Select(e => new
+                    {
+                        e.Id,
+                        Display = string.IsNullOrWhiteSpace(e.Nd) ? e.Name : e.Name + " — " + e.Nd,
+                    }).ToListAsync();
                 foreach (var x in gm) result[x.Id] = x.Display;
                 break;
             case "AssemblyUnit":

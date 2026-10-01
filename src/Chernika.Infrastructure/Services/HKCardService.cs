@@ -501,7 +501,7 @@ public class HKCardService
 
     public async Task<HKCard?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
-        return await _db.HKCards
+        var card = await _db.HKCards
             .AsSplitQuery()
             .Include(x => x.Branch)
             .Include(x => x.Node)
@@ -509,9 +509,76 @@ public class HKCardService
             .Include(x => x.EquipmentModel)
             .Include(x => x.Complex)
             .Include(x => x.Items.OrderBy(i => i.SortOrder)).ThenInclude(i => i.AssemblyUnit)
-            .Include(x => x.Items).ThenInclude(i => i.Materials).ThenInclude(m => m.GsmMaterial)
+            // Навигацию GsmMaterial здесь намеренно НЕ включаем: у марки есть
+            // глобальный фильтр по мягкому удалению, и EF при такой загрузке
+            // ТЕРЯЕТ строку HKCardItemMaterial, чей материал удалён. Марки
+            // подставляются отдельным запросом без фильтра — см.
+            // AttachGsmMaterialsIgnoringSoftDeleteAsync.
+            .Include(x => x.Items).ThenInclude(i => i.Materials)
             .Include(x => x.StatusLog.OrderByDescending(s => s.ChangedAt))
             .FirstOrDefaultAsync(x => x.Id == id, ct);
+
+        if (card is not null)
+            await AttachGsmMaterialsIgnoringSoftDeleteAsync(card, ct);
+
+        return card;
+    }
+
+    /// <summary>
+    /// Подстановка марок строк ХК БЕЗ глобального фильтра мягкого удаления.
+    /// <para>
+    /// Зачем: у <see cref="GsmMaterial"/> включён <c>HasQueryFilter(!IsDeleted)</c>.
+    /// Если включить навигацию <c>Materials -&gt; GsmMaterial</c> обычным Include,
+    /// EF строит запрос с этим фильтром и не возвращает строку материала вовсе —
+    /// вместе с ней из графа исчезает и <c>HKCardItemMaterial</c>. Дальше
+    /// <c>SyncItemMaterialsAsync</c> сравнивает желаемое состояние с независимой
+    /// проекцией из БД и УДАЛЯЕТ такую строку при любой правке карточки: тихая
+    /// потеря исторических данных.
+    /// </para>
+    /// <para>
+    /// Поэтому строки материалов грузятся обычным Include (у них своего фильтра
+    /// нет), а сами марки — отдельным запросом с <c>IgnoreQueryFilters</c>.
+    /// Удалённая марка остаётся видимой и помечается <c>IsDeleted</c>: потребитель
+    /// решает сам, как её показать.
+    /// </para>
+    /// </summary>
+    private async Task AttachGsmMaterialsIgnoringSoftDeleteAsync(HKCard card, CancellationToken ct)
+    {
+        var rows = card.Items.SelectMany(i => i.Materials).ToList();
+        if (rows.Count == 0) return;
+
+        var ids = rows.Select(r => r.GsmMaterialId)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+        if (ids.Count == 0) return;
+
+        var materials = await _db.GsmMaterials
+            .IgnoreQueryFilters()
+            // Классификация нужна карточному контракту: группа и подгруппы
+            // показываются вместо прежних Type/Gost (PR-5).
+            .Include(m => m.Classifications)
+            .Where(m => ids.Contains(m.Id))
+            .ToListAsync(ct);
+
+        var byId = materials.ToDictionary(m => m.Id);
+        foreach (var row in rows)
+        {
+            if (byId.TryGetValue(row.GsmMaterialId, out var material))
+            {
+                row.GsmMaterial = material;
+            }
+            else if (row.GsmMaterial is null)
+            {
+                // Физически отсутствующей марки быть не может (FK RESTRICT), но
+                // подставка сохраняет строку читаемой и не роняет граф.
+                row.GsmMaterial = new GsmMaterial
+                {
+                    Id = row.GsmMaterialId,
+                    Name = "(марка не найдена)",
+                };
+            }
+        }
     }
     // ── Вложения ХК (PDF-скан): бизнес-логика только здесь, не в UI/API ───
 
@@ -975,23 +1042,36 @@ public class HKCardService
         if (childCardIds.Count == 0)
             return new List<AggregatedRowDto>();
 
-        return await _db.HKCardItems
-            .AsNoTracking()
-            .Where(i => childCardIds.Contains(i.HKCardId))
-            .OrderBy(i => i.SortOrder)
-            .SelectMany(i => i.Materials, (i, m) => new AggregatedRowDto
-            {
-                SourceCardCode = i.HKCard.Code,
-                SourceCardVersion = i.HKCard.Version,
-                SourceCardId = i.HKCardId,
-                AssemblyUnitName = i.AssemblyUnit!.Name,
-                Volume = i.Volume,
-                UnitOfMeasure = i.UnitOfMeasure,
-                GsmMaterialName = m.GsmMaterial.Name,
-                Gost = m.GsmMaterial.Gost,
-                Category = m.Category.ToString()
-            })
+        // Запрос начинается с HKCardItemMaterials и соединяется с марками через
+        // IgnoreQueryFilters: обычная навигация скрыла бы мягко удалённую марку
+        // вместе со строкой. Историческая строка остаётся в сводке.
+        var rows = await (
+                from m in _db.HKCardItemMaterials.AsNoTracking()
+                join i in _db.HKCardItems.AsNoTracking() on m.HKCardItemId equals i.Id
+                where childCardIds.Contains(i.HKCardId)
+                join mat in _db.GsmMaterials.IgnoreQueryFilters().AsNoTracking()
+                    on m.GsmMaterialId equals mat.Id into mats
+                from mat in mats.DefaultIfEmpty()
+                orderby i.SortOrder
+                select new AggregatedRowDto
+                {
+                    SourceCardCode = i.HKCard.Code,
+                    SourceCardVersion = i.HKCard.Version,
+                    SourceCardId = i.HKCardId,
+                    AssemblyUnitName = i.AssemblyUnit!.Name,
+                    Volume = i.Volume,
+                    UnitOfMeasure = i.UnitOfMeasure,
+                    // Физически отсутствующей марки быть не может (FK RESTRICT).
+                    // Физически удалённую показываем как есть: строка ХК
+                    // сохраняется, а данные марки не выдумываются.
+                    GsmMaterialName = mat != null ? mat.Name : "(марка не найдена)",
+                    Nd = mat != null ? mat.Nd : null,
+                    MaterialIsDeleted = mat != null && mat.IsDeleted,
+                    Category = m.Category.ToString(),
+                })
             .ToListAsync(ct);
+
+        return rows;
     }
 
     private static string? ValidateLevelChain(HKObjectLevel parentLevel, HKObjectLevel childLevel)
@@ -2446,49 +2526,71 @@ public class HKCardService
     /// однозначного представления. После переключения потребителей (PR-5)
     /// проверка снимается.
     /// </summary>
+    /// <summary>
+    /// Проверка марок новых назначений ХК: марка должна быть опубликована, не
+    /// удалена и классифицирована.
+    /// <para>
+    /// Требование «хотя бы одна подгруппа», а не «ровно одна»: переходный запрет
+    /// PR-3 на несколько подгрупп снят в PR-5 после переключения потребителей на
+    /// <c>Nd</c> и классификацию. Марка без классификации (в том числе
+    /// legacy-марка, у которой группа не выдумывается) по-прежнему недопустима.
+    /// </para>
+    /// <para>
+    /// Исторические строки не перепроверяются — здесь только добавляемые
+    /// назначения. Поэтому НОВОЙ строке нельзя назначить удалённую марку, тогда как
+    /// уже сохранённая ссылка на неё остаётся рабочей.
+    /// </para>
+    /// </summary>
     private async Task EnsureHkAssignableMaterialsAsync(
         IEnumerable<Guid> materialIds, CancellationToken ct)
     {
         var ids = materialIds.Distinct().ToList();
         if (ids.Count == 0) return;
 
-        // Количество классификаций по марке и её название читаются одним
-        // проекционным запросом: 0 подгрупп так же недопустимо, как и несколько.
-        var rows = await _db.GsmMaterialClassifications
-            .AsNoTracking()
-            .Where(c => ids.Contains(c.GsmMaterialId))
-            .GroupBy(c => c.GsmMaterialId)
-            .Select(g => new { GsmMaterialId = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var countById = rows.ToDictionary(r => r.GsmMaterialId, r => r.Count);
-
-        var names = await _db.GsmMaterials
+        // Одним запросом собираем и классификацию, и статус марки. Фильтр мягкого
+        // удаления снят намеренно: удалённая марка должна быть ОТКЛОНЕНА с понятным
+        // текстом, а не выглядеть как «не найдена».
+        var rows = await _db.GsmMaterials
+            .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(m => ids.Contains(m.Id))
-            .Select(m => new { m.Id, m.Name })
+            .Select(m => new AssignabilityRow(
+                m.Id, m.Name, m.IsDeleted, m.IsDraft, m.Classifications.Any()))
             .ToListAsync(ct);
-
-        var nameById = names.ToDictionary(n => n.Id, n => n.Name);
+        var byId = rows.ToDictionary(r => r.Id);
 
         // Порядок влияет только на текст сообщения, не на решение.
         var rejected = ids
-            .Where(id => !countById.TryGetValue(id, out var c) || c != 1)
-            .Select(id => (Id: id, Count: countById.TryGetValue(id, out var c2) ? c2 : 0,
-                Name: nameById.TryGetValue(id, out var n) ? n : "(марка не найдена)"))
+            .Where(id => !byId.TryGetValue(id, out var m) || !m.IsAssignable)
+            .Select(id => byId.TryGetValue(id, out var m)
+                ? (Name: m.Name, Reason: m.RejectReason)
+                : (Name: "(марка не найдена)", Reason: "не найдена"))
             .OrderBy(x => x.Name, StringComparer.Ordinal)
             .ToList();
 
         if (rejected.Count == 0) return;
 
         var first = rejected[0];
-        var reason = first.Count == 0
-            ? "не классифицирована (нет ни одной подгруппы)"
-            : $"указана в {first.Count} подгруппах";
-
         throw new InvalidOperationException(
-            $"Марка «{first.Name}» {reason} и пока не может использоваться в новых строках ХК. " +
-            "Выберите марку с одной подгруппой.");
+            $"Марка «{first.Name}» {first.Reason} и не может использоваться в новых строках ХК. " +
+            "Выберите опубликованную классифицированную марку из справочника ГСМ.");
+    }
+
+    /// <summary>Допустимость марки для НОВОГО назначения в ХК.</summary>
+    private sealed record AssignabilityRow(
+        Guid Id,
+        string Name,
+        bool IsDeleted,
+        bool IsDraft,
+        bool HasClassification)
+    {
+        public bool IsAssignable => !IsDeleted && !IsDraft && HasClassification;
+
+        public string RejectReason =>
+            IsDeleted ? "удалена" :
+            IsDraft ? "ещё не опубликована (черновик)" :
+            !HasClassification ? "не классифицирована" :
+            "недоступна";
     }
 
     public async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)
@@ -2632,13 +2734,20 @@ public class HKCardService
                 break;
 
             case ProposalTargetType.GsmMaterial:
+                // Черновой.stub марки. Источник истины — новые поля Nd/IntendedUse;
+                // прежние Gost/Description больше не пишутся (PR-5), иначе триггер
+                // TRG_GsmMaterials_LegacyFieldSync мог бы переписать Nd из
+                // переходного значения. Type остаётся заполненным: колонка NOT NULL
+                // до PR-6, а значение берётся из самого предложения — группа из
+                // прежнего Type не выдумывается. Классификации у черновика нет:
+                // она проверяется при публикации (AcceptProposalAsync).
                 var gsm = new GsmMaterial
                 {
                     Id = proposal.Id,
                     Name = proposal.Name,
                     Type = proposal.Type ?? "",
-                    Gost = proposal.Gost,
-                    Description = proposal.Description,
+                    Nd = proposal.Gost,
+                    IntendedUse = proposal.Description,
                     IsDraft = true
                 };
                 _db.GsmMaterials.Add(gsm);

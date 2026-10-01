@@ -56,18 +56,44 @@ public class SearchServiceExtendedIntegrationTests
         return model.Id;
     }
 
-    private async Task<Guid> CreateMaterialAsync(TestScope s, string? name = null, string? gost = null)
+    /// <summary>
+    /// Марка создаётся напрямую в БД с АКТУАЛЬНЫМИ полями Nd/IntendedUse и
+    /// классификацией: поиск с PR-5 читает именно их. Прежний Gost/Type не
+    /// заполняются — действующих потребителей у них не осталось.
+    /// </summary>
+    private async Task<Guid> CreateMaterialAsync(
+        TestScope s,
+        string? name = null,
+        string? nd = null,
+        string? groupName = null,
+        IReadOnlyCollection<string>? subgroups = null)
     {
         var material = new GsmMaterial
         {
             Id = Guid.NewGuid(),
             Name = name ?? "ГСМ " + Suffix(),
-            Type = "Тип " + Suffix(),
-            Gost = gost,
+            Nd = nd,
+            IntendedUse = "Назначение " + Suffix(),
+            // Колонка NOT NULL до PR-6: значение детерминированное, группа сюда
+            // не пишется.
+            Type = "Подгруппа " + Suffix(),
             IsDeleted = false,
             IsDraft = false,
         };
         s.Db.GsmMaterials.Add(material);
+
+        var own = (subgroups ?? new[] { "Подгруппа " + Suffix() }).ToList();
+        foreach (var subgroup in own)
+        {
+            s.Db.GsmMaterialClassifications.Add(new GsmMaterialClassification
+            {
+                Id = Guid.NewGuid(),
+                GsmMaterialId = material.Id,
+                GroupName = groupName ?? "Группа " + Suffix(),
+                SubgroupName = subgroup,
+            });
+        }
+
         await s.Db.SaveChangesAsync();
         return material.Id;
     }
@@ -204,7 +230,7 @@ public class SearchServiceExtendedIntegrationTests
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
         var materialName = "М-10Г2к " + Suffix();
-        var materialId = await CreateMaterialAsync(s, name: materialName, gost: "ГОСТ-" + Suffix());
+        var materialId = await CreateMaterialAsync(s, name: materialName, nd: "ГОСТ-" + Suffix());
         var nodeId = await CreateNodeAsync(s);
         var hkId = await CreateHKCardAsync(s, nodeId, materialId: materialId);
         var hk = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == hkId);
@@ -223,19 +249,40 @@ public class SearchServiceExtendedIntegrationTests
     }
 
     [Fact]
-    public async Task SearchAsync_ByGost_FindsMaterialWithGostContext()
+    public async Task SearchAsync_ByNd_FindsMaterialWithNdContext()
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
-        var gost = "8581-" + Suffix();
-        var materialName = "ГСМ ГОСТ " + Suffix();
-        var materialId = await CreateMaterialAsync(s, name: materialName, gost: gost);
+        var nd = "8581-" + Suffix();
+        var materialName = "ГСМ НД " + Suffix();
+        var materialId = await CreateMaterialAsync(s, name: materialName, nd: nd);
 
-        var page = await Service(s).SearchAsync(new SearchQuery { Text = gost, PageSize = 25 });
+        var page = await Service(s).SearchAsync(new SearchQuery { Text = nd, PageSize = 25 });
 
         var material = page.Items.FirstOrDefault(i => i.EntityType == "GsmMaterial" && i.EntityId == materialId);
         Assert.NotNull(material);
-        Assert.Contains("ГОСТ/ТУ", material!.MatchContext ?? "");
+        Assert.Contains("нормативные документы", material!.MatchContext ?? "");
+        Assert.Contains(nd, material.Subtitle ?? "");
+    }
+
+    [Fact]
+    public async Task SearchAsync_BySubgroup_ReturnsOneRowPerMaterial_AndShowsGroupAndSubgroups()
+    {
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+        var subgroup = "Подгруппа поиска " + Suffix();
+        var group = "Группа поиска " + Suffix();
+        var materialId = await CreateMaterialAsync(
+            s, name: "ГСМ подгруппы " + Suffix(), groupName: group,
+            subgroups: new[] { subgroup, "Вторая подгруппа " + Suffix() });
+
+        var page = await Service(s).SearchAsync(new SearchQuery { Text = subgroup, PageSize = 25 });
+
+        var rows = page.Items.Where(i => i.EntityType == "GsmMaterial" && i.EntityId == materialId).ToList();
+        // Совпадение по подгруппе идёт через EXISTS: марка не размножается.
+        var row = Assert.Single(rows);
+        Assert.Contains(group, row.Subtitle ?? "");
+        Assert.Contains(subgroup, row.Subtitle ?? "");
     }
 
     [Fact]
@@ -462,8 +509,10 @@ public class SearchServiceExtendedIntegrationTests
     }
 
     [Fact]
-    public async Task SearchAsync_RelatedScopeICOnly_ShowsOnlyIndividualCards()
+    public async Task SearchAsync_RelatedScopeICOnly_ReturnsNothing_BecauseModuleIsConserved()
     {
+        // Модуль ИК законсервирован и в действующую поисковую выдачу не входит.
+        // Исторические ИК остаются доступны по прямой ссылке.
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
         var materialName = "М-10Э " + Suffix();
@@ -477,12 +526,15 @@ public class SearchServiceExtendedIntegrationTests
             RelatedScope = RelatedResultsScope.ICOnly,
         });
 
-        Assert.All(page.Items, i => Assert.Equal("IndividualCard", i.EntityType));
+        Assert.DoesNotContain(page.Items, i => i.EntityType == "IndividualCard");
     }
 
     [Fact]
-    public async Task SearchAsync_IndividualCardFormStateFilter_Works()
+    public async Task SearchAsync_IndividualCardIsNeverReturned_EvenWhenExplicitlyRequested()
     {
+        // Прямой запрос вида сущности ИК возвращает пустую выдачу: модуль
+        // законсервирован, а фильтры ИК в контракте поиска сохранены ради
+        // совместимости и на результат не влияют.
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
         var nodeId = await CreateNodeAsync(s);
@@ -503,7 +555,7 @@ public class SearchServiceExtendedIntegrationTests
             EntityType = "IndividualCard",
             IsFormed = false,
         });
-        Assert.Contains(notFormed.Items, i => i.EntityType == "IndividualCard" && i.EntityId == draft.Id);
+        Assert.DoesNotContain(notFormed.Items, i => i.EntityType == "IndividualCard");
 
         var formed = await Service(s).SearchAsync(new SearchQuery
         {
@@ -511,7 +563,11 @@ public class SearchServiceExtendedIntegrationTests
             EntityType = "IndividualCard",
             IsFormed = true,
         });
-        Assert.DoesNotContain(formed.Items, i => i.EntityId == draft.Id);
+        Assert.DoesNotContain(formed.Items, i => i.EntityType == "IndividualCard");
+
+        // При этом сама карта сохраняется и остаётся читаемой: консервация не
+        // означает удаление данных.
+        Assert.True(await s.Db.IndividualCards.AnyAsync(c => c.Id == draft.Id));
     }
 
     [Fact]
@@ -598,7 +654,7 @@ public class SearchServiceExtendedIntegrationTests
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
         var materialName = "М-10Х " + Suffix();
-        var materialId = await CreateMaterialAsync(s, name: materialName, gost: "ГОСТ-" + Suffix());
+        var materialId = await CreateMaterialAsync(s, name: materialName, nd: "ГОСТ-" + Suffix());
         var nodeId = await CreateNodeAsync(s);
         await CreateHKCardAsync(s, nodeId, materialId: materialId);
 

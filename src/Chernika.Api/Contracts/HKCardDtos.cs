@@ -4,11 +4,57 @@ using Chernika.Domain.Models;
 
 namespace Chernika.Api.Contracts;
 
+/// <summary>
+/// Ссылка на марку ГСМ в строках ХК.
+/// <para>
+/// Источник истины — <c>GsmMaterial.Nd</c> и <c>GsmMaterialClassifications</c>.
+/// Прежние <c>Type</c>/<c>Gost</c> больше не передаются: они удаляются в PR-6, и
+/// держать их в действующем контракте значит закрепить переходные поля в API.
+/// </para>
+/// </summary>
 public record GsmMaterialRefDto(
     Guid Id,
     string Name,
-    string Type,
-    string? Gost);
+    string? Nd,
+    string? GroupName,
+    IReadOnlyList<string> SubgroupNames);
+
+/// <summary>
+/// Единое построение ссылки на марку для всех картных контрактов. Навигация
+/// <c>GsmMaterial</c> может оказаться незагруженной: у марки есть глобальный
+/// фильтр по мягкому удалению, поэтому удалённая марка в строке ХК даёт
+/// <c>null</c>. Историческая строка при этом остаётся читаемой — материал не
+/// удаляется из строки ХК.
+/// </summary>
+public static class GsmMaterialRefFactory
+{
+    public static GsmMaterialRefDto Create(HKCardItemMaterial m)
+    {
+        // Классификация нормализована: одна группа на марку (инвариант B),
+        // подгрупп может быть несколько после снятия переходного запрета PR-3.
+        var own = m.GsmMaterial?.Classifications?
+            .Where(c => !string.IsNullOrWhiteSpace(c.GroupName))
+            .ToList() ?? new List<Domain.Entities.GsmMaterialClassification>();
+        var group = own
+            .Select(c => c.GroupName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(g => g, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var subgroups = own
+            .Select(c => c.SubgroupName)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
+
+        return new GsmMaterialRefDto(
+            m.GsmMaterialId,
+            m.GsmMaterial?.Name ?? "",
+            m.GsmMaterial?.Nd,
+            group,
+            subgroups);
+    }
+}
 
 public record HKCardDetailDto(
     Guid Id,
@@ -161,11 +207,7 @@ public static class HKCardMapper
                 .ToList());
 
     private static GsmMaterialRefDto ToMaterialRef(HKCardItemMaterial m) =>
-        new(
-            m.GsmMaterialId,
-            m.GsmMaterial.Name,
-            m.GsmMaterial.Type,
-            m.GsmMaterial.Gost);
+        GsmMaterialRefFactory.Create(m);
 
     public static HKCard FromCreate(CreateHKCardRequest r) => new()
     {

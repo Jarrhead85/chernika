@@ -269,7 +269,13 @@ public class GsmInventorySchemaIntegrationTests
                 SET ""Nd"" = NULLIF(btrim(""Gost""), ''),
                     ""IntendedUse"" = ""Description""
                 WHERE ""Id"" = {alreadyFilled}");
-        Assert.Empty(await s3.GsmMaterials.GetTransitionDivergencesAsync());
+
+        // Расхождение по этой марке закрыто. Общий отчёт после PR-5 может быть не
+        // пустым: переходные колонки заморожены и расходятся у любой марки,
+        // изменённой сервисом. Поэтому проверяем свою марку, а не весь список.
+        Assert.DoesNotContain(
+            await s3.GsmMaterials.GetTransitionDivergencesAsync(),
+            d => d.Id == alreadyFilled && d.NdDiffers);
     }
 
     [Fact]

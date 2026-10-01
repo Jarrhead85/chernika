@@ -22,7 +22,21 @@ public class AggregatedRowDto
     public decimal Volume { get; init; }
     public string? UnitOfMeasure { get; init; }
     public string? GsmMaterialName { get; init; }
-    public string? Gost { get; init; }
+
+    /// <summary>
+    /// НД марки из <c>GsmMaterial.Nd</c>. ХК не хранит собственного снимка
+    /// марки, поэтому показывается актуальное значение; прежнее поле
+    /// <c>Gost</c> заменено на <c>Nd</c> в PR-5.
+    /// </summary>
+    public string? Nd { get; init; }
+
+    /// <summary>
+    /// Марка строки мягко удалена. Строка ХК при этом сохранена и продолжает
+    /// читаться: материал из строки не удаляется (см. FK RESTRICT и
+    /// AttachGsmMaterialsIgnoringSoftDeleteAsync).
+    /// </summary>
+    public bool MaterialIsDeleted { get; init; }
+
     public string? Category { get; init; }
 }
 

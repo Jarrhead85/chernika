@@ -122,7 +122,7 @@
                                         <th>Масса/объём</th>
                                         <th>Ед.изм.</th>
                                         <th>Марка ГСМ</th>
-                                        <th>ГОСТ</th>
+                                        <th>НД</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -134,7 +134,7 @@
                                             <td>@row.Volume.ToString("F0")</td>
                                             <td>@(row.UnitOfMeasure ?? "кг")</td>
                                             <td>@row.GsmMaterialName</td>
-                                            <td class="mono">@row.Gost</td>
+                                            <td class="mono">@row.Nd</td>
                                         </tr>
                                     }
                                 </tbody>

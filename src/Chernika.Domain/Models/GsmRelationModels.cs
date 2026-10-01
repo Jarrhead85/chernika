@@ -73,6 +73,17 @@ public sealed class GsmRelationSummary
     public bool RelatedInGostNomenclature { get; init; }
 }
 
+/// <summary>
+/// Справочная подсказка по связи для формы ХК: какая марка связана с какой и
+/// каким типом связи. Ничего не добавляет в строки ХК автоматически.
+/// </summary>
+public sealed record GsmRelationHint(
+    Guid PrimaryMaterialId,
+    Guid RelatedMaterialId,
+    string RelatedName,
+    string? RelatedNd,
+    GsmRelationType RelationType);
+
 /// <summary>Полная карточка связи для формы редактирования.</summary>
 public sealed class GsmRelationEditView
 {

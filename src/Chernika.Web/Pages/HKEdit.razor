@@ -503,12 +503,24 @@
                                                                     </button>
                                                                 }
                                                                 <div class="gsm-dropdown-divider" role="separator"></div>
-                                                                @foreach (var group in FilteredGsmMaterials(cat, item).GroupBy(m => m.Type))
+                                                                @* Группировка — по классификации марки (одна группа,
+                                                                   перечень подгрупп), а не по прежнему Type. *@
+                                                                @foreach (var group in FilteredGsmMaterials(cat, item)
+                                                                           .GroupBy(m => GsmGroupLabel(m)))
                                                                 {
                                                                     <div class="gsm-dropdown-group-label">@group.Key</div>
                                                                     @foreach (var mat in group)
                                                                     {
-                                                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMaterial(item, cat, mat.Id)">@mat.Name</div>
+                                                                        var hint = RelatedHint(cat, item, mat.Id);
+                                                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMaterial(item, cat, mat.Id)">
+                                                                            <span>@mat.Name</span>
+                                                                            @if (hint is not null)
+                                                                            {
+                                                                                @* Справочная связь — только подсказка: строка
+                                                                                   не добавляется и Category не меняется. *@
+                                                                                <span class="tag gsm-dropdown-hint">@hint</span>
+                                                                            }
+                                                                        </div>
                                                                     }
                                                                 }
                                                                 @if (!FilteredGsmMaterials(cat, item).Any())
@@ -991,6 +1003,14 @@
     private string? _archiveError;
 
     private List<GsmMaterial> gsmMaterials = new();
+
+    /// <summary>
+    /// Справочные связи ГСМ по основным маркам строк: основная марка → список
+    /// связанных с типом связи. Только подсказка в списке выбора, ничего не
+    /// добавляет автоматически.
+    /// </summary>
+    private Dictionary<Guid, List<GsmRelationHint>> _relationHints = new();
+
     private Guid? _focusItemId;
     private Dictionary<Guid, string> _auSearch = new();
     private Dictionary<Guid, bool> _auOpen = new();
@@ -1118,6 +1138,7 @@
             gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
             _materialNames = null;
             await LoadMaterialNamesAsync(CancellationToken.None);
+            _relationHints = await LoadRelationHintsAsync(CancellationToken.None);
             allMilitaryBranches = await EquipmentService.GetMilitaryBranchesAsync();
         }
 
@@ -2189,14 +2210,111 @@
         _materialNames = names;
     }
 
+    /// <summary>
+    /// Справочные связи по основным маркам уже сохранённых строк. Читаются после
+    /// загрузки документа, потому что новые строки без основной марки подсказок
+    /// не имеют. Ошибка чтения не должна ломать редактирование: подсказки
+    /// необязательны, поэтому возвращается пустой словарь.
+    /// </summary>
+    private async Task<Dictionary<Guid, List<GsmRelationHint>>> LoadRelationHintsAsync(CancellationToken ct)
+    {
+        var primaryIds = card.Items
+            .SelectMany(i => i.Materials)
+            .Where(m => m.Category == GsmCategory.Primary)
+            .Select(m => m.GsmMaterialId)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+        if (primaryIds.Count == 0) return new Dictionary<Guid, List<GsmRelationHint>>();
+        try
+        {
+            return await GsmMaterialService.GetRelationHintsAsync(primaryIds, ct);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException)
+        {
+            return new Dictionary<Guid, List<GsmRelationHint>>();
+        }
+    }
+
+    /// <summary>
+    /// Марки для выпадающего списка строки ХК. Поиск идёт по названию, НД, индексу
+    /// НАТО, группе и любой подгруппе — прежний <c>Type</c> больше не читается
+    /// (PR-5). Уже добавленные в эту же категорию марки скрыты, как и раньше.
+    /// </summary>
     private IEnumerable<GsmMaterial> FilteredGsmMaterials(GsmCategory cat, HKCardItem item)
     {
         var search = _matSearch.GetValueOrDefault((item.Id, cat), "")?.Trim().ToLower() ?? "";
         var existingIds = item.Materials.Where(m => m.Category == cat).Select(m => m.GsmMaterialId).ToHashSet();
         var available = gsmMaterials.Where(m => !existingIds.Contains(m.Id));
         if (string.IsNullOrEmpty(search)) return available;
-        return available.Where(m => (m.Name?.ToLower().Contains(search) ?? false) || (m.Type?.ToLower().Contains(search) ?? false));
+        return available.Where(m =>
+            (m.Name?.ToLower().Contains(search) ?? false)
+            || (m.Nd?.ToLower().Contains(search) ?? false)
+            || (m.NatoIndex?.ToLower().Contains(search) ?? false)
+            || m.Classifications.Any(c =>
+                (c.GroupName?.ToLower().Contains(search) ?? false)
+                || (c.SubgroupName?.ToLower().Contains(search) ?? false)));
     }
+
+    /// <summary>
+    /// Заголовок группы марки: одна группа и её подгруппы. У классифицированной
+    /// марки группа одна (инвариант B), поэтому берётся первая по алфавиту;
+    /// неклассифицированная марка в новый список не попадает, но подпись
+    /// определена на все случаи.
+    /// </summary>
+    private static string GsmGroupLabel(GsmMaterial m)
+    {
+        var own = m.Classifications
+            .Where(c => !string.IsNullOrWhiteSpace(c.GroupName))
+            .ToList();
+        if (own.Count == 0) return "Без классификации";
+        var group = own.Select(c => c.GroupName).Distinct(StringComparer.Ordinal)
+            .OrderBy(g => g, StringComparer.Ordinal).First();
+        var subgroups = own.Select(c => c.SubgroupName)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
+        return subgroups.Count > 0 ? $"{group}: {string.Join(", ", subgroups)}" : group;
+    }
+
+    /// <summary>
+    /// Справочная подсказка по связи для марки в списке категории. Связь
+    /// направлена Primary → Related, поэтому подсказка строится от основной марки
+    /// той же строки. <c>DuplicateAndReserve</c> показывается и в списке
+    /// дублирующих, и в списке резервных; <c>Foreign</c> — только в своём.
+    /// Ничего не добавляет автоматически.
+    /// </summary>
+    private string? RelatedHint(GsmCategory cat, HKCardItem item, Guid candidateId)
+    {
+        if (_relationHints.Count == 0) return null;
+
+        foreach (var primaryId in item.Materials
+                     .Where(m => m.Category == GsmCategory.Primary)
+                     .Select(m => m.GsmMaterialId))
+        {
+            if (!_relationHints.TryGetValue(primaryId, out var hints)) continue;
+            foreach (var h in hints)
+            {
+                if (h.RelatedMaterialId != candidateId) continue;
+                var visible = (cat, h.RelationType) switch
+                {
+                    (GsmCategory.Duplicate, GsmRelationType.DuplicateAndReserve) => "дублирующая к " + PrimaryLabel(primaryId),
+                    (GsmCategory.Reserve, GsmRelationType.DuplicateAndReserve) => "резервная к " + PrimaryLabel(primaryId),
+                    (GsmCategory.Duplicate, GsmRelationType.Duplicate) => "дублирующая к " + PrimaryLabel(primaryId),
+                    (GsmCategory.Reserve, GsmRelationType.Reserve) => "резервная к " + PrimaryLabel(primaryId),
+                    (GsmCategory.Foreign, GsmRelationType.Foreign) => "зарубежный аналог к " + PrimaryLabel(primaryId),
+                    _ => null,
+                };
+                if (visible is not null) return visible;
+            }
+        }
+
+        return null;
+    }
+
+    private string PrimaryLabel(Guid primaryId) =>
+        MaterialNames.TryGetValue(primaryId, out var name) ? name : "основной марке";
 
     private void RemoveItem(HKCardItem item) => card.Items.Remove(item);
 

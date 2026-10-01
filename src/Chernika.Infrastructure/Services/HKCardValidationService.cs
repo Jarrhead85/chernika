@@ -291,7 +291,13 @@ public sealed class HKCardValidationService
             .Select(m => m.GsmMaterialId).Distinct().ToList();
         if (gsmIds.Count > 0)
         {
-            var existing = await _db.GsmMaterials.AsNoTracking()
+            // Существование проверяется БЕЗ глобального фильтра мягкого удаления.
+            // Строка материала в уже сохранённой ХК остаётся исторической и после
+            // удаления марки: с фильтром такая правка карточки отклонялась бы с
+            // «Марка ГСМ не найдена», хотя ссылка физически на месте (FK RESTRICT).
+            // Допустимость НОВОГО назначения удалённой марки проверяется отдельно —
+            // в EnsureHkAssignableMaterialsAsync.
+            var existing = await _db.GsmMaterials.IgnoreQueryFilters().AsNoTracking()
                 .Where(m => gsmIds.Contains(m.Id))
                 .Select(m => m.Id)
                 .ToListAsync(ct);
