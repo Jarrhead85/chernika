@@ -12,6 +12,11 @@
 @inject CircuitDbLock DbLock
 @inject NavigationManager Nav
 
+@* Маршрут сохранён для совместимости ссылок, но форма создания недоступна:
+   модуль ИК законсервирован. Сценарий и вызовы сервиса оставлены в коде — они
+   вернутся вместе с возобновлением модуля. Проверки прав и загрузки цели
+   намеренно НЕ выполняются: страница не должна требовать работающего модуля. *@
+<IndividualCardConservedNotice />
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
@@ -173,6 +178,11 @@
 </div>
 
 @code {
+    // Сценарий создания сохранён целиком, но модуль ИК законсервирован и форма
+    // больше не вызывается: OnInitializedAsync намеренно ничего не проверяет.
+    // Поля и обработчики сценария остаются в коде и вернутся при возобновлении
+    // модуля, поэтому предупреждения о неиспользуемом состоянии здесь сняты.
+#pragma warning disable CS0414, CS0649
     private string? _error;
     private bool _canCreateDraft;
 
@@ -252,12 +262,11 @@
         }
     }
 
-    protected override async Task OnInitializedAsync()
-    {
-        var auth = await AuthState.GetAuthenticationStateAsync();
-        var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
-        _canCreateDraft = await DbLock.LockedAsync(() => Perms.HasPermissionAsync(userId, PermissionCodes.IndividualCardCreateDraft));
-    }
+    // Модуль ИК законсервирован: страница показывает только уведомление о
+    // границе и НЕ обращается ни к сервису ИК, ни к проверкам прав — действующий
+    // контур не должен зависеть от работающего модуля ИК. Сценарий ниже сохранён
+    // целиком и вернётся при возобновлении модуля.
+    protected override Task OnInitializedAsync() => Task.CompletedTask;
 
     private async Task SelectLevel(IndividualCardObjectLevel level)
     {

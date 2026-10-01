@@ -9,6 +9,22 @@ using System.Globalization;
 
 namespace Chernika.Infrastructure.Services;
 
+/// <summary>
+/// Индивидуальные карты: сохранённый, но выведенный из действующего функционала
+/// модуль.
+/// <para>
+/// Решение владельца: ИК больше не входят в действующий функционал проекта. Код,
+/// сущности, таблицы, миграции и исторические данные сохранены целиком, поэтому
+/// чтение остаётся доступным, а ЛЮБАЯ операция записи закрыта границей модуля
+/// (<see cref="IndividualCardModuleGuard"/>) до обращения к БД. Отключать кнопки
+/// в интерфейсе недостаточно: прямой вызов сервиса или API обязан отказать так же.
+/// </para>
+/// <para>
+/// Операции с КОЭФФИЦИЕНТАМИ в этом классе — не операции ИК: коэффициенты остаются
+/// действующим справочником (у них собственный <see cref="CoefficientService"/>),
+/// поэтому граница модуля их не закрывает.
+/// </para>
+/// </summary>
 public class IndividualCardService
 {
     private readonly AppDbContext _db;
@@ -17,6 +33,7 @@ public class IndividualCardService
     private readonly TimeProvider _time;
     private readonly IPermissionService _permissions;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly IIndividualCardModuleState _module;
 
     public IndividualCardService(
         AppDbContext db,
@@ -24,7 +41,8 @@ public class IndividualCardService
         ICurrentUserService currentUser,
         TimeProvider time,
         IPermissionService permissions,
-        UserManager<ApplicationUser> userManager)
+        UserManager<ApplicationUser> userManager,
+        IIndividualCardModuleState module)
     {
         _db = db;
         _audit = audit;
@@ -32,6 +50,7 @@ public class IndividualCardService
         _time = time;
         _permissions = permissions;
         _userManager = userManager;
+        _module = module;
     }
 
     public Task<PagedResult<IndividualCard>> GetPagedAsync(int page = 1, int pageSize = 50, Guid? instanceId = null)
@@ -79,6 +98,7 @@ public class IndividualCardService
 
     public async Task<IndividualCard> CreateCardAsync(IndividualCard card, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "создание индивидуальной карты");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardGenerate);
         card.Id = Guid.NewGuid();
         if (card.RevisionNumber < 1) card.RevisionNumber = 1;
@@ -91,6 +111,7 @@ public class IndividualCardService
 
     public async Task<IndividualCard> UpdateCardAsync(IndividualCard card)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "изменение индивидуальной карты");
         _db.IndividualCards.Update(card);
         await _db.SaveChangesAsync();
         return card;
@@ -98,6 +119,7 @@ public class IndividualCardService
 
     public async Task<bool> UpdateNotesAsync(Guid id, string? notes)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "изменение примечаний индивидуальной карты");
         var card = await _db.IndividualCards.FindAsync(id);
         if (card == null) return false;
         card.Notes = notes;
@@ -107,6 +129,7 @@ public class IndividualCardService
 
     public async Task<bool> DeleteCardAsync(Guid id)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "удаление индивидуальной карты");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardGenerate);
         var card = await _db.IndividualCards.FindAsync(id);
         if (card == null) return false;
@@ -121,6 +144,7 @@ public class IndividualCardService
     /// </summary>
     public async Task<List<IndividualCard>> GenerateCardsForInstanceAsync(Guid instanceId, List<Guid> coefficientIds, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "формирование индивидуальных карт по экземпляру");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardGenerate);
         throw new InvalidOperationException(
             "Формирование ИК временно недоступно до завершения предварительной проверки нормативной цепочки.");
@@ -398,6 +422,9 @@ public class IndividualCardService
         bool demandCreateDraftPermission = true,
         CancellationToken ct = default)
     {
+        // Предварительная проверка сама ничего не пишет, но существует только как
+        // первый шаг создания ИК, поэтому закрыта вместе с ним.
+        IndividualCardModuleGuard.DemandWrite(_module, "предварительная проверка нормативной цепочки");
         if (demandCreateDraftPermission)
             await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
 
@@ -1589,6 +1616,7 @@ public class IndividualCardService
     public async Task<IndividualCardDraftDto> CreateDraftAsync(
         CreateIndividualCardDraftRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "создание черновика ИК");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateDraft, ct);
 
         if (request.ObjectLevel == 0 || !Enum.IsDefined(request.ObjectLevel))
@@ -1693,6 +1721,7 @@ public class IndividualCardService
     public async Task<IndividualCardDraftDto> RefreshDraftSourcesAsync(
         RefreshIndividualCardDraftSourcesRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "обновление источников черновика ИК");
         // Обновление разрешено автору черновика или владельцу IndividualCard.EditDraft
         // (с учётом ветки); IndividualCard.CreateDraft НЕ требуется.
         var scope = await ResolveActorScopeAsync(ct);
@@ -1806,6 +1835,7 @@ public class IndividualCardService
 
     public async Task DeleteDraftAsync(Guid individualCardId, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "удаление черновика ИК");
         // Удаление разрешено автору черновика или владельцу IndividualCard.EditDraft
         // (с учётом ветки); IndividualCard.CreateDraft НЕ требуется.
         var scope = await ResolveActorScopeAsync(ct);
@@ -1836,6 +1866,9 @@ public class IndividualCardService
     public async Task<IndividualCardCalculationDto?> GetDraftCalculationAsync(
         Guid individualCardId, CancellationToken ct = default)
     {
+        // Расчёт заново на каждый запрос — это пересчёт, а не чтение сохранённого
+        // документа, поэтому закрыт вместе с остальными операциями расчёта.
+        IndividualCardModuleGuard.DemandWrite(_module, "расчёт состава черновика ИК");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
         var scope = await ResolveActorScopeAsync(ct);
 
@@ -1851,6 +1884,8 @@ public class IndividualCardService
     public async Task<IReadOnlyList<CoefficientListItemDto>> GetWorkingCoefficientsForDraftSelectAsync(
         Guid individualCardId, string? searchText = null, CancellationToken ct = default)
     {
+        // Список существует только для набора коэффициентов в черновике.
+        IndividualCardModuleGuard.DemandWrite(_module, "подбор коэффициентов для черновика ИК");
         var scope = await ResolveActorScopeAsync(ct);
 
         var draft = await _db.IndividualCards.AsNoTracking()
@@ -1896,6 +1931,7 @@ public class IndividualCardService
     public async Task<IndividualCardCalculationDto> RecalculateDraftAsync(
         RecalculateIndividualCardDraftRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "пересчёт черновика ИК");
         var scope = await ResolveActorScopeAsync(ct);
 
         var draft = await _db.IndividualCards
@@ -2054,6 +2090,7 @@ public class IndividualCardService
     public async Task<IndividualCardCalculationDto> FormDraftAsync(
         FormIndividualCardRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "формирование ИК по черновику");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardForm, ct);
         var scope = await ResolveActorScopeAsync(ct);
 
@@ -2182,6 +2219,8 @@ public class IndividualCardService
     public async Task<IndividualCardVersionComparisonDto> BuildNewVersionComparisonAsync(
         IndividualCardVersionPreflightRequest request, CancellationToken ct = default)
     {
+        // Сравнение — подготовительный шаг новой версии, закрыт вместе с ней.
+        IndividualCardModuleGuard.DemandWrite(_module, "сравнение новой версии ИК");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateVersion, ct);
         var scope = await ResolveActorScopeAsync(ct);
 
@@ -2396,6 +2435,7 @@ public class IndividualCardService
     public async Task<IndividualCardDraftDto> CreateNewVersionAsync(
         CreateIndividualCardVersionRequest request, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "создание новой версии ИК");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardCreateVersion, ct);
         var scope = await ResolveActorScopeAsync(ct);
 
@@ -2490,6 +2530,7 @@ public class IndividualCardService
 
     public async Task ArchiveIndividualCardAsync(Guid individualCardId, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "архивирование ИК");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardArchive, ct);
         var scope = await ResolveActorScopeAsync(ct);
 
@@ -2938,10 +2979,16 @@ public class IndividualCardService
     /// E0: единая immutable export-модель ИК для будущих PDF (E1) и XLSX (E2).
     /// Только snapshot-данные; live-чтения — Branch.Name и имя автора.
     /// Не выполняет preflight, пересчёт или любые операции записи; аудит не пишет.
+    /// <para>
+    /// Закрыта границей модуля: это единственный источник данных для экспорта, и
+    /// экспорт законсервированного модуля отключён. Карты при этом остаются
+    /// читаемыми через <see cref="GetDetailAsync"/> и <see cref="GetHistoryAsync"/>.
+    /// </para>
     /// </summary>
     public async Task<IndividualCardExportDto?> GetExportAsync(
         Guid individualCardId, CancellationToken ct = default)
     {
+        IndividualCardModuleGuard.DemandWrite(_module, "экспорт индивидуальной карты");
         await _permissions.DemandPermissionAsync(PermissionCodes.IndividualCardView, ct);
         var scope = await ResolveActorScopeAsync(ct);
 
@@ -3152,14 +3199,22 @@ public class IndividualCardService
     }
 
     /// <summary>E0: аудит успешного экспорта ИК в PDF. Вызывается E1 только
-    /// после успешной генерации байтов файла; не мутирует ИК и снимки.</summary>
-    public async Task RecordPdfExportAsync(Guid individualCardId, CancellationToken ct = default) =>
+    /// после успешной генерации байтов файла; не мутирует ИК и снимки.
+    /// Закрыт границей модуля вместе с самим экспортом.</summary>
+    public async Task RecordPdfExportAsync(Guid individualCardId, CancellationToken ct = default)
+    {
+        IndividualCardModuleGuard.DemandWrite(_module, "экспорт ИК в PDF");
         await RecordExportAuditAsync(individualCardId, "IndividualCard.PdfExported", "PDF", ct);
+    }
 
     /// <summary>E0: аудит успешного экспорта ИК в XLSX. Вызывается E2 только
-    /// после успешной генерации байтов файла; не мутирует ИК и снимки.</summary>
-    public async Task RecordXlsxExportAsync(Guid individualCardId, CancellationToken ct = default) =>
+    /// после успешной генерации байтов файла; не мутирует ИК и снимки.
+    /// Закрыт границей модуля вместе с самим экспортом.</summary>
+    public async Task RecordXlsxExportAsync(Guid individualCardId, CancellationToken ct = default)
+    {
+        IndividualCardModuleGuard.DemandWrite(_module, "экспорт ИК в XLSX");
         await RecordExportAuditAsync(individualCardId, "IndividualCard.XlsxExported", "XLSX", ct);
+    }
 
     private async Task RecordExportAuditAsync(
         Guid individualCardId, string action, string format, CancellationToken ct)

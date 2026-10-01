@@ -1,0 +1,23 @@
+/* Граница законсервированного модуля ИК: заметный, но не тревожный блок.
+   Используется на всех страницах индивидуальных карт вместо кнопок записи. */
+
+.icConserved {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: rgba(79, 140, 255, .08);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.icConservedTitle {
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.icConservedText {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}

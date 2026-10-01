@@ -106,6 +106,11 @@ builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<EquipmentService>();
 builder.Services.AddScoped<GsmMaterialService>();
 builder.Services.AddScoped<ReferenceCatalogService>();
+// Индивидуальные карты законсервированы: раздел IndividualCards по умолчанию
+// выключен (Enabled=false), операции записи ИК отклоняются на сервере.
+builder.Services.Configure<IndividualCardModuleOptions>(
+    builder.Configuration.GetSection("IndividualCards"));
+builder.Services.AddSingleton<IIndividualCardModuleState, ConfiguredIndividualCardModuleState>();
 builder.Services.AddScoped<IndividualCardService>();
 builder.Services.AddScoped<CoefficientService>();
 builder.Services.AddScoped<AuditService>();

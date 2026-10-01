@@ -11,6 +11,16 @@ using DomainIndividualCardDetailDto = Chernika.Domain.Models.IndividualCardDetai
 
 namespace Chernika.Api.Controllers;
 
+/// <summary>
+/// Индивидуальные карты: модуль законсервирован.
+/// <para>
+/// Чтение сохранённых карт и документов остаётся доступным. Любая операция записи
+/// (создание, пересчёт, изменение, новая версия, архивирование, экспорт)
+/// отклоняется границей модуля <see cref="IndividualCardModuleGuard"/> до
+/// обращения к БД и возвращается как контролируемый 409 с понятным текстом — в
+/// том числе при прямом вызове API в обход интерфейса.
+/// </para>
+/// </summary>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]
@@ -181,9 +191,16 @@ public class IndividualCardsController : ControllerBase
     [HttpGet("drafts/{id:guid}/calculation")]
     public async Task<ActionResult<IndividualCardCalculationDto>> GetDraftCalculation(Guid id, CancellationToken ct)
     {
-        var calculation = await _cards.GetDraftCalculationAsync(id, ct);
-        if (calculation is null) return NotFound();
-        return Ok(calculation);
+        try
+        {
+            var calculation = await _cards.GetDraftCalculationAsync(id, ct);
+            if (calculation is null) return NotFound();
+            return Ok(calculation);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpGet("drafts/{id:guid}/coefficients")]
@@ -358,17 +375,31 @@ public class IndividualCardsController : ControllerBase
     [Authorize(Policy = "CreateIndividualCard")]
     public async Task<ActionResult> UpdateNotes(Guid id, [FromBody] UpdateCardNotesRequest request)
     {
-        if (!await _cards.UpdateNotesAsync(id, request.Notes))
-            return NotFound();
-        return NoContent();
+        try
+        {
+            if (!await _cards.UpdateNotesAsync(id, request.Notes))
+                return NotFound();
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpDelete("{id}")]
     [Authorize(Policy = "DeleteIndividualCard")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        if (!await _cards.DeleteCardAsync(id))
-            return NotFound();
-        return NoContent();
+        try
+        {
+            if (!await _cards.DeleteCardAsync(id))
+                return NotFound();
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 }

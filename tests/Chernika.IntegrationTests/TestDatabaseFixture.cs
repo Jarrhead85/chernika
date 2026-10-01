@@ -78,6 +78,12 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         services.AddScoped<EquipmentService>();
         services.AddScoped<CoefficientService>();
         services.AddScoped<GsmMaterialService>();
+        // Модуль ИК в бою выключен, но тесты гоняют СОХРАНЁННЫЙ код и его
+        // покрытие: включаем осознанно, в пределах scope. Тест отказа выключает
+        // модуль в своём scope (TestIndividualCardModuleState.Disable).
+        services.AddScoped<TestIndividualCardModuleState>();
+        services.AddScoped<IIndividualCardModuleState>(
+            sp => sp.GetRequiredService<TestIndividualCardModuleState>());
         services.AddScoped<IndividualCardService>();
         services.AddSingleton<IOptions<FileStorageOptions>>(
             new OptionsWrapper<FileStorageOptions>(

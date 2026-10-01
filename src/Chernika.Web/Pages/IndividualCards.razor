@@ -14,14 +14,11 @@
 @inject NavigationManager Nav
 
 <div class="stack">
+    <IndividualCardConservedNotice />
     <section class="panel">
         <div class="panelHeader">
             <h2>Индивидуальные карты</h2>
-            <div class="hint">Формирование и история расчётных норм ГСМ</div>
-            @if (_canCreateDraft)
-            {
-                <button type="button" class="btn primary" @onclick="GoToCreate">+ Создать ИК</button>
-            }
+            <div class="hint">История ранее сформированных карт (только чтение)</div>
         </div>
         <div class="panelBody">
             <div class="hkr-filters">
@@ -137,20 +134,11 @@
                                         }
                                     </td>
                                     <td>@(card.AuthorName ?? "—")</td>
+                                    @* Только просмотр: удаление черновика, новая версия и
+                                       архивирование отключены границей модуля ИК, поэтому
+                                       кнопок этих действий в списке нет. *@
                                     <td class="hkr-actions">
                                         <button type="button" class="linkBtn" @onclick="() => OpenCard(card.Id)">Открыть</button>
-                                        @if (card.Status == IndividualCardStatus.Draft && (card.CreatedByUserId == _currentUserId || _canEditDraft))
-                                        {
-                                            <button type="button" class="linkBtn" @onclick="() => BeginDeleteDraft(card)">Удалить</button>
-                                        }
-                                        @if (card.Status == IndividualCardStatus.Formed && _canCreateVersion)
-                                        {
-                                            <button type="button" class="linkBtn" @onclick="() => OpenCard(card.Id, openVersion: true)">Новая версия</button>
-                                        }
-                                        @if (card.Status == IndividualCardStatus.Formed && _canArchive)
-                                        {
-                                            <button type="button" class="linkBtn" @onclick="() => OpenCard(card.Id, openArchive: true)">В архив</button>
-                                        }
                                     </td>
                                 </tr>
                             }
@@ -168,29 +156,15 @@
     </section>
 </div>
 
-@if (_deleteCandidate is not null)
-{
-    <div class="modalOverlay" @onclick="() => _deleteCandidate = null">
-        <div class="modal" @onclick:stopPropagation>
-            <div class="modalHeader">
-                <h3>Удалить черновик ИК</h3>
-                <button type="button" class="linkBtn" @onclick="() => _deleteCandidate = null">✕</button>
-            </div>
-            <div class="modalBody">
-                <div>Удалить черновик «@_deleteCandidate.Code @_deleteCandidate.Version»?</div>
-                <div class="hkv-muted">Черновик и все его снимки будут удалены безвозвратно.</div>
-            </div>
-            <div class="modalFooter">
-                <button type="button" class="btn ghost" @onclick="() => _deleteCandidate = null">Отмена</button>
-                <button type="button" class="btn primary" disabled="@_deleting" @onclick="DeleteDraft">
-                    @(_deleting ? "Удаление…" : "Удалить")
-                </button>
-            </div>
-        </div>
-    </div>
-}
+@* Диалог удаления черновика недостижим: действие закрыто границей модуля ИК,
+   а кнопки удаления в списке нет. Код сохранён вместе с остальным модулем и
+   вернётся при его возобновлении. *@
 
 @code {
+    // Удаление черновика закрыто границей модуля ИК вместе с кнопкой в списке,
+    // поэтому состояние диалога удаления осталось неиспользуемым и сохраняется
+    // вместе с остальным кодом модуля.
+#pragma warning disable CS0414
     private bool _loading = true;
     private string? _error;
     private PagedResult<IndividualCardRegistryItemDto>? _page;

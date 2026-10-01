@@ -31,9 +31,10 @@
             <NavLink href="составы" Match="NavLinkMatch.Prefix" class="@GetCompositionsActive()">
                 <span>Составы техники</span>
             </NavLink>
-            <NavLink href="инд-карты" Match="NavLinkMatch.Prefix" class="@GetActive("инд-карты")">
-                <span>Индивидуальная карта</span>
-            </NavLink>
+            @* Индивидуальная карта убрана из основной навигации: модуль ИК
+               законсервирован и выведен из действующего функционала. Исторические
+               карты остаются доступны по прямой ссылке /инд-карты только для
+               чтения. *@
 
             <div class="navDivider"></div>
 

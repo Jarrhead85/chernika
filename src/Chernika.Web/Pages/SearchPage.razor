@@ -854,11 +854,13 @@
         _ => "muted",
     };
 
+    // Индивидуальная карта исключена: модуль ИК законсервирован и в действующую
+    // поисковую выдачу не входит (IndividualCardModuleGuard). Исторические ИК
+    // открываются по прямой ссылке.
     private static IReadOnlyList<(string Value, string Label)> EntityTypeOptions =>
     [
         ("", "Все"),
         ("HKCard", "Химмотологическая карта"),
-        ("IndividualCard", "Индивидуальная карта"),
         ("Complex", "Комплекс"),
         ("EquipmentModel", "Изделие"),
         ("Aggregate", "Агрегат"),

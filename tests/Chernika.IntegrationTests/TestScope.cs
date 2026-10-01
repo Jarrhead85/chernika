@@ -26,6 +26,7 @@ public sealed class TestScope : IAsyncDisposable
         Equipment = scope.ServiceProvider.GetRequiredService<EquipmentService>();
         CoeffService = scope.ServiceProvider.GetRequiredService<CoefficientService>();
         GsmMaterials = scope.ServiceProvider.GetRequiredService<GsmMaterialService>();
+        IndividualCardModule = scope.ServiceProvider.GetRequiredService<TestIndividualCardModuleState>();
         IndividualCards = scope.ServiceProvider.GetRequiredService<IndividualCardService>();
     }
 
@@ -41,6 +42,10 @@ public sealed class TestScope : IAsyncDisposable
     public EquipmentService Equipment { get; }
     public CoefficientService CoeffService { get; }
     public GsmMaterialService GsmMaterials { get; }
+
+    /// <summary>Состояние модуля ИК в этом scope: по умолчанию включён.</summary>
+    public TestIndividualCardModuleState IndividualCardModule { get; }
+
     public IndividualCardService IndividualCards { get; }
 
     public async ValueTask DisposeAsync()
