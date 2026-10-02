@@ -11,14 +11,17 @@ public sealed class TestScope : IAsyncDisposable
 {
     private readonly AsyncServiceScope _scope;
 
-    public TestScope(AsyncServiceScope scope, FakeCurrentUser user)
+    public TestScope(AsyncServiceScope scope, FakeCurrentUser user, TestTimeProvider clock, TestLogCollector logs)
     {
         _scope = scope;
         User = user;
+        Clock = clock;
+        Logs = logs;
         Db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Tasks = scope.ServiceProvider.GetRequiredService<TaskService>();
         HK = scope.ServiceProvider.GetRequiredService<HKCardService>();
         Expiration = scope.ServiceProvider.GetRequiredService<HKCardExpirationService>();
+        Forecast = scope.ServiceProvider.GetRequiredService<HKExpirationForecastService>();
         Notifications = scope.ServiceProvider.GetRequiredService<NotificationService>();
         Audit = scope.ServiceProvider.GetRequiredService<AuditService>();
         Permissions = scope.ServiceProvider.GetRequiredService<IPermissionService>();
@@ -33,10 +36,22 @@ public sealed class TestScope : IAsyncDisposable
     }
 
     public FakeCurrentUser User { get; }
+
+    /// <summary>Управляемое время фикстуры. Даты сроков проверяются только через
+    /// него: иначе тесты «день до / день срока / день после» зависели бы от
+    /// часа запуска.</summary>
+    public TestTimeProvider Clock { get; }
+
+    /// <summary>Журнал текущего теста: позволяет утверждать, что ошибка записана.</summary>
+    public TestLogCollector Logs { get; }
     public AppDbContext Db { get; }
     public TaskService Tasks { get; }
     public HKCardService HK { get; }
     public HKCardExpirationService Expiration { get; }
+
+    /// <summary>Прогноз обработки сроков: только чтение. Нужен, чтобы узнать,
+    /// что сделает worker, не выполняя это.</summary>
+    public HKExpirationForecastService Forecast { get; }
     public NotificationService Notifications { get; }
     public AuditService Audit { get; }
     public IPermissionService Permissions { get; }

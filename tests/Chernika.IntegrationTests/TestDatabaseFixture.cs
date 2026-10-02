@@ -42,7 +42,18 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         ConnectionString = TestDatabase.For(DbName);
 
         var services = new ServiceCollection();
-        services.AddLogging(b => b.AddFilter(_ => false));
+
+        // Инициализация ДО AddLogging: провайдер передаётся по ссылке, и при
+        // обратном порядке в AddProvider ушёл бы null.
+        Logs = new TestLogCollector();
+
+        // Фильтр логов снят: тесты должны видеть записи Error, чтобы утверждать,
+        // что ошибка ПОПАЛА в журнал, а не просто не уронила цикл.
+        services.AddLogging(b =>
+        {
+            b.SetMinimumLevel(LogLevel.Warning);
+            b.AddProvider(Logs);
+        });
         services.AddDbContext<AppDbContext>(o =>
             o.UseNpgsql(ConnectionString).AddInterceptors(FailingCommandInterceptor.Instance));
         services.AddIdentityCore<ApplicationUser>(o =>
@@ -59,7 +70,15 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
             .AddEntityFrameworkStores<AppDbContext>();
         services.AddDataProtection();
         services.AddMemoryCache();
-        services.AddSingleton(TimeProvider.System);
+        // Управляемое время вместо TimeProvider.System: обработчик сроков и его
+        // проверки обязаны видеть один и тот же момент во всех scope фикстуры.
+        // Значение по умолчанию совпадает с системным, поэтому для остальных
+        // тестов подмена прозрачна.
+        Clock = TestTimeProvider.SystemShim();
+        // Регистрируется под обоими именами: сервисы просят TimeProvider, а тесты
+        // управляют через TestTimeProvider.
+        services.AddSingleton(Clock);
+        services.AddSingleton<TimeProvider>(Clock);
         services.AddScoped<FakeCurrentUser>();
         services.AddScoped<ICurrentUserService>(sp => sp.GetRequiredService<FakeCurrentUser>());
         services.AddScoped<IPermissionService, PermissionService>();
@@ -76,6 +95,9 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
             o.ReviewTaskDueDays = 14;
         });
         services.AddScoped<HKCardExpirationService>();
+        // Прогноз обработки сроков — только чтение. Регистрируется в общей фикстуре,
+        // потому что проверяется на тех же картах, что и сама обработка.
+        services.AddScoped<HKExpirationForecastService>();
         services.AddScoped<EquipmentService>();
         services.AddScoped<CoefficientService>();
         services.AddScoped<GsmMaterialService>();
@@ -134,10 +156,22 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
 
     public TestScope CreateScope()
     {
+        // Время и журнал сбрасываются при каждом scope: иначе момент, закреплённый
+        // одним тестом, утекал бы в следующий, а записи журнала смешивались бы
+        // между тестами и порядок выполнения влиял бы на результат.
+        Clock.Reset();
+        Logs.Clear();
+
         var scope = Services.CreateAsyncScope();
         var user = scope.ServiceProvider.GetRequiredService<FakeCurrentUser>();
-        return new TestScope(scope, user);
+        return new TestScope(scope, user, Clock, Logs);
     }
+
+    /// <summary>Общее для всей фикстуры управляемое время.</summary>
+    public TestTimeProvider Clock { get; private set; } = null!;
+
+    /// <summary>Записи журнала текущего теста.</summary>
+    public TestLogCollector Logs { get; private set; } = null!;
 
     private static async Task DropAndCreateDatabaseAsync()
     {

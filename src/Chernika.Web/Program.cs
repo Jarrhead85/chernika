@@ -126,9 +126,25 @@ builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
 builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection("FileStorage"));
 builder.Services.Configure<HKExpirationOptions>(builder.Configuration.GetSection("HKExpiration"));
 builder.Services.AddScoped<HKCardExpirationService>();
+builder.Services.AddScoped<HKExpirationForecastService>();
+// ВЛАДЕЛЕЦ фоновой обработки сроков ХК. Именно этот хост запускает
+// start_app.cmd и содержит весь интерфейс, поэтому worker живёт здесь.
+// Регистрация управляется настройкой HKExpiration:WorkerEnabled — см.
+// HKExpirationWorkerRegistration. В Chernika.Api он выключен, поэтому при
+// запуске обоих хостов обработка не удваивается.
+builder.Services.AddHKExpirationWorker(builder.Configuration, "Chernika.Web");
 builder.Services.AddScoped<AuthenticationStateProvider, RevalidatingIdentityAuthenticationStateProvider<ApplicationUser>>();
 
 var app = builder.Build();
+
+// Решение о владении worker'ом пишется в журнал запуска явно: иначе по логу
+// нельзя отличить «worker включён» от «его забыли зарегистрировать».
+var hkWorker = app.Services.GetRequiredService<HKExpirationWorkerOwnership>();
+app.Logger.LogInformation(
+    "Обработка сроков действия ХК: владелец = {Host} ({Decision}). Обработка выполняется {Where}.",
+    hkWorker.HostName,
+    hkWorker.IsOwner ? "этим хостом" : "НЕ этим хостом (владелец — Chernika.Web)",
+    hkWorker.IsOwner ? "здесь" : "в Chernika.Web");
 
 if (!app.Environment.IsDevelopment())
 {

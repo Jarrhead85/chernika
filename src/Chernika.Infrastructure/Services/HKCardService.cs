@@ -1793,13 +1793,56 @@ public class HKCardService
         return (true, null);
     }
 
+    /// <summary>
+    /// Автоматическое архивирование карты по истечении срока действия.
+    /// <para>
+    /// <b>Метод сам проверяет все условия и не полагается на вызывающего.</b>
+    /// Раньше проверку срока делал только вызывающий сервис, поэтому прямой
+    /// вызов <c>ArchiveExpiredAsync</c> на действующей карте архивировал её —
+    /// достаточно было одного обращения из кода или теста.
+    /// </para>
+    /// <para>Условия архивирования, все обязательные:</para>
+    /// <list type="number">
+    /// <item>карта в статусе <c>Approved</c> (архивная, удалённая и черновая не
+    /// трогаются, повторный вызов ничего не делает);</item>
+    /// <item><c>ExpirationDate</c> задан: без срока карта бессрочная;</item>
+    /// <item>карта действует В ТЕЧЕНИЕ дня окончания, поэтому
+    /// <c>ExpirationDate.Date &lt; сегодняшняя UTC-дата</c>. В день окончания
+    /// метод не архивирует ничего — только уведомление.</item>
+    /// </list>
+    /// <para>
+    /// Отказ не является ошибкой: возвращается <c>false</c> без побочных
+    /// эффектов — без записи в журнал статусов, аудит и задачи. Иначе «нечего
+    /// было делать» выглядело бы как изменение истории карты.
+    /// </para>
+    /// </summary>
     public async Task<bool> ArchiveExpiredAsync(Guid cardId, CancellationToken ct = default)
     {
         var now = _time.GetUtcNow().UtcDateTime;
+        var today = now.Date;
+
         var card = await _db.HKCards
             .FirstOrDefaultAsync(c => c.Id == cardId && c.Status == HKCardStatus.Approved, ct);
         if (card == null)
             return false;
+
+        // Без даты окончания карта бессрочная: истечь нечем.
+        if (!card.ExpirationDate.HasValue)
+        {
+            _logger.LogInformation(
+                "Карта {CardCode} не архивирована по сроку: дата окончания не задана.", card.Code);
+            return false;
+        }
+
+        // Карта действует до конца дня своего ExpirationDate: архивирование
+        // начинается со следующего UTC-дня.
+        if (card.ExpirationDate.Value.Date >= today)
+        {
+            _logger.LogInformation(
+                "Карта {CardCode} не архивирована по сроку: срок действия не истёк (окончание {Expiration:yyyy-MM-dd}, сегодня {Today:yyyy-MM-dd} UTC).",
+                card.Code, card.ExpirationDate.Value, today);
+            return false;
+        }
 
         var oldStatus = card.Status;
         card.Status = HKCardStatus.Archived;
@@ -1826,6 +1869,13 @@ public class HKCardService
             ActorUserId: Guid.Empty,
             EntityDisplayName: $"{card.Code} v{card.Version}",
             Details: $"ХК {card.Code} (v{card.Version}) автоматически переведена в архив по истечении срока действия."), ct);
+
+        // Сохранение внутри метода, а не «по договорённости с вызывающим».
+        // Раньше изменения оставались только в трекере EF, и повторный вызов на
+        // той же сессии видел несохранённый Approved и возвращал true снова —
+        // обещание «карта архивирована» не соответствовало базе. Внутри
+        // открытой транзакции вызывающего сохранение участвует в ней.
+        await _db.SaveChangesAsync(ct);
 
         return true;
     }

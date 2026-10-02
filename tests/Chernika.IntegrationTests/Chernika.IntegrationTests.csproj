@@ -31,6 +31,10 @@
          и мапперы ХК — действующий публичный контракт, который после PR-5
          переведён с Type/Gost на Nd и классификацию. -->
     <ProjectReference Include="..\..\src\Chernika.Api\Chernika.Api.csproj" />
+    <!-- Ссылка на Web нужна для проверки штатного запуска: worker обработки
+         сроков ХК живёт в нём, и «владелец ровно один» доказывается подъёмом
+         настоящего хоста, а не подстановкой удобной конфигурации. -->
+    <ProjectReference Include="..\..\src\Chernika.Web\Chernika.Web.csproj" />
   </ItemGroup>
 
 </Project>

@@ -28,6 +28,10 @@ public sealed class HKExpirationBackgroundService : BackgroundService
     {
         if (_options.Value.RunOnStartup)
         {
+            _logger.LogInformation(
+                "Стартовый прогон обработки сроков ХК (RunOnStartup=true), пороги: {Thresholds}.",
+                string.Join(", ", _options.Value.WarningDays));
+
             try
             {
                 await RunScopedAsync(stoppingToken);
@@ -41,6 +45,11 @@ public sealed class HKExpirationBackgroundService : BackgroundService
                 _logger.LogError(ex, "Ошибка стартового запуска обработки сроков действия ХК");
             }
         }
+        else
+        {
+            _logger.LogInformation(
+                "Стартовый прогон обработки сроков ХК пропущен: RunOnStartup=false.");
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -53,6 +62,10 @@ public sealed class HKExpirationBackgroundService : BackgroundService
             {
                 return;
             }
+
+            _logger.LogInformation(
+                "Ежедневный прогон обработки сроков ХК начат (расписание: {Schedule} UTC).",
+                _options.Value.DailyRunTimeUtc);
 
             try
             {
