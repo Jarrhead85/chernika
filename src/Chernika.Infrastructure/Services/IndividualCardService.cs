@@ -3464,14 +3464,47 @@ public class IndividualCardService
                 foreach (var material in hkItem.Materials
                              .OrderBy(m => m.Category).ThenBy(m => m.GsmMaterial.Name))
                 {
+                    // Адаптация фазы B PR-6: прежние GsmMaterial.Type/Gost удалены
+                    // из схемы, поэтому снимок ИК наполняется живыми полями Nd и
+                    // классификацией марки.
+                    // <para>
+                    // Исторические карты при этом НЕ пересчитываются: их снимки
+                    // уже хранят MaterialType/Gost как данные снимка, и отчёты
+                    // читают именно их. Этот путь недостижим при выключенном
+                    // модуле (IndividualCardModuleGuard) и нужен только при его
+                    // возобновлении — код сохранён, а не удалён.
+                    // </para>
+                    // <para>
+                    // <c>MaterialType</c> в снимке NOT NULL. Прежде значение
+                    // бралось из <c>GsmMaterial.Type</c>, который тоже был NOT
+                    // NULL, поэтому расхождения не возникало. Теперь источник —
+                    // классификация, которой у марки может не быть вовсе, и
+                    // подставлять пустую строку молча означало бы выдумать
+                    // значение. Поэтому порядок: подгруппа (как и прежде), затем
+                    // группа, и только потом пустая строка как явная отметка
+                    // «классификации нет».
+                    // </para>
+                    var classifications = material.GsmMaterial.Classifications;
+                    var subgroup = classifications
+                        .Select(c => c.SubgroupName)
+                        .OrderBy(s => s, StringComparer.Ordinal)
+                        .FirstOrDefault();
+                    var group = classifications
+                        .Select(c => c.GroupName)
+                        .OrderBy(s => s, StringComparer.Ordinal)
+                        .FirstOrDefault();
+
                     item.MaterialSnapshots.Add(new IndividualCardItemMaterialSnapshot
                     {
                         Id = Guid.NewGuid(),
                         IndividualCardItemId = item.Id,
                         SourceGsmMaterialId = material.GsmMaterialId,
                         MaterialName = material.GsmMaterial.Name,
-                        MaterialType = material.GsmMaterial.Type,
-                        Gost = material.GsmMaterial.Gost,
+                        // Порядок прежней детерминированной записи Type сохранён:
+                        // первая подгруппа по алфавиту, чтобы возобновлённый модуль
+                        // давал те же значения, что и до удаления колонок.
+                        MaterialType = subgroup ?? group ?? string.Empty,
+                        Gost = material.GsmMaterial.Nd,
                         Category = material.Category,
                         CalculatedVolume = calculatedVolume,
                         UnitOfMeasure = unit,

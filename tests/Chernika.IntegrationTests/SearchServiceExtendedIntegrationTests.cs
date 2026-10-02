@@ -76,7 +76,6 @@ public class SearchServiceExtendedIntegrationTests
             IntendedUse = "Назначение " + Suffix(),
             // Колонка NOT NULL до PR-6: значение детерминированное, группа сюда
             // не пишется.
-            Type = "Подгруппа " + Suffix(),
             IsDeleted = false,
             IsDraft = false,
         };

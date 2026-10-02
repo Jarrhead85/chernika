@@ -1,4 +1,4 @@
-﻿using Chernika.Domain;
+using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
@@ -127,8 +127,7 @@ public class IndividualCardCalculationIntegrationTests
         {
             Id = Guid.NewGuid(),
             Name = name ?? "ГСМ " + Suffix(),
-            Type = "Тип " + Suffix(),
-            Gost = gost,
+            Nd = gost,
             IsDeleted = false,
             IsDraft = false,
         };

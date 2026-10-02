@@ -27,16 +27,18 @@ public class GsmLegacyColumnConsumerMapTests
 {
     /// <summary>
     /// Подтверждённые потребители (однозначные обращения).
-    /// Фаза B закрыта, когда список пуст.
+    /// <para>
+    /// После фазы B PR-6 список <b>пуст</b>. Последний потребитель —
+    /// <c>IndividualCardService</c>, строящий снимки ИК, — адаптирован в этой же
+    /// фазе: снимок наполняется живым <c>Nd</c> и первой подгруппой по алфавиту,
+    /// а историческое чтение снимков не изменилось.
+    /// </para>
+    /// <para>
+    /// Любое новое обращение роняет тест. Возвращать удалённые колонки молча
+    /// нельзя, а удалять их повторно уже нечего.
+    /// </para>
     /// </summary>
-    private static readonly (string Path, string Reads, string Status)[] KnownConsumers =
-    [
-        (
-            "src/Chernika.Infrastructure/Services/IndividualCardService.cs",
-            "material.GsmMaterial.Type и material.GsmMaterial.Gost — при построении снимков ИК",
-            "КОНСЕРВИРОВАН, но код компилируется: обязан быть минимально адаптирован к Nd/классификации в фазе B, иначе сборка упадёт. Историческое чтение снимков сохраняется."
-        ),
-    ];
+    private static readonly (string Path, string Reads, string Status)[] KnownConsumers = [];
 
     private static string RepoRoot()
     {
@@ -151,18 +153,18 @@ public class GsmLegacyColumnConsumerMapTests
     }
 
     [Fact]
-    public void GsmMaterialEntity_StillDeclaresLegacyColumns_BeforePhaseB()
+    public void GsmMaterialEntity_NoLongerDeclaresLegacyColumns()
     {
-        // Фиксирует исходное состояние: до фазы B колонки обязаны существовать
-        // в сущности. Тест упадёт после их удаления и заставит обновить карту
-        // осознанно, вместе с миграцией.
+        // Обратная к прежней проверка: после фазы B колонок в сущности быть не
+        // должно. Возврат любой из них — сознательный откат перехода, который
+        // обязан быть явным, а не побочным эффектом правки.
         var root = RepoRoot();
         var entity = File.ReadAllText(Path.Combine(
             root, "src", "Chernika.Domain", "Entities", "GsmMaterial.cs"));
 
-        Assert.Contains("public string Type { get; set; }", entity, StringComparison.Ordinal);
-        Assert.Contains("public string? Gost { get; set; }", entity, StringComparison.Ordinal);
-        Assert.Contains("public string? Description { get; set; }", entity, StringComparison.Ordinal);
+        Assert.DoesNotContain("public string Type { get; set; }", entity, StringComparison.Ordinal);
+        Assert.DoesNotContain("public string? Gost { get; set; }", entity, StringComparison.Ordinal);
+        Assert.DoesNotContain("public string? Description { get; set; }", entity, StringComparison.Ordinal);
     }
 
     [Fact]

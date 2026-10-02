@@ -224,7 +224,6 @@ public class ReferencePermissionsIntegrationTests
         {
             Id = Guid.NewGuid(),
             Name = "Черновик ГСМ",
-            Type = "Масло",
             IsDraft = true
         });
         await s.Db.SaveChangesAsync();

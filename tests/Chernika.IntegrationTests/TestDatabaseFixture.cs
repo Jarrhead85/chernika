@@ -86,6 +86,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
             sp => sp.GetRequiredService<TestIndividualCardModuleState>());
         services.AddScoped<IndividualCardService>();
         services.AddScoped<ReportService>();
+        services.AddScoped<SearchService>();
         services.AddSingleton<IOptions<FileStorageOptions>>(
             new OptionsWrapper<FileStorageOptions>(
                 new FileStorageOptions { MaxPdfSizeBytes = 20L * 1024 * 1024 }));

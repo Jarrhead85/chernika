@@ -26,10 +26,10 @@ public class HKCardCreateIntegrationTests
         s.Db.Nodes.Add(node);
         var au = new AssemblyUnit { Id = Guid.NewGuid(), Code = "AU-" + Suffix(), Name = "СЕ " + Suffix(), IsDeleted = false };
         s.Db.AssemblyUnits.Add(au);
-        var m1 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M1 " + Suffix(), Type = "Т", IsDeleted = false, IsDraft = false };
-        var m2 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M2 " + Suffix(), Type = "Т", IsDeleted = false, IsDraft = false };
-        var m3 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M3 " + Suffix(), Type = "Т", IsDeleted = false, IsDraft = false };
-        var m4 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M4 " + Suffix(), Type = "Т", IsDeleted = false, IsDraft = false };
+        var m1 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M1 " + Suffix(), IsDeleted = false, IsDraft = false };
+        var m2 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M2 " + Suffix(), IsDeleted = false, IsDraft = false };
+        var m3 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M3 " + Suffix(), IsDeleted = false, IsDraft = false };
+        var m4 = new GsmMaterial { Id = Guid.NewGuid(), Name = "M4 " + Suffix(), IsDeleted = false, IsDraft = false };
         s.Db.GsmMaterials.AddRange(m1, m2, m3, m4);
         await s.Db.SaveChangesAsync();
 

@@ -1231,7 +1231,6 @@ public class GsmRelationReferenceIntegrationTests
         {
             Id = id,
             Name = "Черновик " + Suffix(),
-            Type = string.Empty,
             IsDeleted = false,
             IsDraft = true,
         });

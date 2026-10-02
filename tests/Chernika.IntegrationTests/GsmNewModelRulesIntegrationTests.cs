@@ -8,16 +8,27 @@ using Xunit;
 namespace Chernika.IntegrationTests;
 
 /// <summary>
-/// Корректировка PR-3: семантика legacy-полей, пределы длин переходных зеркал,
-/// запрет мультиподгруппных марок в строках ХК и отсутствие ложного отказа
-/// после успешного commit.
+/// Правила новой модели ГСМ, унаследованные от корректировки PR-3 и сохранённые
+/// после удаления переходных колонок (PR-6, фаза B).
+/// <para>
+/// Из прежнего файла удалены тесты, смысл которых был целиком в зеркалах
+/// <c>Type</c>/<c>Gost</c>: «Type = первая подгруппа по алфавиту», «расширено до
+/// 256», «длинная подгруппа помещается в Type». Проверять их после удаления
+/// колонок бессмысленно.
+/// </para>
+/// <para>
+/// Осталось и продолжает работать то, что к зеркалам отношения не имеет:
+/// правила формы и сервиса, пределы длины НД, марка без классификации,
+/// мультиподгруппные марки в строках ХК, отсутствие чтения после commit и
+/// откат при сбое записи классификации.
+/// </para>
 /// </summary>
 [Collection("Database")]
-public class GsmLegacyMirrorCompatibilityIntegrationTests
+public class GsmNewModelRulesIntegrationTests
 {
     private readonly TestDatabaseFixture _fixture;
 
-    public GsmLegacyMirrorCompatibilityIntegrationTests(TestDatabaseFixture fixture) => _fixture = fixture;
+    public GsmNewModelRulesIntegrationTests(TestDatabaseFixture fixture) => _fixture = fixture;
 
     private static string Suffix() => Guid.NewGuid().ToString("N")[..8];
 
@@ -27,67 +38,7 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
     // ── §3: legacy Type = подгруппа ───────────────────────────────────────
 
     [Fact]
-    public async Task Create_TwoSubgroups_MirrorsAlphabeticallyFirstSubgroupIntoType()
-    {
-        await using var s = _fixture.CreateScope();
-        SetRefEditor(s);
-
-        var view = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
-        {
-            Name = "Зеркало Type " + Suffix(),
-            Nd = "ГОСТ 1",
-            GroupName = "Моторные масла",
-            // Порядок ввода обратен алфавитному: правило обязано быть
-            // детерминированным, а не «первой попавшейся».
-            SubgroupNames = new List<string> { "Ясные", "Азотные", "Белое золото" },
-        });
-
-        var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
-
-        // Первая ПО АЛФАВИТУ: «Азотные».
-        Assert.Equal("Азотные", stored.Type);
-        Assert.NotEqual("Моторные масла", stored.Type);
-        Assert.Equal(3, view.SubgroupNames.Count);
-    }
-
-    [Fact]
-    public async Task Create_SingleSubgroup_MirrorsThatSubgroup()
-    {
-        await using var s = _fixture.CreateScope();
-        SetRefEditor(s);
-
-        var view = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
-        {
-            Name = "Одна подгруппа " + Suffix(),
-            GroupName = "Пластичные смазки",
-            SubgroupNames = new List<string> { "Для подшипников" },
-        });
-
-        var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
-        Assert.Equal("Для подшипников", stored.Type);
-    }
-
-    [Fact]
-    public async Task Update_ChangingSubgroups_RecomputesTypeMirror()
-    {
-        var id = await CreateMaterialAsync("Группа", new List<string> { "Альфа", "Бета" });
-
-        await using (var s = _fixture.CreateScope())
-        {
-            SetRefEditor(s);
-            await s.GsmMaterials.UpdateAsync(id, new GsmMaterialWriteRequest
-            {
-                Name = "Смена подгрупп " + Suffix(),
-                GroupName = "Группа",
-                SubgroupNames = new List<string> { "Гамма", "Дельта" },
-            });
-        }
-
-        Assert.Equal("Гамма", await ReadAsync(id, m => m.Type));
-    }
-
-    [Fact]
-    public async Task Update_LegacyMaterialWithoutClassification_PreservesHistoricalType()
+    public async Task Update_LegacyMaterialWithoutClassification_KeepsNoGroupAndNewFields()
     {
         // Legacy-марка: классификации нет, Type хранит историческое значение.
         var id = await CreateLegacyMaterialAsync("Legacy " + Suffix(), "Исторический тип");
@@ -107,7 +58,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         }
 
         // Исторический Type не затирается и группа в него не пишется.
-        Assert.Equal("Исторический тип", await ReadAsync(id, m => m.Type));
         Assert.Equal("ГОСТ legacy", await ReadAsync(id, m => m.Nd));
         Assert.Equal("Новое назначение", await ReadAsync(id, m => m.IntendedUse));
         Assert.Equal("Примечание", await ReadAsync(id, m => m.Note));
@@ -135,7 +85,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
 
         // Классификация на месте.
         Assert.Equal(1, await CountClassificationsAsync(id));
-        Assert.Equal("Подгруппа", await ReadAsync(id, m => m.Type));
     }
 
     [Fact]
@@ -155,7 +104,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
 
         Assert.Contains("групп", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, await CountClassificationsAsync(id));
-        Assert.Equal("Исторический тип", await ReadAsync(id, m => m.Type));
     }
 
     [Fact]
@@ -198,7 +146,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         Assert.NotNull(result);
         Assert.Equal("Моторные масла", result!.GroupName);
         Assert.Equal(1, await CountClassificationsAsync(id));
-        Assert.Equal("Для турбин", await ReadAsync(id, m => m.Type));
     }
 
     private async Task<int> CountClassificationsAsync(Guid materialId)
@@ -214,32 +161,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
     // зеркале Gost (varchar(128), позже 256) и снимке ИК (varchar(200)). Оба
     // перестали действовать: Gost в PR-5 не заполняется, модуль ИК законсервирован
     // и новых снимков не создаёт. Собственная колонка Nd — text.
-
-    [Fact]
-    public async Task Nd_LongerThanLegacyColumn_IsAccepted_AndStoredWithoutTruncation()
-    {
-        // 129..200 символов: прежние varchar(128) такое значение не вмещали.
-        var longNd = "ГОСТ 21743-76; " + new string('A', 180);
-        Assert.True(longNd.Length > 128 && longNd.Length <= 200, "длина тестового НД вне диапазона: " + longNd.Length);
-
-        await using var s = _fixture.CreateScope();
-        SetRefEditor(s);
-
-        var view = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
-        {
-            Name = "Длинное НД " + Suffix(),
-            Nd = longNd,
-            GroupName = "Моторные масла",
-            SubgroupNames = new List<string> { "Для турбин" },
-        });
-
-        var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
-        Assert.Equal(longNd, stored.Nd);
-
-        // Переходное зеркало не заполняется, поэтому скрытого переполнения
-        // прежнего varchar(256) здесь быть не может.
-        Assert.Null(stored.Gost);
-    }
 
     [Theory]
     [InlineData(128)]  // ровно прежний предел Type
@@ -264,7 +185,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
 
         var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
         Assert.Equal(nd, stored.Nd);
-        Assert.Null(stored.Gost);
     }
 
     [Fact]
@@ -311,62 +231,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
 
         Assert.Contains("1000", ex.Message, StringComparison.Ordinal);
         Assert.False(await s.Db.GsmMaterials.AnyAsync(m => m.Name == name || m.Nd == tooLong));
-    }
-
-    [Theory]
-    [InlineData(128)]  // ровно прежний предел Type
-    [InlineData(129)]  // первый символ сверх прежнего предела
-    [InlineData(200)]  // предел новой модели для подгруппы
-    public async Task Subgroup_AtLegacyBoundaries_FitsLegacyTypeAfterWidening(int length)
-    {
-        var subgroup = new string('П', length);
-
-        await using var s = _fixture.CreateScope();
-        SetRefEditor(s);
-
-        var view = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
-        {
-            Name = $"Подгруппа {length} " + Suffix(),
-            GroupName = "Группа",
-            SubgroupNames = new List<string> { subgroup },
-        });
-
-        var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
-        Assert.Equal(subgroup, stored.Type);
-    }
-
-    [Fact]
-    public async Task Subgroup_LongerThan128_FitsLegacyTypeAfterWidening()
-    {
-        // Подгруппа до 200 символов не помещалась в прежний varchar(128) Type.
-        var longSubgroup = new string('В', 200);
-
-        await using var s = _fixture.CreateScope();
-        SetRefEditor(s);
-
-        var view = await s.GsmMaterials.CreateAsync(new GsmMaterialWriteRequest
-        {
-            Name = "Длинная подгруппа " + Suffix(),
-            GroupName = "Группа",
-            SubgroupNames = new List<string> { longSubgroup },
-        });
-
-        var stored = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == view.Id);
-        Assert.Equal(longSubgroup, stored.Type);
-    }
-
-    [Fact]
-    public async Task LegacyColumns_WereWidenedTo256_AndNdIsUnboundedText()
-    {
-        await using var s = _fixture.CreateScope();
-        Assert.Equal("256", await ColumnLengthAsync(s, "GsmMaterials", "Type"));
-        Assert.Equal("256", await ColumnLengthAsync(s, "GsmMaterials", "Gost"));
-
-        // Снимки ИК не расширялись, но они больше не пишутся: модуль ИК
-        // законсервирован и новых карт не создаёт. Действующее поле НД —
-        // Nd, у него ограничения длины нет вовсе.
-        Assert.Equal("200", await ColumnLengthAsync(s, "IndividualCardItemMaterialSnapshots", "Gost"));
-        Assert.Null(await ColumnLengthAsync(s, "GsmMaterials", "Nd"));
     }
 
     // ── §3: мультиподгруппные марки разрешены в новых строках ХК (PR-5) ────
@@ -551,7 +415,6 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
             .Where(c => c.GsmMaterialId == id).ToListAsync();
         Assert.Single(rows);
         Assert.Equal("Старая", rows[0].SubgroupName);
-        Assert.Equal("Старая", await ReadAsync(id, m => m.Type));
         Assert.Equal(auditsBefore, await CountAuditsAsync(id));
     }
 
@@ -577,17 +440,22 @@ public class GsmLegacyMirrorCompatibilityIntegrationTests
         return created.Id;
     }
 
-    /// <summary>Legacy-марка с заданным историческим Type: классификация снимается,
-    /// Type пишется напрямую — так выглядит состояние до перехода.</summary>
-    private async Task<Guid> CreateLegacyMaterialAsync(string name, string historicalType)
+    /// <summary>Марка в состоянии «до перехода»: созданная сервисом, но без
+    /// классификации. Именно такие строки остаются в базе после удаления
+    /// переходных колонок, и они обязаны оставаться читаемыми и редактируемыми.
+    /// <para>
+    /// Раньше фикстура дописывала исторический <c>Type</c> прямым SQL. Теперь
+    /// колонки нет, поэтому состояние «до перехода» воспроизводится снятием
+    /// классификации — это и есть его сущность.
+    /// </para>
+    /// </summary>
+    private async Task<Guid> CreateLegacyMaterialAsync(string name, string _)
     {
         var id = await CreateMaterialAsync("Группа " + Suffix(), new List<string> { "Подгруппа" });
         await using var s = _fixture.CreateScope();
         var rows = await s.Db.GsmMaterialClassifications.Where(c => c.GsmMaterialId == id).ToListAsync();
         s.Db.GsmMaterialClassifications.RemoveRange(rows);
         await s.Db.SaveChangesAsync();
-        await s.Db.Database.ExecuteSqlInterpolatedAsync(
-            $@"UPDATE ""GsmMaterials"" SET ""Type"" = {historicalType} WHERE ""Id"" = {id}");
         return id;
     }
 

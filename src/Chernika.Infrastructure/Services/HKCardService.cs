@@ -2763,18 +2763,18 @@ public class HKCardService
                 break;
 
             case ProposalTargetType.GsmMaterial:
-                // Черновой.stub марки. Источник истины — новые поля Nd/IntendedUse;
-                // прежние Gost/Description больше не пишутся (PR-5), иначе триггер
-                // TRG_GsmMaterials_LegacyFieldSync мог бы переписать Nd из
-                // переходного значения. Type остаётся заполненным: колонка NOT NULL
-                // до PR-6, а значение берётся из самого предложения — группа из
-                // прежнего Type не выдумывается. Классификации у черновика нет:
-                // она проверяется при публикации (AcceptProposalAsync).
+                // Черновой-stub марки. Источник истины — Nd и IntendedUse.
+                // Переходные Gost/Description/Type удалены из GsmMaterials в фазе B
+                // PR-6, поэтому прежний Type предложения больше не пишется в
+                // марку: он остаётся в САМОМ предложении
+                // (ReferenceProposal.Type — другое поле другой таблицы, этого PR
+                // не касается) и используется при публикации.
+                // Классификации у черновика нет: она проверяется при публикации
+                // (AcceptProposalAsync).
                 var gsm = new GsmMaterial
                 {
                     Id = proposal.Id,
                     Name = proposal.Name,
-                    Type = proposal.Type ?? "",
                     Nd = proposal.Gost,
                     IntendedUse = proposal.Description,
                     IsDraft = true

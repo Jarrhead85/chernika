@@ -4,24 +4,26 @@ public class GsmMaterial
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
-    public string Type { get; set; } = string.Empty;
-    public string? Gost { get; set; }
-    public string? Description { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
     public bool IsDraft { get; set; }
 
-    // ── Расширение схемы (PR-2: expand) ───────────────────────────────────
-    // Старые Type/Gost/Description остаются переходными полями: их продолжает
-    // читать и писать действующий код до переключения в PR-5 и удаления в PR-6.
+    // ── Переходные колонки удалены (PR-2 expand → PR-5 переключение → PR-6 удаление)
+    //
+    // Прежние `Type` (varchar(256) NOT NULL), `Gost` (varchar(256)) и
+    // `Description` (text) удалены из сущности и из схемы миграцией фазы B.
+    // Источник истины — `Nd` и `IntendedUse`, классификация — в
+    // `GsmMaterialClassifications`. Исторические значения прежних полей не
+    // хранятся в марке: где они нужны для чтения (снимки ИК), они лежат в
+    // `IndividualCardItemMaterialSnapshots.Gost/MaterialType` как данные снимка.
 
-    /// <summary>НД: текстовое представление прежнего <see cref="Gost"/>, может содержать несколько документов.</summary>
+    /// <summary>НД: нормативное обозначение, может содержать несколько документов.</summary>
     public string? Nd { get; set; }
 
     /// <summary>Включена в номенклатуру по ГОСТ. Требуется для проверки связи Foreign.</summary>
     public bool InGostNomenclature { get; set; }
 
-    /// <summary>Назначение и условия применения (переходная копия прежнего <see cref="Description"/>).</summary>
+    /// <summary>Назначение и условия применения.</summary>
     public string? IntendedUse { get; set; }
 
     public bool SuitabilityGround { get; set; }

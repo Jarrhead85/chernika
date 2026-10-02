@@ -340,7 +340,6 @@ public class GsmRelationFilterAndSelectionIntegrationTests
             {
                 Id = Guid.NewGuid(),
                 Name = $"Ааа{i:D3} {suffix}",
-                Type = "Подгруппа",
                 IsDeleted = false,
                 IsDraft = false,
             }).ToList();
@@ -549,7 +548,6 @@ public class GsmRelationFilterAndSelectionIntegrationTests
         {
             Id = id,
             Name = "Черновик " + Suffix(),
-            Type = string.Empty,
             IsDeleted = false,
             IsDraft = true,
         });

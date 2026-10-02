@@ -907,7 +907,7 @@ public class GsmMaterialService
             IsDraft = false,
             DeletedAt = null,
         };
-        ApplyLegacyMirrors(material, fields);
+        ApplyFields(material, fields);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         _db.GsmMaterials.Add(material);
@@ -1011,7 +1011,7 @@ public class GsmMaterialService
         material.SuitabilitySea = fields.SuitabilitySea;
         material.NatoIndex = fields.NatoIndex;
         material.Note = fields.Note;
-        ApplyLegacyMirrors(material, fields);
+        ApplyFields(material, fields);
 
         // Черновик предложения публикуется только с классификацией.
         if (material.IsDraft && fields.GroupName != null)
@@ -1804,39 +1804,20 @@ public class GsmMaterialService
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
-    /// Переходные правила для legacy-колонок, которые остаются физически до PR-6.
-    /// <list type="bullet">
-    /// <item><c>Type</c> = подгруппа, первая по алфавиту. Колонка физически NOT
-    /// NULL, поэтому её заполнение прекратить нельзя до PR-6 — это явное
-    /// исключение из «полного отказа от записи в legacy-поля». Значение
-    /// детерминированное, произвольная группа или фиктивный тип не подставляются.
-    /// При нескольких подгруппах берётся первая ПО АЛФАВИТУ.</item>
-    /// <item><c>Gost</c> и <c>Description</c> больше НЕ пишутся: после PR-5 ни
-    /// один действующий потребитель их не читает. Их прежние значения остаются в
-    /// базе как есть и удаляются вместе с колонками в PR-6. Это также убирает
-    /// скрытое переполнение: прежнее <c>Gost</c> — <c>varchar(256)</c>, а
-    /// <c>Nd</c> — <c>text</c>.</item>
-    /// </list>
-    /// У марки без классификации прежние значения не выдумываются: остаются
-    /// те, что уже были.
+    /// Единственная точка записи полей марки. Переходных legacy-колонок больше
+    /// нет: <c>Type</c>, <c>Gost</c> и <c>Description</c> удалены из сущности и из
+    /// схемы миграцией фазы B PR-6, а значит и писать в них нечем и незачем.
     /// <para>
-    /// Триггер <c>TRG_GsmMaterials_LegacyFieldSync</c> остаётся до PR-6 как
-    /// страховка для отката на старую версию приложения: он срабатывает только
-    /// когда <c>Nd</c>/<c>IntendedUse</c> явно не менялись, а значит не может
-    /// переписать новое значение, записанное сервисом.
+    /// Метод переименован из <c>ApplyLegacyMirrors</c> при удалении колонок:
+    /// прежнее имя описывало не то, что делало. Источник истины — <c>Nd</c> и
+    /// <c>IntendedUse</c>; классификация живёт в
+    /// <see cref="GsmMaterialClassification"/> и пишется отдельно.
     /// </para>
     /// </summary>
-    private static void ApplyLegacyMirrors(GsmMaterial material, NormalizedFields fields)
+    private static void ApplyFields(GsmMaterial material, NormalizedFields fields)
     {
         material.Nd = fields.Nd;
         material.IntendedUse = fields.IntendedUse;
-        // Legacy Type = подгруппа (§4.3 контракта: SubgroupName = btrim("Type")).
-        // При нескольких подгруппах берётся первая ПО АЛФАВИТУ — правило
-        // детерминированное и документированное, а не «первая попавшаяся».
-        // Пустой набор означает «классификации нет»: исторический Type
-        // сохраняется, группа в него не пишется никогда.
-        if (fields.Subgroups.Count > 0)
-            material.Type = fields.Subgroups.OrderBy(s => s, StringComparer.Ordinal).First();
     }
 
     private static string DescribeWrite(NormalizedFields fields)

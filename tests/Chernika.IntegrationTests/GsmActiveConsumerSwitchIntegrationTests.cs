@@ -245,13 +245,10 @@ public class GsmActiveConsumerSwitchIntegrationTests
         Assert.Equal(gost, stub.Nd);
         Assert.Equal("Назначение предложения", stub.IntendedUse);
 
-        // Переходные колонки не заполняются: триггер не сможет переписать Nd.
-        Assert.Null(stub.Gost);
-        Assert.Null(stub.Description);
-
-        // Type остаётся заполненным (NOT NULL до PR-6) и берётся из предложения:
-        // группа из прежнего Type не выдумывается.
-        Assert.Equal("Прежняя подгруппа", stub.Type);
+        // Переходные Gost/Description/Type удалены из GsmMaterials (PR-6, фаза B),
+        // поэтому черновик содержит только Nd/IntendedUse. Прежний Type предложения
+        // остаётся в САМОМ предложении (ReferenceProposal.Type) — это другое поле
+        // другой таблицы, и в марку больше не переносится.
         Assert.False(await s.Db.GsmMaterialClassifications.AnyAsync(c => c.GsmMaterialId == stub.Id));
     }
 

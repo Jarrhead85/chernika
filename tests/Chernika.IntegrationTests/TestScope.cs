@@ -26,6 +26,7 @@ public sealed class TestScope : IAsyncDisposable
         Equipment = scope.ServiceProvider.GetRequiredService<EquipmentService>();
         CoeffService = scope.ServiceProvider.GetRequiredService<CoefficientService>();
         GsmMaterials = scope.ServiceProvider.GetRequiredService<GsmMaterialService>();
+        Search = scope.ServiceProvider.GetRequiredService<SearchService>();
         IndividualCardModule = scope.ServiceProvider.GetRequiredService<TestIndividualCardModuleState>();
         IndividualCards = scope.ServiceProvider.GetRequiredService<IndividualCardService>();
         Reports = scope.ServiceProvider.GetRequiredService<ReportService>();
@@ -43,6 +44,10 @@ public sealed class TestScope : IAsyncDisposable
     public EquipmentService Equipment { get; }
     public CoefficientService CoeffService { get; }
     public GsmMaterialService GsmMaterials { get; }
+
+    /// <summary>Поиск по всем разделам. Нужен, чтобы проверить, что после удаления
+    /// переходных колонок марки ГСМ находятся по НД и по названию группы.</summary>
+    public SearchService Search { get; }
 
     /// <summary>Состояние модуля ИК в этом scope: по умолчанию включён.</summary>
     public TestIndividualCardModuleState IndividualCardModule { get; }

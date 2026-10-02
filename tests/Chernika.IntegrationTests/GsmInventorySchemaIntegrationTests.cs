@@ -36,12 +36,12 @@ public class GsmInventorySchemaIntegrationTests
     // ── Схема: GsmMaterials ────────────────────────────────────────────────
 
     [Fact]
-    public async Task GsmMaterials_HasNewColumns_AndKeepsLegacyColumns()
+    public async Task GsmMaterials_HasNewColumns_AndNoLegacyColumns()
     {
         await using var s = _fixture.CreateScope();
         var columns = await GetColumnNamesAsync(s, "GsmMaterials");
 
-        // Расширение схемы.
+        // Новая модель.
         Assert.Contains("Nd", columns);
         Assert.Contains("InGostNomenclature", columns);
         Assert.Contains("IntendedUse", columns);
@@ -51,13 +51,15 @@ public class GsmInventorySchemaIntegrationTests
         Assert.Contains("NatoIndex", columns);
         Assert.Contains("Note", columns);
 
-        // Переходные поля на месте — старый код продолжает их читать и писать.
-        Assert.Contains("Type", columns);
-        Assert.Contains("Gost", columns);
-        Assert.Contains("Description", columns);
         Assert.Contains("IsDraft", columns);
         Assert.Contains("IsDeleted", columns);
         Assert.Contains("DeletedAt", columns);
+
+        // Переходные поля удалены (PR-6, фаза B). Проверка зеркальная к прежней
+        // «на месте»: их возвращение означало бы, что удаление откатили молча.
+        Assert.DoesNotContain("Type", columns);
+        Assert.DoesNotContain("Gost", columns);
+        Assert.DoesNotContain("Description", columns);
     }
 
     [Fact]
@@ -215,70 +217,6 @@ public class GsmInventorySchemaIntegrationTests
     // ── Backfill ───────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task BackfillSql_CopiesGostToNd_AndDescriptionToIntendedUse_WithoutTouchingLegacy()
-    {
-        var gostWithValue = "ГОСТ 8581-78 " + Suffix();
-        var blankGost = "   ";
-        var manualName = "Марка вручную " + Suffix();
-        var manualDescription = "Назначение " + Suffix();
-
-        // 1) обычная legacy-марка, 2) марка с пустым Gost, 3) марка, где новые
-        // поля уже заполнены вручную (backfill не должен их перетирать).
-        var fromGost = await InsertLegacyMaterialAsync(gostWithValue, "Назначение " + Suffix());
-        var withBlankGost = await InsertLegacyMaterialAsync(blankGost, "Без НД " + Suffix());
-        var alreadyFilled = await InsertLegacyMaterialAsync("ГОСТ 23652-79", manualDescription,
-            nd: "НД вручную", intendedUse: "Не перетирать", name: manualName);
-
-        // Ровно те два оператора, что выполняет миграция; прогоняем повторно
-        // (проверка идемпотентности).
-        await RunBackfillSqlAsync();
-        await RunBackfillSqlAsync();
-
-        await using var s = _fixture.CreateScope();
-        var rows = await s.Db.GsmMaterials.AsNoTracking()
-            .Where(m => m.Id == fromGost || m.Id == withBlankGost || m.Id == alreadyFilled)
-            .ToListAsync();
-        Assert.Equal(3, rows.Count);
-
-        var copied = rows.Single(m => m.Id == fromGost);
-        Assert.Equal(gostWithValue, copied.Nd);
-        Assert.Equal(copied.Description, copied.IntendedUse);
-
-        // Пустой Gost не превращается в пустую строку Nd.
-        Assert.Null(rows.Single(m => m.Id == withBlankGost).Nd);
-
-        // Уже заполненные новые значения не перетираются.
-        var manual = rows.Single(m => m.Id == alreadyFilled);
-        Assert.Equal("НД вручную", manual.Nd);
-        Assert.Equal("Не перетирать", manual.IntendedUse);
-
-        // Прежние поля не изменились.
-        Assert.Equal("ГОСТ 23652-79", manual.Gost);
-        Assert.Equal(manualDescription, manual.Description);
-        Assert.False(string.IsNullOrWhiteSpace(manual.Type));
-
-        // Расхождение Nd↔Gost, созданное вручную, убирается напрямую, чтобы
-        // общая БД оставалась чистой для остальных тестов. Проверять его отчётом
-        // о переносе больше нельзя: отчёт удалён в фазе A PR-6 как неверный
-        // критерий — он измерял данные, а спрашивал про код. Проверка готовности
-        // к удалению колонок — карта обращений и тесты (см.
-        // GsmActiveConsumerSwitchIntegrationTests).
-        await using var s3 = _fixture.CreateScope();
-        SetRefEditor(s3);
-        await s3.Db.Database.ExecuteSqlInterpolatedAsync(
-            $@"UPDATE ""GsmMaterials""
-                SET ""Nd"" = NULLIF(btrim(""Gost""), ''),
-                    ""IntendedUse"" = ""Description""
-                WHERE ""Id"" = {alreadyFilled}");
-
-        var restored = await s3.Db.GsmMaterials.IgnoreQueryFilters().AsNoTracking()
-            .SingleAsync(m => m.Id == alreadyFilled);
-        // После выравнивания Nd повторяет Gost, а IntendedUse — Description.
-        Assert.Equal(restored.Gost, restored.Nd);
-        Assert.Equal(restored.Description, restored.IntendedUse);
-    }
-
-    [Fact]
     public async Task LegacyMaterial_WithoutGroup_GetsNoFabricatedClassification()
     {
         var materialId = await CreateMaterialAsync();
@@ -289,12 +227,9 @@ public class GsmInventorySchemaIntegrationTests
 
         // Старые читатели видят марку как прежде.
         var material = await s.Db.GsmMaterials.AsNoTracking().FirstAsync(m => m.Id == materialId);
-        Assert.False(string.IsNullOrWhiteSpace(material.Type));
 
         // Новые поля не содержат выдуманных значений: это копия прежних
         // (см. TRG_GsmMaterials_LegacyFieldSync), а не новый источник истины.
-        Assert.Equal(material.Gost, material.Nd);
-        Assert.Equal(material.Description, material.IntendedUse);
         Assert.False(material.InGostNomenclature);
     }
 
@@ -315,7 +250,6 @@ public class GsmInventorySchemaIntegrationTests
         var materialRow = loaded.Materials.Single();
         Assert.Equal(materialId, materialRow.GsmMaterialId);
         Assert.NotNull(materialRow.GsmMaterial);
-        Assert.False(string.IsNullOrWhiteSpace(materialRow.GsmMaterial!.Type));
     }
 
     // ── Инвариант A: уникальность нормализованной пары ─────────────────────
@@ -739,9 +673,6 @@ public class GsmInventorySchemaIntegrationTests
         {
             Id = Guid.NewGuid(),
             Name = name ?? ("Марка " + Suffix()),
-            Type = "Моторное масло " + Suffix(),
-            Gost = gost,
-            Description = description,
             Nd = nd,
             IntendedUse = intendedUse,
             IsDeleted = false,
@@ -863,7 +794,6 @@ public class GsmInventorySchemaIntegrationTests
         {
             Id = Guid.NewGuid(),
             Name = "Черновик " + Suffix(),
-            Type = "Черновик " + Suffix(),
             IsDraft = true,
             IsDeleted = false,
         };

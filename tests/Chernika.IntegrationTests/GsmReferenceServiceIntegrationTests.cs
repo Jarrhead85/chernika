@@ -109,16 +109,9 @@ public class GsmReferenceServiceIntegrationTests
         Assert.True(stored.SuitabilityAir);
         Assert.Equal("Примечание", stored.Note);
 
-        // PR-5: Gost/Description больше не заполняются — действующих читателей
-        // у переходных колонок не осталось, они удаляются в PR-6.
-        Assert.Null(stored.Gost);
-        Assert.Null(stored.Description);
-
-        // Переходное правило: legacy Type = подгруппа, первая по алфавиту.
-        // Колонка NOT NULL до PR-6, поэтому заполнение продолжается.
-        // Группа в Type не пишется — это разные уровни модели.
-        Assert.Equal("Для газовых турбин", stored.Type);
-        Assert.NotEqual("Моторные масла", stored.Type);
+        // Классификация — источник истины для группы/подгрупп, а не удалённая
+        // колонка Type. Несколько подгрупп сохранены как несколько строк
+        // классификации, и группа в подгруппу не смешивается.
     }
 
     // ── 3. Классификация: замена набора и запреты ──────────────────────────
@@ -821,7 +814,6 @@ public class GsmReferenceServiceIntegrationTests
         {
             Id = Guid.NewGuid(),
             Name = "Черновик " + Suffix(),
-            Type = "Черновик " + Suffix(),
             IsDraft = true,
             IsDeleted = false,
         };

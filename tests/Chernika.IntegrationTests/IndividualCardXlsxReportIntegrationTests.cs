@@ -144,8 +144,7 @@ public class IndividualCardXlsxReportIntegrationTests
         {
             Id = Guid.NewGuid(),
             Name = name ?? "ГСМ " + Suffix(),
-            Type = "Тип " + Suffix(),
-            Gost = gost,
+            Nd = gost,
             IsDeleted = false,
             IsDraft = false,
         };

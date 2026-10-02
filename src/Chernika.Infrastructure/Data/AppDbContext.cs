@@ -149,21 +149,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(256).IsRequired();
-            // Переходные зеркала расширены до 256: прежние varchar(128) не вмещали
-            // ни подгруппу (до 200), ни НД, отражённые в них для legacy-потребителей.
-            // Расширение ничего не теряет и обратимо; колонки удаляются в PR-6.
-            e.Property(x => x.Type).HasMaxLength(256).IsRequired();
-            e.Property(x => x.Gost).HasMaxLength(256);
 
-            // ── Расширение схемы ГСМ (PR-2: expand) ──
             // Nd/IntendedUse/Note — text (без MaxLength): НД может содержать
-            // несколько документов, примечание — произвольной длины.
+            // несколько документов, примечание — произвольной длины. Предел ввода
+            // 1000 символов задаёт сервис, а не схема.
             e.Property(x => x.NatoIndex).HasMaxLength(50);
             e.Property(x => x.InGostNomenclature).HasDefaultValue(false);
             e.Property(x => x.SuitabilityGround).HasDefaultValue(false);
             e.Property(x => x.SuitabilityAir).HasDefaultValue(false);
             e.Property(x => x.SuitabilitySea).HasDefaultValue(false);
-            // Старые Type/Gost/Description остаются переходными полями до PR-6.
+            // Переходные Type/Gost/Description удалены в фазе B PR-6 и больше не
+            // участвуют в модели: конфигурации для них не осталось.
 
             e.HasQueryFilter(x => !x.IsDeleted);
         });

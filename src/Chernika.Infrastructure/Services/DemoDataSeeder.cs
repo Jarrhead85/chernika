@@ -96,11 +96,11 @@ public static class DemoDataSeeder
             {
                 Id = id,
                 Name = row.Name,
+                // Источник истины — Nd и IntendedUse. Переходные Gost/Description/
+                // Type удалены в фазе B PR-6 и больше не заполняются: группа и
+                // подгруппа живут в GsmMaterialClassifications, а не в колонке Type.
                 Nd = row.Nd,
-                Gost = row.Nd,
                 IntendedUse = row.Use,
-                Description = row.Use,
-                Type = row.Group,
             });
             gsmClassifications.Add(new GsmMaterialClassification
             {
