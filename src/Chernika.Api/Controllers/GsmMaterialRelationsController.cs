@@ -93,25 +93,50 @@ public class GsmMaterialRelationsController : ControllerBase
     [Authorize(Policy = "CreateEquipment")]
     public async Task<ActionResult<GsmRelationDto>> Create([FromBody] GsmRelationWriteApiRequest request)
     {
-        var created = await _gsmService.CreateRelationAsync(GsmRelationMapper.ToWriteRequest(request));
-        return CreatedAtAction(nameof(GetById), new { id = created.Id }, GsmRelationMapper.ToDto(created));
+        try
+        {
+            var created = await _gsmService.CreateRelationAsync(GsmRelationMapper.ToWriteRequest(request));
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, GsmRelationMapper.ToDto(created));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Отказ по правилам связи (повтор активной пары, самоссылка, Foreign
+            // при InGostNomenclature = true) — это НЕ серверная ошибка. Без
+            // перехвата клиент получал сырой 500 с text/plain вместо понятного
+            // ответа с причиной; HTTP-тест это зафиксировал.
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpPut("{id:guid}")]
     [Authorize(Policy = "EditEquipment")]
     public async Task<ActionResult> Update(Guid id, [FromBody] GsmRelationWriteApiRequest request)
     {
-        var updated = await _gsmService.UpdateRelationAsync(
-            id, GsmRelationMapper.ToWriteRequest(request));
-        if (updated == null) return NotFound();
-        return NoContent();
+        try
+        {
+            var updated = await _gsmService.UpdateRelationAsync(
+                id, GsmRelationMapper.ToWriteRequest(request));
+            if (updated == null) return NotFound();
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = "DeleteEquipment")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        if (!await _gsmService.DeleteRelationAsync(id)) return NotFound();
-        return NoContent();
+        try
+        {
+            if (!await _gsmService.DeleteRelationAsync(id)) return NotFound();
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 }

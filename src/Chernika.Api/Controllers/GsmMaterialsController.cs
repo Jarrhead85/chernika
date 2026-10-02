@@ -50,24 +50,48 @@ public class GsmMaterialsController : ControllerBase
     [Authorize(Policy = "CreateEquipment")]
     public async Task<ActionResult<GsmMaterialDto>> Create([FromBody] GsmMaterialWriteApiRequest request)
     {
-        var created = await _gsmService.CreateAsync(GsmMaterialMapper.ToWriteRequest(request));
-        return CreatedAtAction(nameof(GetById), new { id = created.Id }, GsmMaterialMapper.ToDto(created));
+        try
+        {
+            var created = await _gsmService.CreateAsync(GsmMaterialMapper.ToWriteRequest(request));
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, GsmMaterialMapper.ToDto(created));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Отказ по правилам марки (пустое имя, предел НД, группа без
+            // подгруппы) — не серверная ошибка. Тот же дефект, что был найден в
+            // контроллере связей: без перехвата клиент получал 500 с text/plain.
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpPut("{id}")]
     [Authorize(Policy = "EditEquipment")]
     public async Task<ActionResult> Update(Guid id, [FromBody] GsmMaterialWriteApiRequest request)
     {
-        var updated = await _gsmService.UpdateAsync(id, GsmMaterialMapper.ToWriteRequest(request));
-        if (updated == null) return NotFound();
-        return NoContent();
+        try
+        {
+            var updated = await _gsmService.UpdateAsync(id, GsmMaterialMapper.ToWriteRequest(request));
+            if (updated == null) return NotFound();
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpDelete("{id}")]
     [Authorize(Policy = "DeleteEquipment")]
     public async Task<ActionResult> Delete(Guid id)
     {
-        if (!await _gsmService.DeleteAsync(id)) return NotFound();
-        return NoContent();
+        try
+        {
+            if (!await _gsmService.DeleteAsync(id)) return NotFound();
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 }

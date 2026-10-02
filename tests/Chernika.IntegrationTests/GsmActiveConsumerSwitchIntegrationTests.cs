@@ -17,17 +17,155 @@ namespace Chernika.IntegrationTests;
 /// подгрупп не блокируют новое назначение, а справочные связи остаются лишь
 /// подсказкой и ничего не подставляют автоматически.
 /// </para>
+/// <para>
+/// <b>Изоляция.</b> Фикстура <c>SeedGraphAsync</c> намеренно создаёт строку ХК
+/// со ссылкой на soft-deleted марку — это и есть проверяемый случай. Такая
+/// строка опасна для общей тестовой БД: её не видно ни через глобальный фильтр,
+/// ни через подсчёт строк, поэтому оставленная марка и её связи тихо меняют
+/// результат чужого теста. Каждый тет этого класса поэтому убирает за собой
+/// ТОЛЬКО свои Guid через <see cref="GsmTestDataCleaner"/>.
+/// </para>
 /// </summary>
 [Collection("Database")]
-public class GsmActiveConsumerSwitchIntegrationTests
+public class GsmActiveConsumerSwitchIntegrationTests : IAsyncLifetime
 {
     private readonly TestDatabaseFixture _fixture;
 
+    /// <summary>Идентификаторы, созданные текущим тестом. xUnit создаёт новый
+    /// экземпляр класса на каждый тест, поэтому список не протекает между ними.</summary>
+    private readonly List<Guid> _created = new();
+
     public GsmActiveConsumerSwitchIntegrationTests(TestDatabaseFixture fixture) => _fixture = fixture;
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    /// <summary>
+    /// Уборка выполняется и при падении теста: иначе именно упавший тест
+    /// оставляет за собой самый опасный остаток.
+    /// </summary>
+    public async Task DisposeAsync()
+    {
+        if (_created.Count == 0) return;
+        await using var s = _fixture.CreateScope();
+        await GsmTestDataCleaner.CleanupAsync(s.Db, _created);
+    }
+
+    /// <summary>Регистрирует объект для уборки. Вызывается всеми помощниками.</summary>
+    private Guid Track(Guid id)
+    {
+        _created.Add(id);
+        return id;
+    }
+
+    /// <summary>
+    /// Идентификаторы, зарегистрированные текущим тестом. Открыт наружу, чтобы
+    /// тест изоляции проверял РЕАЛЬНЫЙ путь уборки (тот же набор, который
+    /// использует <see cref="DisposeAsync"/>), а не собирал свой — иначе
+    /// расхождение между ними останется незамеченным.
+    /// </summary>
+    internal IReadOnlyList<Guid> TrackedIds => _created;
 
     private static string Suffix() => Guid.NewGuid().ToString("N")[..8];
 
     private void AsNormAdmin(TestScope s) => s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+    // ── Изоляция: уборка своих данных, а не чужих ─────────────────────────
+
+    [Fact]
+    public async Task SeededGraph_LeavesNothingBehind_AfterCleanup()
+    {
+        // Фикстура намеренно создаёт строку ХК со ссылкой на soft-deleted марку.
+        // Если такая конструкция остаётся в общей БД, она не видна ни глобальному
+        // фильтру, ни подсчёту строк, и тихо меняет результат чужого теста.
+        // Проверяется уборка, а не сам сценарий: после уборки не должно остаться
+        // НИ ОДНОЙ строки тестовых объектов.
+        var before = await CountGlobalAsync();
+
+        await SeedGraphAsync("НД изоляции " + Suffix());
+
+        // Проверяется именно тот набор, который использует DisposeAsync после
+        // теста. Раньше здесь собирался набор из возвращаемых кортежей, и
+        // EquipmentModel в него не входил — уборка оставляла строку, а тест
+        // об этом не знал. Именно такой остаток и ломал чужие тесты.
+        var ids = TrackedIds;
+        Assert.True(ids.Count >= 9,
+            "зарегистрировано меньше объектов, чем создаёт фикстура: " + ids.Count);
+
+        await using (var s = _fixture.CreateScope())
+        {
+            var during = await GsmTestDataCleaner.CountResidueAsync(s.Db, ids);
+            Assert.True(during.Values.Sum() > 0,
+                "фикстура ничего не создала — проверка уборки была бы пустой");
+        }
+
+        // Уборка выполняется на ОТДЕЛЬНОМ scope: общий DbContext первого using
+        // уже освобождён, а новый scope гарантирует, что DELETE не будет
+        // откачен вместе с его disposal.
+        await using (var cleanupScope = _fixture.CreateScope())
+        {
+            await GsmTestDataCleaner.CleanupAsync(cleanupScope.Db, ids);
+        }
+        await using (var s = _fixture.CreateScope())
+        {
+            var residue = await GsmTestDataCleaner.CountResidueAsync(s.Db, ids);
+            Assert.True(
+                GsmTestDataCleaner.DescribeResidue(residue) == "остатка нет",
+                "после уборки остались строки тестовых объектов: "
+                + GsmTestDataCleaner.DescribeResidue(residue));
+        }
+
+        // Глобальные счётчики общей фикстуры вернулись к исходным. Это и есть
+        // требование «порядок запуска классов не влияет на результат».
+        var after = await CountGlobalAsync();
+        foreach (var key in after.Keys)
+        {
+            Assert.True(before[key] == after[key],
+                $"счётчик {key} не вернулся: было {before[key]}, стало {after[key]}. "
+                + "Тест оставил данные в общей фикстуре.");
+        }
+    }
+
+    [Fact]
+    public async Task Cleanup_DoesNotTouchRows_CreatedByOtherTests()
+    {
+        // Уборка обязана быть направленной: чужие строки общей фикстуры не
+        // трогаются. Иначе падение одного теста удалит фикстуры остальных.
+        await using var s = _fixture.CreateScope();
+        var before = await CountGlobalAsync();
+
+        // Пустой набор идентификаторов — самый простой случай: удалять нечего.
+        await GsmTestDataCleaner.CleanupAsync(s.Db, Array.Empty<Guid>());
+
+        // Набор из несуществующих Guid: удалять тоже нечего, а существующие
+        // строки должны уцелеть.
+        await GsmTestDataCleaner.CleanupAsync(s.Db, new[] { Guid.NewGuid(), Guid.NewGuid() });
+
+        var after = await CountGlobalAsync();
+        foreach (var key in after.Keys)
+        {
+            Assert.True(before[key] == after[key],
+                $"уборка несуществующих Guid изменила {key}: было {before[key]}, стало {after[key]}");
+        }
+    }
+
+    /// <summary>Счётчики общей фикстуры по таблицам, затрагиваемым тестами ГСМ/ХК.</summary>
+    private async Task<Dictionary<string, int>> CountGlobalAsync()
+    {
+        await using var s = _fixture.CreateScope();
+        return new Dictionary<string, int>
+        {
+            ["GsmMaterials"] = await s.Db.GsmMaterials.IgnoreQueryFilters().CountAsync(),
+            ["GsmMaterialClassifications"] = await s.Db.GsmMaterialClassifications.CountAsync(),
+            ["GsmMaterialRelations"] = await s.Db.GsmMaterialRelations.IgnoreQueryFilters().CountAsync(),
+            ["HKCards"] = await s.Db.HKCards.IgnoreQueryFilters().CountAsync(),
+            ["HKCardItems"] = await s.Db.HKCardItems.CountAsync(),
+            ["HKCardItemMaterials"] = await s.Db.HKCardItemMaterials.CountAsync(),
+            ["HKCardComponents"] = await s.Db.HKCardComponents.CountAsync(),
+            ["Nodes"] = await s.Db.Nodes.IgnoreQueryFilters().CountAsync(),
+            ["AssemblyUnits"] = await s.Db.AssemblyUnits.IgnoreQueryFilters().CountAsync(),
+            ["EquipmentModels"] = await s.Db.EquipmentModels.IgnoreQueryFilters().CountAsync(),
+        };
+    }
 
     // ── ХК: сводные строки показывают Nd, а не Gost ───────────────────────
 
@@ -512,6 +650,18 @@ public class GsmActiveConsumerSwitchIntegrationTests
 
         await s.Db.SaveChangesAsync();
 
+        // Каждый созданный объект регистрируется для уборки. Забытый здесь Guid
+        // оставит в общей БД строку ХК со ссылкой на soft-deleted марку.
+        Track(primary.Id);
+        Track(related.Id);
+        Track(toDelete.Id);
+        Track(node.Id);
+        Track(unit.Id);
+        Track(model.Id);
+        Track(childCard.Id);
+        Track(item.Id);
+        Track(parentCard.Id);
+
         return (primary.Id, related.Id, toDelete.Id, node.Id, unit.Id, parentCard.Id, childCard.Id);
     }
 
@@ -528,7 +678,7 @@ public class GsmActiveConsumerSwitchIntegrationTests
         };
         s.Db.Nodes.Add(node);
         await s.Db.SaveChangesAsync();
-        return node.Id;
+        return Track(node.Id);
     }
 
     /// <summary>Черновик ХК: предложения создаются только для него или для карты на доработке.</summary>
@@ -548,6 +698,6 @@ public class GsmActiveConsumerSwitchIntegrationTests
         };
         s.Db.HKCards.Add(card);
         await s.Db.SaveChangesAsync();
-        return card.Id;
+        return Track(card.Id);
     }
 }

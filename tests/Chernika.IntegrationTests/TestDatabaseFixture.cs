@@ -16,9 +16,11 @@ namespace Chernika.IntegrationTests;
 
 public sealed class TestDatabaseFixture : IAsyncLifetime
 {
-    private const string DbName = "chernika_test";
-    private const string ServerCs =
-        "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=qwerty12345";
+    // Строка подключения собирается в одном месте на весь проект: см. TestDatabase.
+    private const string DbName = TestDatabase.IntegrationDbName;
+
+    // Вычисляется, а не задаётся константой: пароль берётся из окружения.
+    private static string ServerCs => TestDatabase.LocalServerConnectionString();
 
     public ServiceProvider Services { get; private set; } = null!;
     public string ConnectionString { get; private set; } = null!;
@@ -37,8 +39,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await DropAndCreateDatabaseAsync();
-        ConnectionString =
-            "Host=localhost;Port=5432;Database=" + DbName + ";Username=postgres;Password=qwerty12345;Pooling=false";
+        ConnectionString = TestDatabase.For(DbName);
 
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddFilter(_ => false));

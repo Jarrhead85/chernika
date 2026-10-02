@@ -114,3 +114,17 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.Run();
+
+/// <summary>
+/// Точка входа, видимая для <c>WebApplicationFactory&lt;Program&gt;</c>.
+/// <para>
+/// Top-level statements компилируются в внутренний класс, на который нельзя
+/// сослаться из другого проекта. Пустой partial-класс делает его доступным,
+/// не меняя ни регистрации сервисов, ни поведения приложения.
+/// </para>
+/// <para>
+/// Нужен именно для HTTP-тестов: без него проверки шли бы в обход реальных
+/// маршрутов, политик и middleware, что не доказывает ничего.
+/// </para>
+/// </summary>
+public partial class Program;
