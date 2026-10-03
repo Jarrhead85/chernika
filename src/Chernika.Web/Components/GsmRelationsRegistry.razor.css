@@ -56,6 +56,12 @@
   table-layout: fixed;
 }
 
+/* Минимальная высота строки — общая для всех таблиц (см. site.css).
+   Фиксированной высоты нет: при переносе длинного текста строка растёт. */
+.relTable tbody tr {
+  height: 44px;
+}
+
 .relTable th,
 .relTable td {
   vertical-align: middle;   /* все ячейки по середине высоты строки */

@@ -245,6 +245,12 @@
     border-right: none;
 }
 
+/* Минимальная высота строки — общая для всех таблиц (см. site.css).
+   Фиксированной высоты нет: при переносе длинного текста строка растёт. */
+.hk-items-table tbody tr {
+    height: 44px;
+}
+
 .hk-items-table tbody tr {
     background: var(--panel);
 }

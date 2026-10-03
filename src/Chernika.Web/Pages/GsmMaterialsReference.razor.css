@@ -47,6 +47,11 @@
   table-layout: fixed;
 }
 
+/* Минимальная высота строки — общая для всех таблиц (см. site.css). */
+.gsmTable tbody tr {
+  height: 44px;
+}
+
 .gsmTable th,
 .gsmTable td {
   vertical-align: middle;

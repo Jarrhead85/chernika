@@ -36,7 +36,7 @@
                         <div class="mono" style="margin-top:4px">@card.Code | @card.Version | @card.Status</div>
                     </div>
 
-                    <table style="width:100%;margin-bottom:16px">
+                    <table class="printFormTable" style="width:100%;margin-bottom:16px">
                         <tr><td style="padding:6px;font-weight:700;width:180px">Уровень:</td><td style="padding:6px">@LevelName(card.ObjectLevel)</td></tr>
                         <tr><td style="padding:6px;font-weight:700">Объект:</td><td style="padding:6px">@ObjectName(card)</td></tr>
                         <tr><td style="padding:6px;font-weight:700">Организация:</td><td style="padding:6px">@card.Branch?.Name</td></tr>
@@ -49,7 +49,7 @@
                          || !string.IsNullOrEmpty(card.OutgoingLetterNumber) || !string.IsNullOrEmpty(card.RequestDetails))
                     {
                         <h3 style="font-size:14px;margin:16px 0 8px">Основание разработки ХК:</h3>
-                        <table>
+                        <table class="printFormTable">
                             @if (!string.IsNullOrEmpty(card.RequestOrganization))
                             {
                                 <tr><td style="padding:4px;font-weight:700;width:200px">Организация:</td><td style="padding:4px">@card.RequestOrganization</td></tr>
@@ -80,7 +80,7 @@
                     @if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && card.Items.Any())
                     {
                         <h3 style="font-size:14px;margin:16px 0 8px">Сборочные единицы и нормы ГСМ:</h3>
-                        <table>
+                        <table class="printFormTable">
                             <thead>
                                 <tr>
                                     <th>Сборочная единица</th>
@@ -114,7 +114,7 @@
                         }
                         else
                         {
-                            <table>
+                            <table class="printFormTable">
                                 <thead>
                                     <tr>
                                         <th>ХК-источник</th>

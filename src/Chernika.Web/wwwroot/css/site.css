@@ -457,12 +457,40 @@ th.num{text-align:center;vertical-align:middle;white-space:nowrap;font-variant-n
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border-radius:12px;border:1px solid rgba(32,50,86,.75);background:rgba(11,18,32,.35)}
 [data-theme="light"] table{background:rgba(255,255,255,.92)}
-thead th{text-align:left;font-size:12px;color:var(--muted);padding:10px;border-bottom:1px solid rgba(32,50,86,.75);background:rgba(12,23,48,.35);white-space:nowrap;font-weight:650}
+/* Выравнивание в таблице общего назначения.
+   Заголовок и данные одной колонки стоят по центру, содержимое ячейки — по
+   середине высоты строки. Раньше здесь было text-align:left у заголовка и
+   vertical-align:top у данных, из-за чего в одной строке текст, тег статуса и
+   кнопка оказывались на разной высоте, а данные не совпадали со своим
+   заголовком. Тот же контракт уже описан в .gsmTable и .relTable — здесь он
+   применяется к остальным таблицам без собственных правил. */
+thead th{
+  text-align:center;
+  vertical-align:middle;
+  font-size:12px;
+  color:var(--muted);
+  padding:10px 12px;
+  border-bottom:1px solid rgba(32,50,86,.75);
+  background:rgba(12,23,48,.35);
+  white-space:nowrap;
+  font-weight:650;
+}
 [data-theme="light"] thead th{
   background:linear-gradient(180deg, rgba(79,140,255,.10) 0%, rgba(79,140,255,.05) 100%);
   border-bottom-color:rgba(111,138,178,.18);
 }
-tbody td{padding:10px;border-bottom:1px solid rgba(32,50,86,.45);font-size:13px;vertical-align:top}
+/* Фиксированной высоты нет: длинный текст переносится, и строка растёт целиком.
+   overflow-wrap нужен, чтобы длинное слово переносилось по границам ячейки, а не
+   выпирало за неё и не обрезалось. */
+tbody tr{height:44px}
+tbody td{
+  padding:10px 12px;
+  border-bottom:1px solid rgba(32,50,86,.45);
+  font-size:13px;
+  vertical-align:middle;
+  text-align:center;
+  overflow-wrap:anywhere;
+}
 [data-theme="light"] tbody td{border-bottom-color:rgba(111,138,178,.16)}
 tbody tr:hover td{background:rgba(79,140,255,.06)}
 [data-theme="light"] tbody tr:hover td{background:rgba(79,140,255,.055)}
@@ -471,7 +499,25 @@ tbody tr:hover td{background:rgba(79,140,255,.06)}
 [data-theme="light"] .clickableRow:focus-visible{box-shadow:inset 0 0 0 2px rgba(79,140,255,.75)}
 .mono{font-family:var(--mono);color:var(--muted);font-size:12px}
 [data-theme="light"] .mono{color:#70829e}
-.rowActions{display:flex;gap:8px;flex-wrap:wrap}
+/* Печатная форма ХК — документ, а не реестр. Её таблицы раскладывают
+   «подпись: значение» и списки номенклатуры, поэтому центрирование им не
+   подходит: подпись в колонке 180px уехала бы в середину и бланк стал бы
+   нечитаемым. Правило возвращает документную типографику и отключает также
+   минимальную высоту строки — в бланке высота задаётся содержимым. */
+table.printFormTable th,
+table.printFormTable td {
+  text-align: left;
+  vertical-align: top;
+}
+table.printFormTable tbody tr {
+  height: auto;
+}
+
+   /* Кнопки в ячейке действий. justify-content центрует группу под центрированным
+   заголовком своей колонки: блок растягивается на всю ширину ячейки, поэтому
+   без этого кнопки прижимались к левому краю и уезжали от своего заголовка.
+   align-items центрует их по вертикали при разной высоте соседних ячеек. */
+.rowActions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:center}
 .tableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 @media (max-width:900px){.tableWrap table{min-width:760px}}
 .linkBtn{
@@ -851,13 +897,15 @@ input:-webkit-autofill:focus {
     font-size: 11px;
 }
 
-.permissionsTable tbody tr {
-    vertical-align: top;
-}
+/* Раньше здесь стояло `vertical-align: top` на tbody tr. На строке таблицы это
+   свойство не действует: vertical-align применяется к ячейкам и строчным
+   элементам, а не к боксу <tr>. Правило было пустым и при этом читалось как
+   «выравнивать по верху», то есть противоречило контракту таблиц. Удалено:
+   общее правило ячеек уже даёт vertical-align: middle. */
 
 .permissionsTable tbody td {
-    padding: 12px 10px;
-    border-bottom: 1px solid var(--line);
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
 }
 
 .permissionsTable tbody tr:hover {
