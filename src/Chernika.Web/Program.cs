@@ -139,12 +139,17 @@ var app = builder.Build();
 
 // Решение о владении worker'ом пишется в журнал запуска явно: иначе по логу
 // нельзя отличить «worker включён» от «его забыли зарегистрировать».
+//
+// Формулировка различает ИМЯ ХОСТА и РЕШЕНИЕ. Раньше здесь подставлялись оба, и
+// при выключенном worker'е выходило «владелец = Chernika.Web (НЕ этот хост)» —
+// противоречие, в котором имя и решение смешивались в одну фразу.
 var hkWorker = app.Services.GetRequiredService<HKExpirationWorkerOwnership>();
 app.Logger.LogInformation(
-    "Обработка сроков действия ХК: владелец = {Host} ({Decision}). Обработка выполняется {Where}.",
+    "Обработка сроков действия ХК: хост {Host} — {Decision}.",
     hkWorker.HostName,
-    hkWorker.IsOwner ? "этим хостом" : "НЕ этим хостом (владелец — Chernika.Web)",
-    hkWorker.IsOwner ? "здесь" : "в Chernika.Web");
+    hkWorker.IsOwner
+        ? "ВЛАДЕЛЕЦ, обработка выполняется здесь"
+        : "НЕ владелец, обработка выполняется в Chernika.Web");
 
 if (!app.Environment.IsDevelopment())
 {

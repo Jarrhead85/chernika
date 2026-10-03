@@ -115,12 +115,16 @@ builder.Services.AddScoped<SearchService>();
 var app = builder.Build();
 
 // Владелец worker'а объявляется в журнале запуска: иначе по логу нельзя
-// отличить «обработка выполняется» от «её здесь нет».
+// отличить «обработка выполняется» от «её здесь нет». Имя хоста и решение
+// разведены по разным местам фразы, иначе при выключенном worker'е выходило бы
+// противоречие вида «владелец = Chernika.Api (НЕ этот хост)».
 var hkWorker = app.Services.GetRequiredService<HKExpirationWorkerOwnership>();
 app.Logger.LogInformation(
-    "Обработка сроков действия ХК: владелец = {Host} ({Decision}).",
+    "Обработка сроков действия ХК: хост {Host} — {Decision}.",
     hkWorker.HostName,
-    hkWorker.IsOwner ? "этим хостом" : "НЕ этот хост (владелец — Chernika.Web)");
+    hkWorker.IsOwner
+        ? "ВЛАДЕЛЕЦ, обработка выполняется здесь"
+        : "НЕ владелец, обработка выполняется в Chernika.Web");
 
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();

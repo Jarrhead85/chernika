@@ -45,7 +45,13 @@ public class HKExpirationWorkerOwnershipTests
             .AddJsonFile("appsettings.json", optional: false)
             .Build();
 
-    private const string OwnershipLog = "владелец =";
+    // Фраза различает имя хоста и решение: «хост Chernika.Web — ВЛАДЕЛЕЦ».
+    // Раньше шаблон подставлял и то, и другое в одну конструкцию, и при
+    // выключенном worker'е выдавал противоречие «владелец = Chernika.Web
+    // (НЕ этот хост)». Тесты проверяли наличие подстрок и такой текст проходил.
+    private const string OwnershipLog = "Обработка сроков действия ХК: хост";
+    private const string OwnerDecision = "ВЛАДЕЛЕЦ, обработка выполняется здесь";
+    private const string NotOwnerDecision = "НЕ владелец, обработка выполняется в Chernika.Web";
     private const string StartupRunLog = "Стартовый прогон обработки сроков ХК";
 
     // ── Ровно один владелец, объявленный данными ───────────────────────────
@@ -129,8 +135,8 @@ public class HKExpirationWorkerOwnershipTests
 
         // Обработка действительно начата: worker записал решение о владении и
         // вышел на стартовый прогон (RunOnStartup=true).
-        Assert.True(host.Logs.Any(m => m.Contains(OwnershipLog) && m.Contains("Chernika.Web")
-                && m.Contains("этим хостом")),
+        Assert.True(host.Logs.Any(m => m.Contains(OwnershipLog)
+                && m.Contains("Chernika.Web") && m.Contains(OwnerDecision)),
             "журнал запуска не содержит решения о владении обработкой сроков: "
             + string.Join(" | ", host.Logs));
         Assert.True(host.Logs.Any(m => m.Contains(StartupRunLog)),
@@ -149,13 +155,18 @@ public class HKExpirationWorkerOwnershipTests
         Assert.Single(web.Workers);
         Assert.Empty(api.Workers);
 
-        Assert.True(web.Logs.Any(m => m.Contains(OwnershipLog) && m.Contains("этим хостом")),
+        Assert.True(web.Logs.Any(m => m.Contains(OwnershipLog)
+                && m.Contains("Chernika.Web") && m.Contains(OwnerDecision)),
             string.Join(" | ", web.Logs));
 
         Assert.True(api.Logs.Any(m => m.Contains(OwnershipLog)
-                && m.Contains("Chernika.Api") && m.Contains("НЕ этот хост")),
+                && m.Contains("Chernika.Api") && m.Contains(NotOwnerDecision)),
             "API не зафиксировал в журнале, что он не владелец: "
             + string.Join(" | ", api.Logs));
+
+        // Решение непротиворечиво: хост не может быть назван владельцем и тут же
+        // исключён из владельцев.
+        Assert.DoesNotContain(api.Logs, m => m.Contains("Chernika.Api") && m.Contains(OwnerDecision));
 
         // Двойного исполнения нет: обработку запустил только Web.
         Assert.False(api.Logs.Any(m => m.Contains(StartupRunLog)),
