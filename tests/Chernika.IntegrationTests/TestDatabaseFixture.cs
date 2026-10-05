@@ -98,6 +98,9 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         // Прогноз обработки сроков — только чтение. Регистрируется в общей фикстуре,
         // потому что проверяется на тех же картах, что и сама обработка.
         services.AddScoped<HKExpirationForecastService>();
+        // Нужен для проверки индивидуальных решений по полномочиям: форма и API
+        // вызывают одни и те же методы UserManagementService.
+        services.AddScoped<UserManagementService>();
         services.AddScoped<EquipmentService>();
         services.AddScoped<CoefficientService>();
         services.AddScoped<GsmMaterialService>();

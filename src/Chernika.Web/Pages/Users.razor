@@ -6,6 +6,7 @@
 @using Chernika.Domain.Models
 @using Chernika.Infrastructure.Services
 @inject UserManagementService UserMgmt
+@inject IPermissionService Permissions
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthState
 @inject CircuitDbLock DbLock
@@ -266,7 +267,7 @@
                                         <th>По роли</th>
                                         <th>Индивидуальное решение</th>
                                         <th>Итоговый доступ</th>
-                                        @if (effectivePermissions.BaseRole != "SystemAdmin")
+                                        @if (canManageUserPermissions && effectivePermissions.BaseRole != "SystemAdmin")
                                         {
                                             <th>Действия</th>
                                         }
@@ -275,12 +276,19 @@
                                 <tbody>
                                     @foreach (var perm in filteredPermissions)
                                     {
+                                        var actions = IndividualPermissionDecision.ActionsFor(perm);
                                         <tr>
                                             <td><span class="tag">@perm.Module</span></td>
                                             <td class="permissionCell">
                                                 <div class="permissionName">@perm.Name</div>
-                                                <div class="permissionDescription">@perm.Description</div>
-                                                <code class="permissionCode">Код системы: @perm.Code</code>
+                                                @* Описание показывается только там, где название само по себе
+                                                   не различает похожие права. Код полномочия в интерфейс не
+                                                   выводится: он остаётся в модели и уходит в запрос при
+                                                   сохранении, то есть администратору он не нужен. *@
+                                                @if (IndividualPermissionDecision.NeedsDescription(perm))
+                                                {
+                                                    <div class="permissionDescription">@perm.Description</div>
+                                                }
                                             </td>
                                             <td>
                                                 @if (perm.GrantedByRole)
@@ -296,10 +304,6 @@
                                                 @if (perm.OverrideIsGranted == true)
                                                 {
                                                     <span class="permissionStatus permissionStatus--granted">✓ Разрешено индивидуально</span>
-                                                    @if (perm.GrantedByRole)
-                                                    {
-                                                        <div class="permSecondaryHint">Дополнительное разрешение не изменяет текущий доступ</div>
-                                                    }
                                                     @if (!string.IsNullOrEmpty(perm.OverrideReason))
                                                     {
                                                         <div class="permReason">@perm.OverrideReason</div>
@@ -328,23 +332,35 @@
                                                     <span class="permissionStatus permissionStatus--denied">× Доступ запрещён</span>
                                                 }
                                             </td>
-                                            @if (effectivePermissions.BaseRole != "SystemAdmin")
+                                            @if (canManageUserPermissions && effectivePermissions.BaseRole != "SystemAdmin")
                                             {
                                                 <td>
                                                     @if (perm.RowSaving)
                                                     {
                                                         <span class="permissionStatus permissionStatus--neutral">Сохранение...</span>
                                                     }
-                                                    else if (perm.OverrideIsGranted == null)
+                                                    else if (actions.Any)
                                                     {
                                                         <div class="permActions">
-                                                            <button class="linkBtn" @onclick="() => GrantPerm(perm)">Разрешить дополнительно</button>
-                                                            <button class="linkBtn permActionDeny" @onclick="() => DenyPerm(perm)">Запретить</button>
+                                                            @* Порядок: снятие решения — возврат к доступу по роли,
+                                                               затем единственное осмысленное изменение доступа. *@
+                                                            @if (actions.CanRevokeOverride)
+                                                            {
+                                                                <button class="linkBtn" @onclick="() => RevokePerm(perm)">Снять индивидуальное решение</button>
+                                                            }
+                                                            @if (actions.CanGrant)
+                                                            {
+                                                                <button class="linkBtn" @onclick="() => GrantPerm(perm)">Разрешить</button>
+                                                            }
+                                                            @if (actions.CanDeny)
+                                                            {
+                                                                <button class="linkBtn permActionDeny" @onclick="() => DenyPerm(perm)">Запретить</button>
+                                                            }
                                                         </div>
                                                     }
                                                     else
                                                     {
-                                                        <button class="linkBtn" @onclick="() => RevokePerm(perm)">Отменить индивидуальное решение</button>
+                                                        <span class="permissionStatus permissionStatus--neutral">—</span>
                                                     }
                                                 </td>
                                             }
@@ -364,7 +380,7 @@
         <div class="modalOverlay" @onclick="() => showGrantDenyModal = false">
             <div class="modal" @onclick:stopPropagation="true" style="max-width:400px">
                 <div class="modalHeader">
-                    <h3>@(grantDenyAction == "grant" ? "Разрешить дополнительно" : "Запретить")</h3>
+                    <h3>@(grantDenyAction == "grant" ? "Разрешить" : "Запретить")</h3>
                     <button class="linkBtn" @onclick="() => showGrantDenyModal = false"
                             aria-label="Закрыть">✕</button>
                 </div>
@@ -374,8 +390,10 @@
                         <div style="margin-bottom:12px">
                             <div style="font-weight:700;font-size:14px">@grantDenyTarget.Name</div>
                             <div style="font-size:12px;color:var(--text2)">@grantDenyTarget.Module</div>
-                            <div style="font-size:11px;color:var(--muted);margin-top:4px">@grantDenyTarget.Description</div>
-                            <code style="display:inline-block;margin-top:7px;padding:2px 6px;border:1px solid var(--line);border-radius:5px;color:var(--muted);background:var(--panel2);font-family:var(--mono);font-size:11px">Код системы: @grantDenyTarget.Code</code>
+                            @if (IndividualPermissionDecision.NeedsDescription(grantDenyTarget))
+                            {
+                                <div style="font-size:11px;color:var(--muted);margin-top:4px">@grantDenyTarget.Description</div>
+                            }
                         </div>
                         @if (grantDenyAction == "deny" && grantDenyTarget.GrantedByRole)
                         {
@@ -486,6 +504,17 @@
     private string permModuleFilter = "";
     private string permStatusFilter = "";
 
+    /// <summary>
+    /// Есть ли у текущего пользователя право управления пользователями.
+    /// <para>
+    /// Страница и так закрыта политикой <c>ManageUsers</c>, поэтому у того, кто её
+    /// открыл, право есть. Проверка повторена явно: кнопка — приглашение, а не
+    /// запрет, и полагаться только на политику маршрута значит однажды показать
+    /// действия там, где сервер всё равно откажет.
+    /// </para>
+    /// </summary>
+    private bool canManageUserPermissions { get; set; }
+
     private bool showGrantDenyModal = false;
     private string grantDenyAction = "grant";
     private UserEffectivePermissionDto? grantDenyTarget;
@@ -550,41 +579,40 @@
     }
 
     IEnumerable<UserEffectivePermissionDto> filteredPermissions =>
-        effectivePermissions?.Permissions.Where(ActivePermissionFilter) ?? Enumerable.Empty<UserEffectivePermissionDto>();
+        effectivePermissions?.Permissions
+            .Where(p => IndividualPermissionDecision.Matches(p, permSearch, permModuleFilter, permStatusFilter))
+            ?? Enumerable.Empty<UserEffectivePermissionDto>();
 
     /// <summary>
-    /// Права модуля ИК не входят в выдачу и не редактируются: модуля нет в
-    /// действующем функционале, и право ничего бы не разрешило. Записи
-    /// разрешений, назначения ролей и индивидуальные решения остаются в БД и
-    /// доступны через журнал аудита — помечать их в интерфейсе не нужно.
+    /// Счётчики считаются по текущей отфильтрованной выборке — правило в
+    /// <see cref="IndividualPermissionDecision.Count"/>. Считать их здесь
+    /// отдельно было бы второй реализацией того же правила, и они разошлись бы
+    /// с видимыми строками при первом же изменении фильтра.
     /// </summary>
-    bool ActivePermissionFilter(UserEffectivePermissionDto p)
+    IndividualPermissionDecision.Counters permissionCounters =>
+        IndividualPermissionDecision.Count(
+            effectivePermissions?.Permissions, permSearch, permModuleFilter, permStatusFilter);
+
+    int activePermissionCount => permissionCounters.Total;
+
+    int grantedActivePermissionCount => permissionCounters.Granted;
+
+    int deniedActivePermissionCount => permissionCounters.Denied;
+
+    int overrideActivePermissionCount => permissionCounters.WithOverride;
+
+    /// <summary>
+    /// Право управления пользователями у того, кто открыл форму. Вычисляется
+    /// один раз при открытии, потому что решает, показывать ли колонку действий.
+    /// </summary>
+    private async Task<bool> ResolveCanManagePermissionsAsync()
     {
-        if (PermissionCatalog.IsConserved(p.Code)) return false;
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var rawId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (!Guid.TryParse(rawId, out var actorId)) return false;
 
-        return (string.IsNullOrEmpty(permSearch) ||
-                p.Name.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
-                p.Code.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
-                p.Description.Contains(permSearch, StringComparison.OrdinalIgnoreCase) ||
-                p.Module.Contains(permSearch, StringComparison.OrdinalIgnoreCase)) &&
-               (string.IsNullOrEmpty(permModuleFilter) || p.Module == permModuleFilter) &&
-               (string.IsNullOrEmpty(permStatusFilter) ||
-                (permStatusFilter == "effective" && p.IsEffective) ||
-                (permStatusFilter == "denied" && !p.IsEffective) ||
-                (permStatusFilter == "override" && p.OverrideIsGranted != null));
+        return await Permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.UsersManage);
     }
-
-    int activePermissionCount =>
-        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code)) ?? 0;
-
-    int grantedActivePermissionCount =>
-        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code) && p.IsEffective) ?? 0;
-
-    int deniedActivePermissionCount =>
-        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code) && !p.IsEffective) ?? 0;
-
-    int overrideActivePermissionCount =>
-        effectivePermissions?.Permissions.Count(p => !PermissionCatalog.IsConserved(p.Code) && p.OverrideIsGranted != null) ?? 0;
 
     protected override async Task OnInitializedAsync()
     {
@@ -749,6 +777,7 @@
         StateHasChanged();
 
         effectivePermissions = await DbLock.LockedAsync(() => UserMgmt.GetEffectivePermissionsAsync(userId));
+        canManageUserPermissions = await ResolveCanManagePermissionsAsync();
         permissionsLoading = false;
         StateHasChanged();
     }
@@ -813,6 +842,8 @@
             return;
         }
 
+        // Список, счётчики и набор кнопок пересобираются целиком: иначе после
+        // действия строка продолжала бы предлагать то, что уже не осмысленно.
         effectivePermissions = result;
         showGrantDenyModal = false;
         grantDenySaving = false;

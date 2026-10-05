@@ -775,7 +775,7 @@ input:-webkit-autofill:focus {
 .permissionsModal {
     width: min(1440px, calc(100vw - 32px));
     max-width: none;
-    height: min(860px, calc(100dvh - 32px));
+    height: min(920px, calc(100dvh - 24px));
     max-height: none;
     display: flex;
     flex-direction: column;
@@ -798,7 +798,21 @@ input:-webkit-autofill:focus {
     padding: 16px 20px 20px;
 }
 
-.permissionsToolbar,
+/* Фильтры — одна строка. Поиск получает заметно большую долю, чем каждый из
+   двух одинаковых селекторов, иначе по названию полномочия искать негде.
+   На узком экране строка переносится в две, а потом в одну: см. медиазапросы
+   ниже. Перенос сделан сеткой, поэтому поля не могут наложиться друг на друга. */
+.permissionsToolbar {
+    display: grid;
+    grid-template-columns: minmax(240px, 1.4fr) minmax(170px, 1fr) minmax(160px, 1fr);
+    gap: 12px;
+    align-items: end;
+}
+
+.permissionsToolbar .field {
+    min-width: 0;
+}
+
 .permCounters,
 .permissionsSystemNote,
 .permissionsError {
@@ -903,8 +917,11 @@ input:-webkit-autofill:focus {
    «выравнивать по верху», то есть противоречило контракту таблиц. Удалено:
    общее правило ячеек уже даёт vertical-align: middle. */
 
+/* Строки полномочий плотнее прочих таблиц: в форме их больше шестидесяти, и
+   каждый сэкономленный по вертикали пиксель — это строка, поместившаяся на
+   экране без прокрутки. */
 .permissionsTable tbody td {
-  padding: 12px 10px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -955,15 +972,14 @@ input:-webkit-autofill:focus {
     font-style: italic;
 }
 
+/* Причина не обрезается: она показывает, что именно записал администратор, и
+   обрезка до двух строк скрывала половину записи. Строка растёт целиком. */
 .permReason {
     margin-top: 6px;
     font-size: 11px;
     color: var(--muted);
     line-height: 1.4;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    overflow-wrap: anywhere;
 }
 
 .permActions {
@@ -1005,6 +1021,18 @@ input:-webkit-autofill:focus {
 }
 
 @media (max-width: 1120px) {
+
+/* Фильтры в две строки: поиск во всю ширину, два селектора под ним.
+   Сетка гарантирует, что поля не наложатся друг на друга при любой ширине. */
+@media (max-width: 980px) {
+    .permissionsToolbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .permissionsToolbar > .field:first-child {
+        grid-column: 1 / -1;
+    }
+}
     .permissionsModal {
         width: calc(100vw - 24px);
         height: calc(100dvh - 24px);
@@ -1023,6 +1051,7 @@ input:-webkit-autofill:focus {
         gap: 10px;
     }
 
+    /* Одна колонка: поля не накладываются, выстраиваются сверху вниз. */
     .permissionsToolbar {
         grid-template-columns: 1fr;
         gap: 10px;
