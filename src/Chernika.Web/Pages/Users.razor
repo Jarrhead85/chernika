@@ -75,23 +75,30 @@
                                     }
                                 </td>
                                 <td>
-                                    <button class="linkBtn" @onclick="() => OpenEdit(user)">Изменить</button>
-                                    <button class="linkBtn" @onclick="() => OpenPermissions(user)">Полномочия</button>
-                                    @if (user.IsDeleted)
-                                    {
-                                        <button class="linkBtn" style="color:var(--ok)" @onclick="() => RestoreUser(user)">Восстановить</button>
-                                    }
-                                    else
-                                    {
-                                        <button class="linkBtn" style="color:var(--warn)" @onclick="() => ToggleBlock(user)">
-                                            @(user.IsActive ? "Заблокировать" : "Разблокировать")
-                                        </button>
-                                        <button class="linkBtn" style="color:var(--error)" @onclick="() => DeleteUser(user)">Удалить</button>
-                                        @if (user.IsActive)
+                                    @* Все кнопки колонки — один класс и один цвет.
+                                       Цвет задавался inline-стилем, а для «Удалить»
+                                       ещё и через переменную --error, которой в
+                                       палитре нет, поэтому опасное действие
+                                       выглядело так же, как безопасное. *@
+                                    <div class="rowActions">
+                                        <button class="linkBtn" @onclick="() => OpenEdit(user)">Изменить</button>
+                                        <button class="linkBtn" @onclick="() => OpenPermissions(user)">Полномочия</button>
+                                        @if (user.IsDeleted)
                                         {
-                                            <button class="linkBtn" @onclick="() => OpenResetPassword(user)">Сбросить пароль</button>
+                                            <button class="linkBtn" @onclick="() => RestoreUser(user)">Восстановить</button>
                                         }
-                                    }
+                                        else
+                                        {
+                                            <button class="linkBtn" @onclick="() => ToggleBlock(user)">
+                                                @(user.IsActive ? "Заблокировать" : "Разблокировать")
+                                            </button>
+                                            <button class="linkBtn" @onclick="() => DeleteUser(user)">Удалить</button>
+                                            @if (user.IsActive)
+                                            {
+                                                <button class="linkBtn" @onclick="() => OpenResetPassword(user)">Сбросить пароль</button>
+                                            }
+                                        }
+                                    </div>
                                 </td>
                             </tr>
                         }
@@ -150,7 +157,7 @@
                             @if (formRole != nameof(UserRole.SystemAdmin))
                             {
                                 <div class="field">
-                                    <label for="new-user-branch">Организация *</label>
+                                    <label for="new-user-branch">Отдел *</label>
                                     <BranchSelect @bind-Value="SelectedBranchId" CanCreate="canQuickCreateBranch" />
                                 </div>
                             }
@@ -705,7 +712,7 @@
             {
                 if (string.IsNullOrEmpty(formBranchId) || !Guid.TryParse(formBranchId, out var parsed))
                 {
-                    formError = "Организация обязательна для выбранной роли";
+                    formError = "Отдел обязателен для выбранной роли";
                     return;
                 }
                 branchId = parsed;

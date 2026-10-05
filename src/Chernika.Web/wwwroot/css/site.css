@@ -517,7 +517,32 @@ table.printFormTable tbody tr {
    заголовком своей колонки: блок растягивается на всю ширину ячейки, поэтому
    без этого кнопки прижимались к левому краю и уезжали от своего заголовка.
    align-items центрует их по вертикали при разной высоте соседних ячеек. */
-.rowActions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:center}
+.rowActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center}
+/* Кнопки действий в строке таблицы. Раньше промежуток между ними задавался
+   пробелом в разметке, потому что у .linkBtn не было отступа вовсе: кнопки
+   вставали вровень, но неравномерно, и при переносе строки разъезжались.
+   Теперь промежуток один на всю таблицу — gap выше, — и задаётся он сеткой,
+   а не пробелами.
+
+   Стиль и цвет тоже единые. Отдельный цвет на каждую кнопку задавался
+   inline-стилем, причём для «Удалить» использовалась переменная --error,
+   которой в палитре нет: кнопка молча оставалась обычного цвета. */
+.rowActions .linkBtn{
+  display:inline-flex;align-items:center;justify-content:center;
+  padding:6px 10px;border:1px solid var(--line);border-radius:10px;
+  background:var(--panel2);color:var(--text);
+  font-size:12px;font-weight:500;line-height:1.2;white-space:nowrap;
+  cursor:pointer;transition:background .18s ease,border-color .18s ease,color .18s ease;
+}
+.rowActions .linkBtn:hover{
+  background:color-mix(in srgb,var(--accent) 12%,var(--panel2));
+  border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
+  color:var(--text);
+}
+.rowActions .linkBtn:focus-visible{
+  outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,140,255,.14);
+}
+.rowActions .linkBtn:active{background:color-mix(in srgb,var(--accent) 18%,var(--panel2))}
 .tableWrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 @media (max-width:900px){.tableWrap table{min-width:760px}}
 .linkBtn{
@@ -1559,11 +1584,11 @@ input:-webkit-autofill:focus {
   .registryTableWrap table{min-width:620px}
 }
 
-.rowActions{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-}
+/* Раньше здесь стояло второе определение .rowActions — display:inline-flex без
+   переноса и с другим промежутком. Оно шло позже и перебивало первое, поэтому
+   объявленные выше перенос строк и выравнивание по центру не действовали, а
+   расстояние между кнопками зависело от того, какое правило выиграло. Единое
+   определение — выше, рядом с .linkBtn. */
 
 .iconBtn{
   width:32px;
