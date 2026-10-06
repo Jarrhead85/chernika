@@ -382,6 +382,11 @@ public class UserPermissionOverrideIntegrationTests : IAsyncLifetime
         await using var s = _fixture.CreateScope();
         s.User.CurrentUserId = Guid.Parse(_subjectUserId);
 
+        // Пользователю выдаётся Permissions.Manage, иначе сработает гейт права и
+        // до проверки «нельзя менять себя» дело не дойдёт. Проверяется именно
+        // бизнес-правило, а не отсутствие прав.
+        await SeedOverrideAsync(s, PermissionCodes.PermissionsManage, granted: true);
+
         var (result, error) = await s.UserMgmt.GrantPermissionAsync(
             _subjectUserId, PermissionCodes.ReferenceView, "себе");
 

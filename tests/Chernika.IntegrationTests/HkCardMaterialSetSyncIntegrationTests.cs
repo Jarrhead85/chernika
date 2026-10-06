@@ -53,6 +53,7 @@ public class HkCardMaterialSetSyncIntegrationTests
         // Значения читаются в новом scope: запись действительно дошла до БД.
         await using (var s2 = _fixture.CreateScope())
         {
+            AsNormAdmin(s2);
             var saved = await s2.HK.GetByIdAsync(cardId);
             Assert.NotNull(saved);
             Assert.Equal("Правка примечания", saved!.Notes);
@@ -245,6 +246,7 @@ public class HkCardMaterialSetSyncIntegrationTests
 
         await using (var s2 = _fixture.CreateScope())
         {
+            AsNormAdmin(s2);
             var card = await s2.HK.GetByIdAsync(cardId);
             Assert.NotNull(card);
             Assert.Equal(2, card!.Items.Count);
@@ -361,6 +363,7 @@ public class HkCardMaterialSetSyncIntegrationTests
 
         await using (var s2 = _fixture.CreateScope())
         {
+            AsNormAdmin(s2);
             var card = await s2.HK.GetByIdAsync(cardId);
             var rows = card!.Items.SelectMany(i => i.Materials).ToList();
             Assert.Equal(2, rows.Count);

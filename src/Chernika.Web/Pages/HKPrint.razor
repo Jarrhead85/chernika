@@ -235,7 +235,10 @@
     async Task DownloadPdf()
     {
         if (card == null) return;
-        var pdfBytes = ReportService.GenerateHKCardPdf(card);
+
+        // Право экспорта проверяет сервис: раньше печать шла под ViewHK, и
+        // запрет Report.Export не оставлял следа — форму можно было выгрузить.
+        var pdfBytes = await ReportService.GenerateHKCardPdfAsync(card);
         await JS.InvokeVoidAsync("downloadFile", "HK-" + card.Code + ".pdf", "application/pdf", Convert.ToBase64String(pdfBytes));
     }
 
@@ -243,7 +246,7 @@
     {
         if (card == null) return;
         var cards = await DbLock.LockedAsync(() => HKCardService.GetAllAsync());
-        var excelBytes = ReportService.GenerateHKRegistryExcel(cards);
+        var excelBytes = await ReportService.GenerateHKRegistryExcelAsync(cards);
         await JS.InvokeVoidAsync("downloadFile", "Registry_HK.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Convert.ToBase64String(excelBytes));
     }
 

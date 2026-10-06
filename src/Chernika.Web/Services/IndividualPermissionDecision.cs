@@ -44,11 +44,18 @@ public static class IndividualPermissionDecision
     public readonly record struct Counters(int Total, int Granted, int Denied, int WithOverride);
 
     /// <summary>
-    /// Относится ли право к действующему функционалу. Права законсервированного
-    /// модуля ИК в активной форме выдачи не участвуют: модуля нет в интерфейсе и
-    /// право ничего бы не разрешило.
+    /// Относится ли право к действующему функционалу.
+    /// <para>
+    /// В активную форму не попадают два вида кодов. Законсервированные права ИК:
+    /// модуля нет в интерфейсе и право ничего бы не разрешило. Устаревшие общие
+    /// коды (Task.Manage, Composition.Edit): своей операции у них нет, и выдача
+    /// такого права вводила бы в заблуждение — администратор выдавал бы право,
+    /// которое ничем не управляет. В обоих случаях код и данные сохраняются,
+    /// исключается только возможность выдать его из формы.
+    /// </para>
     /// </summary>
-    public static bool IsActive(string code) => !PermissionCatalog.IsConserved(code);
+    public static bool IsActive(string code) =>
+        !PermissionCatalog.IsConserved(code) && !PermissionCatalog.IsDeprecated(code);
 
     /// <summary>
     /// Действия строки — по ИТОГОВОМУ доступу, а не по одному полю «По роли».

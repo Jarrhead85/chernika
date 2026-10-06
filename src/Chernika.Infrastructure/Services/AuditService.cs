@@ -9,8 +9,18 @@ namespace Chernika.Infrastructure.Services;
 public class AuditService
 {
     private readonly AppDbContext _db;
+    private readonly IPermissionService _permissions;
+    private readonly ICurrentUserService _currentUser;
 
-    public AuditService(AppDbContext db) => _db = db;
+    public AuditService(
+        AppDbContext db,
+        IPermissionService permissions,
+        ICurrentUserService currentUser)
+    {
+        _db = db;
+        _permissions = permissions;
+        _currentUser = currentUser;
+    }
 
     public async Task<AuditLog> LogAsync(AuditWriteRequest request, CancellationToken ct = default)
     {
@@ -99,17 +109,39 @@ public class AuditService
         return await LogAsync(new AuditWriteRequest(entityType, entityId, action, userId, Details: details));
     }
 
-    public Task<List<AuditLog>> GetLogsAsync(int page = 1, int pageSize = 50, string? entityType = null, string? action = null, string? period = null, string? source = null) =>
-        BuildFilteredQuery(entityType, action, period, source)
+    /// <summary>
+    /// Проверка права просмотра журнала аудита.
+    /// <para>
+    /// Право требуют только методы ЧТЕНИЯ журнала. Методы записи
+    /// (<see cref="LogAsync"/>, <see cref="CreateLogAsync"/>) права намеренно не
+    /// требуют: их вызывают и фоновые операции сроков ХК, где интерактивного
+    /// пользователя нет. Запись аудита — часть бизнес-операции, а не чтение
+    /// журнала, и требование права просмотра сломало бы системные пути.
+    /// </para>
+    /// </summary>
+    private async Task DemandViewPermissionAsync(CancellationToken ct)
+    {
+        var userId = _currentUser.GetRequiredUserId();
+        await _permissions.DemandPermissionAsync(PermissionCodes.AuditView, ct);
+    }
+
+    public async Task<List<AuditLog>> GetLogsAsync(int page = 1, int pageSize = 50, string? entityType = null, string? action = null, string? period = null, string? source = null, CancellationToken ct = default)
+    {
+        await DemandViewPermissionAsync(ct);
+
+        return await BuildFilteredQuery(entityType, action, period, source)
             .OrderByDescending(l => l.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .ToListAsync();
+            .ToListAsync(ct);
+    }
 
     public async Task<List<AuditLogDisplayDto>> GetLogsWithEntityNamesAsync(
         int page = 1, int pageSize = 50,
         string? entityType = null, string? action = null, string? period = null, string? source = null)
     {
+        await DemandViewPermissionAsync(default);
+
         var query = BuildFilteredQuery(entityType, action, period, source);
 
         var totalCount = await query.CountAsync();
@@ -228,15 +260,24 @@ public class AuditService
         }).ToList();
     }
 
-    public Task<int> GetTotalCountAsync(
-        string? entityType = null, string? action = null, string? period = null, string? source = null) =>
-        BuildFilteredQuery(entityType, action, period, source).CountAsync();
+    public async Task<int> GetTotalCountAsync(
+        string? entityType = null, string? action = null, string? period = null, string? source = null,
+        CancellationToken ct = default)
+    {
+        await DemandViewPermissionAsync(ct);
+        return await BuildFilteredQuery(entityType, action, period, source).CountAsync(ct);
+    }
 
-    public Task<List<AuditLog>> GetLogsByEntityAsync(string entityType, string entityId) =>
-        _db.AuditLogs
+    public async Task<List<AuditLog>> GetLogsByEntityAsync(
+        string entityType, string entityId, CancellationToken ct = default)
+    {
+        await DemandViewPermissionAsync(ct);
+
+        return await _db.AuditLogs
             .Where(l => l.EntityType == entityType && l.EntityId == entityId)
             .OrderByDescending(l => l.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(ct);
+    }
 
     private IQueryable<AuditLog> BuildFilteredQuery(string? entityType, string? action, string? period, string? source)
     {

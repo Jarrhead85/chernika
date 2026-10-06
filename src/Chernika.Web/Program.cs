@@ -89,14 +89,17 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("SystemConfig", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.SystemConfig)));
     options.AddPolicy("ViewAuditLog", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.AuditView)));
     options.AddPolicy("ViewTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskViewOwn)));
+    options.AddPolicy("ViewAllTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskView)));
+    options.AddPolicy("AssignTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskAssign)));
+    options.AddPolicy("CompleteTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskComplete)));
+    options.AddPolicy("CancelTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskCancel)));
     options.AddPolicy("ViewNotifications", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.NotificationView)));
     options.AddPolicy("ManageReference", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
     options.AddPolicy("ViewReferences", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceView)));
     options.AddPolicy("ViewComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionView)));
-    options.AddPolicy("ManageComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionEdit)));
     options.AddPolicy("ManageIndividualCards", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
-    options.AddPolicy("ManageTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskManage)));
     options.AddPolicy("ReportExport", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReportExport)));
+    options.AddPolicy("HKAttachmentView", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKAttachmentView)));
     options.AddPolicy("HKAttachmentEdit", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKAttachmentEdit)));
 });
 

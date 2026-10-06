@@ -35,7 +35,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult<ProductCompositionDto>> Create([FromBody] CreateCompositionRequest request)
     {
         var created = await _equipService.CreateCompositionDraftAsync(request);
@@ -43,7 +43,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Update(Guid id, [FromBody] UpdateCompositionDraftRequest request)
     {
         var req = request with { Id = id };
@@ -63,7 +63,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/parts")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult<ProductCompositionPartDto>> AddPart(Guid id, [FromBody] AddPartRequest req)
     {
         var request = req with { CompositionId = id };
@@ -72,7 +72,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPut("parts/{partId}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> UpdatePart(Guid partId, [FromBody] UpdatePartRequest request)
     {
         var req = request with { PartId = partId };
@@ -82,7 +82,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpDelete("parts/{partId}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> RemovePart(Guid partId)
     {
         var success = await _equipService.RemovePartAsync(partId);
@@ -101,7 +101,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPost("{compositionId}/aggregates")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult<ProductCompositionAggregateDto>> AddAggregate(Guid compositionId, [FromBody] AddProductCompositionAggregateRequest req)
     {
         var request = req with { ProductCompositionId = compositionId };
@@ -110,7 +110,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPost("aggregates/{id}/move")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> MoveAggregate(Guid id, [FromBody] MoveProductCompositionAggregateRequest req)
     {
         var request = req with { AggregateItemId = id };
@@ -120,7 +120,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPut("aggregates/{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> UpdateAggregate(Guid id, [FromBody] UpdateProductCompositionAggregateRequest req)
     {
         var request = req with { Id = id };
@@ -134,7 +134,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpDelete("aggregates/{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> RemoveAggregate(Guid id)
     {
         var success = await _equipService.RemoveAggregateAsync(id);
@@ -145,7 +145,7 @@ public class ProductCompositionsController : ControllerBase
     // ── Переходы статусов ──────────────────────────────────────────────
 
     [HttpPost("{id}/submit")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> SubmitForReview(Guid id)
     {
         if (!await _equipService.SubmitForReviewAsync(id)) return NotFound();
@@ -153,7 +153,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/return")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> ReturnToDraft(Guid id, [FromBody] ReturnToDraftRequest? req)
     {
         if (!await _equipService.ReturnToDraftAsync(id, req?.Comment)) return NotFound();
@@ -161,7 +161,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/approve")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Approve(Guid id, [FromBody] ApproveRequest? req)
     {
         if (!await _equipService.ApproveCompositionAsync(id, req?.Comment)) return NotFound();
@@ -169,7 +169,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/archive")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Archive(Guid id)
     {
         if (!await _equipService.ArchiveCompositionAsync(id)) return NotFound();
@@ -177,7 +177,7 @@ public class ProductCompositionsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Delete(Guid id)
     {
         var success = await _equipService.DeleteCompositionDraftAsync(id);

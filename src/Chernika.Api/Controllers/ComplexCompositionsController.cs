@@ -34,7 +34,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult<ComplexCompositionDto>> Create([FromBody] CreateComplexCompositionRequest request)
     {
         var created = await _equip.CreateComplexCompositionAsync(request);
@@ -42,7 +42,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Update(Guid id, [FromBody] UpdateComplexCompositionDraftRequest request)
     {
         var req = request with { Id = id };
@@ -54,7 +54,7 @@ public class ComplexCompositionsController : ControllerBase
     // ── Элементы ────────────────────────────────────────────────
 
     [HttpPost("{id}/items")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult<ComplexCompositionItemDto>> AddItem(Guid id, [FromBody] AddComplexCompositionItemRequest req)
     {
         var request = req with { CompositionId = id };
@@ -63,7 +63,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpPut("items/{itemId}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> UpdateItem(Guid itemId, [FromBody] UpdateComplexCompositionItemRequest request)
     {
         var req = request with { Id = itemId };
@@ -73,7 +73,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpDelete("items/{itemId}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> RemoveItem(Guid itemId)
     {
         var success = await _equip.RemoveComplexCompositionItemAsync(itemId);
@@ -84,7 +84,7 @@ public class ComplexCompositionsController : ControllerBase
     // ── Переходы статусов ───────────────────────────────────────
 
     [HttpPost("{id}/submit")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> SubmitForReview(Guid id)
     {
         if (!await _equip.SubmitComplexCompositionForReviewAsync(id)) return NotFound();
@@ -92,7 +92,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/return")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> ReturnToDraft(Guid id, [FromBody] ReturnToDraftRequest? req)
     {
         if (!await _equip.ReturnComplexCompositionToDraftAsync(id, req?.Comment)) return NotFound();
@@ -100,7 +100,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/approve")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Approve(Guid id, [FromBody] ApproveRequest? req)
     {
         if (!await _equip.ApproveComplexCompositionAsync(id, req?.Comment)) return NotFound();
@@ -108,7 +108,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/archive")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Archive(Guid id)
     {
         if (!await _equip.ArchiveComplexCompositionAsync(id)) return NotFound();
@@ -116,7 +116,7 @@ public class ComplexCompositionsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Delete(Guid id)
     {
         var success = await _equip.DeleteComplexCompositionDraftAsync(id);

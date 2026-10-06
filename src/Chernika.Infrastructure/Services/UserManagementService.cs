@@ -32,8 +32,39 @@ public class UserManagementService
         _audit = audit;
     }
 
+    /// <summary>
+    /// Проверка права перед чтением или записью в данные пользователей и полномочий.
+    /// <para>
+    /// Раньше сервис содержал ноль проверок: всё держалось на политиках хоста.
+    /// Политика — это фильтр маршрута, а не проверка в операции: другой вызов того
+    /// же метода проходил без всяких прав. Поэтому право проверяется здесь, до
+    /// обращения к данным.
+    /// </para>
+    /// </summary>
+    private async Task DemandAsync(string permissionCode, CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        await _permissions.DemandPermissionAsync(permissionCode, ct);
+    }
+
+    /// <summary>
+    /// Проверка одного из двух прав. Нужна там, где одну и ту же операцию
+    /// выполняют два разных экрана с разными правами: форма пользователей
+    /// открывается по Users.Manage, а выдача индивидуальных решений через API —
+    /// по Permissions.Manage.
+    /// </summary>
+    private async Task DemandEitherAsync(CancellationToken ct, params string[] permissionCodes)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), permissionCodes))
+            throw new UnauthorizedAccessException(
+                "Недостаточно прав: требуется одно из " + string.Join(", ", permissionCodes) + ".");
+    }
     public async Task<List<UserListItem>> GetUsersAsync(string? statusFilter = null, string? roleFilter = null, string? search = null, int page = 1, int pageSize = 50)
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         var query = _userManager.Users.AsQueryable();
 
         if (statusFilter == "active")
@@ -90,6 +121,8 @@ public class UserManagementService
 
     public async Task<int> GetUsersCountAsync(string? statusFilter = null, string? roleFilter = null, string? search = null)
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         var query = _userManager.Users.AsQueryable();
 
         if (statusFilter == "active")
@@ -111,6 +144,8 @@ public class UserManagementService
 
     public async Task<List<BranchListItem>> GetBranchesAsync()
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         return await _db.Branches
             .OrderBy(b => b.Code)
             .Select(b => new BranchListItem { Id = b.Id, Name = b.Name, Code = b.Code })
@@ -119,6 +154,8 @@ public class UserManagementService
 
     public async Task<(bool Success, string? Error)> CreateUserAsync(string userName, string password, string fullName, string position, string roleName, Guid? branchId = null)
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         var actorId = _currentUser.GetRequiredUserId();
 
         if (string.IsNullOrWhiteSpace(userName))
@@ -167,6 +204,8 @@ public class UserManagementService
 
     public async Task<(bool Success, string? Error)> UpdateUserAsync(string userId, string fullName, string position, string roleName, Guid? branchId = null)
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         var actorId = _currentUser.GetRequiredUserId();
 
         if (actorId.ToString() == userId)
@@ -230,6 +269,8 @@ public class UserManagementService
 
     public async Task<(bool Success, string? Error)> ToggleBlockAsync(string userId)
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         var actorId = _currentUser.GetRequiredUserId();
 
         if (actorId.ToString() == userId)
@@ -277,6 +318,8 @@ public class UserManagementService
 
     public async Task<(bool Success, string? Error)> DeleteUserAsync(string userId, string reason)
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         var actorId = _currentUser.GetRequiredUserId();
 
         if (actorId.ToString() == userId)
@@ -330,6 +373,8 @@ public class UserManagementService
 
     public async Task<(bool Success, string? Error)> RestoreUserAsync(string userId, string roleName, Guid? branchId)
     {
+        await DemandAsync(PermissionCodes.UsersManage);
+
         var actorId = _currentUser.GetRequiredUserId();
 
         var user = await _userManager.FindByIdAsync(userId);
@@ -381,6 +426,8 @@ public class UserManagementService
 
     public async Task<List<UserPermissionOverrideDto>> GetOverridesAsync(string userId)
     {
+        await DemandAsync(PermissionCodes.PermissionsManage);
+
         var overrides = await _db.UserPermissionOverrides
             .Where(x => x.UserId == userId)
             .OrderBy(x => x.PermissionCode)
@@ -401,6 +448,8 @@ public class UserManagementService
 
     public async Task<(bool Success, string? Error)> SetOverrideAsync(string userId, string permissionCode, bool isGranted, string? reason)
     {
+        await DemandAsync(PermissionCodes.PermissionsManage);
+
         var actorId = _currentUser.GetRequiredUserId();
 
         var user = await _userManager.FindByIdAsync(userId);
@@ -445,6 +494,8 @@ public class UserManagementService
 
     public async Task<(bool Success, string? Error)> RemoveOverrideAsync(string userId, string permissionCode)
     {
+        await DemandAsync(PermissionCodes.PermissionsManage);
+
         var actorId = _currentUser.GetRequiredUserId();
 
         var user = await _userManager.FindByIdAsync(userId);
@@ -472,6 +523,11 @@ public class UserManagementService
 
     public async Task<UserEffectivePermissionsDto?> GetEffectivePermissionsAsync(string userId)
     {
+        // Форму пользователей открывают по Users.Manage, а выдачу решений через API
+        // — по Permissions.Manage. Чтение прав одно и то же, поэтому принимается
+        // любое из двух прав, а не одно конкретное.
+        await DemandEitherAsync(ct: default, PermissionCodes.UsersManage, PermissionCodes.PermissionsManage);
+
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return null;
 
@@ -546,6 +602,8 @@ public class UserManagementService
 
     public async Task<(UserEffectivePermissionsDto? Result, string? Error)> GrantPermissionAsync(string userId, string permissionCode, string reason)
     {
+        await DemandAsync(PermissionCodes.PermissionsManage);
+
         var actorId = _currentUser.GetRequiredUserId();
         var actorUserId = actorId.ToString();
 

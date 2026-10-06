@@ -408,7 +408,7 @@ public class IndividualCardPdfReportIntegrationTests
     public async Task FormedPdf_ContainsAllSectionsAndRequisites()
     {
         await using var s = Scope();
-        var service = new ReportService(s.IndividualCards);
+        var service = new ReportService(s.IndividualCards, s.Permissions, s.User);
         SetUser(s, _fixture.SystemAdminUser);
         var (cardId, modelId, _) = await CreateFormedCardAsync(s);
         var model = await s.Db.EquipmentModels.AsNoTracking().FirstAsync(m => m.Id == modelId);
@@ -545,7 +545,7 @@ public class IndividualCardPdfReportIntegrationTests
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
-        var service = new ReportService(s.IndividualCards);
+        var service = new ReportService(s.IndividualCards, s.Permissions, s.User);
         var (cardId, _, _) = await CreateFormedCardAsync(s);
 
         var foreign = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchB);
@@ -569,7 +569,7 @@ public class IndividualCardPdfReportIntegrationTests
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
-        var service = new ReportService(s.IndividualCards);
+        var service = new ReportService(s.IndividualCards, s.Permissions, s.User);
         var (cardId, _, _) = await CreateFormedCardAsync(s);
 
         var file = await service.GenerateIndividualCardPdfAsync(cardId);

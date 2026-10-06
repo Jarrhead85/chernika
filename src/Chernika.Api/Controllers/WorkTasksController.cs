@@ -17,6 +17,7 @@ public class WorkTasksController : ControllerBase
     public WorkTasksController(TaskService tasks) => _tasks = tasks;
 
     [HttpGet]
+    [Authorize(Policy = "ViewAllTasks")]
     public async Task<ActionResult<List<WorkTaskListItemDto>>> GetActive([FromQuery] int limit = 100)
     {
         var result = await _tasks.GetMyTasksAsync(new WorkTaskQuery
@@ -30,6 +31,7 @@ public class WorkTasksController : ControllerBase
     }
 
     [HttpGet("completed")]
+    [Authorize(Policy = "ViewAllTasks")]
     public async Task<ActionResult<List<WorkTaskListItemDto>>> GetCompleted([FromQuery] int limit = 20)
     {
         var result = await _tasks.GetMyTasksAsync(new WorkTaskQuery
@@ -42,12 +44,14 @@ public class WorkTasksController : ControllerBase
     }
 
     [HttpGet("count")]
+    [Authorize(Policy = "ViewAllTasks")]
     public async Task<ActionResult<int>> GetActiveCount()
     {
         return Ok(await _tasks.GetOpenTaskCountAsync());
     }
 
     [HttpPost]
+    [Authorize(Policy = "AssignTasks")]
     public async Task<ActionResult<WorkTaskDto>> Create([FromBody] CreateWorkTaskRequest request)
     {
         var created = await _tasks.CreateAsync(new CreateWorkTaskCommand(
@@ -65,6 +69,7 @@ public class WorkTasksController : ControllerBase
     }
 
     [HttpPut("{id}/complete")]
+    [Authorize(Policy = "CompleteTasks")]
     public async Task<ActionResult> Complete(Guid id, [FromBody] CompleteWorkTaskRequest? request = null)
     {
         await _tasks.CompleteAsync(new CompleteWorkTaskCommand(id, request?.Comment));
@@ -72,6 +77,7 @@ public class WorkTasksController : ControllerBase
     }
 
     [HttpPost("{id}/start")]
+    [Authorize(Policy = "CompleteTasks")]
     public async Task<ActionResult<WorkTaskDto>> Start(Guid id)
     {
         var dto = await _tasks.StartAsync(id);
@@ -79,6 +85,7 @@ public class WorkTasksController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [Authorize(Policy = "ViewAllTasks")]
     public async Task<ActionResult<WorkTaskDto>> GetById(Guid id)
     {
         var dto = await _tasks.GetByIdAsync(id);
@@ -88,6 +95,7 @@ public class WorkTasksController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Policy = "CancelTasks")]
     public async Task<ActionResult> Delete(Guid id)
     {
         await _tasks.CancelAsync(new CancelWorkTaskCommand(id, "Удалено через API"));

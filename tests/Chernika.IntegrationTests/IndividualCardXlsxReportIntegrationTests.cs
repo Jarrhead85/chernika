@@ -885,7 +885,7 @@ public class IndividualCardXlsxReportIntegrationTests
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
-        var service = new ReportService(s.IndividualCards);
+        var service = new ReportService(s.IndividualCards, s.Permissions, s.User);
         var (cardId, _, _) = await CreateFormedCardAsync(s);
 
         var foreign = await CreateUserAsync(s, nameof(UserRole.NormAdmin), _fixture.BranchB);
@@ -909,7 +909,7 @@ public class IndividualCardXlsxReportIntegrationTests
     {
         await using var s = Scope();
         SetUser(s, _fixture.SystemAdminUser);
-        var service = new ReportService(s.IndividualCards);
+        var service = new ReportService(s.IndividualCards, s.Permissions, s.User);
         var (cardId, _, _) = await CreateFormedCardAsync(s);
 
         var file = await service.GenerateIndividualCardXlsxAsync(cardId);

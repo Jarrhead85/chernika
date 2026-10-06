@@ -320,7 +320,7 @@ public class IndividualPermissionDecisionTests
     }
 
     [Fact]
-    public void Counters_ExcludeConservedPermissions()
+    public void Counters_ExcludeConservedAndDeprecatedPermissions()
     {
         var catalog = PermissionCatalog.All
             .Select(d => P(d.Code, true, null, true, d.Module, d.Name, d.Description))
@@ -328,8 +328,22 @@ public class IndividualPermissionDecisionTests
 
         var counters = IndividualPermissionDecision.Count(catalog, null, null, null);
 
-        Assert.Equal(catalog.Count - PermissionCatalog.ConservedIndividualCardCodes.Count, counters.Total);
+        // Из активной формы исключены и законсервированные права ИК, и устаревшие
+        // общие коды Task.Manage и Composition.Edit: своей операции у них нет.
+        // Коды и данные при этом сохраняются.
+        Assert.Equal(
+            catalog.Count(p => !PermissionCatalog.IsConserved(p.Code)
+                              && !PermissionCatalog.IsDeprecated(p.Code)),
+            counters.Total);
+
+        Assert.Equal(catalog.Count - PermissionCatalog.ConservedIndividualCardCodes.Count
+                              - PermissionCatalog.DeprecatedCodes.Count,
+            counters.Total);
+
         Assert.True(counters.Total > 0);
+
+        Assert.All(PermissionCatalog.DeprecatedCodes,
+            code => Assert.False(IndividualPermissionDecision.IsActive(code)));
     }
 
     [Fact]

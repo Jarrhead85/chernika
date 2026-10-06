@@ -247,6 +247,16 @@ public class NotificationService
     public async Task<int> GetUnreadCountAsync(CancellationToken ct = default)
     {
         var userId = _currentUser.GetRequiredUserId().ToString();
+
+        // Здесь не DemandPermissionAsync, а мягкая проверка с возвратом 0.
+        // Счётчик рисуется в MainLayout, то есть на каждой странице: индивидуальный
+        // запрет Notification.View не должен ронять чужие страницы. Данные при этом
+        // не раскрываются — просто счётчик не показывается, ровно как при отсутствии
+        // уведомлений. Соседний GetMyNotificationsAsync, открываемый явно, требует
+        // право жёстко.
+        if (!await _permissions.HasPermissionAsync(userId, PermissionCodes.NotificationView, ct))
+            return 0;
+
         var now = DateTime.UtcNow;
         return await _db.Notifications
             .Where(n => n.UserId == userId && !n.IsRead && (n.ExpiresAtUtc == null || n.ExpiresAtUtc > now))

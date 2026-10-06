@@ -221,10 +221,15 @@ public class HKCardsController : ControllerBase
     }
 
     [HttpGet("{id}/attachment")]
+    [Authorize(Policy = "HKAttachmentView")]
     public async Task<ActionResult<object>> GetAttachment(Guid id)
     {
-        var card = await _hkCards.GetByIdAsync(id);
-        if (card == null) return NotFound();
+        // Доступ проверяет сервис: права на вложение и организация карточки.
+        // Раньше контроллер читал вложение прямо из контекста, и организация не
+        // проверялась вовсе — метаданные вложения чужой организации отдавались
+        // любому пользователю с правом просмотра ХК.
+        if (await _hkCards.GetAttachmentInfoAsync(id) is null) return NotFound();
+
         var attachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);
         if (attachment == null) return NotFound();
         return Ok(new
@@ -336,9 +341,16 @@ public class HKCardsController : ControllerBase
     }
 
     [HttpGet("{id}/attachment/content")]
+    [Authorize(Policy = "HKAttachmentView")]
     public async Task<IActionResult> GetAttachmentContent(Guid id, [FromQuery] bool inline = false)
     {
-        if (!await _permissions.HasPermissionAsync(_currentUser.GetRequiredUserId().ToString(), PermissionCodes.HKView))
+        // Проверку прав и организации поручаем сервису. Раньше здесь стояла
+        // собственная проверка одного лишь HK.View, из-за чего организация не
+        // проверялась: пользователь с правом просмотра ХК выдавал себе PDF чужой
+        // организации. Политика на эндпоинте — дополнительный уровень, а не
+        // замена проверки сервиса.
+        var accessible = await _hkCards.OpenAttachmentAsync(id);
+        if (accessible is null)
             return Forbid();
 
         var attachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);

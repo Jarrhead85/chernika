@@ -34,7 +34,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult<AggregateCompositionDto>> Create([FromBody] CreateAggregateCompositionRequest request)
     {
         var created = await _equip.CreateAggregateCompositionAsync(request);
@@ -42,7 +42,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Update(Guid id, [FromBody] UpdateAggregateCompositionDraftRequest request)
     {
         var req = request with { Id = id };
@@ -54,7 +54,7 @@ public class AggregateCompositionsController : ControllerBase
     // ── Узлы ────────────────────────────────────────────────────
 
     [HttpPost("{id}/nodes")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult<AggregateCompositionNodeDto>> AddNode(Guid id, [FromBody] AddAggregateCompositionNodeRequest req)
     {
         var request = req with { AggregateCompositionId = id };
@@ -63,7 +63,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpPut("nodes/{nodeId}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> UpdateNode(Guid nodeId, [FromBody] UpdateAggregateCompositionNodeRequest request)
     {
         var req = request with { Id = nodeId };
@@ -73,7 +73,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpDelete("nodes/{nodeId}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> RemoveNode(Guid nodeId)
     {
         var success = await _equip.RemoveAggregateCompositionNodeAsync(nodeId);
@@ -84,7 +84,7 @@ public class AggregateCompositionsController : ControllerBase
     // ── Переходы статусов ───────────────────────────────────────
 
     [HttpPost("{id}/submit")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> SubmitForReview(Guid id)
     {
         if (!await _equip.SubmitAggregateCompositionForReviewAsync(id)) return NotFound();
@@ -92,7 +92,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/return")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> ReturnToDraft(Guid id, [FromBody] ReturnToDraftRequest? req)
     {
         if (!await _equip.ReturnAggregateCompositionToDraftAsync(id, req?.Comment)) return NotFound();
@@ -100,7 +100,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/approve")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Approve(Guid id, [FromBody] ApproveRequest? req)
     {
         if (!await _equip.ApproveAggregateCompositionAsync(id, req?.Comment)) return NotFound();
@@ -108,7 +108,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpPost("{id}/archive")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Archive(Guid id)
     {
         if (!await _equip.ArchiveAggregateCompositionAsync(id)) return NotFound();
@@ -116,7 +116,7 @@ public class AggregateCompositionsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Policy = "ManageComposition")]
+    [Authorize(Policy = "ViewComposition")]
     public async Task<ActionResult> Delete(Guid id)
     {
         var success = await _equip.DeleteAggregateCompositionDraftAsync(id);

@@ -1,3 +1,4 @@
+using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Infrastructure.Reports;
 using ClosedXML.Excel;
@@ -11,8 +12,38 @@ namespace Chernika.Infrastructure.Services;
 public class ReportService
 {
     private readonly IndividualCardService _individualCards;
+    private readonly IPermissionService _permissions;
+    private readonly ICurrentUserService _currentUser;
 
-    public ReportService(IndividualCardService individualCards) => _individualCards = individualCards;
+    public ReportService(
+        IndividualCardService individualCards,
+        IPermissionService permissions,
+        ICurrentUserService currentUser)
+    {
+        _individualCards = individualCards;
+        _permissions = permissions;
+        _currentUser = currentUser;
+    }
+
+    /// <summary>
+    /// Проверка права экспорта.
+    /// <para>
+    /// Раньше в сервисе не было ни одной проверки: выгрузка файла держалась
+    /// только на политике ReportExport. Формально этого достаточно для
+    /// маршрута, но не для операции: вызов того же метода в обход маршрута
+    /// отдавал файл без всяких прав, а индивидуальный запрет Report.Export не
+    /// оставлял следа.
+    /// </para>
+    /// <para>
+    /// Требуется перед любой генерацией файла, а не только перед реестром:
+    /// печатная форма и выгрузка ИК — та же операция выгрузки.
+    /// </para>
+    /// </summary>
+    private async Task DemandExportPermissionAsync(CancellationToken ct)
+    {
+        _currentUser.GetRequiredUserId();
+        await _permissions.DemandPermissionAsync(PermissionCodes.ReportExport, ct);
+    }
 
     /// <summary>
     /// E1: печатный PDF-бланк ИК. Данные — только E0 export-read-model
@@ -23,6 +54,8 @@ public class ReportService
     public async Task<IndividualCardPdfFile?> GenerateIndividualCardPdfAsync(
         Guid individualCardId, CancellationToken ct = default)
     {
+        await DemandExportPermissionAsync(ct);
+
         QuestPDF.Settings.License = LicenseType.Community;
 
         var export = await _individualCards.GetExportAsync(individualCardId, ct);
@@ -44,6 +77,8 @@ public class ReportService
     public async Task<IndividualCardXlsxFile?> GenerateIndividualCardXlsxAsync(
         Guid individualCardId, CancellationToken ct = default)
     {
+        await DemandExportPermissionAsync(ct);
+
         var export = await _individualCards.GetExportAsync(individualCardId, ct);
         if (export is null)
             return null;
@@ -54,8 +89,10 @@ public class ReportService
         return file;
     }
 
-    public byte[] GenerateHKCardPdf(HKCard card)
+    public async Task<byte[]> GenerateHKCardPdfAsync(HKCard card, CancellationToken ct = default)
     {
+        await DemandExportPermissionAsync(ct);
+
         QuestPDF.Settings.License = LicenseType.Community;
 
         var document = Document.Create(container =>
@@ -164,8 +201,10 @@ public class ReportService
         return document.GeneratePdf();
     }
 
-    public byte[] GenerateHKRegistryExcel(List<HKCard> cards)
+    public async Task<byte[]> GenerateHKRegistryExcelAsync(List<HKCard> cards, CancellationToken ct = default)
     {
+        await DemandExportPermissionAsync(ct);
+
         using var workbook = new XLWorkbook();
         var worksheet = workbook.Worksheets.Add("Реестр ХК");
 
@@ -182,8 +221,10 @@ public class ReportService
         return stream.ToArray();
     }
 
-    public async Task<Stream> GenerateHKRegistryExcelAsync(IQueryable<HKCard> query)
+    public async Task<Stream> GenerateHKRegistryExcelAsync(IQueryable<HKCard> query, CancellationToken ct = default)
     {
+        await DemandExportPermissionAsync(ct);
+
         var workbook = new XLWorkbook();
         var worksheet = workbook.Worksheets.Add("Реестр ХК");
 

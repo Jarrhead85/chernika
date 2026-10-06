@@ -58,6 +58,13 @@ public class HKCardService
     private async Task<Guid?> GetAccessibleBranchIdAsync(Guid? requestedBranchId, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
+
+        // HK.View требуется на любом чтении реестра ХК. Раньше этот гейт проверял
+        // только организацию, поэтому индивидуальный запрет HK.View не мешал
+        // прочитать карты своей организации: запрет менял IsEffective в форме,
+        // а чтение продолжалось.
+        await _permissions.DemandPermissionAsync(PermissionCodes.HKView, ct);
+
         if (await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.SystemConfig))
             return requestedBranchId;
 
@@ -501,6 +508,16 @@ public class HKCardService
 
     public async Task<HKCard?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
+        // Право и организация проверяются ДО выборки карточки. Сначала читается
+        // только служебная часть — уровень, организация, статус, — чтобы не тащить
+        // из базы содержимое карточки тому, кому оно не показывают. Раньше проверки
+        // не было вовсе: эндпоинт был закрыт политикой, но сам сервис отдавал
+        // карточку любому аутентифицированному, а индивидуальный запрет HK.View
+        // проходил мимо.
+        var access = await LoadCardAccessAsync(id, ct);
+        if (access != null)
+            await GetAccessibleBranchIdAsync(access.BranchId, ct);
+
         var card = await _db.HKCards
             .AsSplitQuery()
             .Include(x => x.Branch)
@@ -607,6 +624,13 @@ public class HKCardService
                 return (null, null, new UnauthorizedAccessException("Недостаточно прав для работы с вложением ХК."), null);
             if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
                 return (null, null, null, new InvalidOperationException("Вложение доступно только для черновика или карты на доработке."));
+        }
+        else if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKAttachmentView))
+        {
+            // Просмотр вложения — отдельное право, а не следствие HK.View.
+            // Раньше отдельного права не было: чтение PDF шло по HK.View, поэтому
+            // запрет HK.Attachment.View не оставлял никакого следа.
+            return (null, null, new UnauthorizedAccessException("Недостаточно прав для просмотра вложения ХК."), null);
         }
 
         return (card, actor, null, null);
@@ -872,9 +896,88 @@ public class HKCardService
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// Служебная часть карточки, по которой принимается решение о доступе.
+    /// <para>
+    /// Читается до проверки права: уровень, организация и статус — это данные, по
+    /// которым решение выносится, а не защищённое содержимое карточки. Поэтому
+    /// право требуется до выборки содержимого.
+    /// </para>
+    /// </summary>
+    private sealed record CardAccessInfo(Domain.Enums.HKObjectLevel ObjectLevel, Guid BranchId, HKCardStatus Status);
+
+    private async Task<CardAccessInfo?> LoadCardAccessAsync(Guid cardId, CancellationToken ct) =>
+        await _db.HKCards.AsNoTracking()
+            .Where(x => x.Id == cardId)
+            .Select(x => new CardAccessInfo(x.ObjectLevel, x.BranchId, x.Status))
+            .FirstOrDefaultAsync(ct);
+
+    /// <summary>
+    /// Право редактирования черновика для уровня объекта.
+    /// <para>
+    /// Состав карточки — это часть черновика, поэтому требует ровно то же право,
+    /// что и редактирование самой карточки. Таблица уровней раньше была
+    /// продублирована в UpdateAsync; здесь она одна.
+    /// </para>
+    /// </summary>
+    private static string EditDraftPermission(Domain.Enums.HKObjectLevel level) => level switch
+    {
+        Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeEditDraft,
+        Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateEditDraft,
+        Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentEditDraft,
+        Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexEditDraft,
+        _ => throw new ArgumentException("Неизвестный уровень объекта.")
+    };
+
+    /// <summary>
+    /// Доступ на изменение состава карточки: право уровня и организация.
+    /// <para>
+    /// Право берётся из СОХРАНЁННОГО уровня объекта, а не из данных запроса: иначе
+    /// можно было бы подсунуть чужой уровень и получить право соседнего уровня.
+    /// Проверка статуса остаётся на месте у вызывающего метода со своим текстом
+    /// ошибки. Организация — граница данных, а не разрешение на действие, поэтому
+    /// индивидуальное разрешение её не обходит.
+    /// </para>
+    /// </summary>
+    private async Task EnsureEditDraftAccessAsync(CardAccessInfo card, CancellationToken ct)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+        var permission = EditDraftPermission(card.ObjectLevel);
+
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), permission))
+            throw new UnauthorizedAccessException("Недостаточно прав для изменения состава ХК.");
+
+        var actor = await _userManager.FindByIdAsync(actorId.ToString());
+        if (actor == null)
+            throw new UnauthorizedAccessException("Пользователь не найден.");
+
+        if (actor.BranchId != card.BranchId && !await IsSystemAdminAsync(actor))
+            throw new UnauthorizedAccessException("Нет доступа к карточке другой организации.");
+    }
+
+    /// <summary>
+    /// Доступ на чтение карточки и её состава: HK.View и организация.
+    /// <para>
+    /// Проверка права требуется ДО выборки состава. Раньше чтение состава шло без
+    /// проверок вовсе, поэтому индивидуальный запрет HK.View не мешал прочитать
+    /// связи карты любой организации.
+    /// </para>
+    /// </summary>
+    private async Task EnsureCardReadAccessAsync(CardAccessInfo card, CancellationToken ct)
+    {
+        // Тот же гейт, что и у чтения реестра: HK.View плюс организация, с тем же
+        // правилом пересечения организаций. Отдельная проверка разошлась бы с
+        // реестром и дала бы два разных ответа на один и тот же вопрос.
+        await GetAccessibleBranchIdAsync(card.BranchId, ct);
+    }
+
     public async Task<HKCardComponent> AddComponentAsync(Guid parentCardId, Guid childCardId, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
+
+        var access = await LoadCardAccessAsync(parentCardId, ct)
+            ?? throw new ArgumentException("Родительская ХК не найдена.");
+        await EnsureEditDraftAccessAsync(access, ct);
 
         var parent = await _db.HKCards.FirstOrDefaultAsync(x => x.Id == parentCardId, ct)
             ?? throw new ArgumentException("Родительская ХК не найдена.");
@@ -960,6 +1063,10 @@ public class HKCardService
             .FirstOrDefaultAsync(x => x.Id == componentId, ct)
             ?? throw new ArgumentException("Компонент не найден.");
 
+        var access = await LoadCardAccessAsync(component.ParentHKCardId, ct)
+            ?? throw new ArgumentException("Родительская ХК не найдена.");
+        await EnsureEditDraftAccessAsync(access, ct);
+
         if (component.ParentHKCard.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
             throw new InvalidOperationException("Нельзя изменить состав утверждённой или отправленной на проверку ХК.");
 
@@ -979,6 +1086,10 @@ public class HKCardService
 
     public async Task<List<HKCardComponentDto>> GetComponentsAsync(Guid cardId, CancellationToken ct = default)
     {
+        var access = await LoadCardAccessAsync(cardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+        await EnsureCardReadAccessAsync(access, ct);
+
         return await _db.HKCardComponents
             .AsNoTracking()
             .Where(x => x.ParentHKCardId == cardId)
@@ -1003,6 +1114,10 @@ public class HKCardService
 
     public async Task<List<HKCardComponentDto>> GetParentComponentsAsync(Guid cardId, CancellationToken ct = default)
     {
+        var access = await LoadCardAccessAsync(cardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+        await EnsureCardReadAccessAsync(access, ct);
+
         return await _db.HKCardComponents
             .AsNoTracking()
             .Where(x => x.ChildHKCardId == cardId)
@@ -1027,6 +1142,10 @@ public class HKCardService
 
     public async Task<List<AggregatedRowDto>> GetAggregatedRowsAsync(Guid cardId, CancellationToken ct = default)
     {
+        var access = await LoadCardAccessAsync(cardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+        await EnsureCardReadAccessAsync(access, ct);
+
         var card = await _db.HKCards.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == cardId, ct)
             ?? throw new ArgumentException("ХК не найдена.");
@@ -1423,14 +1542,7 @@ public class HKCardService
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
-        var editPerm = card.ObjectLevel switch
-        {
-            Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeEditDraft,
-            Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateEditDraft,
-            Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentEditDraft,
-            Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexEditDraft,
-            _ => throw new ArgumentException("Неизвестный уровень объекта.")
-        };
+        var editPerm = EditDraftPermission(card.ObjectLevel);
         if (!await _permissions.HasPermissionAsync(actorId.ToString(), editPerm))
             throw new UnauthorizedAccessException("Недостаточно прав для редактирования ХК.");
 
