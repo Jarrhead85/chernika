@@ -342,6 +342,7 @@ public class HkRelationSuggestionIntegrationTests
         });
 
         await using var s2 = _fixture.CreateScope();
+        AsNormAdmin(s2);
         var saved = await s2.HK.GetByIdAsync(card.Id);
         var rows = saved!.Items.Single().Materials.ToList();
 
@@ -407,6 +408,7 @@ public class HkRelationSuggestionIntegrationTests
         }
 
         await using var s4 = _fixture.CreateScope();
+        AsNormAdmin(s4);
         var saved = await s4.HK.GetByIdAsync(cardId);
         var rows = saved!.Items.Single().Materials.ToList();
         Assert.Equal(2, rows.Count);

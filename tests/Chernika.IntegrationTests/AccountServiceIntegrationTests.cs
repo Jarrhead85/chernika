@@ -36,7 +36,8 @@ public class AccountServiceIntegrationTests
         var storage = new LocalFileStorageService(configuration, Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalFileStorageService>.Instance);
         return new AccountService(
             s.Db, s.User, s.Users, TimeProvider.System, storage,
-            new Microsoft.Extensions.Logging.Abstractions.NullLogger<AccountService>());
+            new Microsoft.Extensions.Logging.Abstractions.NullLogger<AccountService>(),
+            s.Permissions);
     }
 
     private void SetUser(TestScope s, ApplicationUser user) =>

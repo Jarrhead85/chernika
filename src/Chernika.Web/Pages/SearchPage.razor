@@ -9,6 +9,7 @@
 @using Chernika.Web.Services
 @using Microsoft.AspNetCore.Authorization
 @inject SearchService SearchSvc
+@inject IPermissionService Permissions
 @inject NavigationManager Nav
 @inject CircuitDbLock DbLock
 @inject AuthenticationStateProvider AuthState
@@ -387,7 +388,7 @@
     private async Task LoadRoleAndBranchesAsync()
     {
         var auth = await AuthState.GetAuthenticationStateAsync();
-        _isSystemAdmin = auth.User.IsInRole(UserRole.SystemAdmin.ToString());
+        _isSystemAdmin = await Permissions.IsSystemAdminAsync();
         if (!_isSystemAdmin || _branches is not null)
             return;
 

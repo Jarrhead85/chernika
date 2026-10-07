@@ -1324,8 +1324,8 @@ public class HKCardService
 
     /// <summary>Системный администратор определяется по реальной роли,
     /// а не по разрешению: филиальные проверки ему не применяются.</summary>
-    private async Task<bool> IsSystemAdminAsync(ApplicationUser actor) =>
-        await _userManager.IsInRoleAsync(actor, Domain.Enums.UserRole.SystemAdmin.ToString());
+    private Task<bool> IsSystemAdminAsync(ApplicationUser actor) =>
+        _permissions.IsSystemAdminAsync(actor.Id);
 
     private static DateTime? NormalizeUtc(DateTime? value)
     {

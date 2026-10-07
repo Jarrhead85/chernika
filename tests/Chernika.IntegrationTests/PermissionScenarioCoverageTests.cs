@@ -339,12 +339,48 @@ public class PermissionScenarioCoverageTests : IAsyncLifetime
         WriteReport(report);
 
         // Каждое активное право обязано быть классифицировано: либо под
-        // защитой операции, либо в списке «сценария нет». Неclassified быть не
-        // может — иначе отчёт врёт.
+        // защитой операции, либо в списке «сценария нет».
         foreach (var def in active)
         {
             var classified = codesWithOperation.Contains(def.Code) || activeWithoutOperation.Contains(def);
             Assert.True(classified, def.Code + " не попало ни в одну категорию отчёта");
+        }
+
+        // Классификация не должна быть безусловной. Раньше проверка сводилась к
+        // «число непокрытых прав >= 0», то есть проходила при любом состоянии и
+        // ничего не утверждала. Теперь утверждается содержание: каждое право без
+        // защищённой операции обязано быть объяснено в отчёте, а каждое право под
+        // защитой - иметь конкретную операцию, а не просто упоминаться.
+        foreach (var def in activeWithoutOperation)
+        {
+            var explained = report.Any(line =>
+                line.StartsWith("  " + def.Code + " ", StringComparison.Ordinal));
+
+            Assert.True(explained,
+                "право без защищённой операции не объяснено в отчёте: " + def.Code);
+        }
+
+        foreach (var code in codesWithOperation)
+        {
+            if (!active.Any(d => d.Code == code) && !conserved.Any(d => d.Code == code))
+                Assert.Fail("политика ссылается на код, которого нет в каталоге: " + code);
+        }
+
+        // Каждое право под защитой обязано быть под защитой РЕАЛЬНОЙ операции: код
+        // должен встречаться хотя бы в одной политике эндпоинта или страницы.
+        // Иначе право числится защищённым по политике, которую никто не требует.
+        foreach (var def in active.Where(d => codesWithOperation.Contains(d.Code)))
+        {
+            // Защита может висеть на эндпоинте API или на странице Blazor - оба
+            // варианта равноправны. Проверять только API нельзя: например,
+            // Reference.View ни одного эндпоинта не касается, его требуют
+            // тринадцать страниц справочников.
+            var wiredToApi = policyToCodes.Values.Any(codes => codes.Contains(def.Code));
+            var wiredToPage = pagePolicies.Values.Any(pages => pages.Count > 0)
+                              && codesWithPage.Contains(def.Code);
+
+            Assert.True(wiredToApi || wiredToPage,
+                "политика есть, но ни один эндпоинт и ни одна страница её не требуют: " + def.Code);
         }
 
         _output.WriteLine(string.Join("\n", report));
@@ -352,7 +388,16 @@ public class PermissionScenarioCoverageTests : IAsyncLifetime
         // Инвариант отчёта: консервация не должна выглядеть как «работает».
         Assert.All(conserved,
             d => Assert.False(IndividualPermissionDecision.IsActive(d.Code)));
-        Assert.True(activeWithoutOperation.Count >= 0);
+        // Права без защищённой операции допустимы - они перечислены в отчёте как
+        // «сценария нет». Но пустой список означал бы, что отчёт вообще ничего не
+        // нашёл, а значит карта построена не по тем данным: это повод разобраться,
+        // а не повод радоваться. Поэтому утверждается наличие содержимого.
+        Assert.NotEmpty(codesWithOperation);
+        Assert.NotEmpty(active);
+
+        // Ни одно активное право не должно попасть в обе категории сразу: это
+        // означало бы, что классификация неоднозначна.
+        Assert.Empty(active.Where(d => codesWithOperation.Contains(d.Code) && activeWithoutOperation.Contains(d)));
     }
 
     /// <summary>

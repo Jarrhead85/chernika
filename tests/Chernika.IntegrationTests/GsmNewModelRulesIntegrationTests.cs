@@ -333,6 +333,7 @@ public class GsmNewModelRulesIntegrationTests
         }
 
         await using var s3 = _fixture.CreateScope();
+        SetRefEditor(s3);
         var saved = await s3.HK.GetByIdAsync(cardId);
         Assert.NotNull(saved);
         Assert.Equal("Проверка", saved!.Notes);

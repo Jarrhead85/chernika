@@ -937,7 +937,7 @@ public class SearchService
         var userId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(userId.ToString())
             ?? throw new UnauthorizedAccessException("Пользователь не найден.");
-        var isSystemAdmin = await _userManager.IsInRoleAsync(actor, UserRole.SystemAdmin.ToString());
+        var isSystemAdmin = await _permissions.IsSystemAdminAsync(userId.ToString());
         Guid? branch = actor.BranchId is { } branchId && branchId != Guid.Empty ? branchId : null;
         if (!isSystemAdmin && branch is null)
             throw new UnauthorizedAccessException("У пользователя не указана организация.");

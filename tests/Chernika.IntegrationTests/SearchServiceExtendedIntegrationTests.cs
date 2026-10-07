@@ -399,6 +399,46 @@ public class SearchServiceExtendedIntegrationTests
     }
 
     [Fact]
+    public async Task SearchAsync_HKViewDenied_DoesNotLeakCardThroughSearch()
+    {
+        // Запрет чтения не должен обходиться поиском. Роль даёт HK.View,
+        // индивидуальное решение его запрещает: карточка своей организации не
+        // должна появляться в выдаче, даже при точном совпадении по коду.
+        await using var s = Scope();
+        SetUser(s, _fixture.SystemAdminUser);
+
+        var nodeId = await CreateNodeAsync(s);
+        var cardId = await CreateHKCardAsync(s, nodeId);
+        var card = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+
+        var user = await CreateUserAsync(s, nameof(UserRole.Operator), _fixture.BranchA, grantHK: true);
+
+        // Право выдано индивидуально - убеждаемся, что поиск его видит,
+        // иначе проверка ниже прошла бы вовсе не по той причине.
+        SetUser(s, user);
+        var allowed = await Service(s).SearchAsync(new SearchQuery { Text = card.Code });
+        Assert.Contains(allowed.Items, i => i.EntityId == cardId);
+
+        // Решение по HK.View уже существует (индивидуальное разрешение выше),
+        // поэтому запрет обновляет его, а не вставляет вторую строку.
+        var decision = await s.Db.UserPermissionOverrides.FirstAsync(o =>
+            o.UserId == user.Id && o.PermissionCode == Chernika.Domain.PermissionCodes.HKView);
+
+        decision.IsGranted = false;
+        decision.Reason = "Запрет чтения";
+        await s.Db.SaveChangesAsync();
+        s.Permissions.InvalidateCache(user.Id);
+
+        var after = await Service(s).SearchAsync(new SearchQuery { Text = card.Code });
+
+        Assert.DoesNotContain(after.Items, i => i.EntityId == cardId);
+
+        // Косвенная утечка: карточка не должна выглядеть «пустым» результатом,
+        // который заявляет о её существовании через связанные строки.
+        Assert.DoesNotContain(after.Items, i => i.EntityType == "HKCard");
+    }
+
+    [Fact]
     public async Task SearchAsync_WorkTaskSearch_FindsBySnapshotFields()
     {
         await using var s = Scope();

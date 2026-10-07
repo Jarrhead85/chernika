@@ -25,6 +25,7 @@ public sealed class AccountService
     private readonly TimeProvider _time;
     private readonly IFileStorageService _fileStorage;
     private readonly ILogger<AccountService> _logger;
+    private readonly IPermissionService _permissions;
 
     public AccountService(
         AppDbContext db,
@@ -32,7 +33,8 @@ public sealed class AccountService
         UserManager<ApplicationUser> userManager,
         TimeProvider time,
         IFileStorageService fileStorage,
-        ILogger<AccountService> logger)
+        ILogger<AccountService> logger,
+        IPermissionService permissions)
     {
         _db = db;
         _currentUser = currentUser;
@@ -40,6 +42,7 @@ public sealed class AccountService
         _time = time;
         _fileStorage = fileStorage;
         _logger = logger;
+        _permissions = permissions;
     }
 
     // ── Профиль ───────────────────────────────────────────────────────────
@@ -275,7 +278,7 @@ public sealed class AccountService
         var actorId = _currentUser.GetRequiredUserId().ToString();
         var actor = await _userManager.FindByIdAsync(actorId)
             ?? throw new UnauthorizedAccessException("Пользователь не найден.");
-        var isSystemAdmin = await _userManager.IsInRoleAsync(actor, UserRole.SystemAdmin.ToString());
+        var isSystemAdmin = await _permissions.IsSystemAdminAsync(actorId);
         if (!isSystemAdmin)
             throw new UnauthorizedAccessException("Доступно только системному администратору.");
 

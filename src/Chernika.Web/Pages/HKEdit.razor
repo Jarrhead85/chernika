@@ -6,6 +6,7 @@
 @using Chernika.Domain.Models
 @using Chernika.Domain.Enums
 @inject HKCardService HKCardService
+@inject IPermissionService Permissions
 @inject NavigationManager Nav
 @inject EquipmentService EquipmentService
 @inject GsmMaterialService GsmMaterialService
@@ -1311,7 +1312,7 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
-        isSystemAdmin = user.IsInRole("SystemAdmin");
+        isSystemAdmin = await Permissions.IsSystemAdminAsync();
 
         // Проверки прав и чтение организаций выполняются через общий scoped DbContext,
         // поэтому сериализуем их тем же CircuitDbLock, что и загрузку данных.

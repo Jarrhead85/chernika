@@ -401,7 +401,7 @@ public class IndividualCardService
         var actorId = _currentUser.GetRequiredUserId();
         var actor = await _userManager.FindByIdAsync(actorId.ToString())
             ?? throw new UnauthorizedAccessException("Пользователь не найден.");
-        var isSystemAdmin = await _userManager.IsInRoleAsync(actor, UserRole.SystemAdmin.ToString());
+        var isSystemAdmin = await _permissions.IsSystemAdminAsync(actorId.ToString());
 
         if (!isSystemAdmin)
         {

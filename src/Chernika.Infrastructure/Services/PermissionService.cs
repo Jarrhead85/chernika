@@ -121,9 +121,56 @@ public class PermissionService : IPermissionService
             throw new UnauthorizedAccessException($"Недостаточно прав. Требуется разрешение: {permissionCode}");
     }
 
+    /// <summary>
+    /// Является ли пользователь защищённым системным администратором.
+    /// <para>
+    /// Единственное место, где определяется это исключение. Раньше проверка
+    /// <c>IsInRole("SystemAdmin")</c> была размазана по четырём сервисам и
+    /// четырём страницам, причём два раза строковым литералом — опечатка в имени
+    /// роли прошла бы незамеченной и тихо отключала бы исключение.
+    /// </para>
+    /// <para>
+    /// Исключение намеренно узкое: оно снимает ограничения организации и шаблона
+    /// роли, но НЕ отменяет бизнес-правила, проверки статуса документов и
+    /// консервацию модулей. Поэтому оно вызывается только там, где раньше стояла
+    /// именно эта проверка, и ничего больше не меняет.
+    /// </para>
+    /// </summary>
+    public async Task<bool> IsSystemAdminAsync(string userId, CancellationToken ct = default)
+    {
+        var cacheKey = $"systemadmin:{userId}";
+        if (_cache.TryGetValue<bool>(cacheKey, out var cached))
+            return cached;
+
+        // Роль берётся тем же способом, что и в GetEffectivePermissionsAsync, - через
+        // UserManager. Подставлять искусственный ApplicationUser ради IsInRoleAsync
+        // было бы подделкой: проверка роли получила бы объект, которого в базе нет.
+        var user = await _userManager.FindByIdAsync(userId);
+
+        var isSystemAdmin = user != null
+            && await _userManager.IsInRoleAsync(user, nameof(UserRole.SystemAdmin));
+
+        _cache.Set(cacheKey, isSystemAdmin, CacheDuration);
+        return isSystemAdmin;
+    }
+
+    /// <summary>
+    /// То же для текущего пользователя. Если текущего пользователя нет
+    /// (системный путь), возвращается false: исключение без актора не действует.
+    /// </summary>
+    public async Task<bool> IsSystemAdminAsync(CancellationToken ct = default)
+    {
+        var userId = _currentUser.GetUserId();
+        return userId != null && await IsSystemAdminAsync(userId.Value.ToString(), ct);
+    }
+
     public void InvalidateCache(string userId)
     {
         _cache.Remove($"permissions:{userId}");
+
+        // Роль меняется вместе с правами: забыть об этом означало бы, что
+        // снятое исключение продолжит действовать до истечения кэша.
+        _cache.Remove($"systemadmin:{userId}");
     }
 
     public void InvalidateAllCache()

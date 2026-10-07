@@ -632,7 +632,7 @@
             .Where(m => m != PermissionCatalog.ConservedIndividualCardModule)
             .ToList();
         var authState = await AuthState.GetAuthenticationStateAsync();
-        canQuickCreateBranch = authState.User.IsInRole(nameof(UserRole.SystemAdmin));
+        canQuickCreateBranch = await Permissions.IsSystemAdminAsync();
     }
 
     async Task LoadUsers()

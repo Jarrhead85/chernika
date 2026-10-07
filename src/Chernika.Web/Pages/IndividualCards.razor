@@ -7,6 +7,7 @@
 @using System.Globalization
 @using Chernika.Web.Services
 @inject IndividualCardService IndCardService
+@inject IPermissionService Permissions
 @inject EquipmentService EquipService
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
@@ -210,7 +211,7 @@
     {
         var auth = await AuthState.GetAuthenticationStateAsync();
         _currentUserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
-        _isSystemAdmin = auth.User.IsInRole("SystemAdmin");
+        _isSystemAdmin = await Permissions.IsSystemAdminAsync();
 
         await using (await DbLock.WaitAsync())
         {

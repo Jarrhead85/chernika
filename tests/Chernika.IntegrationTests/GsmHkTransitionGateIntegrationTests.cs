@@ -143,6 +143,7 @@ public class GsmHkTransitionGateIntegrationTests
 
         await using (var s2 = _fixture.CreateScope())
         {
+            AsNormAdmin(s2);
             var saved = await s2.HK.GetByIdAsync(cardId);
             Assert.Equal("Правка текста при изменённой классификации", saved!.Notes);
         }

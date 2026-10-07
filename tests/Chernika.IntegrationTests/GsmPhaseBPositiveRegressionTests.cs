@@ -107,6 +107,7 @@ public class GsmPhaseBPositiveRegressionTests
 
         // Повторное открытие: выбор категории пережил сохранение.
         await using var s2 = _fixture.CreateScope();
+        AsNormAdmin(s2);
         var reopened = await s2.HK.GetByIdAsync(card.Id);
         var rows = reopened!.Items.Single().Materials.ToList();
 
@@ -154,6 +155,7 @@ public class GsmPhaseBPositiveRegressionTests
         await s.Db.SaveChangesAsync();
 
         await using var s2 = _fixture.CreateScope();
+        AsNormAdmin(s2);
         var reopened = await s2.HK.GetByIdAsync(card.Id);
         Assert.NotNull(reopened);
         Assert.Single(reopened!.Items.Single().Materials);

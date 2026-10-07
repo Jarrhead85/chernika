@@ -4,6 +4,7 @@ using Chernika.Domain.Enums;
 using Chernika.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Chernika.Infrastructure.Services;
 
@@ -248,16 +249,35 @@ public class UserManagementService
 
         if (baseRole != roleName)
         {
-            if (baseRole == nameof(UserRole.SystemAdmin) && !await HasOtherActiveSystemAdminAsync(userId))
-                return (false, "Нельзя изменить роль единственного активного системного администратора");
+            // Уход системного администратора из своей роли делает систему без
+            // администратора, поэтому проверка и запись идут под блокировкой.
+            if (baseRole == nameof(UserRole.SystemAdmin))
+            {
+                await using var guard = await BeginSystemAdminGuardAsync();
 
-            await _userManager.RemoveFromRolesAsync(user, currentRoles);
-            await _userManager.AddToRoleAsync(user, roleName);
-            _permissions.InvalidateCache(userId);
+                if (!await HasOtherActiveSystemAdminAsync(userId))
+                    return (false, LastSystemAdminRefusal());
 
-            await _audit.LogAsync(new AuditWriteRequest("User", userId, "RoleChanged", actorId,
-                EntityDisplayName: $"{user.UserName} — {user.FullName}",
-                Details: $"Было: {GetRoleDisplayName(baseRole)}; стало: {GetRoleDisplayName(roleName)}"));
+                await _userManager.RemoveFromRolesAsync(user, currentRoles);
+                await _userManager.AddToRoleAsync(user, roleName);
+                _permissions.InvalidateCache(userId);
+
+                await _audit.LogAsync(new AuditWriteRequest("User", userId, "RoleChanged", actorId,
+                    EntityDisplayName: $"{user.UserName} - {user.FullName}",
+                    Details: $"Роль: {GetRoleDisplayName(baseRole)}; новая: {GetRoleDisplayName(roleName)}"));
+
+                await guard.CommitAsync();
+            }
+            else
+            {
+                await _userManager.RemoveFromRolesAsync(user, currentRoles);
+                await _userManager.AddToRoleAsync(user, roleName);
+                _permissions.InvalidateCache(userId);
+
+                await _audit.LogAsync(new AuditWriteRequest("User", userId, "RoleChanged", actorId,
+                    EntityDisplayName: $"{user.UserName} - {user.FullName}",
+                    Details: $"Роль: {GetRoleDisplayName(baseRole)}; новая: {GetRoleDisplayName(roleName)}"));
+            }
         }
 
         await _audit.LogAsync(new AuditWriteRequest("User", userId, "Updated", actorId,
@@ -282,30 +302,51 @@ public class UserManagementService
         if (user.IsDeleted)
             return (false, "Нельзя блокировать удалённого пользователя");
 
-        if (user.IsActive)
+        // Проверка и переключение выполняются под блокировкой транзакции.
+        // Без неё два одновременных запроса, каждый про свою учётную запись,
+        // считали бы второго администратора действующим и вместе оставили бы
+        // систему без администратора.
+        var userDisplayName = $"{user.UserName} - {user.FullName}";
+        var wasActive = user.IsActive;
+
+        if (wasActive)
         {
             var roles = await _userManager.GetRolesAsync(user);
             var isSysAdmin = roles.Contains(nameof(UserRole.SystemAdmin));
-            if (isSysAdmin && !await HasOtherActiveSystemAdminAsync(userId))
-                return (false, "Нельзя деактивировать единственного активного системного администратора");
-        }
 
-        user.IsActive = !user.IsActive;
-        var userDisplayName = $"{user.UserName} — {user.FullName}";
+            if (isSysAdmin)
+            {
+                await using var guard = await BeginSystemAdminGuardAsync();
 
-        if (user.IsActive)
-        {
-            await _userManager.SetLockoutEndDateAsync(user, null);
-            await _userManager.SetLockoutEnabledAsync(user, false);
+                if (!await HasOtherActiveSystemAdminAsync(userId))
+                    return (false, LastSystemAdminRefusal());
+
+                user.IsActive = false;
+                await _userManager.SetLockoutEnabledAsync(user, true);
+                await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+                await _userManager.UpdateAsync(user);
+                await _userManager.UpdateSecurityStampAsync(user);
+
+                await guard.CommitAsync();
+            }
+            else
+            {
+                user.IsActive = false;
+                await _userManager.SetLockoutEnabledAsync(user, true);
+                await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+                await _userManager.UpdateAsync(user);
+                await _userManager.UpdateSecurityStampAsync(user);
+            }
         }
         else
         {
-            await _userManager.SetLockoutEnabledAsync(user, true);
-            await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+            user.IsActive = true;
+            await _userManager.SetLockoutEndDateAsync(user, null);
+            await _userManager.SetLockoutEnabledAsync(user, false);
+            await _userManager.UpdateAsync(user);
+            await _userManager.UpdateSecurityStampAsync(user);
         }
 
-        await _userManager.UpdateAsync(user);
-        await _userManager.UpdateSecurityStampAsync(user);
         _permissions.InvalidateCache(userId);
 
         await _audit.LogAsync(new AuditWriteRequest("User", userId,
@@ -334,10 +375,15 @@ public class UserManagementService
         if (user.IsDeleted)
             return (false, "Пользователь уже удалён");
 
+        // Проверка и удаление под одной блокировкой: два одновременных удаления
+        // разных администраторов иначе прошли бы оба, и в системе не осталось бы
+        // ни одного.
+        await using var guard = await BeginSystemAdminGuardAsync();
+
         var roles = await _userManager.GetRolesAsync(user);
         var isSysAdmin = roles.Contains(nameof(UserRole.SystemAdmin));
         if (isSysAdmin && !await HasOtherActiveSystemAdminAsync(userId))
-            return (false, "Нельзя удалить единственного активного системного администратора");
+            return (false, LastSystemAdminRefusal());
 
         user.IsDeleted = true;
         user.IsActive = false;
@@ -369,6 +415,8 @@ public class UserManagementService
             Details: $"Причина: {reason}"));
 
         return (true, null);
+
+        await guard.CommitAsync();
     }
 
     public async Task<(bool Success, string? Error)> RestoreUserAsync(string userId, string roleName, Guid? branchId)
@@ -786,6 +834,62 @@ public class UserManagementService
     {
         var sysAdmins = await _userManager.GetUsersInRoleAsync(nameof(UserRole.SystemAdmin));
         return sysAdmins.Any(u => u.IsActive && u.Id != excludeUserId);
+    }
+
+    /// <summary>
+    /// Ключ advisory-блокировки, сериализующей операции, способные лишить
+    /// систему последнего активного системного администратора.
+    /// <para>
+    /// Число произвольное, но постоянное: блокировка должна быть общей для всех
+    /// трёх операций - блокировки, удаления и смены роли.
+    /// </para>
+    /// </summary>
+    private const long LastSystemAdminLockKey = 8123471290;
+
+    /// <summary>
+    /// Открывает транзакцию и берёт блокировку на всё время операции.
+    /// <para>
+    /// Без этого защита последнего администратора была проверкой без
+    /// синхронизации: два одновременных запроса, каждый из которых деактивирует
+    /// своего администратора, видели второго как «ещё одного активного» и оба
+    /// проходили. В итоге система оставалась без администратора. Блокировка
+    /// уровня транзакции удерживается до фиксации, поэтому второй запрос
+    /// дожидается первого и проверяет уже актуальное число.
+    /// </para>
+    /// <para>
+    /// Транзакция откатывается при возврате без фиксации, то есть отказ
+    /// ничего не меняет.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Отказ при попытке лишить систему последнего активного системного
+    /// администратора. Текст один на три операции, чтобы сообщение не расходилось
+    /// между блокировкой, удалением и сменой роли.
+    /// </summary>
+    private static string LastSystemAdminRefusal() =>
+        "Нельзя лишить систему последнего активного системного администратора.";
+
+    /// <para>
+/// Токен сознательно не принимается: все три вызывающие операции работают без
+/// него, а перегрузка BeginTransactionAsync с токеном в этой версии EF разрешается
+/// неоднозначно.
+/// </para>
+    private async Task<IDbContextTransaction> BeginSystemAdminGuardAsync()
+    {
+        var transaction = await _db.Database.BeginTransactionAsync();
+
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT pg_advisory_xact_lock({0})", LastSystemAdminLockKey);
+
+            return transaction;
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     private static string GetRoleDisplayName(string role) => role switch

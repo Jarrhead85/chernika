@@ -73,34 +73,11 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("ViewHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKView)));
-    options.AddPolicy("CreateHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeCreate, PermissionCodes.HKAggregateCreate, PermissionCodes.HKEquipmentCreate, PermissionCodes.HKComplexCreate)));
-    options.AddPolicy("EditHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeEditDraft, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKComplexEditDraft)));
-    options.AddPolicy("DeleteHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteOnReview, PermissionCodes.HKDeleteRevisionRequired)));
-    options.AddPolicy("ArchiveHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKArchive)));
-    options.AddPolicy("SendToApprove", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKNodeSubmit, PermissionCodes.HKAggregateSubmit, PermissionCodes.HKEquipmentSubmit, PermissionCodes.HKComplexSubmit)));
-    options.AddPolicy("CreateIndividualCard", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
-    options.AddPolicy("VerifyHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKReview)));
-    options.AddPolicy("ApproveHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKApprove)));
-    options.AddPolicy("ReturnHK", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKReview)));
-    options.AddPolicy("ManageCoefficients", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
-    options.AddPolicy("ManageUsers", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.UsersManage)));
-    options.AddPolicy("ManageRoles", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.PermissionsManage)));
-    options.AddPolicy("SystemConfig", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.SystemConfig)));
-    options.AddPolicy("ViewAuditLog", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.AuditView)));
-    options.AddPolicy("ViewTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskViewOwn)));
-    options.AddPolicy("ViewAllTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskView)));
-    options.AddPolicy("AssignTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskAssign)));
-    options.AddPolicy("CompleteTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskComplete)));
-    options.AddPolicy("CancelTasks", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.TaskCancel)));
-    options.AddPolicy("ViewNotifications", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.NotificationView)));
-    options.AddPolicy("ManageReference", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceEdit)));
-    options.AddPolicy("ViewReferences", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReferenceView)));
-    options.AddPolicy("ViewComposition", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.CompositionView)));
-    options.AddPolicy("ManageIndividualCards", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.IndividualCardGenerate)));
-    options.AddPolicy("ReportExport", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.ReportExport)));
-    options.AddPolicy("HKAttachmentView", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKAttachmentView)));
-    options.AddPolicy("HKAttachmentEdit", policy => policy.AddRequirements(new PermissionRequirement(PermissionCodes.HKAttachmentEdit)));
+    // Политики полномочий регистрируются единым списком. Раздельные списки
+    // хостов разошлись: часть политик была только в Api, часть только в Web,
+    // и одно право считалось по-разному в зависимости от источника запроса.
+    // Общая регистрация делает повторное расхождение невозможным.
+    options.AddPermissionPolicies();
 });
 
 builder.Services.AddScoped<HKCardService>();
