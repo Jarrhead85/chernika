@@ -1010,7 +1010,20 @@ input:-webkit-autofill:focus {
 .permActions {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: 6px;
+}
+
+/* Текст кнопок-действий не переносится: при сжатой ячейке слово
+   «Разрешить» разрывалось на «Разреши» и «ть». Ширина кнопки задаётся
+   содержимым, а ячейка не сжимает столбец ниже этого предела. */
+.permActions .linkBtn {
+    white-space: nowrap;
+}
+
+.permActionsCell {
+    white-space: nowrap;
+    width: 1%;
 }
 
 .permActionDeny {

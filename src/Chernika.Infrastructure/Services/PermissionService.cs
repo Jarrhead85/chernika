@@ -65,13 +65,19 @@ public class PermissionService : IPermissionService
                 if (baseRole != null)
                 {
                     var templatePerms = await _db.RolePermissionTemplates
+                        .AsNoTracking()
                         .Where(x => x.RoleName == baseRole)
                         .Select(x => x.PermissionCode)
                         .ToListAsync(ct);
                     result.UnionWith(templatePerms);
                 }
 
+                // Чтение без отслеживания обязательно: область может жить
+                // долго, и уже отслеженные ею строки решений содержали бы
+                // прежние значения. Тогда открытая сессия продолжала бы
+                // считать право действующим после запрета.
                 var overrides = await _db.UserPermissionOverrides
+                    .AsNoTracking()
                     .Where(x => x.UserId == userId)
                     .ToListAsync(ct);
 

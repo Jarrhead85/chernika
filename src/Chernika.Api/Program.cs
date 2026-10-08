@@ -73,6 +73,9 @@ builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<ReportService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
+// Оповещение процесс-локальное: один экземпляр на процесс, чтобы все
+// открытые сессии этого процесса увидели изменение прав.
+builder.Services.AddSingleton<IPermissionChangeNotifier, PermissionChangeNotifier>();
 builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 builder.Services.AddScoped<UserManagementService>();
 builder.Services.AddScoped<ISecurityDataRepairService, SecurityDataRepairService>();

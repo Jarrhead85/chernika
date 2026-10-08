@@ -276,7 +276,7 @@
                                         <th>Итоговый доступ</th>
                                         @if (canManageUserPermissions && effectivePermissions.BaseRole != "SystemAdmin")
                                         {
-                                            <th>Действия</th>
+                                            <th class="permActionsCell">Действия</th>
                                         }
                                     </tr>
                                 </thead>
@@ -341,7 +341,7 @@
                                             </td>
                                             @if (canManageUserPermissions && effectivePermissions.BaseRole != "SystemAdmin")
                                             {
-                                                <td>
+                                                <td class="permActionsCell">
                                                     @if (perm.RowSaving)
                                                     {
                                                         <span class="permissionStatus permissionStatus--neutral">Сохранение...</span>

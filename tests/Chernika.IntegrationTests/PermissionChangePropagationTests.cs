@@ -194,6 +194,93 @@ public class PermissionChangePropagationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LongLivedScope_SeesDecisionChangeWithoutManualCacheReset()
+    {
+        // Отличие от прежней проверки: область A не освобождается между
+        // вызовами. Прежний тест создавал новую область на каждом шаге, чем
+        // доказывал лишь то, что новый scope читает базу. Здесь область,
+        // наполнившая кэш, продолжает жить, и решение меняется из независимой
+        // области B - так же, как открытая сессия пользователя при чужом
+        // изменении прав.
+        await using var scopeA = _fixture.CreateScope();
+        scopeA.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+        await GiveManageAsync(scopeA, _users["owner"]);
+
+        // Первый вызов наполняет кэш области A и выполняет защищённую операцию.
+        Assert.True(await scopeA.Permissions.HasPermissionAsync(
+            _users["owner"], PermissionCodes.PermissionsManage));
+
+        var initial = await scopeA.UserMgmt.GetEffectivePermissionsAsync(_users["owner"]);
+        Assert.NotNull(initial);
+        Assert.True(initial!.Permissions
+            .Single(p => p.Code == PermissionCodes.PermissionsManage).IsEffective);
+
+        // Запрет выполняется из независимой области B.
+        await using (var scopeB = _fixture.CreateScope())
+        {
+            scopeB.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+
+            var (_, error) = await scopeB.UserMgmt.DenyPermissionAsync(
+                _users["owner"], PermissionCodes.PermissionsManage, "запрет из другой области");
+
+            Assert.Null(error);
+        }
+
+        await using (var diag = _fixture.CreateScope())
+        {
+            var fresh = await diag.Permissions.HasPermissionAsync(
+                _users["owner"], PermissionCodes.PermissionsManage);
+
+            Assert.False(fresh);
+        }
+
+        // Область A продолжает жить и не пересоздаёт сервисы. Права обязаны
+        // смениться: кэш процесса общий, а сброс выполняет сам сервис.
+        Assert.False(await scopeA.Permissions.HasPermissionAsync(
+            _users["owner"], PermissionCodes.PermissionsManage));
+
+        var afterDeny = await scopeA.UserMgmt.GetEffectivePermissionsAsync(_users["owner"]);
+        var denied = afterDeny!.Permissions
+            .Single(p => p.Code == PermissionCodes.PermissionsManage);
+
+        Assert.False(denied.IsEffective);
+        Assert.False(denied.OverrideIsGranted);
+
+        // И живая операция из той же области обязана отказать.
+        scopeA.User.CurrentUserId = Guid.Parse(_users["owner"]);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => scopeA.UserMgmt.GetOverridesAsync(_users["owner"]));
+
+        // Повторное разрешение снова видно в A без пересоздания.
+        await using (var scopeC = _fixture.CreateScope())
+        {
+            scopeC.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+
+            var (_, error) = await scopeC.UserMgmt.GrantPermissionAsync(
+                _users["owner"], PermissionCodes.PermissionsManage, "повторное разрешение");
+
+            Assert.Null(error);
+        }
+
+        Assert.True(await scopeA.Permissions.HasPermissionAsync(
+            _users["owner"], PermissionCodes.PermissionsManage));
+
+        // И снятие решения снова видно.
+        await using (var scopeD = _fixture.CreateScope())
+        {
+            scopeD.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
+
+            var (_, error) = await scopeD.UserMgmt.RevokePermissionAsync(
+                _users["owner"], PermissionCodes.PermissionsManage);
+
+            Assert.Null(error);
+        }
+
+        Assert.False(await scopeA.Permissions.HasPermissionAsync(
+            _users["owner"], PermissionCodes.PermissionsManage));
+    }
+
+    [Fact]
     public async Task StaleClientView_DoesNotAllowServerToPerformForbiddenOperation()
     {
         // Сценарий устаревшей кнопки: страница загружена, когда доступ был, и

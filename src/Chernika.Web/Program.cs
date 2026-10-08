@@ -41,6 +41,9 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
+// Оповещение процесс-локальное: один экземпляр на процесс, чтобы все
+// открытые сессии этого процесса увидели изменение прав.
+builder.Services.AddSingleton<IPermissionChangeNotifier, PermissionChangeNotifier>();
 builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 builder.Services.AddScoped<CircuitDbLock>();
 

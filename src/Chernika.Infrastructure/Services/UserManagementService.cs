@@ -16,6 +16,7 @@ public class UserManagementService
     private readonly ICurrentUserService _currentUser;
     private readonly IPermissionService _permissions;
     private readonly AuditService _audit;
+    private readonly IPermissionChangeNotifier _changes;
 
     public UserManagementService(
         AppDbContext db,
@@ -23,7 +24,8 @@ public class UserManagementService
         RoleManager<IdentityRole> roleManager,
         ICurrentUserService currentUser,
         IPermissionService permissions,
-        AuditService audit)
+        AuditService audit,
+        IPermissionChangeNotifier changes)
     {
         _db = db;
         _userManager = userManager;
@@ -31,6 +33,7 @@ public class UserManagementService
         _currentUser = currentUser;
         _permissions = permissions;
         _audit = audit;
+        _changes = changes;
     }
 
     /// <summary>
@@ -232,14 +235,18 @@ public class UserManagementService
         if (branchId.HasValue && !await _db.Branches.AnyAsync(b => b.Id == branchId.Value))
             return (false, "Указанная организация не существует");
 
-        user.FullName = fullName;
-        user.Position = position;
-        user.BranchId = branchId;
-        var updateResult = await _userManager.UpdateAsync(user);
-        if (!updateResult.Succeeded)
-            return (false, string.Join("; ", updateResult.Errors.Select(e => e.Description)));
+        // Изменение данных и смена роли образуют один пакет. Раньше данные
+        // сохранялись первым вызовом UpdateAsync, а смена роли шла под
+        // блокировкой: отказ на смене роли оставлял обновлённые данные при
+        // старой роли. Блокировка берётся на весь пакет - она общая для всех
+        // путей, способных оставить систему без администратора.
+        await using var guard = await BeginSystemAdminGuardAsync();
 
-        var currentRoles = await _userManager.GetRolesAsync(user);
+        var freshUser = await _userManager.FindByIdAsync(userId);
+        if (freshUser is null || freshUser.IsDeleted)
+            return (false, "Пользователь не найден или уже удалён");
+
+        var currentRoles = await _userManager.GetRolesAsync(freshUser);
         var baseRole = currentRoles.FirstOrDefault(r =>
             r == nameof(UserRole.SystemAdmin) ||
             r == nameof(UserRole.NormAdmin) ||
@@ -247,42 +254,49 @@ public class UserManagementService
             r == nameof(UserRole.HeadOfDepartment) ||
             r == nameof(UserRole.Guest)) ?? "";
 
-        if (baseRole != roleName)
+        // Проверка последнего администратора выполняется после получения
+        // блокировки и по фактическому состоянию, а не по данным, прочитанным
+        // до неё.
+        if (baseRole == nameof(UserRole.SystemAdmin) && !await HasOtherActiveSystemAdminAsync(userId))
+            return (false, LastSystemAdminRefusal());
+
+        // Отображаемое имя для audit собирается до фиксации.
+        var displayName = $"{freshUser.UserName} — {freshUser.FullName}";
+
+        var previousBaseRole = baseRole;
+        var roleChanged = baseRole != roleName;
+
+        freshUser.FullName = fullName;
+        freshUser.Position = position;
+        freshUser.BranchId = branchId;
+
+        var updateResult = await _userManager.UpdateAsync(freshUser);
+        if (!updateResult.Succeeded)
+            return (false, DescribeIdentityFailure(updateResult));
+
+        if (roleChanged)
         {
-            // Уход системного администратора из своей роли делает систему без
-            // администратора, поэтому проверка и запись идут под блокировкой.
-            if (baseRole == nameof(UserRole.SystemAdmin))
-            {
-                await using var guard = await BeginSystemAdminGuardAsync();
+            var roleError = await ReplaceRolesAsync(freshUser, currentRoles, roleName);
+            if (roleError != null)
+                return (false, roleError);
+        }
 
-                if (!await HasOtherActiveSystemAdminAsync(userId))
-                    return (false, LastSystemAdminRefusal());
-
-                await _userManager.RemoveFromRolesAsync(user, currentRoles);
-                await _userManager.AddToRoleAsync(user, roleName);
-                _permissions.InvalidateCache(userId);
-
-                await _audit.LogAsync(new AuditWriteRequest("User", userId, "RoleChanged", actorId,
-                    EntityDisplayName: $"{user.UserName} - {user.FullName}",
-                    Details: $"Роль: {GetRoleDisplayName(baseRole)}; новая: {GetRoleDisplayName(roleName)}"));
-
-                await guard.CommitAsync();
-            }
-            else
-            {
-                await _userManager.RemoveFromRolesAsync(user, currentRoles);
-                await _userManager.AddToRoleAsync(user, roleName);
-                _permissions.InvalidateCache(userId);
-
-                await _audit.LogAsync(new AuditWriteRequest("User", userId, "RoleChanged", actorId,
-                    EntityDisplayName: $"{user.UserName} - {user.FullName}",
-                    Details: $"Роль: {GetRoleDisplayName(baseRole)}; новая: {GetRoleDisplayName(roleName)}"));
-            }
+        if (roleChanged)
+        {
+            await _audit.LogAsync(new AuditWriteRequest("User", userId, "RoleChanged", actorId,
+                EntityDisplayName: displayName,
+                Details: $"Роль: {GetRoleDisplayName(previousBaseRole)}; новая: {GetRoleDisplayName(roleName)}"));
         }
 
         await _audit.LogAsync(new AuditWriteRequest("User", userId, "Updated", actorId,
-            EntityDisplayName: $"{user.UserName} — {user.FullName}",
+            EntityDisplayName: displayName,
             Details: "Данные пользователя обновлены"));
+
+        // Фиксация до объявления успеха и до сброса кэша: иначе наблюдатели
+        // видели бы отменённое изменение как действующее.
+        await guard.CommitAsync();
+
+        _permissions.InvalidateCache(userId);
 
         return (true, null);
     }
@@ -302,57 +316,81 @@ public class UserManagementService
         if (user.IsDeleted)
             return (false, "Нельзя блокировать удалённого пользователя");
 
-        // Проверка и переключение выполняются под блокировкой транзакции.
-        // Без неё два одновременных запроса, каждый про свою учётную запись,
-        // считали бы второго администратора действующим и вместе оставили бы
-        // систему без администратора.
-        var userDisplayName = $"{user.UserName} - {user.FullName}";
-        var wasActive = user.IsActive;
+        // Проверка, изменение и запись аудита идут в одной транзакции. Раньше путь
+        // обычного пользователя транзакции не открывал вовсе: изменения
+        // сохранялись первым SaveChanges, а аудит падал уже после этого, и
+        // заблокированный пользователь оставался без записи.
+        await using var guard = await BeginSystemAdminGuardAsync();
+
+        // Состояние перечитывается под блокировкой: прочитанное ранее могло
+        // быть изменено другим запросом.
+        var freshUser = await _userManager.FindByIdAsync(userId);
+        if (freshUser is null || freshUser.IsDeleted)
+            return (false, "Пользователь не найден или уже удалён");
+
+        var userDisplayName = $"{freshUser.UserName} — {freshUser.FullName}";
+        var wasActive = freshUser.IsActive;
 
         if (wasActive)
         {
-            var roles = await _userManager.GetRolesAsync(user);
+            var roles = await _userManager.GetRolesAsync(freshUser);
             var isSysAdmin = roles.Contains(nameof(UserRole.SystemAdmin));
 
-            if (isSysAdmin)
-            {
-                await using var guard = await BeginSystemAdminGuardAsync();
-
-                if (!await HasOtherActiveSystemAdminAsync(userId))
-                    return (false, LastSystemAdminRefusal());
-
-                user.IsActive = false;
-                await _userManager.SetLockoutEnabledAsync(user, true);
-                await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
-                await _userManager.UpdateAsync(user);
-                await _userManager.UpdateSecurityStampAsync(user);
-
-                await guard.CommitAsync();
-            }
-            else
-            {
-                user.IsActive = false;
-                await _userManager.SetLockoutEnabledAsync(user, true);
-                await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
-                await _userManager.UpdateAsync(user);
-                await _userManager.UpdateSecurityStampAsync(user);
-            }
+            if (isSysAdmin && !await HasOtherActiveSystemAdminAsync(userId))
+                return (false, LastSystemAdminRefusal());
         }
-        else
-        {
-            user.IsActive = true;
-            await _userManager.SetLockoutEndDateAsync(user, null);
-            await _userManager.SetLockoutEnabledAsync(user, false);
-            await _userManager.UpdateAsync(user);
-            await _userManager.UpdateSecurityStampAsync(user);
-        }
+
+        // Активный пользователь блокируется, заблокированный - разблокируется.
+        var (applied, blockError) = await ApplyBlockStateAsync(freshUser, blocked: wasActive);
+        if (!applied)
+            return (false, blockError);
+
+        var action = freshUser.IsActive ? "Unblocked" : "Blocked";
+
+        await _audit.LogAsync(new AuditWriteRequest("User", userId, action, actorId,
+            EntityDisplayName: userDisplayName,
+            Details: freshUser.IsActive
+                ? "Учётная запись разблокирована"
+                : "Учётная запись заблокирована"));
+
+        // Фиксация до объявления успеха и до сброса кэша: иначе наблюдатели
+        // видели бы отменённое изменение как действующее.
+        await guard.CommitAsync();
 
         _permissions.InvalidateCache(userId);
 
-        await _audit.LogAsync(new AuditWriteRequest("User", userId,
-            user.IsActive ? "Unblocked" : "Blocked", actorId,
-            EntityDisplayName: userDisplayName,
-            Details: user.IsActive ? "Учётная запись разблокирована" : "Учётная запись заблокирована"));
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Переводит учётную запись в заблокированное или активное состояние.
+    /// <para>
+    /// Каждый возвращённый Identity проверяется: молчаливый отказ оставлял
+    /// сервис с успехом при фактически неприменённых изменениях.
+    /// </para>
+    /// </summary>
+    private async Task<(bool Applied, string? Error)> ApplyBlockStateAsync(
+        ApplicationUser user, bool blocked)
+    {
+        user.IsActive = !blocked;
+
+        var (lockoutApplied, lockoutError) = await SetLockoutAsync(
+            user,
+            enabled: blocked,
+            lockedUntil: blocked ? DateTimeOffset.MaxValue : null);
+
+        if (!lockoutApplied)
+            return (false, (blocked
+                    ? "Не удалось заблокировать учётную запись: "
+                    : "Не удалось снять блокировку учётной записи: ")
+                + lockoutError);
+
+        var updateResult = await _userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+            return (false, DescribeIdentityFailure(updateResult));
+
+        if (!await UpdateSecurityStampCheckedAsync(user))
+            return (false, "Не удалось обновить метку безопасности");
 
         return (true, null);
     }
@@ -380,26 +418,40 @@ public class UserManagementService
         // ни одного.
         await using var guard = await BeginSystemAdminGuardAsync();
 
-        var roles = await _userManager.GetRolesAsync(user);
+        // Состояние читается после получения блокировки: перечитанная ранее
+        // учётная запись к этому моменту могла быть изменена другим запросом.
+        var freshUser = await _userManager.FindByIdAsync(userId);
+        if (freshUser is null || freshUser.IsDeleted)
+            return (false, "Пользователь не найден или уже удалён");
+
+        var roles = await _userManager.GetRolesAsync(freshUser);
         var isSysAdmin = roles.Contains(nameof(UserRole.SystemAdmin));
         if (isSysAdmin && !await HasOtherActiveSystemAdminAsync(userId))
             return (false, LastSystemAdminRefusal());
 
-        user.IsDeleted = true;
-        user.IsActive = false;
-        user.DeletedAt = DateTime.UtcNow;
-        user.DeletedByUserId = actorId.ToString();
-        user.DisplayNameSnapshot = user.DisplayNameSnapshot ?? user.FullName;
+        freshUser.IsDeleted = true;
+        freshUser.IsActive = false;
+        freshUser.DeletedAt = DateTime.UtcNow;
+        freshUser.DeletedByUserId = actorId.ToString();
+        freshUser.DisplayNameSnapshot = freshUser.DisplayNameSnapshot ?? freshUser.FullName;
 
-        var deletedDisplayName = $"{user.UserName} — {user.FullName}";
+        // Отображаемое имя собирается до фиксации: после commit читать данные
+        // уже нельзя, а чтение после commit способно обратить сохранённое
+        // действие в ложный отказ.
+        var deletedDisplayName = $"{freshUser.UserName} — {freshUser.FullName}";
 
-        var updateResult = await _userManager.UpdateAsync(user);
+        var updateResult = await _userManager.UpdateAsync(freshUser);
         if (!updateResult.Succeeded)
-            return (false, string.Join("; ", updateResult.Errors.Select(e => e.Description)));
+            return (false, DescribeIdentityFailure(updateResult));
 
-        await _userManager.SetLockoutEnabledAsync(user, true);
-        await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
-        await _userManager.UpdateSecurityStampAsync(user);
+        var (lockApplied, lockError) = await SetLockoutAsync(
+            freshUser, enabled: true, lockedUntil: DateTimeOffset.MaxValue);
+
+        if (!lockApplied)
+            return (false, "Не удалось заблокировать учётную запись удаляемого пользователя: " + lockError);
+
+        if (!await UpdateSecurityStampCheckedAsync(freshUser))
+            return (false, "Не удалось обновить метку безопасности удаляемого пользователя");
 
         var overrides = await _db.UserPermissionOverrides.Where(x => x.UserId == userId).ToListAsync();
         if (overrides.Count > 0)
@@ -408,15 +460,22 @@ public class UserManagementService
             await _db.SaveChangesAsync();
         }
 
-        _permissions.InvalidateCache(userId);
-
+        // Audit пишется внутри той же транзакции: запись об успешном удалении
+        // не должна пережить откат самого удаления.
         await _audit.LogAsync(new AuditWriteRequest("User", userId, "Deleted", actorId,
             EntityDisplayName: deletedDisplayName,
             Details: $"Причина: {reason}"));
 
-        return (true, null);
-
+        // Успех объявляется только после фиксации. Раньше return стоял выше
+        // CommitAsync, транзакция откатывалась при освобождении, а сервис
+        // отвечал «удалено».
         await guard.CommitAsync();
+
+        // Кэш сбрасывается после фиксации: иначе наблюдатели увидят отменённое
+        // изменение как действующее.
+        _permissions.InvalidateCache(userId);
+
+        return (true, null);
     }
 
     public async Task<(bool Success, string? Error)> RestoreUserAsync(string userId, string roleName, Guid? branchId)
@@ -441,33 +500,49 @@ public class UserManagementService
         if (roleName != nameof(UserRole.SystemAdmin) && branchId == null)
             return (false, "Организация обязательна для роли отличной от SystemAdmin");
 
-        user.IsDeleted = false;
-        user.IsActive = true;
-        user.DeletedAt = null;
-        user.DeletedByUserId = null;
+        // Восстановление может вернуть роль SystemAdmin, поэтому идёт под той же
+        // блокировкой: подсчёт администраторов обязан быть актуальным.
+        await using var guard = await BeginSystemAdminGuardAsync();
 
-        var updateResult = await _userManager.UpdateAsync(user);
-        if (!updateResult.Succeeded)
-            return (false, string.Join("; ", updateResult.Errors.Select(e => e.Description)));
+        var freshUser = await _userManager.FindByIdAsync(userId);
+        if (freshUser is null || !freshUser.IsDeleted)
+            return (false, "Пользователь не найден или не удалён");
 
-        await _userManager.SetLockoutEndDateAsync(user, null);
-        await _userManager.SetLockoutEnabledAsync(user, false);
-        await _userManager.UpdateSecurityStampAsync(user);
+        var displayName = $"{freshUser.UserName} — {freshUser.FullName}";
 
-        var currentRoles = await _userManager.GetRolesAsync(user);
-        if (currentRoles.Any())
-            await _userManager.RemoveFromRolesAsync(user, currentRoles);
-        await _userManager.AddToRoleAsync(user, roleName);
+        freshUser.IsDeleted = false;
+        freshUser.IsActive = true;
+        freshUser.DeletedAt = null;
+        freshUser.DeletedByUserId = null;
 
         if (branchId.HasValue)
-            user.BranchId = branchId;
+            freshUser.BranchId = branchId;
 
-        await _userManager.UpdateAsync(user);
-        _permissions.InvalidateCache(userId);
+        var updateResult = await _userManager.UpdateAsync(freshUser);
+        if (!updateResult.Succeeded)
+            return (false, DescribeIdentityFailure(updateResult));
+
+        var (unlockApplied, unlockError) = await SetLockoutAsync(
+            freshUser, enabled: false, lockedUntil: null);
+
+        if (!unlockApplied)
+            return (false, "Не удалось снять блокировку восстанавливаемой учётной записи: " + unlockError);
+
+        if (!await UpdateSecurityStampCheckedAsync(freshUser))
+            return (false, "Не удалось обновить метку безопасности восстанавливаемой учётной записи");
+
+        var currentRoles = await _userManager.GetRolesAsync(freshUser);
+        var roleError = await ReplaceRolesAsync(freshUser, currentRoles, roleName);
+        if (roleError != null)
+            return (false, roleError);
 
         await _audit.LogAsync(new AuditWriteRequest("User", userId, "Restored", actorId,
-            EntityDisplayName: $"{user.UserName} — {user.FullName}",
+            EntityDisplayName: displayName,
             Details: $"Роль: {GetRoleDisplayName(roleName)}; организация: {branchId}"));
+
+        await guard.CommitAsync();
+
+        _permissions.InvalidateCache(userId);
 
         return (true, null);
     }
@@ -595,7 +670,11 @@ public class UserManagementService
                 .Select(x => x.PermissionCode)
                 .ToListAsync()).ToHashSet();
 
+        // Без отслеживания: долгоживущая область иначе показала бы прежнее
+        // содержимое уже отслеженной ею строки решения, и форма выдала бы
+        // отменённое право как действующее.
         var overrides = await _db.UserPermissionOverrides
+            .AsNoTracking()
             .Where(x => x.UserId == userId)
             .ToDictionaryAsync(x => x.PermissionCode);
 
@@ -716,6 +795,10 @@ public class UserManagementService
             Details: $"Полномочие: {permLabel}; было: {oldState ?? "нет решения"}; стало: разрешено; причина: {reason}"));
 
         var result = await GetEffectivePermissionsAsync(userId);
+
+        // Оповещение после фиксации: подписчики пересчитают интерфейс
+        // и не увидят отменённое изменение как действующее.
+        _changes.NotifyChanged(userId);
         return (result, null);
     }
 
@@ -785,6 +868,10 @@ public class UserManagementService
             Details: $"Полномочие: {permLabel2}; было: {oldState ?? "нет решения"}; стало: запрещено; причина: {reason}"));
 
         var result = await GetEffectivePermissionsAsync(userId);
+
+        // Оповещение после фиксации: подписчики пересчитают интерфейс
+        // и не увидят отменённое изменение как действующее.
+        _changes.NotifyChanged(userId);
         return (result, null);
     }
 
@@ -827,13 +914,107 @@ public class UserManagementService
             Details: $"Полномочие: {permLabel3}; было: {oldState}; решение отменено"));
 
         var result = await GetEffectivePermissionsAsync(userId);
+
+        // Оповещение после фиксации: подписчики пересчитают интерфейс
+        // и не увидят отменённое изменение как действующее.
+        _changes.NotifyChanged(userId);
         return (result, null);
     }
 
     private async Task<bool> HasOtherActiveSystemAdminAsync(string excludeUserId)
     {
-        var sysAdmins = await _userManager.GetUsersInRoleAsync(nameof(UserRole.SystemAdmin));
-        return sysAdmins.Any(u => u.IsActive && u.Id != excludeUserId);
+        // Состояние читается напрямую из базы и без отслеживания изменений.
+        // GetUsersInRoleAsync возвращает уже отслеживаемый контекстом объект,
+        // а он мог быть прочитан до получения блокировки и нести прежнее
+        // значение IsActive. Из-за этого второй запрос видел бы своего
+        // администратора активным и отказ не срабатывал бы.
+        var others = await (
+            from ur in _db.UserRoles.AsNoTracking()
+            join r in _db.Roles.AsNoTracking() on ur.RoleId equals r.Id
+            join u in _db.Users.AsNoTracking() on ur.UserId equals u.Id
+            where r.Name == nameof(UserRole.SystemAdmin)
+                  && u.IsActive
+                  && u.Id != excludeUserId
+            select u.Id)
+            .AnyAsync();
+
+        return others;
+    }
+
+    /// <summary>
+    /// Текст отказа по результату Identity без содержимого внутренних
+    /// сообщений, если оно пусто.
+    /// <para>
+    /// Ошибки Identity иногда приходят без описаний, и тогда вызывающая
+    /// сторона получала пустую строку и не понимала причину отказа.
+    /// </para>
+    /// </summary>
+    private static string DescribeIdentityFailure(IdentityResult result)
+    {
+        var detail = string.Join("; ",
+            result.Errors.Select(e => e.Description).Where(d => !string.IsNullOrWhiteSpace(d)));
+
+        return string.IsNullOrWhiteSpace(detail)
+            ? "Операция Identity завершилась ошибкой"
+            : detail;
+    }
+
+    /// <summary>
+    /// Меняет блокировку входа и проверяет результат каждого вызова Identity.
+    /// <para>
+    /// Identity может сохранять промежуточные изменения внутри своих методов.
+    /// Это допустимо только внутри внешней транзакции, поэтому метод вызывается
+    /// лишь под guard. Результат проверяется: раньше отказы молча игнорировались,
+    /// и сервис сообщал об успехе при фактическом отказе части изменений.
+    /// </para>
+    /// </summary>
+    private async Task<(bool Applied, string? Error)> SetLockoutAsync(
+        ApplicationUser user, bool enabled, DateTimeOffset? lockedUntil)
+    {
+        // Порядок обязателен: SetLockoutEndDateAsync отказывает, если для
+        // учётной записи выключена блокировка. Поэтому срок задаётся первым,
+        // а флаг меняется вторым. Обратный порядок ломал снятие блокировки,
+        // и ошибка молча превращалась в «не удалось снять блокировку».
+        var endResult = await _userManager.SetLockoutEndDateAsync(user, lockedUntil);
+        if (!endResult.Succeeded)
+            return (false, DescribeIdentityFailure(endResult));
+
+        var enableResult = await _userManager.SetLockoutEnabledAsync(user, enabled);
+        if (!enableResult.Succeeded)
+            return (false, DescribeIdentityFailure(enableResult));
+
+        return (true, null);
+    }
+
+    /// <summary>Обновляет метку безопасности и проверяет результат.</summary>
+    private async Task<bool> UpdateSecurityStampCheckedAsync(ApplicationUser user)
+    {
+        var result = await _userManager.UpdateSecurityStampAsync(user);
+        return result.Succeeded;
+    }
+
+    /// <summary>
+    /// Меняет набор ролей пользователя и проверяет результат каждого вызова.
+    /// <para>
+    /// Обе операции обязаны быть успешными: состояние «старую роль сняли, новую
+    /// не назначили» приводит к потере доступа, а audit об успехе уже записан.
+    /// </para>
+    /// </summary>
+    private async Task<string?> ReplaceRolesAsync(
+        ApplicationUser user, IList<string> currentRoles, string newRole)
+    {
+        if (currentRoles.Count > 0)
+        {
+            var removeResult = await _userManager.RemoveFromRolesAsync(user, currentRoles);
+            if (!removeResult.Succeeded)
+                return DescribeIdentityFailure(removeResult);
+        }
+
+        var addResult = await _userManager.AddToRoleAsync(user, newRole);
+        if (!addResult.Succeeded)
+            return DescribeIdentityFailure(addResult);
+
+        return null;
     }
 
     /// <summary>

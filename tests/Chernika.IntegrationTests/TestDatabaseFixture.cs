@@ -82,6 +82,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         services.AddScoped<FakeCurrentUser>();
         services.AddScoped<ICurrentUserService>(sp => sp.GetRequiredService<FakeCurrentUser>());
         services.AddScoped<IPermissionService, PermissionService>();
+        services.AddSingleton<IPermissionChangeNotifier, PermissionChangeNotifier>();
         services.AddScoped<AuditService>();
         services.AddScoped<TaskService>();
         services.AddScoped<NotificationService>();

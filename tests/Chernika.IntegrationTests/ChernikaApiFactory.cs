@@ -50,7 +50,20 @@ public sealed class ChernikaApiFactory : WebApplicationFactory<Program>, IAsyncL
     private const string ConnectionStringTemplate =
         "Host=localhost;Port=5432;Database={0};Username=postgres;Password=qwerty12345;Pooling=false";
 
-    public static string HttpConnectionString => string.Format(ConnectionStringTemplate, HttpDbName);
+    /// <summary>
+    /// Имя базы для этого экземпляра фабрики.
+    /// <para>
+    /// Раньше все экземпляры делили одно имя, и параллельные классы тестов
+    /// пересоздавали одну и ту же базу: один падал с «база уже существует»,
+    /// а другой в это время работал по уже пересозданной базе. Имя делается
+    /// уникальным на экземпляр, чтобы параллельные прогоны не зависели друг
+    /// от друга и от порядка выполнения.
+    /// </para>
+    /// </summary>
+    public string DbName { get; } =
+        HttpDbName + "_" + Guid.NewGuid().ToString("N")[..8];
+
+    public string HttpConnectionString => string.Format(ConnectionStringTemplate, DbName);
 
     public string SystemAdminUserName { get; private set; } = null!;
     public string NormAdminUserName { get; private set; } = null!;
@@ -61,10 +74,10 @@ public sealed class ChernikaApiFactory : WebApplicationFactory<Program>, IAsyncL
     {
         // Строгая охрана: запуск против рабочей БД из этих тестов недопустим.
         var incoming = builder.GetSetting("ConnectionStrings:DefaultConnection");
-        if (!string.IsNullOrEmpty(incoming) && !incoming.Contains(HttpDbName, StringComparison.Ordinal))
+        if (!string.IsNullOrEmpty(incoming) && !incoming.Contains(DbName, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "HTTP-тесты не должны работать против БД '" + HttpDbName + "'. "
+                "HTTP-тесты не должны работать против БД '" + DbName + "'. "
                 + "В конфигурации передана: " + incoming);
         }
 
@@ -148,7 +161,7 @@ public sealed class ChernikaApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// Пересоздание базы. Соединение с самой фабрики здесь не годится: хост ещё
     /// поднимается, и держать открытое соединение к удаляемой базе рискованно.
     /// </summary>
-    private static async Task RecreateDatabaseAsync()
+    private async Task RecreateDatabaseAsync()
     {
         var adminConnection =
             "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=qwerty12345";
@@ -157,13 +170,13 @@ public sealed class ChernikaApiFactory : WebApplicationFactory<Program>, IAsyncL
         await connection.OpenAsync();
 
         await using (var drop = new Npgsql.NpgsqlCommand(
-            $"DROP DATABASE IF EXISTS \"{HttpDbName}\" WITH (FORCE)", connection))
+            $"DROP DATABASE IF EXISTS \"{DbName}\" WITH (FORCE)", connection))
         {
             await drop.ExecuteNonQueryAsync();
         }
 
         await using var create = new Npgsql.NpgsqlCommand(
-            $"CREATE DATABASE \"{HttpDbName}\"", connection);
+            $"CREATE DATABASE \"{DbName}\"", connection);
         await create.ExecuteNonQueryAsync();
     }
 

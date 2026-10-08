@@ -4,6 +4,7 @@
 @inject IPermissionService PermSvc
 @inject TaskService TaskSvc
 @inject ILogger<MainLayout> Logger
+@inject Chernika.Domain.IPermissionChangeNotifier? _changes
 @using Chernika.Domain
 @using Chernika.Domain.Entities
 @using Chernika.Domain.Enums
@@ -265,6 +266,16 @@
     ElementReference _bellPopoverRef;
     bool _authChecked;
     bool _disposed;
+
+    /// <summary>Идентификатор текущего пользователя для пересчёта прав.</summary>
+    string? _currentUserId;
+
+    /// <summary>
+    /// Подписка на изменения прав. Освобождается в Dispose. Оповещатель
+    /// внедряется необязательно: при его отсутствии пересчёт происходит
+    /// обычным путём при загрузке пользователя.
+    /// </summary>
+    IDisposable? _permissionSubscription;
     CancellationTokenSource? _layoutRefreshCts;
 
     [Inject] NavigationManager Nav { get; set; } = null!;
@@ -455,6 +466,7 @@
     public void Dispose()
     {
         _disposed = true;
+        _permissionSubscription?.Dispose();
         Nav.LocationChanged -= OnLocationChanged;
         NotifRefresh.Changed -= OnNotifRefresh;
         _layoutRefreshCts?.Cancel();
@@ -609,17 +621,61 @@
             var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             if (userId != null)
             {
-                await using (await DbLock.WaitAsync())
-                {
-                    canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
-                    canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
-                    canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
-                }
+                _currentUserId = userId;
+                await RefreshAccessFlagsAsync();
+                SubscribeToPermissionChanges(userId);
             }
             await RefreshAccountDataAsync();
             await RefreshLayoutIndicatorsAsync();
             await CheckMustChangePasswordAsync();
         }
+    }
+
+    /// <summary>
+    /// Пересчитывает права, определяющие видимость пунктов меню.
+    /// <para>
+    /// Чтение идёт под CircuitDbLock: контекст circuit не допускает
+    /// параллельного доступа, а пересчёт приходит извне события.
+    /// </para>
+    /// </summary>
+    async Task RefreshAccessFlagsAsync()
+    {
+        var userId = _currentUserId;
+        if (string.IsNullOrEmpty(userId) || _disposed)
+            return;
+
+        await using (await DbLock.WaitAsync())
+        {
+            canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
+            canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
+            canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
+        }
+    }
+
+    /// <summary>
+    /// Подписывается на изменения прав текущего пользователя, чтобы уже
+    /// отрисованное меню обновилось без перезагрузки страницы. Подписка
+    /// освобождается в Dispose, иначе она удерживала бы circuit живым.
+    /// <para>
+    /// Оповещение процесс-локальное: в другой процесс оно не доставляется,
+    /// и там меню обновится при переходе на страницу или по истечении
+    /// времени жизни кэша прав.
+    /// </para>
+    /// </summary>
+    void SubscribeToPermissionChanges(string userId)
+    {
+        if (_permissionSubscription != null || _changes == null)
+            return;
+
+        _permissionSubscription = _changes.Subscribe(userId, () =>
+            _ = InvokeAsync(async () =>
+            {
+                if (_disposed)
+                    return;
+
+                await RefreshAccessFlagsAsync();
+                StateHasChanged();
+            }));
     }
 
     async Task ToggleTheme()
