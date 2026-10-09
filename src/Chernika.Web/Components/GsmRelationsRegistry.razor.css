@@ -234,9 +234,9 @@
 
 /* ── Выбор марки ──────────────────────────────────────────────────────────
    Список вариантов позиционируется порталом dropdownPortal (js/dropdown-portal.js) —
-   тем же самым механизмом, что у выбора сборочной единицы в HKEdit. Свой
-   позиционирующий CSS сохранён как запасной вариант на случай, если список
-   отрисован, но ещё не перенесён в портал. */
+   тем же самым механизмом, что у выбора сборочной единицы в HKEdit. До переноса
+   он скрыт (см. .relPickerDrop), потому что перенос асинхронный и позирующее
+   в потоке поле успело бы дёрнуть форму. */
 
 .relPickerAnchor {
   position: relative;
@@ -265,23 +265,33 @@
   box-shadow: 0 0 0 3px rgba(79, 140, 255, .12);
 }
 
-/* Оформление списка вариантов. Геометрию (position/top/left/width/max-height/
-   z-index) портал задаёт инлайново с !important, поэтому здесь остаются только
-   оформление и внутренняя прокрутка. */
-.relPickerList {
-  position: absolute;
-  z-index: 60;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  max-height: min(240px, 38vh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
+/* Оформление переносимого списка вариантов. Геометрию (position/top/left/width/
+   max-height/z-index) портал задаёт инлайново с !important, поэтому здесь
+   остаются только оформление, раскладка и внутренняя прокрутка. */
+.relPickerDrop {
+  /* До переноса в портал список не показывается: перенос выполняется
+     асинхронно, и в промежутке список иначе встал бы в поток внутри поля и
+     дёрнул форму. Портал показывает его инлайновым display. */
+  display: none;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius2, 10px);
   box-shadow: var(--shadow);
+  max-height: min(240px, 38vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px 0;
+}
+
+/* Строка поиска лежит внутри списка: без боковых отступов она липла бы к
+   рамке, а без sticky уходила бы вверх вместе с вариантами. */
+.relPickerDrop .relPickerSearch {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px 6px;
 }
 
 .relPickerItem {

@@ -30,6 +30,9 @@ window.dropdownPortal = {
       left: ${left}px !important;
       width: ${width}px !important;
       max-height: ${height}px !important;
+      /* Списки, скрытые в CSS до переноса (display:none), здесь
+         показываются. Для списков с обычным display это no-op. */
+      display: block !important;
       z-index: 9999 !important;
     `;
     this._activeId = dropId;
@@ -39,16 +42,31 @@ window.dropdownPortal = {
     const el = document.getElementById(dropId);
     if (!el) return;
 
-    if (el.__originalParent && el.__originalParent !== document.body) {
-      el.__originalParent.appendChild(el);
-    } else if (el.parentNode) {
-      el.parentNode.removeChild(el);
+    // Возврат выполняется только если элемент действительно переносился в body.
+    // Раньше здесь стояла ветка removeChild: если attach вышел раньше времени
+    // (не нашёл якорь), переноса не было, а detach всё равно удалял элемент из
+    // исходного контейнера. Blazor после этого терял свой узел: список
+    // пропадал, выбор не работал, поле исчезало.
+    if (el.__originalParent) {
+      if (el.__originalParent !== document.body) {
+        el.__originalParent.appendChild(el);
+      }
+      delete el.__originalParent;
     }
-    delete el.__originalParent;
 
     if (this._activeId === dropId) this._activeId = null;
     this._clearHandler();
     this._clearEscape();
+  },
+
+  /* Фокус на первый поле внутри перенесённого списка. Нужен там, где строка
+     поиска находится внутри выпадающего списка: на динамически вставленный
+     элемент атрибут autofocus не действует. */
+  focusFirstInput(dropId) {
+    const el = document.getElementById(dropId);
+    if (!el) return;
+    const input = el.querySelector('input:not([type="hidden"]), select, textarea');
+    if (input) input.focus();
   },
 
   /* ignoreId — необязательный элемент, клики по которому НЕ считаются
@@ -113,14 +131,12 @@ window.dropdownPortal = {
     this._clearEscape();
     if (this._activeId) {
       const el = document.getElementById(this._activeId);
-      if (el) {
-        if (el.__originalParent && el.__originalParent !== document.body) {
-          el.__originalParent.appendChild(el);
-        } else if (el.parentNode) {
-          el.parentNode.removeChild(el);
-        }
-        delete el.__originalParent;
+      // Та же оговорка, что в detach: узел возвращается только если он
+      // действительно переносился в body. Иначе Blazor потерял бы элемент.
+      if (el && el.__originalParent && el.__originalParent !== document.body) {
+        el.__originalParent.appendChild(el);
       }
+      if (el) delete el.__originalParent;
       this._activeId = null;
     }
   }

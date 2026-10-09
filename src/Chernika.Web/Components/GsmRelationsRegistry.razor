@@ -27,18 +27,19 @@
                    уходил под форму. Портал также переворачивает список вверх у
                    нижней границы экрана. Закрытие по клику вне и по Escape
                    регистрирует JS, поэтому собственного @onfocusout здесь нет.
-                   Строка поиска остаётся снаружи списка (в HKEdit она внутри), и
-                   весь контейнер поля передаётся порталу как «не считать кликом
-                   вне» — иначе ввод в поиск закрывал бы список. *@
+
+                   Триггер обязан присутствовать в DOM всегда, и открытым в том
+                   числе: он якорь, по которому портал считает геометрию. Раньше
+                   он скрывался на время раскрытия, якорь исчезал, список не
+                   переносился и закрывался внутри панели, а detach удалял узел,
+                   который JS не переносил, — Blazor терял элемент, и поле
+                   пропадало. Поэтому подпись-заглушка не убирается, а строка
+                   поиска перенесена внутрь списка (как в HKEdit): иначе она
+                   разделяла подпись и варианты и читалась как лишняя строка
+                   выбора. Контейнер поля передаётся порталу как «не считать
+                   кликом вне» — иначе клик по триггеру закрывал бы список. *@
                 <div class="relPickerAnchor" id="@PickerAnchorId(PickerSlot.Primary)"
                      @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Primary)">
-                    @if (pickerOpen == PickerSlot.Primary)
-                    {
-                        <input id="relPrimarySearch" class="relPickerSearch" autofocus
-                               value="@pickerSearch" @oninput="OnPickerSearchInput"
-                               placeholder="Начните вводить название или НД…"
-                               aria-label="Поиск основной марки" />
-                    }
                     @if (SelectedPrimary is { } p)
                     {
                         @* Тег выбранной марки сам служит триггером: при правке связи
@@ -56,11 +57,8 @@
                                     @onclick="() => ClearSelection(PickerSlot.Primary)">×</button>
                         </div>
                     }
-                    else if (pickerOpen != PickerSlot.Primary)
+                    else
                     {
-                        @* Пока селектор открыт, подпись-заглушка убирается: она
-                           попадала в поле между строкой поиска и раскрытым
-                           списком и выглядела как лишняя строка выбора. *@
                         <button id="relPrimaryBtn" type="button" class="btn ghost relPickerTrigger"
                                 @onclick="() => TogglePicker(PickerSlot.Primary)"
                                 aria-expanded="@((pickerOpen == PickerSlot.Primary).ToString().ToLowerInvariant())">
@@ -69,24 +67,34 @@
                     }
                     @if (pickerOpen == PickerSlot.Primary)
                     {
-                        <div id="@PickerDropId(PickerSlot.Primary)" class="relPickerList" role="listbox"
-                             aria-label="Варианты основной марки">
-                            @if (pickerOptions.Count == 0)
-                            {
-                                <div class="relPickerEmpty">Нет совпадений</div>
-                            }
-                            @foreach (var o in pickerOptions)
-                            {
-                                var active = highlightedId == o.Id;
-                                <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
-                                     role="option" aria-selected="@active.ToString().ToLowerInvariant()"
-                                     id="@PickerOptionId(PickerSlot.Primary, o.Id)"
-                                     @onmousedown:preventDefault="true"
-                                     @onclick="() => SelectOption(PickerSlot.Primary, o)"
-                                     @onmouseenter="() => highlightedId = o.Id">
-                                    <span>@o.DisplayLabel</span>
-                                </div>
-                            }
+                        @* Список переносится в body, поэтому обработчик клавиатуры
+                           нужен и на нём самом: события из строки поиска и
+                           вариантов больше не всплывают к контейнеру поля. *@
+                        <div id="@PickerDropId(PickerSlot.Primary)" class="relPickerDrop"
+                             aria-label="Варианты основной марки"
+                             @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Primary)">
+                            <input id="relPrimarySearch" class="relPickerSearch"
+                                   value="@pickerSearch" @oninput="OnPickerSearchInput"
+                                   placeholder="Начните вводить название или НД…"
+                                   aria-label="Поиск основной марки" />
+                            <div class="relPickerList" role="listbox">
+                                @if (pickerOptions.Count == 0)
+                                {
+                                    <div class="relPickerEmpty">Нет совпадений</div>
+                                }
+                                @foreach (var o in pickerOptions)
+                                {
+                                    var active = highlightedId == o.Id;
+                                    <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
+                                         role="option" aria-selected="@active.ToString().ToLowerInvariant()"
+                                         id="@PickerOptionId(PickerSlot.Primary, o.Id)"
+                                         @onmousedown:preventDefault="true"
+                                         @onclick="() => SelectOption(PickerSlot.Primary, o)"
+                                         @onmouseenter="() => highlightedId = o.Id">
+                                        <span>@o.DisplayLabel</span>
+                                    </div>
+                                }
+                            </div>
                         </div>
                     }
                 </div>
@@ -100,13 +108,6 @@
                 <label for="relRelatedBtn">Связанная марка <span class="relReq">*</span></label>
                 <div class="relPickerAnchor" id="@PickerAnchorId(PickerSlot.Related)"
                      @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Related)">
-                    @if (pickerOpen == PickerSlot.Related)
-                    {
-                        <input id="relRelatedSearch" class="relPickerSearch" autofocus
-                               value="@pickerSearch" @oninput="OnPickerSearchInput"
-                               placeholder="Начните вводить название или НД…"
-                               aria-label="Поиск связанной марки" />
-                    }
                     @if (SelectedRelated is { } r)
                     {
                         <div class="relChipRow">
@@ -121,10 +122,8 @@
                                     @onclick="() => ClearSelection(PickerSlot.Related)">×</button>
                         </div>
                     }
-                    else if (pickerOpen != PickerSlot.Related)
+                    else
                     {
-                        @* Подпись-заглушка скрыта на время раскрытия селектора:
-                           иначе она встаёт между поиском и списком. *@
                         <button id="relRelatedBtn" type="button" class="btn ghost relPickerTrigger"
                                 @onclick="() => TogglePicker(PickerSlot.Related)"
                                 aria-expanded="@((pickerOpen == PickerSlot.Related).ToString().ToLowerInvariant())">
@@ -133,24 +132,31 @@
                     }
                     @if (pickerOpen == PickerSlot.Related)
                     {
-                        <div id="@PickerDropId(PickerSlot.Related)" class="relPickerList" role="listbox"
-                             aria-label="Варианты связанной марки">
-                            @if (pickerOptions.Count == 0)
-                            {
-                                <div class="relPickerEmpty">Нет совпадений</div>
-                            }
-                            @foreach (var o in pickerOptions)
-                            {
-                                var active = highlightedId == o.Id;
-                                <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
-                                     role="option" aria-selected="@active.ToString().ToLowerInvariant()"
-                                     id="@PickerOptionId(PickerSlot.Related, o.Id)"
-                                     @onmousedown:preventDefault="true"
-                                     @onclick="() => SelectOption(PickerSlot.Related, o)"
-                                     @onmouseenter="() => highlightedId = o.Id">
-                                    <span>@o.DisplayLabel</span>
-                                </div>
-                            }
+                        <div id="@PickerDropId(PickerSlot.Related)" class="relPickerDrop"
+                             aria-label="Варианты связанной марки"
+                             @onkeydown="ev => OnPickerKeyDown(ev, PickerSlot.Related)">
+                            <input id="relRelatedSearch" class="relPickerSearch"
+                                   value="@pickerSearch" @oninput="OnPickerSearchInput"
+                                   placeholder="Начните вводить название или НД…"
+                                   aria-label="Поиск связанной марки" />
+                            <div class="relPickerList" role="listbox">
+                                @if (pickerOptions.Count == 0)
+                                {
+                                    <div class="relPickerEmpty">Нет совпадений</div>
+                                }
+                                @foreach (var o in pickerOptions)
+                                {
+                                    var active = highlightedId == o.Id;
+                                    <div class="relPickerItem @(active ? "relPickerItemActive" : "")"
+                                         role="option" aria-selected="@active.ToString().ToLowerInvariant()"
+                                         id="@PickerOptionId(PickerSlot.Related, o.Id)"
+                                         @onmousedown:preventDefault="true"
+                                         @onclick="() => SelectOption(PickerSlot.Related, o)"
+                                         @onmouseenter="() => highlightedId = o.Id">
+                                        <span>@o.DisplayLabel</span>
+                                    </div>
+                                }
+                            </div>
                         </div>
                     }
                 </div>
@@ -592,7 +598,12 @@
 
         try
         {
+            // Якорь позиционирования - триггер: он присутствует в DOM всегда,
+            // в том числе при открытом селекторе.
             await JS.InvokeVoidAsync("dropdownPortal.attach", _activeDropdownId, PickerButtonId(slot));
+            // Строка поиска перенесена внутрь списка, поэтому на динамически
+            // вставленный input атрибут autofocus не действует - фокус ставит JS.
+            await JS.InvokeVoidAsync("dropdownPortal.focusFirstInput", _activeDropdownId);
             await JS.InvokeVoidAsync(
                 "dropdownPortal.onClickOutside",
                 _activeDropdownId,
@@ -694,7 +705,7 @@
         highlightedId = options.Count > 0 ? options[0].Id : null;
     }
 
-    private void SelectOption(PickerSlot slot, GsmRelationMaterialOption option)
+    private async Task SelectOption(PickerSlot slot, GsmRelationMaterialOption option)
     {
         // Идентификатор переносится явно: выбор — это конкретная запись справочника,
         // а не совпадение текста. Одноимённые марки различимы подписью.
@@ -712,7 +723,10 @@
         }
 
         // Выбор завершает работу со списком: элемент возвращается из портала.
-        _ = ClosePickerAsync();
+        // Закрытие ожидается: при fire-and-forget состояние менялось уже после того,
+        // как Blazor отрисовал компонент, из-за чего выбранная марка не появлялась,
+        // а селектор оставался раскрытым.
+        await ClosePickerAsync();
     }
 
     private void ClearSelection(PickerSlot slot)
@@ -737,6 +751,11 @@
     private static string PickerDropId(PickerSlot slot) =>
         slot == PickerSlot.Primary ? "relPrimaryDrop" : "relRelatedDrop";
 
+    /// <summary>
+    /// Триггер селектора. Он же якорь позиционирования для портального
+    /// списка, поэтому обязан быть в DOM и при открытом селекторе — скрывать
+    /// его нельзя.
+    /// </summary>
     private static string PickerButtonId(PickerSlot slot) =>
         slot == PickerSlot.Primary ? "relPrimaryBtn" : "relRelatedBtn";
 
@@ -790,7 +809,9 @@
                 var chosen = highlightedId is Guid hid
                     ? pickerOptions.FirstOrDefault(o => o.Id == hid)
                     : null;
-                if (chosen != null) SelectOption(slot, chosen);
+                // Ожидание обязательно: SelectOption возвращает элемент списка
+                // из портала, и рендер должен пройти уже после этого.
+                if (chosen != null) await SelectOption(slot, chosen);
                 break;
         }
     }
