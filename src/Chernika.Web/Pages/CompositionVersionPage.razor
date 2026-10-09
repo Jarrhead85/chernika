@@ -256,19 +256,19 @@
                         <div class="field"><label>Статус</label><CompositionStatusBadge Status="@selected.Status" /></div>
                         <div class="field"><label>Версия</label><div class="mono">@selected.Version</div></div>
                         <div class="field"><label>Автор</label><div>@(selected.AuthorName ?? "—")</div></div>
-                        <div class="field"><label>Создан</label><div class="mono">@selected.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
-                        <div class="field"><label>Обновлён</label><div class="mono">@selected.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        <div class="field"><label>Создан</label><div class="mono">@AppTime.Fmt(selected.CreatedAt, "dd.MM.yyyy HH:mm")</div></div>
+                        <div class="field"><label>Обновлён</label><div class="mono">@AppTime.Fmt(selected.UpdatedAt, "dd.MM.yyyy HH:mm")</div></div>
                         @if (selected.ApprovedAt.HasValue)
                         {
-                            <div class="field"><label>Утверждён</label><div class="mono">@selected.ApprovedAt.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                            <div class="field"><label>Утверждён</label><div class="mono">@AppTime.Fmt(selected.ApprovedAt.Value, "dd.MM.yyyy HH:mm")</div></div>
                         }
                         @if (selected.EffectiveDate.HasValue)
                         {
-                            <div class="field"><label>Действует с</label><div class="mono">@selected.EffectiveDate.Value.ToString("dd.MM.yyyy")</div></div>
+                            <div class="field"><label>Действует с</label><div class="mono">@AppTime.Fmt(selected.EffectiveDate.Value, "dd.MM.yyyy")</div></div>
                         }
                         @if (selected.ExpirationDate.HasValue)
                         {
-                            <div class="field"><label>Действует до</label><div class="mono">@selected.ExpirationDate.Value.ToString("dd.MM.yyyy")</div></div>
+                            <div class="field"><label>Действует до</label><div class="mono">@AppTime.Fmt(selected.ExpirationDate.Value, "dd.MM.yyyy")</div></div>
                         }
                         @if (!string.IsNullOrEmpty(selected.Comment))
                         {
@@ -308,9 +308,9 @@
                                         </div>
                                         @if (v.EffectiveDate.HasValue)
                                         {
-                                            <div class="sub">Действует с @v.EffectiveDate!.Value.ToString("dd.MM.yyyy")</div>
+    <div class="sub">Действует с @AppTime.Fmt(v.EffectiveDate, "dd.MM.yyyy")</div>
                                         }
-                                        <div class="sub">@v.UpdatedAt.ToString("dd.MM.yyyy HH:mm") @(active ? "· Текущая" : "")</div>
+                                        <div class="sub">@AppTime.Fmt(v.UpdatedAt, "dd.MM.yyyy HH:mm") @(active ? "· Текущая" : "")</div>
                                     </div>
                                 }
                             </div>
@@ -362,7 +362,7 @@
                                             <span class="tag @TaskStatusTag(t.Status)">@TaskStatusLabel(t.Status)</span>
                                         </div>
                                         <div class="sub">@t.Title</div>
-                                        <div class="sub">@t.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm") @(t.WorkTaskGroupId.HasValue ? "(групп.)" : "")</div>
+                                        <div class="sub">@AppTime.Fmt(t.CreatedAtUtc, "dd.MM.yyyy HH:mm") @(t.WorkTaskGroupId.HasValue ? "(групп.)" : "")</div>
                                     </div>
                                 }
                             </div>
@@ -385,7 +385,7 @@
                                     <div class="rowCard">
                                         <div class="top">
                                             <span>@AuditDisplayCatalog.GetAction(h.Action).Title</span>
-                                            <span class="sub">@h.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span>
+                                            <span class="sub">@AppTime.Fmt(h.CreatedAt, "dd.MM.yyyy HH:mm")</span>
                                         </div>
                                         @if (!string.IsNullOrEmpty(h.ActorFullName))
                                         {

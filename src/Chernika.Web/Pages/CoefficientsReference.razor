@@ -71,7 +71,6 @@
     <section class="panel">
         <div class="panelHeader">
             <h2>Список коэффициентов</h2>
-            <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
             <div class="mbFilters">
@@ -143,7 +142,7 @@
                                     <td>@c.ConditionDescription</td>
                                     <td>@(string.IsNullOrEmpty(c.NormativeBasis) ? "—" : c.NormativeBasis)</td>
                                     <td><span class="tag @(c.IsDeleted ? "" : "ok")">@(c.IsDeleted ? "Архивный" : "Рабочий")</span></td>
-                                    <td class="mono">@c.UpdatedAt.ToString("dd.MM.yyyy")</td>
+                                    <td class="mono">@AppTime.Fmt(c.UpdatedAt, "dd.MM.yyyy")</td>
                                     @if (canEdit)
                                     {
                                         <td @ondblclick:stopPropagation="true">

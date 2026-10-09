@@ -257,7 +257,7 @@
                             <div class="searchResultMeta">
                                 @if (r.CreatedAt is { } createdAt)
                                 {
-                                    <span>Создано: @createdAt.ToString("dd.MM.yyyy")</span>
+                                    <span>Создано: @AppTime.Fmt(createdAt, "dd.MM.yyyy")</span>
                                 }
                                 @if (!string.IsNullOrEmpty(r.BranchName))
                                 {
@@ -843,13 +843,13 @@
         "GsmMaterial" =>
         [
             ("", "Показать во всех связанных данных"),
-            ("ReferenceOnly", "Показать только в справочнике ГСМ"),
+            ("ReferenceOnly", "Показать только в классификаторе ГСМ"),
             ("HKOnly", "Показать только в ХК"),
         ],
         _ =>
         [
             ("", "Показать во всех связанных данных"),
-            ("ReferenceOnly", "Показать только в справочнике"),
+            ("ReferenceOnly", "Показать только в классификаторе"),
             ("HKOnly", "Показать только в ХК"),
         ],
     };

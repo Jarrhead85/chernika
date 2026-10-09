@@ -56,8 +56,11 @@
                                     @onclick="() => ClearSelection(PickerSlot.Primary)">×</button>
                         </div>
                     }
-                    else
+                    else if (pickerOpen != PickerSlot.Primary)
                     {
+                        @* Пока селектор открыт, подпись-заглушка убирается: она
+                           попадала в поле между строкой поиска и раскрытым
+                           списком и выглядела как лишняя строка выбора. *@
                         <button id="relPrimaryBtn" type="button" class="btn ghost relPickerTrigger"
                                 @onclick="() => TogglePicker(PickerSlot.Primary)"
                                 aria-expanded="@((pickerOpen == PickerSlot.Primary).ToString().ToLowerInvariant())">
@@ -82,10 +85,6 @@
                                      @onclick="() => SelectOption(PickerSlot.Primary, o)"
                                      @onmouseenter="() => highlightedId = o.Id">
                                     <span>@o.DisplayLabel</span>
-                                    @if (o.InGostNomenclature)
-                                    {
-                                        <span class="tag">в номенклатуре ГОСТ</span>
-                                    }
                                 </div>
                             }
                         </div>
@@ -122,8 +121,10 @@
                                     @onclick="() => ClearSelection(PickerSlot.Related)">×</button>
                         </div>
                     }
-                    else
+                    else if (pickerOpen != PickerSlot.Related)
                     {
+                        @* Подпись-заглушка скрыта на время раскрытия селектора:
+                           иначе она встаёт между поиском и списком. *@
                         <button id="relRelatedBtn" type="button" class="btn ghost relPickerTrigger"
                                 @onclick="() => TogglePicker(PickerSlot.Related)"
                                 aria-expanded="@((pickerOpen == PickerSlot.Related).ToString().ToLowerInvariant())">
@@ -148,10 +149,6 @@
                                      @onclick="() => SelectOption(PickerSlot.Related, o)"
                                      @onmouseenter="() => highlightedId = o.Id">
                                     <span>@o.DisplayLabel</span>
-                                    @if (o.InGostNomenclature)
-                                    {
-                                        <span class="tag">в номенклатуре ГОСТ</span>
-                                    }
                                 </div>
                             }
                         </div>
@@ -859,12 +856,12 @@
 
         if (primaryId == Guid.Empty)
         {
-            primaryError = "Выберите основную марку из справочника.";
+            primaryError = "Выберите основную марку из классификатора.";
             return;
         }
         if (relatedId == Guid.Empty)
         {
-            relatedError = "Выберите связанную марку из справочника.";
+            relatedError = "Выберите связанную марку из классификатора.";
             return;
         }
 

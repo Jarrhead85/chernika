@@ -40,7 +40,7 @@
             <div class="navDivider"></div>
 
             <NavLink href="справочники" Match="NavLinkMatch.Prefix" class="@GetReferencesActive()">
-                <span>Справочники</span>
+                <span>Библиотека</span>
             </NavLink>
 
             <div class="navDivider"></div>
@@ -92,7 +92,7 @@
             <div class="logo">ИС</div>
             <div>
                 <h1>АИС «ИСБ ГСМ»</h1>
-                <div class="sub">Реестр ХК • Состав изделия • Справочники ГСМ</div>
+                <div class="sub">Реестр ХК • Состав изделия • Классификаторы ГСМ</div>
             </div>
         </div>
         <div class="actions">
@@ -460,7 +460,7 @@
         if (diff.TotalHours < 24) return $"{(int)diff.TotalHours} ч назад";
         if (diff.TotalDays < 2) return "вчера";
         if (diff.TotalDays < 7) return $"{(int)diff.TotalDays} дн назад";
-        return local.ToString("dd.MM.yyyy");
+        return AppTime.Fmt(local, "dd.MM.yyyy");
     }
 
     public void Dispose()

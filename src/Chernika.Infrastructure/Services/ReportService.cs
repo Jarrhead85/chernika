@@ -132,10 +132,10 @@ public class ReportService
                         table.Cell().Border(1).Padding(5).Text(card.Branch?.Name ?? "—");
 
                         table.Cell().Border(1).Padding(5).Text("Дата утверждения:").Bold();
-                        table.Cell().Border(1).Padding(5).Text(card.ApprovedDate?.ToString("dd.MM.yyyy") ?? "—");
+                        table.Cell().Border(1).Padding(5).Text(AppTime.FmtOr(card.ApprovedDate, "dd.MM.yyyy", "—"));
 
                         table.Cell().Border(1).Padding(5).Text("Срок действия:").Bold();
-                        table.Cell().Border(1).Padding(5).Text($"{card.EffectiveDate?.ToString("dd.MM.yyyy") ?? "—"} — {card.ExpirationDate?.ToString("dd.MM.yyyy") ?? "—"}");
+                        table.Cell().Border(1).Padding(5).Text($"{AppTime.FmtOr(card.EffectiveDate, "dd.MM.yyyy", "—")} — {AppTime.FmtOr(card.ExpirationDate, "dd.MM.yyyy", "—")}");
                     });
 
                     col.Item().PaddingTop(10).Text("Сборочные единицы и нормы ГСМ:").Bold().FontSize(12);
@@ -264,8 +264,8 @@ public class ReportService
         worksheet.Cell(row, 3).Value = card.Status.ToString();
         worksheet.Cell(row, 4).Value = card.Node?.Name ?? "—";
         worksheet.Cell(row, 5).Value = card.Branch?.Name ?? "—";
-        worksheet.Cell(row, 6).Value = card.CreatedAt.ToString("dd.MM.yyyy");
-        worksheet.Cell(row, 7).Value = card.ApprovedDate?.ToString("dd.MM.yyyy") ?? "—";
+        worksheet.Cell(row, 6).Value = AppTime.Date(card.CreatedAt);
+        worksheet.Cell(row, 7).Value = AppTime.FmtOr(card.ApprovedDate, "dd.MM.yyyy", "—");
         worksheet.Cell(row, 8).Value = card.Items.Count;
 
         var statusCell = worksheet.Cell(row, 3);

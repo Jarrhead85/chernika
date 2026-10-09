@@ -4,7 +4,6 @@
 @using Chernika.Domain
 @using Chernika.Web.Services
 @implements IDisposable
-@inject ReferenceCatalogService CatalogSvc
 @inject AuthenticationStateProvider AuthState
 @inject IPermissionService Perms
 @inject NavigationManager Nav
@@ -14,11 +13,11 @@
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
-            <h2>Справочники</h2>
-            <div class="hint">Единая точка входа в справочники системы</div>
+            <h2>Библиотека</h2>
+            <div class="hint">Единая точка входа в классификаторы системы</div>
         </div>
         <div class="panelBody">
-            <input class="refSearch" placeholder="Поиск справочника..."
+            <input class="refSearch" placeholder="Поиск классификатора..."
                    value="@search"
                    @oninput="OnSearchInput" />
             @if (!string.IsNullOrEmpty(errorMessage))
@@ -34,7 +33,7 @@
             }
             else if (FilteredGroups.Count == 0)
             {
-                <div class="empty-state">Справочники не найдены</div>
+                <div class="empty-state">Классификаторы не найдены</div>
             }
             else
             {
@@ -43,10 +42,6 @@
                     <div class="refGroup">
                         <div class="refGroupHeader">
                             <h3>@group.Title</h3>
-                            @if (group.RequiresAdmin)
-                            {
-                                <span class="tag warn">Администрирование</span>
-                            }
                         </div>
                         <div class="refCards">
                             @foreach (var card in cards)
@@ -54,13 +49,12 @@
                                 <div class="refCard refCardClickable"
                                      role="link"
                                      tabindex="0"
-                                     aria-label="Открыть справочник: @card.Title"
+                                     aria-label="Открыть классификатор: @card.Title"
                                      @ondblclick="() => Open(card.Route)"
                                      @onkeydown="(e) => OnCardKeyDown(e, card.Route)">
                                     <div class="refCardTitle">@card.Title</div>
                                     <div class="refCardDesc">@card.Description</div>
                                     <div class="refCardFooter">
-                                        <span class="tag">@ActiveCountText(CountFor(card.Route))</span>
                                         <div class="refCardActions">
                                             <button class="btn"
                                                     @onclick:stopPropagation="true"
@@ -86,7 +80,6 @@
     [
         new("Техника", false),
         new("Материалы", false),
-        new("Классификаторы", false),
         new("Администрирование", true),
     ];
 
@@ -94,28 +87,22 @@
     {
         ["Техника"] =
         [
-            new("Виды техники", "Справочник видов / категорий техники.", "/справочники/техника/виды-техники"),
+            new("Виды техники", "Классификатор видов / категорий техники.", "/справочники/техника/виды-техники"),
             new("Изделия", "Номенклатура изделий техники.", "/справочник-моделей"),
-            new("Комплексы", "Общесистемный справочник комплексов.", "/справочник-комплексов"),
-            new("Агрегаты", "Общесистемный справочник агрегатов.", "/справочник-агрегатов"),
-            new("Узлы", "Общесистемный справочник узлов и изделий.", "/справочник-узлов"),
-            new("Сборочные единицы", "Общесистемный справочник сборочных единиц.", "/справочник-сборочных-единиц"),
+            new("Комплексы", "Общесистемный классификатор комплексов.", "/справочник-комплексов"),
+            new("Агрегаты", "Общесистемный классификатор агрегатов.", "/справочник-агрегатов"),
+            new("Узлы", "Общесистемный классификатор узлов и изделий.", "/справочник-узлов"),
+            new("Сборочные единицы", "Общесистемный классификатор сборочных единиц.", "/справочник-сборочных-единиц"),
             new("Экземпляры изделий", "Учётные экземпляры изделий техники.", "/справочник-экземпляров"),
+            new("Рода войск", "Перечень родов войск для привязки документов.", "/справочник-родов-войск"),
         ],
         ["Материалы"] =
         [
             new("Смазочные материалы / ГСМ", "Горюче-смазочные материалы, применяемые при эксплуатации техники.", "/справочник-гсм"),
             new("Связи марок ГСМ", "Дублирующие, резервные и зарубежные аналоги марок.", "/справочник-гсм-связи"),
         ],
-        ["Классификаторы"] =
-        [
-            new("Рода войск", "Перечень родов войск для привязки документов.", "/справочник-родов-войск"),
-            // Справочник коэффициентов убран из активной навигации: коэффициенты
-            // применялись только в расчёте индивидуальных карт, модуль которых
-            // законсервирован. Код, данные и маршрут сохранены без изменений.
-        ],
         ["Администрирование"] = [
-            new("Отделы", "Справочник отделов.", "/справочники/администрирование/филиалы"),
+            new("Отделы", "Классификатор отделов.", "/справочники/администрирование/филиалы"),
         ],
     };
 
@@ -123,7 +110,6 @@
     private bool loading = true;
     private bool isAdmin;
     private string? errorMessage;
-    private readonly Dictionary<string, int> _countByRoute = new();
     private readonly SemaphoreSlim _catalogLoadGate = new(1, 1);
     private CancellationTokenSource? _loadCts;
     private int _loadVersion;
@@ -209,11 +195,11 @@
             if (!ct.IsCancellationRequested && !_disposed && version == _loadVersion)
             {
                 Logger.LogError(ex,
-                    "Ошибка загрузки справочников. Version={Version}, Route={Route}",
+                    "Ошибка загрузки классификаторов. Version={Version}, Route={Route}",
                     version,
                     Nav.ToBaseRelativePath(Nav.Uri));
 
-                errorMessage = "Не удалось загрузить справочники. Повторите попытку.";
+                errorMessage = "Не удалось загрузить классификаторы. Повторите попытку.";
             }
         }
         finally
@@ -236,20 +222,8 @@
 
             ct.ThrowIfCancellationRequested();
 
-            var counts = await CatalogSvc.GetCountsAsync(ct);
-            ct.ThrowIfCancellationRequested();
 
             isAdmin = canAdmin;
-            _countByRoute["/справочник-моделей"] = counts.EquipmentModels;
-            _countByRoute["/справочник-комплексов"] = counts.Complexes;
-            _countByRoute["/справочник-агрегатов"] = counts.Aggregates;
-            _countByRoute["/справочник-узлов"] = counts.Nodes;
-            _countByRoute["/справочник-сборочных-единиц"] = counts.AssemblyUnits;
-            _countByRoute["/справочник-экземпляров"] = counts.EquipmentInstances;
-            _countByRoute["/справочник-гсм"] = counts.GsmMaterials;
-            _countByRoute["/справочник-родов-войск"] = counts.MilitaryBranches;
-            _countByRoute["/справочники/техника/виды-техники"] = counts.EquipmentTypes;
-            _countByRoute["/справочники/администрирование/филиалы"] = counts.Branches;
         }
     }
 
@@ -288,9 +262,6 @@
             Open(route);
     }
 
-    private int CountFor(string route) =>
-        _countByRoute.TryGetValue(route, out var n) ? n : 0;
-
     private void OnSearchInput(ChangeEventArgs e)
     {
         search = e.Value?.ToString() ?? "";
@@ -298,12 +269,4 @@
 
     private void Open(string route) => Nav.NavigateTo(route);
 
-    private static string ActiveCountText(int n) => n switch
-    {
-        0 => "Нет активных записей",
-        1 => "1 активная запись",
-        _ when n % 10 == 1 && n % 100 != 11 => $"{n} активная запись",
-        _ when n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) => $"{n} активные записи",
-        _ => $"{n} активных записей",
-    };
 }

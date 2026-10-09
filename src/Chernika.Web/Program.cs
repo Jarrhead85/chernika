@@ -17,6 +17,10 @@ using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Часовой пояс приложения задаётся один раз при старте: хранилище остаётся
+// в UTC, а показ и ввод идут в часовом поясе приложения (по умолчанию UTC+3).
+AppTimeZone.Configure(builder.Configuration.GetValue("TimeZone:OffsetHours", AppTimeZone.DefaultOffsetHours));
+
 // Ключи DataProtection должны переживать рестарты приложения, иначе
 // все auth-cookie становятся невалидными при каждом перезапуске
 // (после Ctrl+F5 пользователь оказывается неаутентифицированным).

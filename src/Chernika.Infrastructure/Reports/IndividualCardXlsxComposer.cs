@@ -784,5 +784,5 @@ public static class IndividualCardXlsxComposer
         return ms.ToArray();
     }
 
-    private static string D(DateTime? value) => value?.ToString("dd.MM.yyyy") ?? string.Empty;
+    private static string D(DateTime? value) => AppTime.Date(value);
 }

@@ -17,7 +17,7 @@
         <section class="panel">
             <div class="panelHeader">
                 <h2>@(editing ? "Редактирование агрегата" : "Новый агрегат")</h2>
-                <div class="hint">Общесистемный справочник</div>
+                <div class="hint">Общесистемный классификатор</div>
             </div>
             <div class="panelBody">
                 <div class="form">
@@ -40,7 +40,6 @@
     <section class="panel">
         <div class="panelHeader">
             <h2>Список агрегатов</h2>
-            <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
             <div class="mbFilters">
@@ -233,7 +232,7 @@
             if (editing)
             {
                 var ok = await DbLock.LockedAsync(() => EquipService.UpdateAggregateAsync(new UpdateAggregateRequest(newEntity.Id, newEntity.Code, newEntity.Name, newEntity.Description)));
-                if (!ok) throw new InvalidOperationException("Не удалось изменить запись справочника. Обновите список и повторите попытку.");
+                if (!ok) throw new InvalidOperationException("Не удалось изменить запись классификатора. Обновите список и повторите попытку.");
             }
             else
             {
@@ -249,8 +248,8 @@
         catch (Exception)
         {
             errorMessage = editing
-                ? "Не удалось изменить запись справочника. Обновите список и повторите попытку."
-                : "Не удалось создать запись справочника. Обновите список и повторите попытку.";
+                ? "Не удалось изменить запись классификатора. Обновите список и повторите попытку."
+                : "Не удалось создать запись классификатора. Обновите список и повторите попытку.";
         }
     }
 

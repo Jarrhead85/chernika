@@ -511,7 +511,7 @@ public static class IndividualCardPdfComposer
 
     private static string Gram(decimal value) => value.ToString("F0", CultureInfo.InvariantCulture);
 
-    private static string Date(DateTime? value) => value?.ToString("dd.MM.yyyy") ?? string.Empty;
+    private static string Date(DateTime? value) => AppTime.Date(value);
 
-    private static string DateT(DateTime? value) => value?.ToString("dd.MM.yyyy HH:mm") ?? string.Empty;
+    private static string DateT(DateTime? value) => AppTime.DateTimeText(value);
 }

@@ -143,7 +143,7 @@
                                     <td><span class="tag @PriorityTagClass(task.Priority)">@PriorityLabel(task.Priority)</span></td>
                                     <td>@(task.AssignedToUserName ?? task.AssignedRole ?? "—")</td>
                                     <td class="mono">@DueLabel(task)</td>
-                                    <td class="mono">@(task.CompletedAtUtc?.ToString("dd.MM.yyyy HH:mm") ?? "—")</td>
+                                    <td class="mono">@(AppTime.FmtOr(task.CompletedAtUtc, "dd.MM.yyyy HH:mm", "—"))</td>
                                     <td>
                                         <div class="rowActions">
                                             @if (CanStart(task))
@@ -452,8 +452,8 @@
 
     private static string DueLabel(WorkTaskListItemDto task) =>
         task.IsOverdue
-            ? "просрочена " + task.DueDateUtc?.ToString("dd.MM.yy")
-            : task.DueDateUtc.HasValue ? task.DueDateUtc.Value.ToString("dd.MM.yy") : "—";
+            ? "просрочена " + AppTime.Fmt(task.DueDateUtc, "dd.MM.yy")
+            : AppTime.FmtOr(task.DueDateUtc, "dd.MM.yy", "—");
 
     private static string StatusLabel(WorkTaskStatus status) => status switch
     {

@@ -37,15 +37,15 @@
                     <div class="metric"><div class="label">Приоритет</div><div class="value">@PriorityLabel(task.Priority)</div></div>
                     <div class="metric"><div class="label">Исполнитель</div><div class="value">@(task.AssignedToUserName ?? task.AssignedRole ?? "—")</div></div>
                     <div class="metric"><div class="label">Автор</div><div class="value">@(task.CreatedByUserName ?? "—")</div></div>
-                    <div class="metric"><div class="label">Создана</div><div class="value mono">@task.CreatedAtUtc.ToString("dd.MM.yyyy HH:mm")</div></div>
-                    <div class="metric"><div class="label">Срок</div><div class="value mono">@(task.DueDateUtc?.ToString("dd.MM.yyyy HH:mm") ?? "—")</div></div>
+                    <div class="metric"><div class="label">Создана</div><div class="value mono">@AppTime.Fmt(task.CreatedAtUtc, "dd.MM.yyyy HH:mm")</div></div>
+                    <div class="metric"><div class="label">Срок</div><div class="value mono">@(AppTime.FmtOr(task.DueDateUtc, "dd.MM.yyyy HH:mm", "—"))</div></div>
                     @if (task.StartedAtUtc.HasValue)
                     {
-                        <div class="metric"><div class="label">Начата</div><div class="value mono">@task.StartedAtUtc.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        <div class="metric"><div class="label">Начата</div><div class="value mono">@AppTime.Fmt(task.StartedAtUtc.Value, "dd.MM.yyyy HH:mm")</div></div>
                     }
                     @if (task.CompletedAtUtc.HasValue)
                     {
-                        <div class="metric"><div class="label">Завершена</div><div class="value mono">@task.CompletedAtUtc.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        <div class="metric"><div class="label">Завершена</div><div class="value mono">@AppTime.Fmt(task.CompletedAtUtc.Value, "dd.MM.yyyy HH:mm")</div></div>
                     }
                     @if (task.CompletedByUserName != null)
                     {
@@ -105,7 +105,7 @@
                             @foreach (var log in auditLogs)
                             {
                                 <tr>
-                                    <td class="mono">@log.CreatedAt.ToString("dd.MM.yyyy HH:mm")</td>
+                                    <td class="mono">@AppTime.Fmt(log.CreatedAt, "dd.MM.yyyy HH:mm")</td>
                                     <td>@AuditDisplayCatalog.GetAction(log.Action).Title</td>
                                     <td>@(log.ActorFullName ?? "Система")</td>
                                     <td>@(log.Details ?? "—")</td>

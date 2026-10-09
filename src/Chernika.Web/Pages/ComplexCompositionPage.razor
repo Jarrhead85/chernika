@@ -72,7 +72,7 @@
                                     <tr class="compositionRow--clickable" @onclick="() => SelectCompositionAsync(comp.Id)">
                                         <td class="mono">@comp.Version</td>
                                         <td><CompositionStatusBadge Status="@comp.Status" /></td>
-                                        <td class="mono">@comp.CreatedAt.ToString("dd.MM.yyyy")</td>
+                                        <td class="mono">@AppTime.Fmt(comp.CreatedAt, "dd.MM.yyyy")</td>
                                         <td>@(comp.ItemCount ?? 0)</td>
                                         <td>
                                             <div class="rowActions">
@@ -265,19 +265,19 @@
                         <div class="field"><label>Статус</label><CompositionStatusBadge Status="@selectedComposition.Status" /></div>
                         <div class="field"><label>Версия</label><div class="mono">@selectedComposition.Version</div></div>
                         <div class="field"><label>Автор</label><div>@(selectedComposition.AuthorName ?? "—")</div></div>
-                        <div class="field"><label>Создан</label><div class="mono">@selectedComposition.CreatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
-                        <div class="field"><label>Обновлён</label><div class="mono">@selectedComposition.UpdatedAt.ToString("dd.MM.yyyy HH:mm")</div></div>
+                        <div class="field"><label>Создан</label><div class="mono">@AppTime.Fmt(selectedComposition.CreatedAt, "dd.MM.yyyy HH:mm")</div></div>
+                        <div class="field"><label>Обновлён</label><div class="mono">@AppTime.Fmt(selectedComposition.UpdatedAt, "dd.MM.yyyy HH:mm")</div></div>
                         @if (selectedComposition.ApprovedAt.HasValue)
                         {
-                            <div class="field"><label>Утверждён</label><div class="mono">@selectedComposition.ApprovedAt.Value.ToString("dd.MM.yyyy HH:mm")</div></div>
+                            <div class="field"><label>Утверждён</label><div class="mono">@AppTime.Fmt(selectedComposition.ApprovedAt.Value, "dd.MM.yyyy HH:mm")</div></div>
                         }
                         @if (selectedComposition.EffectiveDate.HasValue)
                         {
-                            <div class="field"><label>Действует с</label><div class="mono">@selectedComposition.EffectiveDate.Value.ToString("dd.MM.yyyy")</div></div>
+                            <div class="field"><label>Действует с</label><div class="mono">@AppTime.Fmt(selectedComposition.EffectiveDate.Value, "dd.MM.yyyy")</div></div>
                         }
                         @if (selectedComposition.ExpirationDate.HasValue)
                         {
-                            <div class="field"><label>Действует до</label><div class="mono">@selectedComposition.ExpirationDate.Value.ToString("dd.MM.yyyy")</div></div>
+                            <div class="field"><label>Действует до</label><div class="mono">@AppTime.Fmt(selectedComposition.ExpirationDate.Value, "dd.MM.yyyy")</div></div>
                         }
                         @if (!string.IsNullOrEmpty(selectedComposition.Comment))
                         {
@@ -465,8 +465,8 @@
             await EquipService.UpdateComplexCompositionDraftAsync(
                 new UpdateComplexCompositionDraftRequest(selectedComposition!.Id,
                     string.IsNullOrWhiteSpace(editComment) ? null : editComment,
-                    editEffectiveDate?.ToUniversalTime(),
-                    editExpirationDate?.ToUniversalTime()));
+                    editEffectiveDate is { } ed ? AppTime.ToUtc(ed) : null,
+                    editExpirationDate is { } ex ? AppTime.ToUtc(ex) : null));
         }
         await LoadCompositions();
         await SelectCompositionAsync(selectedComposition.Id);

@@ -16,7 +16,7 @@
         <section class="panel">
             <div class="panelHeader">
                 <h2>@(editing ? "Редактирование изделия" : "Новое изделие")</h2>
-                <div class="hint">Общесистемный справочник</div>
+                <div class="hint">Общесистемный классификатор</div>
             </div>
             <div class="panelBody">
                 <div class="form">
@@ -39,7 +39,6 @@
     <section class="panel">
         <div class="panelHeader">
             <h2>Список изделий</h2>
-            <div class="hint">@totalCount записей</div>
         </div>
         <div class="panelBody">
             <div class="mbFilters">
@@ -242,8 +241,8 @@
         catch (Exception)
         {
             errorMessage = editing
-                ? "Не удалось изменить запись справочника. Обновите список и повторите попытку."
-                : "Не удалось создать запись справочника. Обновите список и повторите попытку.";
+                ? "Не удалось изменить запись классификатора. Обновите список и повторите попытку."
+                : "Не удалось создать запись классификатора. Обновите список и повторите попытку.";
         }
     }
 

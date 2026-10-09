@@ -28,9 +28,9 @@
                 }
                 <div class="definitionRow"><span class="definitionLabel">Организация</span><span class="definitionValue">@(Detail.BranchName ?? "—")</span></div>
                 <div class="definitionRow"><span class="definitionLabel">Автор</span><span class="definitionValue">@(Detail.AuthorName ?? "—")</span></div>
-                <div class="definitionRow"><span class="definitionLabel">Создана</span><span class="definitionValue">@Detail.CreatedAt.ToString("dd.MM.yyyy HH:mm")</span></div>
-                <div class="definitionRow"><span class="definitionLabel">Сформирована</span><span class="definitionValue">@(Detail.FormedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
-                <div class="definitionRow"><span class="definitionLabel">Архивирована</span><span class="definitionValue">@(Detail.ArchivedAt?.ToString("dd.MM.yyyy HH:mm") ?? "—")</span></div>
+                <div class="definitionRow"><span class="definitionLabel">Создана</span><span class="definitionValue">@AppTime.Fmt(Detail.CreatedAt, "dd.MM.yyyy HH:mm")</span></div>
+                <div class="definitionRow"><span class="definitionLabel">Сформирована</span><span class="definitionValue">@(AppTime.FmtOr(Detail.FormedAt, "dd.MM.yyyy HH:mm", "—"))</span></div>
+                <div class="definitionRow"><span class="definitionLabel">Архивирована</span><span class="definitionValue">@(AppTime.FmtOr(Detail.ArchivedAt, "dd.MM.yyyy HH:mm", "—"))</span></div>
             </div>
         </div>
 
@@ -120,7 +120,7 @@
             else
             {
                 <div class="icSummaryLine">@latestVersion.Version · @IndividualCardDisplay.Status(latestVersion.Status)</div>
-                <div class="icSummaryLine hint">Создана @latestVersion.CreatedAt.ToString("dd.MM.yyyy")</div>
+                <div class="icSummaryLine hint">Создана @AppTime.Fmt(latestVersion.CreatedAt, "dd.MM.yyyy")</div>
                 @if (Detail.History.Count > 1)
                 {
                     <div class="icSummaryDisclosure">
@@ -225,9 +225,9 @@
                         <tr>
                             <td class="mono">@version.Version</td>
                             <td>@IndividualCardDisplay.Status(version.Status)</td>
-                            <td>@version.CreatedAt.ToString("dd.MM.yyyy")</td>
-                            <td>@(version.FormedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
-                            <td>@(version.ArchivedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
+                            <td>@AppTime.Fmt(version.CreatedAt, "dd.MM.yyyy")</td>
+                            <td>@(AppTime.FmtOr(version.FormedAt, "dd.MM.yyyy", "—"))</td>
+                            <td>@(AppTime.FmtOr(version.ArchivedAt, "dd.MM.yyyy", "—"))</td>
                             <td>@(string.IsNullOrWhiteSpace(version.CreatedByDisplayName) ? "—" : version.CreatedByDisplayName)</td>
                             <td>
                                 @if (version.Id != Detail.Id)
@@ -404,7 +404,7 @@
                 @foreach (var entry in Detail.Audit)
                 {
                     <tr>
-                        <td>@entry.CreatedAt.ToString("dd.MM.yyyy HH:mm")</td>
+                        <td>@AppTime.Fmt(entry.CreatedAt, "dd.MM.yyyy HH:mm")</td>
                         <td>@AuditDisplayCatalog.GetAction(entry.Action).Title</td>
                         <td>@(entry.UserDisplayName ?? "—")</td>
                         <td class="hkr-context">@(IndividualCardAuditDisplayCatalog.FormatDetails(entry.Details) ?? "—")</td>

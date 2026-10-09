@@ -72,7 +72,7 @@
                             }
                             else
                             {
-                                <div class="readonlyValue">@(card.RequestReceivedDate?.ToString("dd.MM.yyyy") ?? "")</div>
+                                <div class="readonlyValue">@(AppTime.FmtOr(card.RequestReceivedDate, "dd.MM.yyyy", ""))</div>
                             }
                         </div>
                         <div class="field hk-letter-numbers-field">
@@ -347,7 +347,7 @@
                             }
                             else
                             {
-                                <div class="readonlyValue">@(card.EffectiveDate?.ToString("dd.MM.yyyy") ?? "")</div>
+                                <div class="readonlyValue">@(AppTime.FmtOr(card.EffectiveDate, "dd.MM.yyyy", ""))</div>
                             }
                         </div>
                         <div class="field">
@@ -358,7 +358,7 @@
                             }
                             else
                             {
-                                <div class="readonlyValue">@(card.ExpirationDate?.ToString("dd.MM.yyyy") ?? "")</div>
+                                <div class="readonlyValue">@(AppTime.FmtOr(card.ExpirationDate, "dd.MM.yyyy", ""))</div>
                             }
                         </div>
                     </div>
@@ -842,7 +842,7 @@
                                             <td class="mono">@comp.ChildCode</td>
                                             <td>@comp.ChildVersion</td>
                                             <td>@comp.ChildObjectName</td>
-                                            <td>@comp.ChildApprovedAt?.ToString("dd.MM.yyyy")</td>
+                                            <td>@AppTime.Fmt(comp.ChildApprovedAt, "dd.MM.yyyy")</td>
                                             <td class="hki-actions col-actions">
                                                 @if (canEdit)
                                                 {
@@ -859,7 +859,7 @@
                                             <td class="mono">@child.Code</td>
                                             <td>@child.Version</td>
                                             <td>@child.ObjectName</td>
-                                            <td>@child.ApprovedDate?.ToString("dd.MM.yyyy")</td>
+                                            <td>@AppTime.Fmt(child.ApprovedDate, "dd.MM.yyyy")</td>
                                             <td class="hki-actions col-actions">
                                                 @if (canEdit)
                                                 {
@@ -992,8 +992,8 @@
                         <tr>
                             <td class="mono">@v.Version</td>
                             <td><StatusBadge Status="@v.Status" /></td>
-                            <td>@(v.ApprovedDate?.ToString("dd.MM.yyyy") ?? "—")</td>
-                            <td>@v.CreatedAt.ToString("dd.MM.yyyy")</td>
+                            <td>@(AppTime.FmtOr(v.ApprovedDate, "dd.MM.yyyy", "—"))</td>
+                            <td>@AppTime.Fmt(v.CreatedAt, "dd.MM.yyyy")</td>
                             <td>
                                 @if (v.IsCurrent)
                                 {
@@ -1135,7 +1135,7 @@
     private static HKCard CreateEmptyCard() => new()
     {
         Id = Guid.NewGuid(),
-        Version = "v" + DateTime.UtcNow.ToString("MMyy"),
+        Version = "v" + AppTime.Now.ToString("MMyy"),
         Items = new List<HKCardItem>(),
         BranchId = Guid.Empty,
         CreatedAt = DateTime.UtcNow,

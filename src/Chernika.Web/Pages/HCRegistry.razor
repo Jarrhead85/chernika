@@ -319,17 +319,17 @@
                             <div class="metric"><div class="label">Объект</div><div class="value">@_selectedCard.ObjectName</div></div>
                             <div class="metric"><div class="label">Организация</div><div class="value">@_selectedCard.BranchName</div></div>
                             <div class="metric"><div class="label">Автор</div><div class="value">@(_selectedCard.AuthorName ?? "—")</div></div>
-                            <div class="metric"><div class="label">Создана</div><div class="value mono">@_selectedCard.CreatedAt.ToString("dd.MM.yyyy")</div></div>
+                            <div class="metric"><div class="label">Создана</div><div class="value mono">@AppTime.Fmt(_selectedCard.CreatedAt, "dd.MM.yyyy")</div></div>
                         </div>
                         <div class="field">
                             <label>Период действия</label>
                             <div>
                                 @if (_selectedCard.EffectiveDate.HasValue)
                                 {
-                                    <span>Действует с @_selectedCard.EffectiveDate.Value.ToString("dd.MM.yyyy")</span>
+                                    <span>Действует с @AppTime.Fmt(_selectedCard.EffectiveDate.Value, "dd.MM.yyyy")</span>
                                     @if (_selectedCard.ExpirationDate.HasValue)
                                     {
-                                        <span> — @_selectedCard.ExpirationDate.Value.ToString("dd.MM.yyyy")</span>
+                                        <span> — @AppTime.Fmt(_selectedCard.ExpirationDate.Value, "dd.MM.yyyy")</span>
                                     }
                                 }
                                 else

@@ -12,11 +12,150 @@
 <div class="stack">
     <ReferenceBreadcrumb Group="Материалы" Current="Смазочные материалы" />
 
+    @if (canEdit)
+    {
+        <section class="panel">
+            <div class="panelHeader">
+                <h2>@(editing ? "Редактирование марки" : "Новая марка ГСМ")</h2>
+            </div>
+            <div class="panelBody">
+                @* Сетка 12 колонок с РАЗНЫМИ долями по строкам: описанию нужно
+                   больше места, индексу НАТО и признаку ГОСТ — меньше. Высоты
+                   контролов во всех строках одинаковы, поэтому пустые поля не
+                   раздувают строку. *@
+                <div class="gsmForm">
+                    @* Строка 1 *@
+                    <div class="field gsmF4">
+                        <label for="gsmGroup">Группа ГСМ <span class="gsmReq">*</span></label>
+                        <input id="gsmGroup" @bind="form.GroupName" />
+                        @if (groupError is not null)
+                        {
+                            <div class="gsmFieldError">@groupError</div>
+                        }
+                    </div>
+                    <div class="field gsmF4">
+                        <label for="gsmSubgroup">Подгруппа ГСМ <span class="gsmReq">*</span></label>
+                        @* Кнопка «Добавить» ВНУТРИ контура поля, по образцу кнопки
+                           лупы в быстром поиске: не перекрывает ввод, у input
+                           достаточный правый отступ под неё. *@
+                        <div class="gsmInlineField">
+                            <input id="gsmSubgroup" class="gsmInlineInput" @bind="subgroupInput"
+                                   @bind:event="oninput" @onkeydown="OnSubgroupKeyDown" />
+                            <button type="button" class="gsmInlineBtn" @onclick="AddSubgroup">Добавить</button>
+                        </div>
+                        @if (subgroupError is not null)
+                        {
+                            <div class="gsmFieldError">@subgroupError</div>
+                        }
+                    </div>
+                    <div class="field gsmF4">
+                        <label for="gsmName">Марка ГСМ <span class="gsmReq">*</span></label>
+                        <input id="gsmName" @ref="_firstField" @bind="form.Name" />
+                        @if (nameError is not null)
+                        {
+                            <div class="gsmFieldError">@nameError</div>
+                        }
+                    </div>
+
+                    @if (formSubgroups.Count > 0)
+                    {
+                        <div class="field gsmF12">
+                            <label>Добавленные подгруппы</label>
+                            <div class="gsmChips">
+                                @foreach (var sub in formSubgroups)
+                                {
+                                    <span class="gsmChip">
+                                        @sub
+                                        <button type="button" class="gsmChipX"
+                                                aria-label="Убрать подгруппу @sub"
+                                                title="Убрать подгруппу @sub"
+                                                @onclick="() => RemoveSubgroup(sub)">×</button>
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    @* Строка 2. Подпись «Нормативные документы» — только в этой форме;
+                       имя поля GsmMaterial.Nd в БД и API не меняется. *@
+                    <div class="field gsmF4">
+                        <label for="gsmNd">Нормативные документы</label>
+                        <input id="gsmNd" @bind="form.Nd" />
+                    </div>
+                    <div class="field gsmF4">
+                        <label for="gsmUse">Назначение и условия применения</label>
+                        <textarea id="gsmUse" class="gsmAutoTextarea" @bind="form.IntendedUse"></textarea>
+                    </div>
+                    <div class="field gsmF4">
+                        <label for="gsmNato">Индекс НАТО</label>
+                        <input id="gsmNato" @bind="form.NatoIndex" />
+                    </div>
+
+                    @* Строка 3 *@
+                    <div class="field gsmF4">
+                        <label for="gsmNote">Общее примечание</label>
+                        <textarea id="gsmNote" class="gsmAutoTextarea" @bind="form.Note"></textarea>
+                    </div>
+                    <div class="field gsmF4">
+                        <label id="gsmSuitLabel">Пригодность</label>
+                        @* Тот же паттерн переключателя, что «Только мои» в Реестре ХК.
+                           Общий filterToggle — отдельного третьего стиля нет. *@
+                        <div class="gsmToggles" role="group" aria-labelledby="gsmSuitLabel">
+                            <button type="button"
+                                    class="filterToggle @(form.SuitabilityGround ? "active" : null)"
+                                    aria-pressed="@form.SuitabilityGround"
+                                    @onclick="() => form.SuitabilityGround = !form.SuitabilityGround">
+                                <span class="filterToggleMark">@(form.SuitabilityGround ? "✓" : "")</span>
+                                Наземная
+                            </button>
+                            <button type="button"
+                                    class="filterToggle @(form.SuitabilityAir ? "active" : null)"
+                                    aria-pressed="@form.SuitabilityAir"
+                                    @onclick="() => form.SuitabilityAir = !form.SuitabilityAir">
+                                <span class="filterToggleMark">@(form.SuitabilityAir ? "✓" : "")</span>
+                                Авиационная
+                            </button>
+                            <button type="button"
+                                    class="filterToggle @(form.SuitabilitySea ? "active" : null)"
+                                    aria-pressed="@form.SuitabilitySea"
+                                    @onclick="() => form.SuitabilitySea = !form.SuitabilitySea">
+                                <span class="filterToggleMark">@(form.SuitabilitySea ? "✓" : "")</span>
+                                Морская
+                            </button>
+                        </div>
+                    </div>
+                    <div class="field gsmF4">
+                        <label id="gsmGostLabel">Включена в номенклатуру по ГОСТ</label>
+                        <div class="gsmToggles" role="group" aria-labelledby="gsmGostLabel">
+                            <button type="button"
+                                    class="filterToggle @(form.InGostNomenclature ? "active" : null)"
+                                    aria-pressed="@form.InGostNomenclature"
+                                    @onclick="() => form.InGostNomenclature = !form.InGostNomenclature">
+                                <span class="filterToggleMark">@(form.InGostNomenclature ? "✓" : "")</span>
+                                В номенклатуре по ГОСТ
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="gsmFormActions">
+                    <button class="btn ghost" @onclick="ResetForm">@(editing ? "Отмена" : "Очистить")</button>
+                    <button class="btn primary" @onclick="SaveGsmAsync" disabled="@saving">
+                        @(editing ? "Сохранить" : "Добавить")
+                    </button>
+                </div>
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="gsmError">@errorMessage</div>
+                }
+            </div>
+        </section>
+    }
+
     <section class="panel">
         <div class="panelHeader">
             <h2>Список марок ГСМ</h2>
             <div class="gsmHeaderRight">
-                <span class="hint">@totalCount марок</span>
                 @* Три колонки связей здесь только на чтение. После изменений во
                    втором справочнике они обновляются по кнопке: DTO марки через
                    форму связей не пишется. *@
@@ -234,146 +373,6 @@
         </div>
     </section>
 
-    @if (canEdit)
-    {
-        <section class="panel">
-            <div class="panelHeader">
-                <h2>@(editing ? "Редактирование марки" : "Новая марка ГСМ")</h2>
-                <div class="hint">@totalCount марок</div>
-            </div>
-            <div class="panelBody">
-                @* Сетка 12 колонок с РАЗНЫМИ долями по строкам: описанию нужно
-                   больше места, индексу НАТО и признаку ГОСТ — меньше. Высоты
-                   контролов во всех строках одинаковы, поэтому пустые поля не
-                   раздувают строку. *@
-                <div class="gsmForm">
-                    @* Строка 1 *@
-                    <div class="field gsmF4">
-                        <label for="gsmGroup">Группа ГСМ <span class="gsmReq">*</span></label>
-                        <input id="gsmGroup" @bind="form.GroupName" />
-                        @if (groupError is not null)
-                        {
-                            <div class="gsmFieldError">@groupError</div>
-                        }
-                    </div>
-                    <div class="field gsmF4">
-                        <label for="gsmSubgroup">Подгруппа ГСМ <span class="gsmReq">*</span></label>
-                        @* Кнопка «Добавить» ВНУТРИ контура поля, по образцу кнопки
-                           лупы в быстром поиске: не перекрывает ввод, у input
-                           достаточный правый отступ под неё. *@
-                        <div class="gsmInlineField">
-                            <input id="gsmSubgroup" class="gsmInlineInput" @bind="subgroupInput"
-                                   @bind:event="oninput" @onkeydown="OnSubgroupKeyDown" />
-                            <button type="button" class="gsmInlineBtn" @onclick="AddSubgroup">Добавить</button>
-                        </div>
-                        @if (subgroupError is not null)
-                        {
-                            <div class="gsmFieldError">@subgroupError</div>
-                        }
-                    </div>
-                    <div class="field gsmF4">
-                        <label for="gsmName">Марка ГСМ <span class="gsmReq">*</span></label>
-                        <input id="gsmName" @ref="_firstField" @bind="form.Name" />
-                        @if (nameError is not null)
-                        {
-                            <div class="gsmFieldError">@nameError</div>
-                        }
-                    </div>
-
-                    @if (formSubgroups.Count > 0)
-                    {
-                        <div class="field gsmF12">
-                            <label>Добавленные подгруппы</label>
-                            <div class="gsmChips">
-                                @foreach (var sub in formSubgroups)
-                                {
-                                    <span class="gsmChip">
-                                        @sub
-                                        <button type="button" class="gsmChipX"
-                                                aria-label="Убрать подгруппу @sub"
-                                                title="Убрать подгруппу @sub"
-                                                @onclick="() => RemoveSubgroup(sub)">×</button>
-                                    </span>
-                                }
-                            </div>
-                        </div>
-                    }
-
-                    @* Строка 2. Подпись «Нормативные документы» — только в этой форме;
-                       имя поля GsmMaterial.Nd в БД и API не меняется. *@
-                    <div class="field gsmF4">
-                        <label for="gsmNd">Нормативные документы</label>
-                        <input id="gsmNd" @bind="form.Nd" />
-                    </div>
-                    <div class="field gsmF5">
-                        <label for="gsmUse">Назначение и условия применения</label>
-                        <textarea id="gsmUse" class="gsmAutoTextarea" @bind="form.IntendedUse"></textarea>
-                    </div>
-                    <div class="field gsmF3">
-                        <label for="gsmNato">Индекс НАТО</label>
-                        <input id="gsmNato" @bind="form.NatoIndex" />
-                    </div>
-
-                    @* Строка 3 *@
-                    <div class="field gsmF4">
-                        <label for="gsmNote">Общее примечание</label>
-                        <textarea id="gsmNote" class="gsmAutoTextarea" @bind="form.Note"></textarea>
-                    </div>
-                    <div class="field gsmF5">
-                        <label id="gsmSuitLabel">Пригодность</label>
-                        @* Тот же паттерн переключателя, что «Только мои» в Реестре ХК.
-                           Общий filterToggle — отдельного третьего стиля нет. *@
-                        <div class="gsmToggles" role="group" aria-labelledby="gsmSuitLabel">
-                            <button type="button"
-                                    class="filterToggle @(form.SuitabilityGround ? "active" : null)"
-                                    aria-pressed="@form.SuitabilityGround"
-                                    @onclick="() => form.SuitabilityGround = !form.SuitabilityGround">
-                                <span class="filterToggleMark">@(form.SuitabilityGround ? "✓" : "")</span>
-                                Наземная
-                            </button>
-                            <button type="button"
-                                    class="filterToggle @(form.SuitabilityAir ? "active" : null)"
-                                    aria-pressed="@form.SuitabilityAir"
-                                    @onclick="() => form.SuitabilityAir = !form.SuitabilityAir">
-                                <span class="filterToggleMark">@(form.SuitabilityAir ? "✓" : "")</span>
-                                Авиационная
-                            </button>
-                            <button type="button"
-                                    class="filterToggle @(form.SuitabilitySea ? "active" : null)"
-                                    aria-pressed="@form.SuitabilitySea"
-                                    @onclick="() => form.SuitabilitySea = !form.SuitabilitySea">
-                                <span class="filterToggleMark">@(form.SuitabilitySea ? "✓" : "")</span>
-                                Морская
-                            </button>
-                        </div>
-                    </div>
-                    <div class="field gsmF3">
-                        <label id="gsmGostLabel">Включена в номенклатуру по ГОСТ</label>
-                        <div class="gsmToggles" role="group" aria-labelledby="gsmGostLabel">
-                            <button type="button"
-                                    class="filterToggle @(form.InGostNomenclature ? "active" : null)"
-                                    aria-pressed="@form.InGostNomenclature"
-                                    @onclick="() => form.InGostNomenclature = !form.InGostNomenclature">
-                                <span class="filterToggleMark">@(form.InGostNomenclature ? "✓" : "")</span>
-                                В номенклатуре по ГОСТ
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="gsmFormActions">
-                    <button class="btn ghost" @onclick="ResetForm">@(editing ? "Отмена" : "Очистить")</button>
-                    <button class="btn primary" @onclick="SaveGsmAsync" disabled="@saving">
-                        @(editing ? "Сохранить" : "Добавить")
-                    </button>
-                </div>
-                @if (!string.IsNullOrEmpty(errorMessage))
-                {
-                    <div class="gsmError">@errorMessage</div>
-                }
-            </div>
-        </section>
-    }
 </div>
 
 @code {

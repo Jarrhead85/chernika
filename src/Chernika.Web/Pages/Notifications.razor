@@ -21,7 +21,7 @@
                 <div class="heroBox">
                     <div class="eyebrow">Колокольчик • Уведомления</div>
                     <h3>События по задачам</h3>
-                    <p>Назначенные задачи, возвраты и утверждения ХК, предложения справочника</p>
+                    <p>Назначенные задачи, возвраты и утверждения ХК, предложения классификатора</p>
                 </div>
                 <div class="heroGrid">
                     <div class="heroStat">
@@ -87,7 +87,7 @@
                                         }
                                     </td>
                                     <td><span class="tag">@NotificationDisplayCatalog.TypeLabel(n.Type)</span></td>
-                                    <td class="mono">@n.CreatedAtUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</td>
+                                    <td class="mono">@AppTime.Fmt(n.CreatedAtUtc, "dd.MM.yyyy HH:mm")</td>
                                     <td><span class="tag @(n.IsRead ? "" : "warn")">@(n.IsRead ? "Прочитано" : "Новое")</span></td>
                                     <td>
                                         <div class="rowActions">

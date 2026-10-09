@@ -9,7 +9,7 @@
         <span class="tag @StatusTagClass">@StatusLabel</span>
     </div>
     <div class="taskPreviewMeta">
-        @TaskTypeLabel(Task.Type) · @(Task.DueDateUtc?.ToString("dd.MM.yyyy") ?? "без срока")
+        @TaskTypeLabel(Task.Type) · @(AppTime.FmtOr(Task.DueDateUtc, "dd.MM.yyyy", "без срока"))
     </div>
     @if (!string.IsNullOrWhiteSpace(EntityUrl))
     {

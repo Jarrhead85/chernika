@@ -118,8 +118,8 @@
                                     </td>
                                     <td><span class="tag @StatusTagClass(card.Status)">@StatusName(card.Status)</span></td>
                                     <td>@card.BranchName</td>
-                                    <td>@card.CreatedAt.ToString("dd.MM.yyyy")</td>
-                                    <td>@(card.FormedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
+                                    <td>@AppTime.Fmt(card.CreatedAt, "dd.MM.yyyy")</td>
+                                    <td>@(AppTime.FmtOr(card.FormedAt, "dd.MM.yyyy", "—"))</td>
                                     <td>@card.HKSourceCount</td>
                                     <td>
                                         @if (card.HasNormativeGaps || card.CalculationProblemCount > 0)
@@ -243,8 +243,8 @@
                 int.TryParse(_levelFilter, out var level) ? (IndividualCardObjectLevel)level : null,
                 int.TryParse(_statusFilter, out var status) ? (IndividualCardStatus)status : null,
                 Guid.TryParse(_branchFilter, out var branchId) ? branchId : null,
-                DateTime.TryParse(_createdFrom, out var from) ? from.ToUniversalTime() : null,
-                DateTime.TryParse(_createdTo, out var to) ? to.ToUniversalTime().AddDays(1) : null,
+                AppTime.ParseInput(_createdFrom),
+                AppTime.ParseInput(_createdTo) is { } to ? to.AddDays(1) : null,
                 _onlyMine,
                 _onlyGaps,
                 _sortBy,

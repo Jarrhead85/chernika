@@ -9,6 +9,10 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Часовой пояс приложения задаётся один раз при старте: хранилище остаётся
+// в UTC, а показ и ввод идут в часовом поясе приложения (по умолчанию UTC+3).
+AppTimeZone.Configure(builder.Configuration.GetValue("TimeZone:OffsetHours", AppTimeZone.DefaultOffsetHours));
+
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddHttpContextAccessor();

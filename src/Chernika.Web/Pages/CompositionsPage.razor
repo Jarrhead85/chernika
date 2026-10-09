@@ -160,7 +160,7 @@
                                             <span class="hint">—</span>
                                         }
                                     </td>
-                                    <td class="mono">@(row.UpdatedAt?.ToString("dd.MM.yyyy") ?? "—")</td>
+                                    <td class="mono">@(AppTime.FmtOr(row.UpdatedAt, "dd.MM.yyyy", "—"))</td>
                                     <td>
                                         <div class="rowActions">
                                             @if (row.CompositionId.HasValue)
