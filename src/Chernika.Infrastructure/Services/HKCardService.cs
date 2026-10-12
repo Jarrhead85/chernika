@@ -470,22 +470,12 @@ public class HKCardService
         if (safeBranchId.HasValue)
             baseQuery = baseQuery.Where(x => x.BranchId == safeBranchId.Value);
 
-        var editDraftLevels = new List<Domain.Enums.HKObjectLevel>();
-        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKNodeEditDraft))
-            editDraftLevels.Add(Domain.Enums.HKObjectLevel.Node);
-        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKAggregateEditDraft))
-            editDraftLevels.Add(Domain.Enums.HKObjectLevel.Aggregate);
-        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKEquipmentEditDraft))
-            editDraftLevels.Add(Domain.Enums.HKObjectLevel.EquipmentModel);
-        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKComplexEditDraft))
-            editDraftLevels.Add(Domain.Enums.HKObjectLevel.Complex);
-
-        if (editDraftLevels.Any())
+        // Редактирование: единое право HK.Work, уровень карты условием не является.
+        if (await _permissions.HasPermissionAsync(actorId, PermissionCodes.HKWork))
         {
             var editableIds = await baseQuery
                 .Where(x => (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.RevisionRequired)
-                    && x.AuthorId.ToString() == actorId
-                    && editDraftLevels.Contains(x.ObjectLevel))
+                    && x.AuthorId.ToString() == actorId)
                 .Select(x => x.Id)
                 .ToListAsync(ct);
             foreach (var id in editableIds) result.Add(id);
@@ -914,27 +904,15 @@ public class HKCardService
             .FirstOrDefaultAsync(ct);
 
     /// <summary>
-    /// Право редактирования черновика для уровня объекта.
+    /// Доступ на изменение карточки: единое право HK.Work и организация.
     /// <para>
-    /// Состав карточки — это часть черновика, поэтому требует ровно то же право,
-    /// что и редактирование самой карточки. Таблица уровней раньше была
-    /// продублирована в UpdateAsync; здесь она одна.
+    /// Право не зависит от уровня объекта и режима карты: уровневые
+    /// HK.{Level}.EditDraft перестали быть условием для этой команды. Fallback
+    /// «HK.Work или уровневое право» НЕ применяется — иначе оставшиеся
+    /// уровневые разрешения продолжили бы действовать и индивидуальный запрет
+    /// HK.Work не запрещал бы операцию.
     /// </para>
-    /// </summary>
-    private static string EditDraftPermission(Domain.Enums.HKObjectLevel level) => level switch
-    {
-        Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeEditDraft,
-        Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateEditDraft,
-        Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentEditDraft,
-        Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexEditDraft,
-        _ => throw new ArgumentException("Неизвестный уровень объекта.")
-    };
-
-    /// <summary>
-    /// Доступ на изменение состава карточки: право уровня и организация.
     /// <para>
-    /// Право берётся из СОХРАНЁННОГО уровня объекта, а не из данных запроса: иначе
-    /// можно было бы подсунуть чужой уровень и получить право соседнего уровня.
     /// Проверка статуса остаётся на месте у вызывающего метода со своим текстом
     /// ошибки. Организация — граница данных, а не разрешение на действие, поэтому
     /// индивидуальное разрешение её не обходит.
@@ -944,14 +922,7 @@ public class HKCardService
     {
         var actorId = _currentUser.GetRequiredUserId();
 
-        // Собственное дерево — единственная команда, уже переведённая на
-        // единое право HK.Work: уровень карты здесь не добавляет условия.
-        // Полный перевод остальных команд — отдельный PR (см. документ).
-        var allowed = card.IsAutonomous
-            ? await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKWork, ct)
-            : await _permissions.HasPermissionAsync(actorId.ToString(), EditDraftPermission(card.ObjectLevel));
-
-        if (!allowed)
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKWork, ct))
             throw new UnauthorizedAccessException("Недостаточно прав для изменения состава ХК.");
 
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
@@ -1108,7 +1079,11 @@ public class HKCardService
     /// — CHECK-ограничение в PostgreSQL циклы длиной больше одного не ловит.
     /// </para>
     /// </summary>
-    public async Task SaveTreeAsync(Guid cardId, IReadOnlyList<HKCardNodeWrite> positions, CancellationToken ct = default)
+    public async Task SaveTreeAsync(
+        Guid cardId,
+        IReadOnlyList<HKCardNodeWrite> positions,
+        uint? expectedRowVersion = null,
+        CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
 
@@ -1116,7 +1091,9 @@ public class HKCardService
             ?? throw new ArgumentException("ХК не найдена.");
         await EnsureEditDraftAccessAsync(access, ct);
 
-        var card = await _db.HKCards.AsNoTracking().FirstOrDefaultAsync(x => x.Id == cardId, ct)
+        // Карта загружается ОТСЛЕЖИВАЕМОЙ: её запись обновляется в той же транзакции,
+        // чтобы токен xmin участвовал в конкурентной проверке (см. описание метода).
+        var card = await _db.HKCards.FirstOrDefaultAsync(x => x.Id == cardId, ct)
             ?? throw new ArgumentException("ХК не найдена.");
 
         if (!card.IsAutonomous)
@@ -1126,6 +1103,10 @@ public class HKCardService
         // делает: по условию метода статус проверяет вызывающий, своим текстом.
         if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
             throw new InvalidOperationException("Редактирование состава недоступно для карточки в текущем статусе.");
+
+        if (expectedRowVersion is { } expected && expected != card.RowVersion)
+            throw new InvalidOperationException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
 
         // ── Валидация входного набора ДО любых изменений состояния контекста ──
         // Ниже проверяется итоговое дерево: переданный набор и есть результат.
@@ -1242,11 +1223,17 @@ public class HKCardService
         // Родительский FK — RESTRICT, поэтому удалять нужно от листьев к корню.
         // Порядок вычисляется по глубине, а не предполагается: родитель с
         // большим SortOrder может идти раньше ребёнка во входном наборе.
-        var byIdForDepth = positions.ToDictionary(p => p.Id);
-        static int Depth(HKCardNodeWrite p, Dictionary<Guid, HKCardNodeWrite> map)
+        // Порядок удаления определяется по СОХРАНЁННОМУ дереву, а не по входному
+        // набору: удаляемые позиции по определению отсутствуют во входном наборе,
+        // поэтому обход их родителей по нему давал бы неверную глубину. Именно
+        // сохранённые связи образуют внешние ключи, которые Postgres потребует
+        // снять в определённом порядке (RESTRICT).
+        var persistedById = existing.ToDictionary(n => n.Id);
+
+        static int Depth(Guid id, Dictionary<Guid, HKCardNode> map)
         {
             var depth = 0;
-            var current = p.ParentId;
+            var current = map.TryGetValue(id, out var node) ? node.ParentId : null;
             var guard = 0;
             while (current.HasValue && guard++ <= map.Count)
             {
@@ -1258,9 +1245,7 @@ public class HKCardService
         }
 
         foreach (var node in removed
-                     .OrderByDescending(n => Depth(
-                         new HKCardNodeWrite(n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder),
-                         byIdForDepth))
+                     .OrderByDescending(n => Depth(n.Id, persistedById))
                      .ThenByDescending(n => n.SortOrder))
         {
             _db.HKCardNodes.Remove(node);
@@ -1305,6 +1290,14 @@ public class HKCardService
         // Несколько SaveChanges в одной транзакции: частичное изменение дерева
         // недопустимо.
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        // Запись карты обновляется в той же транзакции. Это не косметика:
+        // изменение делает карту отслеживаемой, и EF отправляет UPDATE с
+        // условием по xmin. Если карту параллельно изменили, SaveChanges бросает
+        // DbUpdateConcurrencyException и вся транзакция откатывается — вместо
+        // молчаливой перезаписи дерева поверх чужой правки.
+        card.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
     }
@@ -1674,15 +1667,9 @@ public class HKCardService
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
-        var createPerm = card.ObjectLevel switch
-        {
-            Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeCreate,
-            Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateCreate,
-            Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentCreate,
-            Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexCreate,
-            _ => throw new ArgumentException("Неизвестный уровень объекта.")
-        };
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), createPerm))
+
+        // Единое право: уровень карты условием не является.
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKWork))
             throw new UnauthorizedAccessException("Недостаточно прав для создания ХК.");
 
         var isSystemAdmin = await IsSystemAdminAsync(actor);
@@ -1782,8 +1769,8 @@ public class HKCardService
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
-        var editPerm = EditDraftPermission(card.ObjectLevel);
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), editPerm))
+        // Единое право: уровень карты и её режим условием не являются.
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKWork))
             throw new UnauthorizedAccessException("Недостаточно прав для редактирования ХК.");
 
         if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (!card.NodeId.HasValue || card.NodeId == Guid.Empty))
@@ -2292,15 +2279,8 @@ public class HKCardService
         if (!isSystemAdmin && actor.BranchId != source.BranchId)
             return (false, null, "Нельзя создать версию для ХК другой организации.");
 
-        var createPerm = source.ObjectLevel switch
-        {
-            Domain.Enums.HKObjectLevel.Node => PermissionCodes.HKNodeCreate,
-            Domain.Enums.HKObjectLevel.Aggregate => PermissionCodes.HKAggregateCreate,
-            Domain.Enums.HKObjectLevel.EquipmentModel => PermissionCodes.HKEquipmentCreate,
-            Domain.Enums.HKObjectLevel.Complex => PermissionCodes.HKComplexCreate,
-            _ => null
-        };
-        if (createPerm == null || !await _permissions.HasPermissionAsync(actorId.ToString(), createPerm))
+        // Новая версия — создание ХК: то же единое право, что и у CreateAsync.
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKWork))
             return (false, null, "Недостаточно прав для создания новой версии ХК.");
 
         var now = _time.GetUtcNow().UtcDateTime;

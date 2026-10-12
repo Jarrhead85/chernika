@@ -103,6 +103,10 @@ internal static class RolePermissionDefaults
         [nameof(UserRole.NormAdmin)] =
         [
             PermissionCodes.HKView,
+            // Создание и редактирование — единое право. Уровневые Create/EditDraft
+            // остаются в шаблоне: их коды не удаляются, но переведёнными командами
+            // они больше не управляют (см. PermissionPolicyRegistration).
+            PermissionCodes.HKWork,
             PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
             PermissionCodes.HKAggregateCreate, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKAggregateSubmit,
             PermissionCodes.HKEquipmentCreate, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKEquipmentSubmit,
@@ -128,6 +132,7 @@ internal static class RolePermissionDefaults
         [nameof(UserRole.Operator)] =
         [
             PermissionCodes.HKView,
+            PermissionCodes.HKWork,
             PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
             PermissionCodes.HKAttachmentView,
             PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteRevisionRequired,

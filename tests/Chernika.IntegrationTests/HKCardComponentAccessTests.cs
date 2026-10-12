@@ -94,7 +94,7 @@ public class HKCardComponentAccessTests : IAsyncLifetime
         await s.Db.SaveChangesAsync();
 
         // Роли подобраны под сами права, а не наоборот. NormAdmin получает
-        // HKAggregateEditDraft и HK.View из шаблона, поэтому «запрет» поверх его
+        // Прало на изменение состава — единое HK.Work: уровневые Create/EditDraft
         // роли действительно что-то отменяет. Если бы запрет ставился роли, у
         // которой этого права и так нет, тест проходил бы вхолостую.
         // Guest ничего из этого не получает и берёт только индивидуальным решением.
@@ -245,8 +245,8 @@ public class HKCardComponentAccessTests : IAsyncLifetime
         var parentId = await CreateParentDraftAsync(s);
         var childId = await CreateApprovedChildAsync(s);
 
-        // Роль NormAdmin даёт HKAggregateEditDraft, индивидуальный запрет его снимает.
-        await SetDecisionAsync(s, "denied", PermissionCodes.HKAggregateEditDraft, granted: false);
+        // больше не являются условием (PR № 2.2).
+        await SetDecisionAsync(s, "denied", PermissionCodes.HKWork, granted: false);
         s.User.CurrentUserId = Guid.Parse(_users["denied"]);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(
@@ -281,7 +281,7 @@ public class HKCardComponentAccessTests : IAsyncLifetime
         var childId = await CreateApprovedChildAsync(s);
 
         // Роль Guest права редактирования не даёт, индивидуальное разрешение даёт.
-        await SetDecisionAsync(s, "granted", PermissionCodes.HKAggregateEditDraft, granted: true);
+        await SetDecisionAsync(s, "granted", PermissionCodes.HKWork, granted: true);
         s.User.CurrentUserId = Guid.Parse(_users["granted"]);
 
         await s.HK.AddComponentAsync(parentId, childId);
@@ -299,7 +299,7 @@ public class HKCardComponentAccessTests : IAsyncLifetime
         var childId = await CreateApprovedChildAsync(s);
 
         // Решение разрешает, затем снимается — доступ возвращается к роли.
-        await SetDecisionAsync(s, "denied", PermissionCodes.HKAggregateEditDraft, granted: true);
+        await SetDecisionAsync(s, "denied", PermissionCodes.HKWork, granted: true);
         s.User.CurrentUserId = Guid.Parse(_users["denied"]);
 
         var decision = await s.Db.UserPermissionOverrides.FirstAsync(o => o.UserId == _users["denied"]);
@@ -324,7 +324,7 @@ public class HKCardComponentAccessTests : IAsyncLifetime
         s.User.CurrentUserId = Guid.Parse(_users["owner"]);
         var component = await s.HK.AddComponentAsync(parentId, childId);
 
-        await SetDecisionAsync(s, "denied", PermissionCodes.HKAggregateEditDraft, granted: false);
+        await SetDecisionAsync(s, "denied", PermissionCodes.HKWork, granted: false);
         s.User.CurrentUserId = Guid.Parse(_users["denied"]);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(
@@ -360,7 +360,7 @@ public class HKCardComponentAccessTests : IAsyncLifetime
 
         var childId = await CreateApprovedChildAsync(s);
 
-        await SetDecisionAsync(s, "owner", PermissionCodes.HKAggregateEditDraft, granted: true);
+        await SetDecisionAsync(s, "owner", PermissionCodes.HKWork, granted: true);
         s.User.CurrentUserId = Guid.Parse(_users["owner"]);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(

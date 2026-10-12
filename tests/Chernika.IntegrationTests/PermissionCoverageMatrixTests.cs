@@ -43,7 +43,22 @@ public class PermissionCoverageMatrixTests
     /// </para>
     /// </summary>
     private static readonly Dictionary<string, string> ApprovedWithoutOperation =
-        new(StringComparer.Ordinal);
+        new(StringComparer.Ordinal)
+        {
+            // Создание и редактирование ХК переведены на единое право HK.Work
+            // (PR 2.2). Уровневые коды остаются в базе и в каталоге, но больше не
+            // охраняют ни одной операции: сервисные проверки и политики их не
+            // спрашивают. Перенос индивидуальных решений по этим кодам —
+            // отдельное решение владельца (см. таблицу переноса в документе).
+            [PermissionCodes.HKNodeCreate] = "Заменено правом HK.Work: создание ХК.",
+            [PermissionCodes.HKAggregateCreate] = "Заменено правом HK.Work: создание ХК.",
+            [PermissionCodes.HKEquipmentCreate] = "Заменено правом HK.Work: создание ХК.",
+            [PermissionCodes.HKComplexCreate] = "Заменено правом HK.Work: создание ХК.",
+            [PermissionCodes.HKNodeEditDraft] = "Заменено правом HK.Work: редактирование ХК.",
+            [PermissionCodes.HKAggregateEditDraft] = "Заменено правом HK.Work: редактирование ХК.",
+            [PermissionCodes.HKEquipmentEditDraft] = "Заменено правом HK.Work: редактирование ХК.",
+            [PermissionCodes.HKComplexEditDraft] = "Заменено правом HK.Work: редактирование ХК.",
+        };
 
     [Fact]
     public async Task ActivePermissions_AreCoveredByOperationOrApprovedReason()

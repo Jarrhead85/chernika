@@ -574,14 +574,8 @@
 
     private static readonly string[] RegistryPermissionCodes =
     {
-        PermissionCodes.HKNodeCreate,
-        PermissionCodes.HKAggregateCreate,
-        PermissionCodes.HKEquipmentCreate,
-        PermissionCodes.HKComplexCreate,
-        PermissionCodes.HKNodeEditDraft,
-        PermissionCodes.HKAggregateEditDraft,
-        PermissionCodes.HKEquipmentEditDraft,
-        PermissionCodes.HKComplexEditDraft,
+        // Создание и редактирование — единое право.
+        PermissionCodes.HKWork,
         PermissionCodes.HKNodeSubmit,
         PermissionCodes.HKAggregateSubmit,
         PermissionCodes.HKEquipmentSubmit,
@@ -686,14 +680,11 @@
 
     private bool HasPermission(string code) => _grantedPermissions.Contains(code);
 
-    private bool HasCreatePermission(HKObjectLevel level) => level switch
-    {
-        HKObjectLevel.Node => HasPermission(PermissionCodes.HKNodeCreate),
-        HKObjectLevel.Aggregate => HasPermission(PermissionCodes.HKAggregateCreate),
-        HKObjectLevel.EquipmentModel => HasPermission(PermissionCodes.HKEquipmentCreate),
-        HKObjectLevel.Complex => HasPermission(PermissionCodes.HKComplexCreate),
-        _ => false
-    };
+    /// <summary>
+    /// Создание ХК — единое право HK.Work. Параметр уровня оставлен для
+    /// совместимости с местом вызова: условием доступа он больше не является.
+    /// </summary>
+    private bool HasCreatePermission(HKObjectLevel level) => HasPermission(PermissionCodes.HKWork);
 
     private async Task LoadBranchesAsync()
     {
@@ -1034,14 +1025,8 @@
         && HasEditDraftPermission(card.ObjectLevel)
         && IsSameBranchOrSystemConfig(card.BranchId);
 
-    private bool HasEditDraftPermission(HKObjectLevel level) => level switch
-    {
-        HKObjectLevel.Node => HasPermission(PermissionCodes.HKNodeEditDraft),
-        HKObjectLevel.Aggregate => HasPermission(PermissionCodes.HKAggregateEditDraft),
-        HKObjectLevel.EquipmentModel => HasPermission(PermissionCodes.HKEquipmentEditDraft),
-        HKObjectLevel.Complex => HasPermission(PermissionCodes.HKComplexEditDraft),
-        _ => false
-    };
+    /// <summary>Редактирование — единое право HK.Work.</summary>
+    private bool HasEditDraftPermission(HKObjectLevel level) => HasPermission(PermissionCodes.HKWork);
 
     private bool CanSubmit(HKCardRegistryListItemDto card) =>
         (card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired)

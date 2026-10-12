@@ -782,6 +782,125 @@ public class HKCardTreeServiceIntegrationTests
         Assert.Empty(await ReadTreeAsync(cardId));
     }
 
+    // ── Конкурентное сохранение ──
+
+[Fact]
+    public async Task SaveTree_StaleRowVersion_IsRefused_AndTreeUnchanged()
+    {
+        var cardId = await CreateAutonomousCardAsync();
+        await using var scope = await AuthorScopeAsync();
+
+        var keep = Guid.NewGuid();
+        await scope.HK.SaveTreeAsync(cardId,
+            new[] { Node(keep, null, HKObjectLevel.EquipmentModel, "Изделие") });
+
+        var currentVersion = await CurrentRowVersionAsync(scope, cardId);
+
+        // Параллельная правка карты другим пользователем двигает xmin.
+        await using (var other = await AuthorScopeAsync())
+        {
+            var card = await other.Db.HKCards.FirstAsync(c => c.Id == cardId);
+            card.Purpose = "правка другого пользователя";
+            await other.Db.SaveChangesAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            scope.HK.SaveTreeAsync(cardId,
+                new[] { Node(keep, null, HKObjectLevel.EquipmentModel, "Переименовано") },
+                expectedRowVersion: currentVersion));
+
+        Assert.Contains("изменена другим", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Дерево не изменено: отказ дошёл до записи.
+        var tree = await ReadTreeAsync(cardId);
+        Assert.Single(tree);
+        Assert.Equal("Изделие", tree[0].Name);
+    }
+
+    [Fact]
+    public async Task SaveTree_CurrentRowVersion_IsAccepted()
+    {
+        var cardId = await CreateAutonomousCardAsync();
+        await using var scope = await AuthorScopeAsync();
+
+        var version = await CurrentRowVersionAsync(scope, cardId);
+        await scope.HK.SaveTreeAsync(cardId,
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Aggregate, "Агрегат") },
+            expectedRowVersion: version);
+
+        Assert.Single(await ReadTreeAsync(cardId));
+    }
+
+    [Fact]
+    public async Task SaveTree_UpdatesCardRow_UnderConcurrentCardEdit()
+    {
+        // После сохранения дерева версия карты обязана измениться: запись карты
+        // обновляется в той же транзакции, поэтому токен участвует в
+        // конкурентной проверке и следующий сохрантельщик увидит новую версию.
+        var cardId = await CreateAutonomousCardAsync();
+        await using var scope = await AuthorScopeAsync();
+
+        var before = await CurrentRowVersionAsync(scope, cardId);
+
+        await scope.HK.SaveTreeAsync(cardId,
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Aggregate, "Агрегат") },
+            expectedRowVersion: before);
+
+        var after = await CurrentRowVersionAsync(scope, cardId);
+        Assert.NotEqual(before, after);
+    }
+
+    private static async Task<uint> CurrentRowVersionAsync(TestScope scope, Guid cardId)
+    {
+        scope.Db.ChangeTracker.Clear();
+        return (await scope.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId)).RowVersion;
+    }
+
+    // ── Удаление вместе с переносом сохраняемой позиции ──
+
+    [Fact]
+    public async Task SaveTree_RemovesBranch_WhileMovingKeptNodeOut()
+    {
+        // Удаляется вся ветвь, кроме одного узла, который одновременно
+        // переносится в сохраняемую ветвь. Порядок удаления считается по
+        // СОХРАНЁННОМУ дереву, иначе FK родителя срывает операцию.
+        var cardId = await CreateAutonomousCardAsync();
+        var auId = await CreateAssemblyUnitAsync();
+        await using var scope = await AuthorScopeAsync();
+
+        var root = Guid.NewGuid();
+        var doomed = Guid.NewGuid();
+        var doomedChild = Guid.NewGuid();
+        var kept = Guid.NewGuid();
+
+        await scope.HK.SaveTreeAsync(cardId, new[]
+        {
+            Node(root, null, HKObjectLevel.EquipmentModel, "Корень", 1, 0),
+            Node(kept, root, HKObjectLevel.Node, "Сохраняемый узел", 1, 1),
+            Node(doomed, root, HKObjectLevel.Aggregate, "Удаляемая ветвь", 1, 2),
+            Node(doomedChild, doomed, HKObjectLevel.Node, "Потомок удаляемого", 1, 0)
+        });
+
+        await AttachItemAsync(cardId, auId, kept);
+
+        // kept переносится под root (остаётся), ветвь doomed удаляется целиком.
+        await scope.HK.SaveTreeAsync(cardId, new[]
+        {
+            Node(root, null, HKObjectLevel.EquipmentModel, "Корень", 1, 0),
+            Node(kept, root, HKObjectLevel.Node, "Сохраняемый узел", 1, 1)
+        });
+
+        var tree = await ReadTreeAsync(cardId);
+        Assert.Equal(2, tree.Count);
+        Assert.DoesNotContain(tree, n => n.Id == doomed);
+        Assert.DoesNotContain(tree, n => n.Id == doomedChild);
+
+        // Конечная строка сохраняемого узла на месте.
+        await using var check = await AuthorScopeAsync();
+        var item = await check.Db.HKCardItems.AsNoTracking().FirstAsync(i => i.HKCardId == cardId);
+        Assert.Equal(kept, item.HKCardNodeId);
+    }
+
     // ── Структурная валидация ──
 
     [Fact]
@@ -812,6 +931,28 @@ public class HKCardTreeServiceIntegrationTests
         // Но пустой черновик сохраняется и на согласование реквизитов
         // ValidateDraftAsync структуру не проверяет.
         Assert.True((await scope.Validation.ValidateDraftAsync(card)).IsValid);
+    }
+
+    [Fact]
+    public async Task ValidateStructure_ReportsUndefinedLevel()
+    {
+        // Undefined — признак невыведенного уровня карты, а не позиции.
+        var cardId = await CreateAutonomousCardAsync();
+        await using var scope = await AuthorScopeAsync();
+
+        // Прямая вставка в обход сервиса: сервис Undefined не принимает.
+        scope.Db.HKCardNodes.Add(new HKCardNode
+        {
+            Id = Guid.NewGuid(), HKCardId = cardId, ParentId = null,
+            Level = HKObjectLevel.Undefined, Name = "Без уровня", SortOrder = 0
+        });
+        await scope.Db.SaveChangesAsync();
+
+        var card = await scope.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+        var validation = await scope.Validation.ValidateStructureAsync(card);
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Errors, e => e.Code == "node-level-undefined");
     }
 
     [Fact]

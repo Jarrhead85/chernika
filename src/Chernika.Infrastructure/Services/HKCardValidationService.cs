@@ -578,6 +578,15 @@ public sealed class HKCardValidationService
                     $"{prefix}: недопустимое значение уровня {(int)node.Level}.",
                     "node-level-invalid"));
             }
+            else if (node.Level == HKObjectLevel.Undefined)
+            {
+                // Undefined — признак невыведенного уровня КАРТЫ, а не позиции:
+                // у позиции уровень должен быть назван.
+                errors.Add(new HKValidationError(
+                    $"Tree[{node.Id}]",
+                    $"{prefix}: не указан уровень позиции.",
+                    "node-level-undefined"));
+            }
 
             if (node.Id == node.ParentId)
             {

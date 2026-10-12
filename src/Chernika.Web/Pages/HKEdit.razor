@@ -1165,6 +1165,7 @@
     private bool canApprove;
     private bool canReturn;
     private bool canArchive;
+    private bool canWork;
     private bool canCreateNewVersion;
     private bool canCreateNode;
     private bool canCreateAggregate;
@@ -1329,14 +1330,12 @@
             canApprove = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKApprove);
             canReturn = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKReview);
             canArchive = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKArchive);
-            canCreateNewVersion = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate)
-                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate)
-                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate)
-                || await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
-            canCreateNode = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKNodeCreate);
-            canCreateAggregate = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKAggregateCreate);
-            canCreateEquipmentModel = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKEquipmentCreate);
-            canCreateComplex = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKComplexCreate);
+
+            // Создание и редактирование — единое право HK.Work: уровень карты
+            // и её режим условием не являются. Отправка на согласование,
+            // проверка, утверждение и архивирование остались на своих правах.
+            canCreateNewVersion = canWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
+            canCreateNode = canCreateAggregate = canCreateEquipmentModel = canCreateComplex = canWork;
         }
 
         await using (await DbLock.WaitAsync())
@@ -1455,10 +1454,7 @@
 
         await using (await DbLock.WaitAsync())
         {
-            canEdit = await Perms.HasPermissionAsync(currentUserId, selectedLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
-                selectedLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
-                selectedLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
-                PermissionCodes.HKComplexEditDraft);
+            canEdit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
         }
         canQuickCreate = canEdit;
 
@@ -1534,11 +1530,7 @@
             selectedNodeId = card.NodeId ?? Guid.Empty;
             statusStr = card.Status.ToString();
 
-            var canEditLevel = await Perms.HasPermissionAsync(currentUserId,
-                card.ObjectLevel == HKObjectLevel.Node ? PermissionCodes.HKNodeEditDraft :
-                card.ObjectLevel == HKObjectLevel.Aggregate ? PermissionCodes.HKAggregateEditDraft :
-                card.ObjectLevel == HKObjectLevel.EquipmentModel ? PermissionCodes.HKEquipmentEditDraft :
-                PermissionCodes.HKComplexEditDraft);
+            var canEditLevel = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
             if (ct.IsCancellationRequested) return;
             canEdit = canEditLevel && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
             canQuickCreate = canEdit;

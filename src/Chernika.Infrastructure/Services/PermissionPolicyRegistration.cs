@@ -29,16 +29,15 @@ public static class PermissionPolicyRegistration
         options.AddPolicy("ViewHK", p => p.AddRequirements(new PermissionRequirement(
             PermissionCodes.HKView)));
 
-        // Создание и редактирование черновика разрешены на любом уровне ХК:
-        // политика отвечает за допуск к операции, а конкретный уровень и
-        // организация проверяет сервис.
+        // Создание и редактирование ХК — единое право HK.Work. Уровневые
+        // Create/EditDraft больше не управляют этими командами: политика не
+        // должна отклонять запрос раньше сервисной проверки по HK.Work.
+        // Конкретный уровень и организация проверяет сервис.
         options.AddPolicy("CreateHK", p => p.AddRequirements(new PermissionRequirement(
-            PermissionCodes.HKNodeCreate, PermissionCodes.HKAggregateCreate,
-            PermissionCodes.HKEquipmentCreate, PermissionCodes.HKComplexCreate)));
+            PermissionCodes.HKWork)));
 
         options.AddPolicy("EditHK", p => p.AddRequirements(new PermissionRequirement(
-            PermissionCodes.HKNodeEditDraft, PermissionCodes.HKAggregateEditDraft,
-            PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKComplexEditDraft)));
+            PermissionCodes.HKWork)));
 
         options.AddPolicy("SendToApprove", p => p.AddRequirements(new PermissionRequirement(
             PermissionCodes.HKNodeSubmit, PermissionCodes.HKAggregateSubmit,
