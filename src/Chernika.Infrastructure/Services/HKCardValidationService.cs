@@ -30,18 +30,22 @@ public sealed class HKCardValidationService
             return HKValidationResult.Fail(errors);
         }
 
-        var objectInvariant = ValidateExactlyOneObject(card);
-        if (objectInvariant != null)
+        // Для автономных карт привязка к справочному объекту не требуется.
+        if (!card.IsAutonomous)
         {
-            errors.Add(objectInvariant);
-            return HKValidationResult.Fail(errors);
-        }
+            var objectInvariant = ValidateExactlyOneObject(card);
+            if (objectInvariant != null)
+            {
+                errors.Add(objectInvariant);
+                return HKValidationResult.Fail(errors);
+            }
 
-        if (!await ObjectExistsAsync(card, ct))
-            errors.Add(new HKValidationError(
-                "ObjectId",
-                $"{ObjectFieldLabel(card.ObjectLevel)} не найден или недоступен.",
-                "object-not-found"));
+            if (!await ObjectExistsAsync(card, ct))
+                errors.Add(new HKValidationError(
+                    "ObjectId",
+                    $"{ObjectFieldLabel(card.ObjectLevel)} не найден или недоступен.",
+                    "object-not-found"));
+        }
 
         if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
             && card.ExpirationDate.Value < card.EffectiveDate.Value)
@@ -76,7 +80,12 @@ public sealed class HKCardValidationService
 
         var errors = new List<HKValidationError>();
 
-        if (card.ObjectLevel == HKObjectLevel.Node)
+        if (card.IsAutonomous)
+        {
+            var tree = await ValidateStructureAsync(card, ct);
+            errors.AddRange(tree.Errors);
+        }
+        else if (card.ObjectLevel == HKObjectLevel.Node)
         {
             errors.AddRange(await ValidateNodeRowsForReviewAsync(card, ct));
         }
@@ -526,6 +535,152 @@ public sealed class HKCardValidationService
         GsmCategory.Foreign => "Зарубежные",
         _ => category.ToString()
     };
+
+    /// <summary>
+    /// Проверка целостности собственного дерева автономной карты.
+    /// Вызывается при отправке на согласование состава и норм, а не при
+    /// сохранении черновика: пустое дерево допустимо для черновика.
+    /// </summary>
+    public async Task<HKValidationResult> ValidateStructureAsync(HKCard card, CancellationToken ct = default)
+    {
+        var errors = new List<HKValidationError>();
+        var nodes = await _db.HKCardNodes
+            .AsNoTracking()
+            .Where(n => n.HKCardId == card.Id)
+            .ToListAsync(ct);
+
+        if (nodes.Count == 0)
+        {
+            errors.Add(new HKValidationError(
+                "Tree",
+                "Дерево карты пустое. Добавьте позиции структуры или конечные строки.",
+                "tree-empty"));
+            return HKValidationResult.Fail(errors);
+        }
+
+        var nodeById = nodes.ToDictionary(n => n.Id);
+
+        foreach (var node in nodes)
+        {
+            var prefix = $"Позиция «{node.Name}»";
+
+            if (node.Id == node.ParentId)
+            {
+                errors.Add(new HKValidationError(
+                    $"Tree[{node.Id}]",
+                    $"{prefix}: позиция не может ссылаться на себя.",
+                    "node-self-reference"));
+            }
+
+            if (node.ParentId.HasValue)
+            {
+                if (!nodeById.TryGetValue(node.ParentId.Value, out var parent))
+                {
+                    errors.Add(new HKValidationError(
+                        $"Tree[{node.Id}]",
+                        $"{prefix}: родительская позиция не найдена в дереве карты.",
+                        "node-parent-not-found"));
+                }
+                else if (parent.HKCardId != card.Id)
+                {
+                    errors.Add(new HKValidationError(
+                        $"Tree[{node.Id}]",
+                        $"{prefix}: родительская позиция принадлежит другой карте.",
+                        "node-parent-wrong-card"));
+                }
+            }
+
+            if (node.Quantity <= 0)
+            {
+                errors.Add(new HKValidationError(
+                    $"Tree[{node.Id}]",
+                    $"{prefix}: количество должно быть больше нуля.",
+                    "node-quantity-invalid"));
+            }
+
+            if (node.SortOrder < 0)
+            {
+                errors.Add(new HKValidationError(
+                    $"Tree[{node.Id}]",
+                    $"{prefix}: порядок не может быть отрицательным.",
+                    "node-sortorder-invalid"));
+            }
+
+            if (string.IsNullOrWhiteSpace(node.Name))
+            {
+                errors.Add(new HKValidationError(
+                    $"Tree[{node.Id}]",
+                    "Название структурной позиции не может быть пустым.",
+                    "node-name-empty"));
+            }
+        }
+
+        // Проверка многошаговых циклов
+        foreach (var node in nodes)
+        {
+            var visited = new HashSet<Guid>();
+            var current = node.ParentId;
+            while (current.HasValue)
+            {
+                if (current.Value == node.Id)
+                {
+                    errors.Add(new HKValidationError(
+                        $"Tree[{node.Id}]",
+                        $"Позиция «{node.Name}»: обнаружен цикл в дереве.",
+                        "node-cycle"));
+                    break;
+                }
+                if (!visited.Add(current.Value))
+                    break;
+                if (!nodeById.TryGetValue(current.Value, out var parent))
+                    break;
+                current = parent.ParentId;
+            }
+        }
+
+        // Проверка принадлежности конечных строк
+        var items = await _db.HKCardItems
+            .AsNoTracking()
+            .Where(i => i.HKCardId == card.Id)
+            .ToListAsync(ct);
+
+        foreach (var item in items.Where(i => i.HKCardNodeId.HasValue))
+        {
+            if (!nodeById.TryGetValue(item.HKCardNodeId.Value, out var node))
+            {
+                errors.Add(new HKValidationError(
+                    $"Items[{item.Id}]",
+                    "Конечная строка ссылается на несуществующую позицию дерева.",
+                    "item-node-not-found"));
+            }
+            else if (node.HKCardId != card.Id)
+            {
+                errors.Add(new HKValidationError(
+                    $"Items[{item.Id}]",
+                    "Конечная строка ссылается на позицию другой карты.",
+                    "item-node-wrong-card"));
+            }
+        }
+
+        // Конечная строка не может быть родителем структурных позиций
+        var nodeIdsWithChildren = nodes
+            .Where(n => n.ParentId.HasValue)
+            .Select(n => n.ParentId!.Value)
+            .ToHashSet();
+
+        foreach (var item in items.Where(i => i.HKCardNodeId.HasValue))
+        {
+            if (nodeIdsWithChildren.Contains(item.Id))
+            {
+                errors.Add(new HKValidationError(
+                    $"Items[{item.Id}]",
+                    "Конечная строка не может быть родителем структурных позиций.",
+                    "item-is-parent"));
+            }
+        }
+
+        return new HKValidationResult(errors.Count == 0, errors);
+    }
 
     private sealed record ChildSnapshot(
         Guid Id,

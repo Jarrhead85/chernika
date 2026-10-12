@@ -915,6 +915,11 @@ namespace Chernika.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<bool>("IsAutonomous")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<Guid?>("NodeId")
                         .HasColumnType("uuid");
 
@@ -1120,6 +1125,9 @@ namespace Chernika.Infrastructure.Migrations
                     b.Property<Guid>("HKCardId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("HKCardNodeId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Notes")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
@@ -1146,7 +1154,7 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("AssemblyUnitId");
 
-                    b.HasIndex("HKCardId");
+                    b.HasIndex("HKCardId", "HKCardNodeId");
 
                     b.ToTable("HKCardItems");
                 });
@@ -1190,6 +1198,45 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("MilitaryBranchId");
 
                     b.ToTable("HKCardMilitaryBranches");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardNode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("HKCardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Level")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Quantity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<int>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HKCardId", "ParentId");
+
+                    b.HasIndex("HKCardId", "SortOrder");
+
+                    b.ToTable("HKCardNodes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -2843,9 +2890,17 @@ namespace Chernika.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Chernika.Domain.Entities.HKCardNode", "HKCardNode")
+                        .WithMany()
+                        .HasForeignKey("HKCardId", "HKCardNodeId")
+                        .HasPrincipalKey("HKCardId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("AssemblyUnit");
 
                     b.Navigation("HKCard");
+
+                    b.Navigation("HKCardNode");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardItemMaterial", b =>
@@ -2884,6 +2939,25 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("HKCard");
 
                     b.Navigation("MilitaryBranch");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardNode", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCard", "HKCard")
+                        .WithMany("TreeNodes")
+                        .HasForeignKey("HKCardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chernika.Domain.Entities.HKCardNode", "Parent")
+                        .WithMany()
+                        .HasForeignKey("HKCardId", "ParentId")
+                        .HasPrincipalKey("HKCardId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("HKCard");
+
+                    b.Navigation("Parent");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -3357,6 +3431,8 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("StatusLog");
 
                     b.Navigation("SupersededBy");
+
+                    b.Navigation("TreeNodes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardItem", b =>

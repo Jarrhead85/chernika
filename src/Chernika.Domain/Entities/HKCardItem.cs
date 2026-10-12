@@ -5,6 +5,8 @@ public class HKCardItem
     public Guid Id { get; set; }
     public Guid HKCardId { get; set; }
     public HKCard HKCard { get; set; } = null!;
+    public Guid? HKCardNodeId { get; set; }
+    public HKCardNode? HKCardNode { get; set; }
     public Guid AssemblyUnitId { get; set; }
     public AssemblyUnit AssemblyUnit { get; set; } = null!;
     public int Quantity { get; set; } = 1;

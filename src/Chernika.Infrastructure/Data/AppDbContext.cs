@@ -29,6 +29,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ComplexCompositionItem> ComplexCompositionItems => Set<ComplexCompositionItem>();
     public DbSet<HKCard> HKCards => Set<HKCard>();
     public DbSet<HKCardComponent> HKCardComponents => Set<HKCardComponent>();
+    public DbSet<HKCardNode> HKCardNodes => Set<HKCardNode>();
     public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
     public DbSet<HKCardItemMaterial> HKCardItemMaterials => Set<HKCardItemMaterial>();
     public DbSet<HKCardStatusLog> HKCardStatusLogs => Set<HKCardStatusLog>();
@@ -351,6 +352,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Version).HasMaxLength(10).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.ObjectLevel).HasConversion<int>();
+            e.Property(x => x.IsAutonomous).HasDefaultValue(false);
             e.Property(x => x.Purpose).HasMaxLength(2000);
             e.Property(x => x.NormativeBasis).HasMaxLength(2000);
             e.Property(x => x.Notes).HasMaxLength(4000);
@@ -393,6 +395,26 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasQueryFilter(x => x.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 
+        modelBuilder.Entity<HKCardNode>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Quantity).HasDefaultValue(1);
+            e.Property(x => x.SortOrder).HasDefaultValue(0);
+            e.HasOne(x => x.HKCard).WithMany(x => x.TreeNodes)
+                .HasForeignKey(x => x.HKCardId)
+                .OnDelete(DeleteBehavior.Cascade);
+            // Уникальный индекс для составного FK: родитель должен принадлежать
+            // той же карте. Гарантирует, что ParentId не может указывать
+            // на позицию другой карты.
+            e.HasAlternateKey(x => new { x.HKCardId, x.Id });
+            e.HasOne(x => x.Parent).WithMany()
+                .HasForeignKey(x => new { x.HKCardId, x.ParentId })
+                .HasPrincipalKey(x => new { x.HKCardId, x.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.HKCardId, x.SortOrder });
+        });
+
         modelBuilder.Entity<HKCardComponent>(e =>
         {
             e.HasKey(x => x.Id);
@@ -417,6 +439,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Notes).HasMaxLength(2000);
             e.Property(x => x.Volume).HasPrecision(18, 6);
             e.HasOne(x => x.HKCard).WithMany(x => x.Items).HasForeignKey(x => x.HKCardId).OnDelete(DeleteBehavior.Cascade);
+            // Составной FK: строка и её структурная позиция принадлежат одной
+            // карте. Простой FK по HKCardNodeId этого не гарантировал бы —
+            // он разрешил бы привязать строку карты к позиции другой карты.
+            e.HasOne(x => x.HKCardNode).WithMany().HasForeignKey(x => new { x.HKCardId, x.HKCardNodeId })
+                .HasPrincipalKey(x => new { x.HKCardId, x.Id })
+                .OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.AssemblyUnit).WithMany(x => x.HKCardItems).HasForeignKey(x => x.AssemblyUnitId);
         });
 

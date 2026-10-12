@@ -19,6 +19,13 @@ public class HKCard
 
     public HKObjectLevel ObjectLevel { get; set; }
 
+    /// <summary>
+    /// Признак автономной карты нового сценария. Для таких карт не требуется
+    /// привязка к справочному объекту, правило «одна активная ХК на объект»
+    /// не применяется, отсутствие дерева допустимо для сохранения черновика.
+    /// </summary>
+    public bool IsAutonomous { get; set; }
+
     public Guid? ComplexId { get; set; }
     public Complex? Complex { get; set; }
 
@@ -76,6 +83,7 @@ public class HKCard
     public uint RowVersion { get; set; }
 
     public ICollection<HKCardItem> Items { get; set; } = new List<HKCardItem>();
+    public ICollection<HKCardNode> TreeNodes { get; set; } = new List<HKCardNode>();
     public ICollection<HKCardStatusLog> StatusLog { get; set; } = new List<HKCardStatusLog>();
     public ICollection<HKCardComponent> ParentComponents { get; set; } = new List<HKCardComponent>();
     public ICollection<HKCardComponent> ChildComponents { get; set; } = new List<HKCardComponent>();
