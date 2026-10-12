@@ -549,11 +549,18 @@ public sealed class HKCardValidationService
             .Where(n => n.HKCardId == card.Id)
             .ToListAsync(ct);
 
-        if (nodes.Count == 0)
+        // Конечные строки считаются частью наполнения: карта, у которой есть строки
+        // под корнем, но нет структурных позиций, не пуста.
+        var rootItems = await _db.HKCardItems
+            .AsNoTracking()
+            .Where(i => i.HKCardId == card.Id)
+            .ToListAsync(ct);
+
+        if (nodes.Count == 0 && rootItems.Count == 0)
         {
             errors.Add(new HKValidationError(
                 "Tree",
-                "Дерево карты пустое. Добавьте позиции структуры или конечные строки.",
+                "Карта пуста: нет ни позиций структуры, ни конечных строк.",
                 "tree-empty"));
             return HKValidationResult.Fail(errors);
         }
@@ -563,6 +570,14 @@ public sealed class HKCardValidationService
         foreach (var node in nodes)
         {
             var prefix = $"Позиция «{node.Name}»";
+
+            if (!Enum.IsDefined(typeof(HKObjectLevel), node.Level))
+            {
+                errors.Add(new HKValidationError(
+                    $"Tree[{node.Id}]",
+                    $"{prefix}: недопустимое значение уровня {(int)node.Level}.",
+                    "node-level-invalid"));
+            }
 
             if (node.Id == node.ParentId)
             {
@@ -639,10 +654,7 @@ public sealed class HKCardValidationService
         }
 
         // Проверка принадлежности конечных строк
-        var items = await _db.HKCardItems
-            .AsNoTracking()
-            .Where(i => i.HKCardId == card.Id)
-            .ToListAsync(ct);
+        var items = rootItems;
 
         foreach (var item in items.Where(i => i.HKCardNodeId.HasValue))
         {
@@ -662,22 +674,13 @@ public sealed class HKCardValidationService
             }
         }
 
-        // Конечная строка не может быть родителем структурных позиций
-        var nodeIdsWithChildren = nodes
-            .Where(n => n.ParentId.HasValue)
-            .Select(n => n.ParentId!.Value)
-            .ToHashSet();
-
-        foreach (var item in items.Where(i => i.HKCardNodeId.HasValue))
-        {
-            if (nodeIdsWithChildren.Contains(item.Id))
-            {
-                errors.Add(new HKValidationError(
-                    $"Items[{item.Id}]",
-                    "Конечная строка не может быть родителем структурных позиций.",
-                    "item-is-parent"));
-            }
-        }
+        // Проверка «конечная строка не является родителем структурных позиций»
+        // УДАЛЕНА как нерабочая: она сравнивала item.Id со значениями ParentId,
+        // а ParentId структурных позиций ссылается на HKCardNode, а не на
+        // HKCardItem. Несовпадение идентификаторов разных сущностей не могло
+        // означать реальную связь. Требование обеспечивается типом самого FK:
+        // родительский внешний ключ ведёт на HKCardNode, поэтому строка
+        // HKCardItem физически не может оказаться родителем позиции.
 
         return new HKValidationResult(errors.Count == 0, errors);
     }

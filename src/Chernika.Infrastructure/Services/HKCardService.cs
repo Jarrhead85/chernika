@@ -904,12 +904,13 @@ public class HKCardService
     /// право требуется до выборки содержимого.
     /// </para>
     /// </summary>
-    private sealed record CardAccessInfo(Domain.Enums.HKObjectLevel ObjectLevel, Guid BranchId, HKCardStatus Status);
+    private sealed record CardAccessInfo(
+        Domain.Enums.HKObjectLevel ObjectLevel, Guid BranchId, HKCardStatus Status, bool IsAutonomous);
 
     private async Task<CardAccessInfo?> LoadCardAccessAsync(Guid cardId, CancellationToken ct) =>
         await _db.HKCards.AsNoTracking()
             .Where(x => x.Id == cardId)
-            .Select(x => new CardAccessInfo(x.ObjectLevel, x.BranchId, x.Status))
+            .Select(x => new CardAccessInfo(x.ObjectLevel, x.BranchId, x.Status, x.IsAutonomous))
             .FirstOrDefaultAsync(ct);
 
     /// <summary>
@@ -942,9 +943,15 @@ public class HKCardService
     private async Task EnsureEditDraftAccessAsync(CardAccessInfo card, CancellationToken ct)
     {
         var actorId = _currentUser.GetRequiredUserId();
-        var permission = EditDraftPermission(card.ObjectLevel);
 
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), permission))
+        // Собственное дерево — единственная команда, уже переведённая на
+        // единое право HK.Work: уровень карты здесь не добавляет условия.
+        // Полный перевод остальных команд — отдельный PR (см. документ).
+        var allowed = card.IsAutonomous
+            ? await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKWork, ct)
+            : await _permissions.HasPermissionAsync(actorId.ToString(), EditDraftPermission(card.ObjectLevel));
+
+        if (!allowed)
             throw new UnauthorizedAccessException("Недостаточно прав для изменения состава ХК.");
 
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
@@ -1084,7 +1091,12 @@ public class HKCardService
         await _db.SaveChangesAsync(ct);
     }
 
-    // ── Собственное дерево карты (автономный сценарий) ──────────────────
+    // Предел длины названия структурной позиции. Совпадает с конфигурацией EF
+    // для HKCardNode.Name, чтобы сервис отклонял значение до записи, а не
+    // PostgreSQL обрывал его.
+    private const int TreeNameMaxLength = 200;
+
+    // ── Собственное дерево карты (автономный сценарий) ────────────────
 
     /// <summary>
     /// Сохраняет собственное дерево карты целиком: переданный набор позиций
@@ -1110,82 +1122,191 @@ public class HKCardService
         if (!card.IsAutonomous)
             throw new InvalidOperationException("Собственное дерево доступно только для автономной ХК.");
 
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Проверка редактируемого состояния. EnsureEditDraftAccessAsync её не
+        // делает: по условию метода статус проверяет вызывающий, своим текстом.
+        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+            throw new InvalidOperationException("Редактирование состава недоступно для карточки в текущем статусе.");
+
+        // ── Валидация входного набора ДО любых изменений состояния контекста ──
+        // Ниже проверяется итоговое дерево: переданный набор и есть результат.
+
+        var seen = new HashSet<Guid>();
         foreach (var p in positions)
         {
-            if (string.IsNullOrWhiteSpace(p.Name))
-                throw new InvalidOperationException("Название структурной позиции обязательно.");
+            if (p.Id == Guid.Empty)
+                throw new InvalidOperationException("Идентификатор позиции не должен быть пустым.");
+
+            if (!seen.Add(p.Id))
+                throw new InvalidOperationException(
+                    $"Позиция «{p.Name}»: идентификатор {p.Id} встречается в наборе дважды.");
+
+            if (!Enum.IsDefined(typeof(Domain.Enums.HKObjectLevel), p.Level))
+                throw new InvalidOperationException(
+                    $"Позиция «{p.Name}»: недопустимое значение уровня {(int)p.Level}.");
+
             if (p.Level == Domain.Enums.HKObjectLevel.Undefined)
                 throw new InvalidOperationException($"Позиция «{p.Name}»: не указан уровень.");
+
+            var name = p.Name?.Trim() ?? string.Empty;
+            if (name.Length == 0)
+                throw new InvalidOperationException("Название структурной позиции обязательно.");
+            if (name.Length > TreeNameMaxLength)
+                throw new InvalidOperationException(
+                    $"Название структурной позиции длиннее {TreeNameMaxLength} символов.");
+
             if (p.Quantity <= 0)
-                throw new InvalidOperationException($"Позиция «{p.Name}»: количество должно быть больше нуля.");
+                throw new InvalidOperationException($"Позиция «{name}»: количество должно быть больше нуля.");
+
             if (p.SortOrder < 0)
-                throw new InvalidOperationException($"Позиция «{p.Name}»: порядок не может быть отрицательным.");
-
-            var key = $"{p.Id:N}";
-            if (!names.Add(key))
-                throw new InvalidOperationException("В дереве повторяется одна и та же позиция.");
+                throw new InvalidOperationException($"Позиция «{name}»: порядок не может быть отрицательным.");
         }
 
-        var ids = positions.Select(p => p.Id).ToHashSet();
-
-        foreach (var p in positions)
-        {
-            if (p.ParentId == p.Id)
-                throw new InvalidOperationException($"Позиция «{p.Name}»: позиция не может быть родителем самой себе.");
-            if (p.ParentId.HasValue && !ids.Contains(p.ParentId.Value))
-                throw new InvalidOperationException($"Позиция «{p.Name}»: родитель должен принадлежать этому же дереву.");
-        }
-
-        // Полный запрет циклов: обход вверх по родителям от каждой позиции.
         var byId = positions.ToDictionary(p => p.Id);
         foreach (var p in positions)
         {
+            var name = p.Name.Trim();
+
+            if (p.ParentId == p.Id)
+                throw new InvalidOperationException($"Позиция «{name}»: позиция не может быть родителем самой себе.");
+
+            if (p.ParentId.HasValue && !byId.ContainsKey(p.ParentId.Value))
+                throw new InvalidOperationException(
+                    $"Позиция «{name}»: родитель должен присутствовать в сохраняемом дереве.");
+        }
+
+        // Полный запрет циклов: обход вверх по родителям от каждой позиции.
+        foreach (var p in positions)
+        {
+            var name = p.Name.Trim();
             var visited = new HashSet<Guid>();
             var current = p.ParentId;
             while (current.HasValue)
             {
-                if (current.Value == p.Id)
-                    throw new InvalidOperationException($"Позиция «{p.Name}»: обнаружен цикл в дереве.");
-                if (!visited.Add(current.Value))
-                    throw new InvalidOperationException($"Позиция «{p.Name}»: обнаружен цикл в дереве.");
+                if (current.Value == p.Id || !visited.Add(current.Value))
+                    throw new InvalidOperationException($"Позиция «{name}»: обнаружен цикл в дереве.");
                 current = byId[current.Value].ParentId;
             }
         }
 
-        // Полная замена дерева: существующие позиции удаляются, переданные
-        // записываются заново. Мягкое удаление для нового дерева не введено.
+        // ── Синхронизация по Id ──
+
         var existing = await _db.HKCardNodes
             .Where(n => n.HKCardId == cardId)
             .ToListAsync(ct);
-        _db.HKCardNodes.RemoveRange(existing);
+        var existingById = existing.ToDictionary(n => n.Id);
+
+        // Идентификатор из другой карты не принимается: иначе синхронизация
+        // перехватила бы чужую позицию. Ищется отдельно, потому что в existingById
+        // лежат только позиции ЭТОЙ карты и проверка по нему молчала бы.
+        if (positions.Count > 0)
+        {
+            // Идентификаторы выносятся в локальный список: вложенный подзапрос
+            // с Any() по коллекции не транслируется Npgsql в SQL.
+            var incomingIdList = positions.Select(p => p.Id).ToList();
+            var owners = await _db.HKCardNodes
+                .AsNoTracking()
+                .Where(n => incomingIdList.Contains(n.Id))
+                .Select(n => new { n.Id, n.HKCardId })
+                .ToListAsync(ct);
+
+            foreach (var owner in owners.Where(o => o.HKCardId != cardId))
+            {
+                var pos = positions.First(p => p.Id == owner.Id);
+                throw new InvalidOperationException(
+                    $"Позиция «{pos.Name.Trim()}»: идентификатор принадлежит другой карте.");
+            }
+        }
+
+        var incomingIds = positions.Select(p => p.Id).ToHashSet();
+        var removed = existing.Where(n => !incomingIds.Contains(n.Id)).ToList();
+
+        // Конечные строки этого PR не принимают команд удаления или
+        // перепривязки, поэтому позицию, на которую кто-то ссылается,
+        // удалять нельзя: строки и их нормы не отсоединяются автоматически.
+        var removedIds = removed.Select(n => n.Id).ToHashSet();
+        if (removedIds.Count > 0)
+        {
+            var busyIds = await _db.HKCardItems
+                .AsNoTracking()
+                .Where(i => i.HKCardId == cardId && i.HKCardNodeId != null)
+                .Select(i => i.HKCardNodeId!.Value)
+                .ToListAsync(ct);
+
+            var busy = removedIds.Intersect(busyIds).ToList();
+            if (busy.Count > 0)
+                throw new InvalidOperationException(
+                    "Нельзя удалить позицию, на которую ссылаются конечные строки: " +
+                    "сначала удалите или перепривяжите строки.");
+        }
+
+        // Родительский FK — RESTRICT, поэтому удалять нужно от листьев к корню.
+        // Порядок вычисляется по глубине, а не предполагается: родитель с
+        // большим SortOrder может идти раньше ребёнка во входном наборе.
+        var byIdForDepth = positions.ToDictionary(p => p.Id);
+        static int Depth(HKCardNodeWrite p, Dictionary<Guid, HKCardNodeWrite> map)
+        {
+            var depth = 0;
+            var current = p.ParentId;
+            var guard = 0;
+            while (current.HasValue && guard++ <= map.Count)
+            {
+                depth++;
+                if (!map.TryGetValue(current.Value, out var parent)) break;
+                current = parent.ParentId;
+            }
+            return depth;
+        }
+
+        foreach (var node in removed
+                     .OrderByDescending(n => Depth(
+                         new HKCardNodeWrite(n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder),
+                         byIdForDepth))
+                     .ThenByDescending(n => n.SortOrder))
+        {
+            _db.HKCardNodes.Remove(node);
+        }
 
         foreach (var p in positions)
         {
-            _db.HKCardNodes.Add(new HKCardNode
+            if (existingById.TryGetValue(p.Id, out var current))
             {
-                Id = p.Id,
-                HKCardId = cardId,
-                ParentId = p.ParentId,
-                Level = p.Level,
-                Name = p.Name.Trim(),
-                Quantity = p.Quantity,
-                SortOrder = p.SortOrder
-            });
+                // Обновление на существующем экземпляре: строка не пересоздаётся,
+                // поэтому связанные конечные строки и их материалы сохраняются.
+                current.ParentId = p.ParentId;
+                current.Level = p.Level;
+                current.Name = p.Name.Trim();
+                current.Quantity = p.Quantity;
+                current.SortOrder = p.SortOrder;
+            }
+            else
+            {
+                _db.HKCardNodes.Add(new HKCardNode
+                {
+                    Id = p.Id,
+                    HKCardId = cardId,
+                    ParentId = p.ParentId,
+                    Level = p.Level,
+                    Name = p.Name.Trim(),
+                    Quantity = p.Quantity,
+                    SortOrder = p.SortOrder
+                });
+            }
         }
 
-        _db.AuditLogs.Add(new AuditLog
-        {
-            Id = Guid.NewGuid(),
-            EntityType = "HKCard",
-            EntityId = cardId.ToString(),
-            Action = "TreeSaved",
-            UserId = actorId,
-            CreatedAt = DateTime.UtcNow,
-            Details = $"Сохранено дерево карты, позиций: {positions.Count}."
-        });
+        // Аудит — тем же AuditService, что и остальные операции с ХК.
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "HKCard",
+            cardId.ToString(),
+            "TreeSaved",
+            actorId,
+            EntityDisplayName: $"{card.Code} v{card.Version}",
+            Details: $"Сохранено дерево карты: позиций {positions.Count}, добавлено {positions.Count - (existing.Count - removed.Count)}, удалено {removed.Count}."), ct);
 
+        // Несколько SaveChanges в одной транзакции: частичное изменение дерева
+        // недопустимо.
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
     }
 
     public async Task<List<HKCardComponentDto>> GetComponentsAsync(Guid cardId, CancellationToken ct = default)
@@ -1541,6 +1662,15 @@ public class HKCardService
     public async Task<HKCard> CreateAsync(HKCard card, CancellationToken ct = default)
     {
         var actorId = _currentUser.GetRequiredUserId();
+
+        // Ограничение нумерации проверяется ПЕРВЫМ: автономная карта ещё не имеет
+        // утверждённого источника номера. Проверка стоит до отображения права по
+        // уровню, потому что уровень автономной карты может быть Undefined и
+        // отображение на уровневое право завершилось бы иной ошибкой.
+        if (card.IsAutonomous)
+            throw new InvalidOperationException(
+                "Создание автономной ХК пока недоступно: не утверждён источник формирования номера.");
+
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
@@ -1584,21 +1714,9 @@ public class HKCardService
         await EnsureNoActiveDuplicateAsync(card, ct);
 
         card.Id = Guid.NewGuid();
-
-        if (card.IsAutonomous)
-        {
-            // Источник номера для автономных карт ещё не утверждён (пункт 3.5.2).
-            // PR № 2 подготавливает модель, но не завершает создание карты с номером.
-            // Тесты используют явный тестовый номер напрямую через DbSet.
-            card.Code = $"AUTONOMOUS-{card.Id:N}";
-            card.Version = GenerateVersion();
-        }
-        else
-        {
-            var objectCode = await ResolveObjectCodeAsync(card);
-            card.Code = await GenerateCodeAsync(objectCode);
-            card.Version = GenerateVersion();
-        }
+        var objectCode = await ResolveObjectCodeAsync(card);
+        card.Code = await GenerateCodeAsync(objectCode);
+        card.Version = GenerateVersion();
         var now = _time.GetUtcNow().UtcDateTime;
         card.CreatedAt = now;
         card.UpdatedAt = now;
@@ -1621,9 +1739,7 @@ public class HKCardService
             card.Items.SelectMany(i => i.Materials).Select(m => m.GsmMaterialId), ct);
 
         _db.HKCards.Add(card);
-        var details = card.IsAutonomous
-            ? "Создана автономная ХК."
-            : $"Создана ХК уровня «{LevelDisplayName(card.ObjectLevel)}» для объекта «{await ResolveObjectCodeAsync(card)}».";
+        var details = $"Создана ХК уровня «{LevelDisplayName(card.ObjectLevel)}» для объекта «{objectCode}».";
 
         await _audit.CreateLogAsync(new AuditWriteRequest(
             "HKCard",

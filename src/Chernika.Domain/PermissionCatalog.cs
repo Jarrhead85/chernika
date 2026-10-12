@@ -12,6 +12,7 @@ public static class PermissionCatalog
     public static IReadOnlyList<PermissionDefinition> All { get; } = new List<PermissionDefinition>
     {
         new(PermissionCodes.HKView, "Химмотологические карты", "Просмотр химмотологических карт", "Просмотр реестра и деталей химмотологических карт всех уровней", 1),
+        new(PermissionCodes.HKWork, "Химмотологические карты", "Работа с ХК", "Создание и редактирование химмотологической карты независимо от уровня объекта", 267),
         new(PermissionCodes.HKNodeCreate, "ХК — узлы", "Создание ХК узла", "Создание новой химмотологической карты узла", 2),
         new(PermissionCodes.HKNodeEditDraft, "ХК — узлы", "Редактирование черновика ХК узла", "Изменение содержимого черновика химмотологической карты узла", 3),
         new(PermissionCodes.HKNodeSubmit, "ХК — узлы", "Отправка ХК узла на проверку", "Отправка заполненной химмотологической карты узла на нормоконтроль", 4),

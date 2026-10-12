@@ -3,6 +3,19 @@ namespace Chernika.Domain;
 public static class PermissionCodes
 {
     public const string HKView = "HK.View";
+
+    /// <summary>
+    /// Единое право работы с ХК: создание и редактирование независимо от
+    /// уровня объекта и режима карты.
+    /// <para>
+    /// Переход на него выполняется постепенно: сначала собственное дерево
+    /// автономной карты, затем остальные команды создания и редактирования.
+    /// Согласование, утверждение, архивирование и удаление в это право не
+    /// входят и остаются на своих полномочиях.
+    /// </para>
+    /// </summary>
+    public const string HKWork = "HK.Work";
+
     public const string HKNodeCreate = "HK.Node.Create";
     public const string HKNodeEditDraft = "HK.Node.EditDraft";
     public const string HKNodeSubmit = "HK.Node.Submit";
@@ -81,7 +94,7 @@ public static class PermissionCodes
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>
     {
-        HKView, HKNodeCreate, HKNodeEditDraft, HKNodeSubmit,
+        HKView, HKWork, HKNodeCreate, HKNodeEditDraft, HKNodeSubmit,
         HKAggregateCreate, HKAggregateEditDraft, HKAggregateSubmit,
         HKEquipmentCreate, HKEquipmentEditDraft, HKEquipmentSubmit,
         HKComplexCreate, HKComplexEditDraft, HKComplexSubmit,
