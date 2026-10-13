@@ -157,18 +157,36 @@ public class HKWorkPermissionIntegrationTests
     }
 
     [Fact]
-    public async Task CreateAsync_Autonomous_StillRefused()
+    public async Task CreateAsync_Autonomous_UsesSameHkWorkPermission()
     {
-        // Перевод прав не снимает ограничение нумерации автономной карты.
+        // Единое право распространяется и на автономный сценарий: отдельного
+        // права у него нет.
         await using var s = await OperatorScopeAsync(grant: true);
 
         var card = NewCard(_fixture.BranchA, Guid.NewGuid());
         card.IsAutonomous = true;
         card.ObjectLevel = HKObjectLevel.Undefined;
         card.NodeId = null;
+        card.Name = "Автономная " + Suffix();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => s.HK.CreateAsync(card));
-        Assert.Contains("номер", ex.Message, StringComparison.OrdinalIgnoreCase);
+        var created = await s.HK.CreateAsync(card);
+
+        Assert.True(created.IsAutonomous);
+        Assert.StartsWith($"ХК-{card.Name}", created.Code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateAsync_Autonomous_StillRefusedWithoutHkWork()
+    {
+        await using var s = await OperatorScopeAsync(grant: false);
+
+        var card = NewCard(_fixture.BranchA, Guid.NewGuid());
+        card.IsAutonomous = true;
+        card.ObjectLevel = HKObjectLevel.Undefined;
+        card.NodeId = null;
+        card.Name = "Автономная " + Suffix();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => s.HK.CreateAsync(card));
     }
 
     // ── Редактирование ──

@@ -348,7 +348,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<HKCard>(e =>
         {
             e.HasKey(x => x.Id);
-            e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+            // Номер автономной карты содержит название целиком, поэтому предел длины
+            // номера больше прежних 50 символов. Название хранится отдельно.
+            e.Property(x => x.Code).HasMaxLength(HKCard.CodeMaxLength).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(HKCard.NameMaxLength);
             e.Property(x => x.Version).HasMaxLength(10).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.ObjectLevel).HasConversion<int>();

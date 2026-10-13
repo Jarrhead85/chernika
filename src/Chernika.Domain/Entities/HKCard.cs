@@ -7,9 +7,27 @@ public class HKCard
 {
     public Guid Id { get; set; }
 
+    public const int NameMaxLength = 200;
+
+    /// <summary>Предел длины номера: префикс «ХК-», название, год и суффикс.</summary>
+    public const int CodeMaxLength = 260;
+
     [Required(ErrorMessage = "Поле «Номер ХК» обязательно для заполнения.")]
-    [StringLength(50, ErrorMessage = "Длина поля «Номер ХК» не может превышать 50 символов.")]
+    [StringLength(CodeMaxLength, ErrorMessage = "Длина поля «Номер ХК» не может превышать 260 символов.")]
     public string Code { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Название объекта, введённое автором карты. Самостоятельное поле: название
+    /// и номер хранятся раздельно, номер формируется сервером по форме
+    /// ХК-{название}-{год}.
+    /// <para>
+    /// У старых карт поле отсутствует — это допустимо. Заполнять его номером
+    /// автоматически нельзя: название и номер — разные значения. Уникальности
+    /// нет: несколько карт могут иметь одинаковое название.
+    /// </para>
+    /// </summary>
+    [StringLength(NameMaxLength, ErrorMessage = "Длина названия не может превышать 200 символов.")]
+    public string? Name { get; set; }
 
     [Required(ErrorMessage = "Поле «Версия» обязательно для заполнения.")]
     [StringLength(10, ErrorMessage = "Длина поля «Версия» не может превышать 10 символов.")]

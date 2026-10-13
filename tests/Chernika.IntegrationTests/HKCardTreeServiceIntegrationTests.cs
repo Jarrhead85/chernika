@@ -115,6 +115,7 @@ public class HKCardTreeServiceIntegrationTests
         {
             Id = Guid.NewGuid(),
             Code = "TESTTREE-" + Guid.NewGuid().ToString("N")[..8],
+            Name = "Дерево " + Guid.NewGuid().ToString("N")[..6],
             Version = "v0101",
             Status = HKCardStatus.Draft,
             IsAutonomous = true,
@@ -856,14 +857,44 @@ public class HKCardTreeServiceIntegrationTests
         return (await scope.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId)).RowVersion;
     }
 
+    [Fact]
+    public async Task SaveTree_FrozenClock_StillUpdatesCardRow()
+    {
+        // Источник времени не идёт: метка UpdatedAt не меняется. Если бы запись
+        // карты не попадала в UPDATE, токен xmin не участвовал бы в WHERE и
+        // версия карты осталась бы прежней — конкурентная правка прошла бы
+        // незамеченной.
+        var cardId = await CreateAutonomousCardAsync();
+        await using var scope = await AuthorScopeAsync();
+
+        var before = await CurrentRowVersionAsync(scope, cardId);
+        var savedUpdatedAt = (await scope.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId)).UpdatedAt;
+
+        // Закрепляем момент ПЕРЕД сохранённой меткой: часы не идут назад.
+        _fixture.Clock.SetUtcNow(new DateTimeOffset(savedUpdatedAt.AddDays(-1), TimeSpan.Zero));
+        try
+        {
+            await scope.HK.SaveTreeAsync(cardId,
+                new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Aggregate, "Агрегат") });
+        }
+        finally
+        {
+            _fixture.Clock.Reset();
+        }
+
+        var after = await CurrentRowVersionAsync(scope, cardId);
+        Assert.NotEqual(before, after);
+    }
+
     // ── Удаление вместе с переносом сохраняемой позиции ──
 
     [Fact]
     public async Task SaveTree_RemovesBranch_WhileMovingKeptNodeOut()
     {
-        // Удаляется вся ветвь, кроме одного узла, который одновременно
-        // переносится в сохраняемую ветвь. Порядок удаления считается по
-        // СОХРАНЁННОМУ дереву, иначе FK родителя срывает операцию.
+        // Удаляется ветвь doomed целиком, а её потомок kept одновременно переносится
+        // в сохраняемую ветвь root. Порядок удаления считается по СОХРАНЁННОМУ
+        // дереву: kept на момент второго сохранения находится ПОД doomed, и
+        // без этого сценария порядок удаления не был бы проверен.
         var cardId = await CreateAutonomousCardAsync();
         var auId = await CreateAssemblyUnitAsync();
         await using var scope = await AuthorScopeAsync();
@@ -876,14 +907,14 @@ public class HKCardTreeServiceIntegrationTests
         await scope.HK.SaveTreeAsync(cardId, new[]
         {
             Node(root, null, HKObjectLevel.EquipmentModel, "Корень", 1, 0),
-            Node(kept, root, HKObjectLevel.Node, "Сохраняемый узел", 1, 1),
-            Node(doomed, root, HKObjectLevel.Aggregate, "Удаляемая ветвь", 1, 2),
-            Node(doomedChild, doomed, HKObjectLevel.Node, "Потомок удаляемого", 1, 0)
+            Node(doomed, root, HKObjectLevel.Aggregate, "Удаляемая ветвь", 1, 1),
+            Node(doomedChild, doomed, HKObjectLevel.Node, "Потомок удаляемого", 1, 0),
+            Node(kept, doomed, HKObjectLevel.Node, "Сохраняемый узел", 1, 1)
         });
 
         await AttachItemAsync(cardId, auId, kept);
 
-        // kept переносится под root (остаётся), ветвь doomed удаляется целиком.
+        // kept выходит из удаляемой ветви под root; ветвь doomed исчезает.
         await scope.HK.SaveTreeAsync(cardId, new[]
         {
             Node(root, null, HKObjectLevel.EquipmentModel, "Корень", 1, 0),
@@ -989,21 +1020,24 @@ public class HKCardTreeServiceIntegrationTests
     // ── Создание автономной карты ──
 
     [Fact]
-    public async Task CreateAsync_Autonomous_IsRefusedWithoutNumberSource()
+    public async Task CreateAsync_Autonomous_WithoutName_IsRefused()
     {
+        // Запрет на создание автономной карты снят: источник номера определён,
+        // это введённое название. Без названия номер не сформировать.
         await using var scope = await AuthorScopeAsync();
 
         var card = new HKCard
         {
             Code = "",
             Version = "",
+            Name = null,
             IsAutonomous = true,
             ObjectLevel = HKObjectLevel.Undefined,
             BranchId = CurrentBranchId(scope)
         };
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => scope.HK.CreateAsync(card));
-        Assert.Contains("номер", ex.Message, StringComparison.OrdinalIgnoreCase);
+        var ex = await Assert.ThrowsAsync<HKCardValidationException>(() => scope.HK.CreateAsync(card));
+        Assert.Contains(ex.Errors, e => e.Code == "name-required");
 
         // Карта не сохранена.
         await using var check = AuthorScope();

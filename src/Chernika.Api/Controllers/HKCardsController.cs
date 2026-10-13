@@ -87,6 +87,12 @@ public class HKCardsController : ControllerBase
         {
             return BadRequest(ex.ToUserMessage());
         }
+        catch (InvalidOperationException ex)
+        {
+            // Конфликт номера при параллельном создании и прочие отказы создания —
+            // это сообщение пользователю, а не внутренняя ошибка сервера.
+            return Conflict(ex.Message);
+        }
     }
 
     [HttpPut("{id}")]

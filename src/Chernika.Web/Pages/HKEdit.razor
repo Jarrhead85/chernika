@@ -24,6 +24,10 @@
     <section class="panel">
         <div class="panelHeader">
             <h2>@(IsNew ? "Создание новой ХК" : (canEdit ? "Редактирование ХК" : "Просмотр ХК"))</h2>
+            @if (!string.IsNullOrWhiteSpace(card.Name))
+            {
+                <div class="hint">@card.Name</div>
+            }
             <div class="hint mono">@card.Code</div>
             <div class="hint">@card.Version</div>
             @if (!IsNew)
@@ -230,6 +234,8 @@
                                 <div class="readonlyValue readonlyValueMultiline">@(card.RequestDetails ?? "")</div>
                             }
                         </div>
+                        @if (!IsAutonomousMode)
+                        {
                         <div class="field">
                             <label>Уровень объекта</label>
                             <div class="hk-level-segmented" role="tablist" aria-label="Уровень объекта">
@@ -300,11 +306,27 @@
                                 </div>
                             }
                         </div>
+                        }
+                        else
+                        {
+                        <div class="field">
+                            <label for="hk-card-name">Название ХК</label>
+                            @if (canEdit)
+                            {
+                                <InputText id="hk-card-name" @bind-Value="card.Name" class="fieldInput"
+                                           placeholder="Например: Насосный агрегат" />
+                            }
+                            else
+                            {
+                                <div class="readonlyValue">@(card.Name ?? "")</div>
+                            }
+                        </div>
+                        }
                         <div class="field">
                             <label>Номер ХК</label>
-                            @if (canEdit && !IsNew)
+                            @if (IsNew)
                             {
-                                <InputText @bind-Value="card.Code" readonly class="fieldInput" />
+                                <div class="readonlyValue">формируется при сохранении</div>
                             }
                             else
                             {
@@ -1140,6 +1162,10 @@
         BranchId = Guid.Empty,
         CreatedAt = DateTime.UtcNow,
         UpdatedAt = DateTime.UtcNow,
+        // Новая карта создаётся как автономный документ: уровень не выбирается,
+        // справочный объект не требуется.
+        IsAutonomous = true,
+        ObjectLevel = HKObjectLevel.Undefined,
     };
 
     private HKCard card = CreateEmptyCard();
@@ -1160,6 +1186,16 @@
     private string? _activeCardWarning;
     private HKCard? _existingActiveCard;
     private bool IsNew => Id == null || Id == Guid.Empty;
+
+    /// <summary>
+    /// Автономный сценарий: новая карта и сохранённая автономная карта.
+    /// <para>
+    /// В нём нет выбора уровня и справочного объекта — уровень выводится из
+    /// структуры, а до её появления остаётся неопределённым. Средняя часть номера
+    /// берётся из введённого названия.
+    /// </para>
+    /// </summary>
+    private bool IsAutonomousMode => IsNew || card.IsAutonomous;
     private bool canEdit;
     private bool canSendToApprove;
     private bool canApprove;
@@ -1446,11 +1482,13 @@
         selectedMilitaryBranchIds = new();
         _loadedCardId = null;
 
-        selectedLevel = HKObjectLevel.Node;
+        // Уровень автономной карты не выбирается и не подставляется по умолчанию:
+        // он определяется структурой, а структуры пока нет.
+        selectedLevel = HKObjectLevel.Undefined;
         selectedComplexId = Guid.Empty;
         selectedModelId = Guid.Empty;
         selectedAggregateId = Guid.Empty;
-        selectedNodeId = NodeId.HasValue && NodeId.Value != Guid.Empty ? NodeId.Value : Guid.Empty;
+        selectedNodeId = Guid.Empty;
 
         await using (await DbLock.WaitAsync())
         {
@@ -1458,6 +1496,8 @@
         }
         canQuickCreate = canEdit;
 
+        // Автономная карта сохраняется с пустой структурой, поэтому строка
+        // состава заранее не создаётся: её добавит редактор дерева.
         if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
         {
             card.Items.Add(new HKCardItem
@@ -1835,32 +1875,49 @@
 
         errorMessage = null;
 
-        card.ObjectLevel = selectedLevel;
-        card.ComplexId = selectedLevel == HKObjectLevel.Complex ? selectedComplexId : null;
-        card.EquipmentModelId = selectedLevel == HKObjectLevel.EquipmentModel ? selectedModelId : null;
-        card.AggregateId = selectedLevel == HKObjectLevel.Aggregate ? selectedAggregateId : null;
-        card.NodeId = selectedLevel == HKObjectLevel.Node ? selectedNodeId : null;
+        if (IsAutonomousMode)
+        {
+            // Автономная карта: уровень не выбирается, справочный объект не
+            // нужен, номер формирует сервер из названия.
+            card.IsAutonomous = true;
+            card.ObjectLevel = HKObjectLevel.Undefined;
+            card.ComplexId = null;
+            card.EquipmentModelId = null;
+            card.AggregateId = null;
+            card.NodeId = null;
+
+            if (string.IsNullOrWhiteSpace(card.Name))
+            {
+                errorMessage = "Укажите название ХК.";
+                return;
+            }
+        }
+        else
+        {
+            card.IsAutonomous = false;
+            card.ObjectLevel = selectedLevel;
+            card.ComplexId = selectedLevel == HKObjectLevel.Complex ? selectedComplexId : null;
+            card.EquipmentModelId = selectedLevel == HKObjectLevel.EquipmentModel ? selectedModelId : null;
+            card.AggregateId = selectedLevel == HKObjectLevel.Aggregate ? selectedAggregateId : null;
+            card.NodeId = selectedLevel == HKObjectLevel.Node ? selectedNodeId : null;
+
+            var hasObject = selectedLevel switch
+            {
+                HKObjectLevel.Complex => selectedComplexId != Guid.Empty,
+                HKObjectLevel.EquipmentModel => selectedModelId != Guid.Empty,
+                HKObjectLevel.Aggregate => selectedAggregateId != Guid.Empty,
+                HKObjectLevel.Node => selectedNodeId != Guid.Empty,
+                _ => false
+            };
+            if (!hasObject)
+            {
+                errorMessage = "Необходимо выбрать объект нормирования.";
+                return;
+            }
+        }
+
         card.Status = IsNew ? HKCardStatus.Draft : card.Status;
 
-        if (string.IsNullOrWhiteSpace(card.Code))
-        {
-            errorMessage = "Поле «Номер ХК» обязательно для заполнения.";
-            return;
-        }
-
-        var hasObject = selectedLevel switch
-        {
-            HKObjectLevel.Complex => selectedComplexId != Guid.Empty,
-            HKObjectLevel.EquipmentModel => selectedModelId != Guid.Empty,
-            HKObjectLevel.Aggregate => selectedAggregateId != Guid.Empty,
-            HKObjectLevel.Node => selectedNodeId != Guid.Empty,
-            _ => false
-        };
-        if (!hasObject)
-        {
-            errorMessage = "Необходимо выбрать объект нормирования.";
-            return;
-        }
         if (string.IsNullOrWhiteSpace(card.Version))
         {
             errorMessage = "Поле «Версия» обязательно для заполнения.";
@@ -2016,6 +2073,15 @@
                                "Исправьте ошибку и повторите загрузку.";
                 return;
             }
+        }
+
+        // Автономная карта открывается сразу: её номер сформирован сервером при
+        // создании, и пользователь должен увидеть настоящий номер и введённое
+        // название, а не пустую форму.
+        if (card.IsAutonomous && card.Id != Guid.Empty)
+        {
+            Nav.NavigateTo($"/хк/{card.Id}");
+            return;
         }
 
         Nav.NavigateTo("/реестр-хк");

@@ -244,8 +244,16 @@
                                         @onclick="() => SelectCardAsync(card.Id)"
                                         @ondblclick="() => GoToEdit(card.Id)">
                                         <td class="mono">@card.Code<br/><span class="muted">@card.Version</span></td>
-                                        <td>@card.ObjectName<br/><span class="mono muted">@card.ObjectCode</span></td>
-                                         <td>@LevelName(card.ObjectLevel)</td>
+                                        @if (card.IsAutonomous)
+                                        {
+                                            <td>@(card.Name ?? "")<br/><span class="muted">автономная карта</span></td>
+                                            <td class="muted">не определён</td>
+                                        }
+                                        else
+                                        {
+                                            <td>@card.ObjectName<br/><span class="mono muted">@card.ObjectCode</span></td>
+                                            <td>@LevelName(card.ObjectLevel)</td>
+                                        }
                                         <td>
                                             <div class="hkStatusWithReadiness">
                                                 <StatusBadge Status="@card.Status" />
@@ -315,8 +323,9 @@
                             <div class="metric"><div class="label">Код</div><div class="value mono">@_selectedCard.Code</div></div>
                             <div class="metric"><div class="label">Версия</div><div class="value mono">@_selectedCard.Version</div></div>
                             <div class="metric"><div class="label">Статус</div><div class="value"><StatusBadge Status="@_selectedCard.Status" /></div></div>
+                            <div class="metric"><div class="label">Название</div><div class="value">@(_selectedCard.Name ?? "—")</div></div>
                             <div class="metric"><div class="label">Уровень</div><div class="value">@LevelName(_selectedCard.ObjectLevel)</div></div>
-                            <div class="metric"><div class="label">Объект</div><div class="value">@_selectedCard.ObjectName</div></div>
+                            <div class="metric"><div class="label">Объект</div><div class="value">@(_selectedCard.ObjectName ?? "—")</div></div>
                             <div class="metric"><div class="label">Организация</div><div class="value">@_selectedCard.BranchName</div></div>
                             <div class="metric"><div class="label">Автор</div><div class="value">@(_selectedCard.AuthorName ?? "—")</div></div>
                             <div class="metric"><div class="label">Создана</div><div class="value mono">@AppTime.Fmt(_selectedCard.CreatedAt, "dd.MM.yyyy")</div></div>
@@ -369,7 +378,7 @@
                                 <span class="muted">PDF не прикреплён</span>
                             }
                         </div>
-                        @if (_selectedCard.ObjectLevel != HKObjectLevel.Node)
+                        @if (_selectedCard.ObjectLevel != HKObjectLevel.Node && !_selectedCard.IsAutonomous)
                         {
                             <div class="hkReadinessBlock">
                                 <div class="hkReadinessHeader">
@@ -397,7 +406,7 @@
                         }
                         <div class="btnRow">
                             <button class="btn primary" @onclick="() => GoToEdit(_selectedCard.Id)">Открыть карточку</button>
-                            @if (_selectedCard.ObjectLevel != HKObjectLevel.Node)
+                            @if (_selectedCard.ObjectLevel != HKObjectLevel.Node && !_selectedCard.IsAutonomous)
                             {
                                 <button class="btn" @onclick="() => OpenComposition(_selectedCard)">Открыть состав</button>
                             }

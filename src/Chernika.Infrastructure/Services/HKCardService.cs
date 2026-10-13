@@ -128,16 +128,22 @@ public class HKCardService
             {
                 Id = x.Id,
                 Code = x.Code,
+                Name = x.Name,
                 Version = x.Version,
                 Status = x.Status,
                 ObjectLevel = x.ObjectLevel,
+                IsAutonomous = x.IsAutonomous,
                 BranchId = x.BranchId,
                 BranchName = x.Branch.Name,
-                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                // У автономной карты справочного объекта нет: без проверки режима
+                // ветка "иначе" обратилась бы к Complex!.Name и упала.
+                ObjectCode = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
                     : x.Complex!.Code,
-                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                ObjectName = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
@@ -201,16 +207,22 @@ public class HKCardService
             {
                 Id = x.Id,
                 Code = x.Code,
+                Name = x.Name,
                 Version = x.Version,
                 Status = x.Status,
                 ObjectLevel = x.ObjectLevel,
+                IsAutonomous = x.IsAutonomous,
                 BranchId = x.BranchId,
                 BranchName = x.Branch.Name,
-                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                // У автономной карты справочного объекта нет: без проверки режима
+                // ветка "иначе" обратилась бы к Complex!.Name и упала.
+                ObjectCode = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
                     : x.Complex!.Code,
-                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                ObjectName = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
@@ -247,16 +259,22 @@ public class HKCardService
             {
                 Id = x.Id,
                 Code = x.Code,
+                Name = x.Name,
                 Version = x.Version,
                 Status = x.Status,
                 ObjectLevel = x.ObjectLevel,
+                IsAutonomous = x.IsAutonomous,
                 BranchId = x.BranchId,
                 BranchName = x.Branch.Name,
-                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                // У автономной карты справочного объекта нет: без проверки режима
+                // ветка "иначе" обратилась бы к Complex!.Name и упала.
+                ObjectCode = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
                     : x.Complex!.Code,
-                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                ObjectName = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
@@ -333,6 +351,7 @@ public class HKCardService
             var term = $"%{query.SearchText.Trim()}%";
             baseQuery = baseQuery.Where(x =>
                 EF.Functions.ILike(x.Code, term)
+                || EF.Functions.ILike(x.Name ?? "", term)
                 || EF.Functions.ILike(x.Version, term)
                 || EF.Functions.ILike(x.RequestOrganization ?? "", term)
                 || EF.Functions.ILike(x.IncomingLetterNumber ?? "", term)
@@ -370,16 +389,22 @@ public class HKCardService
             {
                 Id = x.Id,
                 Code = x.Code,
+                Name = x.Name,
                 Version = x.Version,
                 Status = x.Status,
                 ObjectLevel = x.ObjectLevel,
+                IsAutonomous = x.IsAutonomous,
                 BranchId = x.BranchId,
                 BranchName = x.Branch.Name,
-                ObjectCode = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
+                // У автономной карты справочного объекта нет: без проверки режима
+                // ветка "иначе" обратилась бы к Complex!.Name и упала.
+                ObjectCode = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Code
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Index
                     : x.Complex!.Code,
-                ObjectName = x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
+                ObjectName = x.IsAutonomous ? null
+                    : x.ObjectLevel == Domain.Enums.HKObjectLevel.Node ? x.Node!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.Aggregate ? x.Aggregate!.Name
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
@@ -1078,6 +1103,23 @@ public class HKCardService
     /// проверяет <see cref="HKCardValidationService.ValidateStructureAsync"/>
     /// — CHECK-ограничение в PostgreSQL циклы длиной больше одного не ловит.
     /// </para>
+    /// <para>
+    /// ЗАЩИТА ОТ ПЕРЕЗАПИСИ ЧУЖОЙ ПРАВКИ КАРТЫ. Параметр
+    /// <paramref name="expectedRowVersion"/> — версия карты (xmin), прочитанная
+    /// вызывающим кодом при загрузке. При несовпадении операция отклоняется до
+    /// записи. В той же транзакции обновляется и сама запись карты, поэтому EF
+    /// отправляет UPDATE с условием по xmin: параллельная правка карты приводит
+    /// к DbUpdateConcurrencyException, а не к молчаливой перезаписи дерева.
+    /// </para>
+    /// <para>
+    /// ГРАНИЦА ЗАЩИТЫ. Это защита от потери обновления КАРТЫ, а не защита от
+    /// отправки устаревшего полного набора дерева. Параметр необязателен: если
+    /// вызывающий код его не передал, защита не действует. Будущий редактор
+    /// дерева обязан передавать версию, прочитанную при загрузке, — иначе
+    /// отправленный набор может оказаться устаревшим и всё равно затрёт более
+    /// новый. Два параллельных вызова по одной карте не выстраиваются в очередь:
+    /// побеждает последний записанный набор.
+    /// </para>
     /// </summary>
     public async Task SaveTreeAsync(
         Guid cardId,
@@ -1296,7 +1338,15 @@ public class HKCardService
         // условием по xmin. Если карту параллельно изменили, SaveChanges бросает
         // DbUpdateConcurrencyException и вся транзакция откатывается — вместо
         // молчаливой перезаписи дерева поверх чужой правки.
-        card.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        //
+        // Метку времени увеличиваем хотя бы на тик, если источник времени её не
+        // изменил (фиксированный TimeProvider в тестах, остановленные часы).
+        // Иначе EF увидит, что ни одно свойство не поменялось, и вообще не
+        // сформирует UPDATE — токен xmin не попал бы в WHERE, и конкурентная
+        // правка прошла бы незамеченной. Порядок UpdatedAt при этом остаётся
+        // монотонным: метка никогда не уезжает назад.
+        var now = _time.GetUtcNow().UtcDateTime;
+        card.UpdatedAt = now > card.UpdatedAt ? now : card.UpdatedAt.AddTicks(1);
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -1499,36 +1549,81 @@ public class HKCardService
     public static bool IsValidVersion(string? version) =>
         !string.IsNullOrEmpty(version) && VersionRegex.IsMatch(version);
 
-    private static string GenerateVersion() =>
-        "v" + DateTime.UtcNow.ToString("MMyy");
+    private string GenerateVersion() =>
+        "v" + _time.GetUtcNow().UtcDateTime.ToString("MMyy");
 
     public static bool IsValidCode(string? code) =>
         !string.IsNullOrEmpty(code) && CodeRegex.IsMatch(code);
 
-    private async Task<string> GenerateCodeAsync(string objectCode)
-    {
-        var year = DateTime.UtcNow.Year.ToString();
-        var baseCode = $"ХК-{objectCode}-{year}";
+    /// <summary>
+    /// Проверка номера автономной карты. Отдельное выражение от <see cref="CodeRegex"/>:
+    /// средняя часть — введённое название, в нём допустимы ПРОБЕЛЫ и ДЕФИСЫ.
+    /// Прежнее выражение рассчитано на справочный код и такое название отвергло бы.
+    /// <para>
+    /// Дефисы внутри названия не считаются границей справочного кода: номер
+    /// разбирается по префиксу и по году, а не наивным делением по «-».
+    /// </para>
+    /// </summary>
+    private static readonly Regex AutonomousCodeRegex =
+        new(@"^ХК-.+-\d{4}(-\d+)?$", RegexOptions.Compiled);
 
+    public static bool IsValidAutonomousCode(string? code) =>
+        !string.IsNullOrEmpty(code) && AutonomousCodeRegex.IsMatch(code)
+        && code.Length <= Domain.Entities.HKCard.CodeMaxLength;
+
+    /// <summary>
+    /// Единая точка подбора суффикса совпадения для обоих сценариев.
+    /// <para>
+    /// Суффикс выводится из длины ОСТАТКА строки, а не из Split('-'): название
+    /// автономной карты само содержит дефисы, и наивное деление приняло бы часть
+    /// названия за номер суффикса. Область проверки совпадений прежняя: сам базовый
+    /// номер и он же с числовым хвостом.
+    /// </para>
+    /// </summary>
+    private async Task<string> AllocateNumberAsync(string baseCode, CancellationToken ct)
+    {
         var existing = await _db.HKCards
             .IgnoreQueryFilters()
             .Where(c => c.Code == baseCode || c.Code!.StartsWith(baseCode + "-"))
             .Select(c => c.Code)
-            .ToListAsync();
+            .ToListAsync(ct);
 
-        if (!existing.Any())
+        if (existing.Count == 0)
             return baseCode;
 
         var maxSuffix = existing
             .Select(c =>
             {
-                var parts = c!.Split('-');
-                return parts.Length >= 4 && int.TryParse(parts[^1], out var n) && c != baseCode ? n : 0;
+                if (c == baseCode) return 0;
+                var tail = c!.Substring(baseCode.Length);
+                return tail.Length > 1
+                       && tail[0] == '-'
+                       && tail[1..].All(char.IsDigit)
+                       && int.TryParse(tail[1..], out var n)
+                    ? n
+                    : 0;
             })
             .DefaultIfEmpty(0)
             .Max();
 
         return maxSuffix == 0 ? $"{baseCode}-2" : $"{baseCode}-{maxSuffix + 1}";
+    }
+
+    /// <summary>Номер старой карты: прежний источник справочного кода, прежний алгоритм.</summary>
+    private async Task<string> GenerateCodeAsync(string objectCode, CancellationToken ct = default)
+    {
+        var year = _time.GetUtcNow().UtcDateTime.Year.ToString();
+        return await AllocateNumberAsync($"ХК-{objectCode}-{year}", ct);
+    }
+
+    /// <summary>
+    /// Номер автономной карты: средняя часть — введённое название.
+    /// Справочный объект у такой карты отсутствует, и он не требуется.
+    /// </summary>
+    private async Task<string> GenerateAutonomousCodeAsync(string name, CancellationToken ct = default)
+    {
+        var year = _time.GetUtcNow().UtcDateTime.Year.ToString();
+        return await AllocateNumberAsync($"ХК-{name}-{year}", ct);
     }
 
     private static string LevelDisplayName(HKObjectLevel level) => level switch
@@ -1656,14 +1751,6 @@ public class HKCardService
     {
         var actorId = _currentUser.GetRequiredUserId();
 
-        // Ограничение нумерации проверяется ПЕРВЫМ: автономная карта ещё не имеет
-        // утверждённого источника номера. Проверка стоит до отображения права по
-        // уровню, потому что уровень автономной карты может быть Undefined и
-        // отображение на уровневое право завершилось бы иной ошибкой.
-        if (card.IsAutonomous)
-            throw new InvalidOperationException(
-                "Создание автономной ХК пока недоступно: не утверждён источник формирования номера.");
-
         var actor = await _userManager.FindByIdAsync(actorId.ToString());
         if (actor == null)
             throw new UnauthorizedAccessException("Пользователь не найден.");
@@ -1701,8 +1788,16 @@ public class HKCardService
         await EnsureNoActiveDuplicateAsync(card, ct);
 
         card.Id = Guid.NewGuid();
-        var objectCode = await ResolveObjectCodeAsync(card);
-        card.Code = await GenerateCodeAsync(objectCode);
+
+        // Два сценария нумерации разведены. У автономной карты справочного объекта
+        // нет: средняя часть номера — введённое название.
+        // Старый сценарий не меняется: прежний источник кода и прежний алгоритм.
+        var numberSource = card.IsAutonomous
+            ? card.Name!.Trim()
+            : await ResolveObjectCodeAsync(card);
+        card.Code = card.IsAutonomous
+            ? await GenerateAutonomousCodeAsync(numberSource, ct)
+            : await GenerateCodeAsync(numberSource, ct);
         card.Version = GenerateVersion();
         var now = _time.GetUtcNow().UtcDateTime;
         card.CreatedAt = now;
@@ -1726,19 +1821,33 @@ public class HKCardService
             card.Items.SelectMany(i => i.Materials).Select(m => m.GsmMaterialId), ct);
 
         _db.HKCards.Add(card);
-        var details = $"Создана ХК уровня «{LevelDisplayName(card.ObjectLevel)}» для объекта «{objectCode}».";
+        var details = card.IsAutonomous
+            ? $"Создана автономная ХК «{card.Name}» с номером {card.Code}."
+            : $"Создана ХК уровня «{LevelDisplayName(card.ObjectLevel)}» для объекта «{numberSource}».";
 
-        await _audit.CreateLogAsync(new AuditWriteRequest(
-            "HKCard",
-            card.Id.ToString(),
-            "Created",
-            actorId,
-            EntityDisplayName: $"{card.Code} v{card.Version}",
-            Details: details), ct);
-
+        // Карта и аудит пишутся в одной транзакции и в таком порядке: сначала
+        // карта, потом аудит. AuditService сохраняет запись сам, поэтому при
+        // откате вставки карты запись аудита осталась бы без документа —
+        // это был бы неверный след. Теперь при любом откате аудита нет.
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         try
         {
             await _db.SaveChangesAsync(ct);
+
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "HKCard",
+                card.Id.ToString(),
+                "Created",
+                actorId,
+                EntityDisplayName: $"{card.Code} v{card.Version}",
+                Details: details), ct);
+
+            // AuditService.CreateLogAsync только добавляет запись в трекер:
+            // сохранение делает вызывающий. Без этого второго SaveChanges запись
+            // аудита осталась бы в памяти и потерялась при завершении контекста.
+            await _db.SaveChangesAsync(ct);
+
+            await tx.CommitAsync(ct);
         }
         catch (DbUpdateException ex)
             when (ex.InnerException is PostgresException
@@ -1747,12 +1856,31 @@ public class HKCardService
                 ConstraintName: string constraint
             } && constraint.StartsWith("UX_HKCards_OneActivePer", StringComparison.Ordinal))
         {
+            await tx.RollbackAsync(ct);
             throw new InvalidOperationException(
                 $"Для выбранного {LevelDisplayName(card.ObjectLevel).ToLowerInvariant()} уже существует активная ХК. " +
                 "Откройте, продолжите или удалите существующую карточку.");
         }
         catch (DbUpdateException ex)
+            when (ex.InnerException is PostgresException
+            {
+                SqlState: PostgresErrorCodes.UniqueViolation,
+                ConstraintName: string constraint
+            } && constraint == "IX_HKCards_Code_Version")
         {
+            // Конфликт номера: параллельное создание с тем же базовым номером и
+            // версией выиграло гонку после подбора суффикса. Это контролируемая
+            // ошибка для пользователя, а не 500, и она не оставляет ни карты,
+            // ни записи аудита: транзакция откатывается целиком.
+            await tx.RollbackAsync(ct);
+            _logger.LogWarning(ex, "Concurrent HK card creation resolved: number collision");
+            throw new InvalidOperationException(
+                "Не удалось создать ХК: такой номер уже занят созданной параллельно картой. " +
+                "Повторите попытку — следующая карта получит свободный номер.");
+        }
+        catch (DbUpdateException ex)
+        {
+            await tx.RollbackAsync(ct);
             _logger.LogError(ex, "Failed to create HK card (ObjectLevel={ObjectLevel})", card.ObjectLevel);
             var detail = ex.InnerException?.Message ?? ex.Message;
             throw new InvalidOperationException(
@@ -1773,15 +1901,8 @@ public class HKCardService
         if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKWork))
             throw new UnauthorizedAccessException("Недостаточно прав для редактирования ХК.");
 
-        if (card.ObjectLevel == Domain.Enums.HKObjectLevel.Node && (!card.NodeId.HasValue || card.NodeId == Guid.Empty))
-            throw new ArgumentException("Необходимо выбрать узел.");
-
         if (card.RowVersion == 0)
             throw new InvalidOperationException("Версия карточки не указана. Обновите страницу и повторите попытку.");
-
-        var validation = await _hkValidation.ValidateDraftAsync(card, ct);
-        if (!validation.IsValid)
-            throw new HKCardValidationException(validation.Errors);
 
         var existing = await _db.HKCards
             .Include(x => x.Items).ThenInclude(i => i.Materials)
@@ -1797,6 +1918,38 @@ public class HKCardService
         if (card.RowVersion != existing.RowVersion)
             throw new InvalidOperationException("Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
 
+        // ── Режим и уровень карты запросом не меняются ──
+        // Автономная карта и карта, привязанная к справочному объекту, — разные
+        // сценарии с разной нумерацией и разными правилами. Переключение
+        // существующего документа запросом оставило бы карту с номером одного
+        // сценария и ссылками другого, поэтому оно отклоняется явно.
+        // В штатных вызовах (Blazor и API) существующая карта — тот же
+        // отслеживаемый объект, и проверка ниже молча истинна; она защищает
+        // вызовы, передающие отдельный экземпляр.
+        if (card.IsAutonomous != existing.IsAutonomous)
+            throw new InvalidOperationException(
+                "Режим карты изменить нельзя: автономная карта и карта объекта нормирования — разные сценарии.");
+
+        // Желаемый уровень и справочные ссылки берутся из СОХРАНЁННОЙ карты, а не
+        // из запроса: иначе можно было бы подсунуть чужой уровень или ссылку.
+        var requestedNodeId = card.NodeId;
+        card.ObjectLevel = existing.ObjectLevel;
+        card.ComplexId = existing.ComplexId;
+        card.EquipmentModelId = existing.EquipmentModelId;
+        card.AggregateId = existing.AggregateId;
+        card.NodeId = existing.NodeId;
+        card.Code = existing.Code;
+        card.Version = existing.Version;
+
+        if (!existing.IsAutonomous && existing.ObjectLevel == Domain.Enums.HKObjectLevel.Node
+            && !requestedNodeId.HasValue)
+            throw new ArgumentException("Необходимо выбрать узел.");
+
+        var validation = await _hkValidation.ValidateDraftAsync(card, ct);
+        if (!validation.IsValid)
+            throw new HKCardValidationException(validation.Errors);
+
+        existing.Name = card.Name;
         existing.Purpose = card.Purpose;
         existing.NormativeBasis = card.NormativeBasis;
         existing.Notes = card.Notes;
@@ -1810,7 +1963,10 @@ public class HKCardService
         existing.ExpirationDate = NormalizeUtc(card.ExpirationDate);
         existing.UpdatedAt = DateTime.UtcNow;
 
-        if (existing.ObjectLevel == Domain.Enums.HKObjectLevel.Node && existing.NodeId != card.NodeId)
+        // Смена узла допустима только у карты, привязанной к справочному объекту.
+        // Номер при этом переформировывается: он выводится из кода узла.
+        if (!existing.IsAutonomous && existing.ObjectLevel == Domain.Enums.HKObjectLevel.Node
+            && existing.NodeId != requestedNodeId)
         {
             if (existing.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
                 throw new InvalidOperationException("Изменение узла недоступно для карточки в текущем статусе.");
@@ -1818,15 +1974,16 @@ public class HKCardService
             var hasActiveOnNewNode = await _db.HKCards.AnyAsync(x =>
                 x.Id != existing.Id &&
                 x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
-                x.NodeId == card.NodeId &&
+                x.NodeId == requestedNodeId &&
                 (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));
             if (hasActiveOnNewNode)
                 throw new InvalidOperationException(
                     "Для выбранного узла уже существует активная ХК. " +
                     "Завершите или архивируйте существующую карточку перед сменой узла.");
 
-            existing.NodeId = card.NodeId;
-            existing.Code = await GenerateCodeAsync(await ResolveObjectCodeAsync(card));
+            existing.NodeId = requestedNodeId;
+            existing.Code = await GenerateCodeAsync(
+                await ResolveObjectCodeAsync(Domain.Enums.HKObjectLevel.Node, requestedNodeId!.Value), ct);
         }
 
         var incomingItems = card.Items.OrderBy(i => i.SortOrder).ToList();
@@ -2013,6 +2170,15 @@ public class HKCardService
         var permError = await CheckStatusChangePermissionAsync(card, newStatus);
         if (permError != null)
             return (false, permError);
+
+        // Одноэтапный процесс не является готовым жизненным циклом автономной
+        // карты: у неё два согласования, и это отдельный этап. Пока он не
+        // реализован, окончательное утверждение через старый процесс запрещено —
+        // иначе карта получила бы утверждённый статус мимо второго согласования.
+        if (card.IsAutonomous && newStatus == HKCardStatus.Approved)
+            return (false,
+                "Утверждение автономной ХК пока недоступно: для неё предусмотрены два этапа согласования, " +
+                "и этот процесс ещё не реализован.");
 
         var oldStatus = card.Status;
         if (!HKCardStatusTransitions.IsAllowed(oldStatus, newStatus))

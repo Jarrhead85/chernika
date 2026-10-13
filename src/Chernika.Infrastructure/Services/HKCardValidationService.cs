@@ -46,6 +46,15 @@ public sealed class HKCardValidationService
                     $"{ObjectFieldLabel(card.ObjectLevel)} не найден или недоступен.",
                     "object-not-found"));
         }
+        else if (string.IsNullOrWhiteSpace(card.Name))
+        {
+            // Название — единственный источник средней части номера автономной
+            // карты, поэтому без него документ создать или сохранить нельзя.
+            errors.Add(new HKValidationError(
+                nameof(card.Name),
+                "Укажите название ХК.",
+                "name-required"));
+        }
 
         if (card.EffectiveDate.HasValue && card.ExpirationDate.HasValue
             && card.ExpirationDate.Value < card.EffectiveDate.Value)
@@ -398,8 +407,9 @@ public sealed class HKCardValidationService
         var errors = new List<HKValidationError>();
         var fields = new (string Name, string? Value, int Max)[]
         {
-            ("Номер ХК", card.Code, 50),
+            ("Номер ХК", card.Code, Domain.Entities.HKCard.CodeMaxLength),
             ("Версия", card.Version, 10),
+            ("Название ХК", card.Name, Domain.Entities.HKCard.NameMaxLength),
             ("Назначение ХК", card.Purpose, 2000),
             ("Нормативная база", card.NormativeBasis, 2000),
             ("Примечание", card.Notes, 4000),
@@ -426,6 +436,7 @@ public sealed class HKCardValidationService
         }
 
         card.Code = card.Code?.Trim() ?? "";
+        card.Name = card.Name?.Trim();
         card.Version = card.Version?.Trim() ?? "";
         card.Purpose = card.Purpose?.Trim();
         card.NormativeBasis = card.NormativeBasis?.Trim();
@@ -665,16 +676,19 @@ public sealed class HKCardValidationService
         // Проверка принадлежности конечных строк
         var items = rootItems;
 
+        // Фильтр Where не переносит проверку HasValue в тело цикла, поэтому
+        // разыменование Nullable подавляется явно.
         foreach (var item in items.Where(i => i.HKCardNodeId.HasValue))
         {
-            if (!nodeById.TryGetValue(item.HKCardNodeId.Value, out var node))
+            if (!nodeById.TryGetValue(item.HKCardNodeId!.Value, out var node))
             {
                 errors.Add(new HKValidationError(
                     $"Items[{item.Id}]",
                     "Конечная строка ссылается на несуществующую позицию дерева.",
                     "item-node-not-found"));
             }
-            else if (node.HKCardId != card.Id)
+            // Ветка else достигается только при успешном TryGetValue, где node не null.
+            else if (node!.HKCardId != card.Id)
             {
                 errors.Add(new HKValidationError(
                     $"Items[{item.Id}]",

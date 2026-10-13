@@ -60,6 +60,7 @@ public class SearchService
         var hkCards = await _db.HKCards
             .Include(c => c.Node)
             .Where(c => EF.Functions.ILike(c.Code, qPattern) ||
+                        EF.Functions.ILike(c.Name ?? "", qPattern) ||
                         EF.Functions.ILike(c.Version, qPattern) ||
                         EF.Functions.ILike(c.Purpose ?? "", qPattern) ||
                         EF.Functions.ILike(c.Notes ?? "", qPattern) ||
@@ -81,7 +82,7 @@ public class SearchService
                 EntityTypeDisplay = "Химмотологическая карта",
                 EntityId = c.Id,
                 Title = $"{c.Code} (v{c.Version})",
-                Subtitle = c.Node?.Name ?? "",
+                Subtitle = c.IsAutonomous ? (c.Name ?? "") : (c.Node?.Name ?? ""),
                 ContextInfo = match != null ? $"Совпадение: {match}" : "",
                 Url = $"/хк/{c.Id}"
             });
@@ -258,6 +259,7 @@ public class SearchService
         if (!string.IsNullOrEmpty(c.IncomingLetterNumber) && c.IncomingLetterNumber.ToLowerInvariant().Contains(qLower)) return "Входящий номер";
         if (!string.IsNullOrEmpty(c.OutgoingLetterNumber) && c.OutgoingLetterNumber.ToLowerInvariant().Contains(qLower)) return "Исходящий номер";
         if (!string.IsNullOrEmpty(c.RequestDetails) && c.RequestDetails.ToLowerInvariant().Contains(qLower)) return "Основание";
+        if (!string.IsNullOrEmpty(c.Name) && c.Name.ToLowerInvariant().Contains(qLower)) return "Название ХК";
         return FindMatch(c.Code, c.Version, c.Purpose, c.Notes, c.NormativeBasis, q);
     }
 

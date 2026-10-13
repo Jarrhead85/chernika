@@ -59,9 +59,11 @@ public static class GsmMaterialRefFactory
 public record HKCardDetailDto(
     Guid Id,
     string Code,
+    string? Name,
     string Version,
     HKCardStatus Status,
     HKObjectLevel ObjectLevel,
+    bool IsAutonomous,
     Guid BranchId,
     string? BranchName,
     Guid? ComplexId,
@@ -105,31 +107,53 @@ public record HKCardItemDto(
     IReadOnlyList<GsmMaterialRefDto> ReserveMaterials,
     IReadOnlyList<GsmMaterialRefDto> ForeignMaterials);
 
+/// <summary>
+/// Создание карты. Номер, версия, автор и служебные даты клиентом не задаются.
+/// <para>
+/// <see cref="IsAutonomous"/> = true создаёт автономный документ: справочные
+/// ссылки объекта не нужны, <see cref="Name"/> обязателен, номер формируется
+/// сервером по форме ХК-{название}-{год}. При false действует прежний сценарий:
+/// уровень и справочный объект обязательны.
+/// </para>
+/// </summary>
 public record CreateHKCardRequest(
     Guid BranchId,
-    HKObjectLevel ObjectLevel,
-    Guid? ComplexId,
-    Guid? EquipmentModelId,
-    Guid? AggregateId,
-    Guid? NodeId,
-    string? Purpose,
-    string? NormativeBasis,
-    string? Notes,
-    string? RequestOrganization,
-    string? RequestSenderFullName,
-    DateTime? RequestReceivedDate,
-    string? RequestDetails,
-    string? IncomingLetterNumber,
-    string? OutgoingLetterNumber,
-    DateTime? EffectiveDate,
-    DateTime? ExpirationDate);
+    bool IsAutonomous = false,
+    HKObjectLevel ObjectLevel = HKObjectLevel.Node,
+    Guid? ComplexId = null,
+    Guid? EquipmentModelId = null,
+    Guid? AggregateId = null,
+    Guid? NodeId = null,
+    string? Name = null,
+    string? Purpose = null,
+    string? NormativeBasis = null,
+    string? Notes = null,
+    string? RequestOrganization = null,
+    string? RequestSenderFullName = null,
+    DateTime? RequestReceivedDate = null,
+    string? RequestDetails = null,
+    string? IncomingLetterNumber = null,
+    string? OutgoingLetterNumber = null,
+    DateTime? EffectiveDate = null,
+    DateTime? ExpirationDate = null);
 
+/// <summary>
+/// Обновление реквизитов. Номер не принимается: он формируется сервером при
+/// создании и далее неизменен.
+/// <para>
+/// <c>ObjectLevel</c> и справочные ссылки в запросе сохраняются ради совместимости
+/// контракта, но НЕ применяются: уровень и объект карты задаются при создании и
+/// запросом не меняются. Изменяется только <c>NodeId</c> — это единственное
+/// допустимое изменение привязки, и оно влечёт переформирование номера.
+/// </para>
+/// </summary>
 public record UpdateHKCardRequest(
     HKObjectLevel ObjectLevel,
     Guid? ComplexId,
     Guid? EquipmentModelId,
     Guid? AggregateId,
     Guid? NodeId,
+    string? Name,
     string? Purpose,
     string? NormativeBasis,
     string? Notes,
@@ -163,7 +187,7 @@ public static class HKCardMapper
     };
 
     public static HKCardDetailDto ToDetail(HKCard c, IReadOnlyList<HKCardVersionDto>? versions = null) => new(
-        c.Id, c.Code, c.Version, c.Status, c.ObjectLevel,
+        c.Id, c.Code, c.Name, c.Version, c.Status, c.ObjectLevel, c.IsAutonomous,
         c.BranchId, c.Branch?.Name,
         c.ComplexId, c.EquipmentModelId, c.AggregateId, c.NodeId,
         GetObjectName(c),
@@ -211,11 +235,16 @@ public static class HKCardMapper
 
     public static HKCard FromCreate(CreateHKCardRequest r) => new()
     {
-        ObjectLevel = r.ObjectLevel,
-        ComplexId = r.ComplexId,
-        EquipmentModelId = r.EquipmentModelId,
-        AggregateId = r.AggregateId,
-        NodeId = r.NodeId,
+        IsAutonomous = r.IsAutonomous,
+        // Уровень автономной карты не задаётся: он выводится из структуры, а
+        // пока структуры нет — остаётся неопределённым. Уровень из запроса
+        // игнорируется, иначе можно было бы задать несуществующий уровень.
+        ObjectLevel = r.IsAutonomous ? HKObjectLevel.Undefined : r.ObjectLevel,
+        ComplexId = r.IsAutonomous ? null : r.ComplexId,
+        EquipmentModelId = r.IsAutonomous ? null : r.EquipmentModelId,
+        AggregateId = r.IsAutonomous ? null : r.AggregateId,
+        NodeId = r.IsAutonomous ? null : r.NodeId,
+        Name = r.Name,
         BranchId = r.BranchId,
         Purpose = r.Purpose,
         NormativeBasis = r.NormativeBasis,
@@ -232,10 +261,14 @@ public static class HKCardMapper
 
     public static void ApplyUpdate(HKCard card, UpdateHKCardRequest r)
     {
-        card.ObjectLevel = r.ObjectLevel;
-        card.ComplexId = r.ComplexId;
-        card.EquipmentModelId = r.EquipmentModelId;
-        card.AggregateId = r.AggregateId;
+        // Уровень и справочные ссылки намеренно НЕ применяются: они задаются
+        // при создании, и запросом их сменить нельзя. Иначе карта одного
+        // сценария получила бы привязку другого. NodeId — единственное
+        // изменяемое поле привязки, его проверяет сервис.
+        //
+        // Номер и версия не применяются по той же причине: документ не
+        // перенумеровывается при редактировании реквизитов.
+        card.Name = r.Name;
         card.NodeId = r.NodeId;
         card.Purpose = r.Purpose;
         card.NormativeBasis = r.NormativeBasis;
