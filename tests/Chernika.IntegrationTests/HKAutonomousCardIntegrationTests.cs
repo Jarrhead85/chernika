@@ -374,21 +374,25 @@ public class HKAutonomousCardIntegrationTests
     }
 
     [Fact]
-    public async Task UpdateAsync_Autonomous_ScenarioSwitchIsRefused()
+    public async Task UpdateAsync_Autonomous_ScenarioSwitchIsNotApplied()
     {
         await using var s = await AuthorScopeAsync();
         var created = await s.HK.CreateAsync(NewAutonomousDraft(_fixture.BranchA, "Режим"));
 
         // Попытка выдать автономную карту за карту объекта нормирования.
+        // Значения принадлежат созданию: сервис применяет только разрешённые
+        // поля и восстанавливает сохранённые, а не принимает подменённые.
         var impostor = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == created.Id);
         impostor.IsAutonomous = false;
         impostor.ObjectLevel = HKObjectLevel.Node;
+        impostor.NodeId = Guid.NewGuid();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => s.HK.UpdateAsync(impostor));
-        Assert.Contains("Режим карты", ex.Message, StringComparison.OrdinalIgnoreCase);
+        await s.HK.UpdateAsync(impostor);
 
         var stored = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == created.Id);
         Assert.True(stored.IsAutonomous);
+        Assert.Equal(HKObjectLevel.Undefined, stored.ObjectLevel);
+        Assert.Null(stored.NodeId);
     }
 
     [Fact]

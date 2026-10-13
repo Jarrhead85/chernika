@@ -929,6 +929,31 @@ public class HKCardService
             .FirstOrDefaultAsync(ct);
 
     /// <summary>
+    /// Сохранённое состояние карты для решений о допуске к правке.
+    /// <para>
+    /// Отдельная проекция AsNoTracking, а не отслеживаемый экземпляр: входной
+    /// объект команды может быть тем же tracked-объектом, и тогда его значения
+    /// уже изменены вызывающим кодом — читать из него значило бы проверять
+    /// сами проверяемые значения.
+    /// </para>
+    /// </summary>
+    private sealed record PersistedCardState(
+        Guid Id,
+        HKCardStatus Status,
+        Guid BranchId,
+        Domain.Enums.HKObjectLevel ObjectLevel,
+        bool IsAutonomous,
+        string Code,
+        string Version,
+        Guid? NodeId,
+        Guid? ComplexId,
+        Guid? EquipmentModelId,
+        Guid? AggregateId,
+        Guid? AuthorId,
+        DateTime CreatedAt,
+        uint RowVersion);
+
+    /// <summary>
     /// Доступ на изменение карточки: единое право HK.Work и организация.
     /// <para>
     /// Право не зависит от уровня объекта и режима карты: уровневые
@@ -1904,50 +1929,63 @@ public class HKCardService
         if (card.RowVersion == 0)
             throw new InvalidOperationException("Версия карточки не указана. Обновите страницу и повторите попытку.");
 
-        var existing = await _db.HKCards
-            .Include(x => x.Items).ThenInclude(i => i.Materials)
-            .FirstOrDefaultAsync(x => x.Id == card.Id, ct)
+        // ── Сохранённое состояние ──
+        // Оно читается ОТДЕЛЬНОЙ проекцией AsNoTracking и используется для всех
+        // решений. Отслеживаемый экземпляр брать для этого нельзя: в штатных
+        // вызовах (Blazor и API) входной объект — тот же tracked-экземпляр, и
+        // вызывающий код мог уже изменить его статус, филиал или уровень. Тогда
+        // проверки читала бы запрошенные значения и пропускала то, что должна
+        // отклонить.
+        var persisted = await _db.HKCards
+            .AsNoTracking()
+            .Where(c => c.Id == card.Id)
+            .Select(c => new PersistedCardState(
+                c.Id, c.Status, c.BranchId, c.ObjectLevel, c.IsAutonomous,
+                c.Code, c.Version, c.NodeId, c.ComplexId, c.EquipmentModelId,
+                c.AggregateId, c.AuthorId, c.CreatedAt, c.RowVersion))
+            .FirstOrDefaultAsync(ct)
             ?? throw new ArgumentException("ХК не найдена.");
 
-        if (actor.BranchId != existing.BranchId && !await IsSystemAdminAsync(actor))
+        if (actor.BranchId != persisted.BranchId && !await IsSystemAdminAsync(actor))
             throw new UnauthorizedAccessException("Нет доступа к карточке другой организации.");
 
-        if (existing.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+        if (persisted.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
             throw new InvalidOperationException("Редактирование недоступно для карточки в текущем статусе.");
 
-        if (card.RowVersion != existing.RowVersion)
+        if (card.RowVersion != persisted.RowVersion)
             throw new InvalidOperationException("Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
 
-        // ── Режим и уровень карты запросом не меняются ──
-        // Автономная карта и карта, привязанная к справочному объекту, — разные
-        // сценарии с разной нумерацией и разными правилами. Переключение
-        // существующего документа запросом оставило бы карту с номером одного
-        // сценария и ссылками другого, поэтому оно отклоняется явно.
-        // В штатных вызовах (Blazor и API) существующая карта — тот же
-        // отслеживаемый объект, и проверка ниже молча истинна; она защищает
-        // вызовы, передающие отдельный экземпляр.
-        if (card.IsAutonomous != existing.IsAutonomous)
-            throw new InvalidOperationException(
-                "Режим карты изменить нельзя: автономная карта и карта объекта нормирования — разные сценарии.");
-
-        // Желаемый уровень и справочные ссылки берутся из СОХРАНЁННОЙ карты, а не
-        // из запроса: иначе можно было бы подсунуть чужой уровень или ссылку.
+        // ── Поля, задаваемые только созданием, запросом не меняются ──
+        // Режим, уровень, справочные ссылки, номер и версия принадлежат
+        // созданию карты. Значения восстанавливаются из сохранённого состояния:
+        // если входной объект — тот же tracked-экземпляр и вызывающий код уже
+        // присвоил ему свои значения, здесь они будут возвращены к сохранённым.
         var requestedNodeId = card.NodeId;
-        card.ObjectLevel = existing.ObjectLevel;
-        card.ComplexId = existing.ComplexId;
-        card.EquipmentModelId = existing.EquipmentModelId;
-        card.AggregateId = existing.AggregateId;
-        card.NodeId = existing.NodeId;
-        card.Code = existing.Code;
-        card.Version = existing.Version;
+        card.IsAutonomous = persisted.IsAutonomous;
+        card.ObjectLevel = persisted.ObjectLevel;
+        card.ComplexId = persisted.ComplexId;
+        card.EquipmentModelId = persisted.EquipmentModelId;
+        card.AggregateId = persisted.AggregateId;
+        card.NodeId = persisted.NodeId;
+        card.Code = persisted.Code;
+        card.Version = persisted.Version;
+        card.Status = persisted.Status;
+        card.AuthorId = persisted.AuthorId;
+        card.BranchId = persisted.BranchId;
+        card.CreatedAt = persisted.CreatedAt;
 
-        if (!existing.IsAutonomous && existing.ObjectLevel == Domain.Enums.HKObjectLevel.Node
+        if (!persisted.IsAutonomous && persisted.ObjectLevel == Domain.Enums.HKObjectLevel.Node
             && !requestedNodeId.HasValue)
             throw new ArgumentException("Необходимо выбрать узел.");
 
         var validation = await _hkValidation.ValidateDraftAsync(card, ct);
         if (!validation.IsValid)
             throw new HKCardValidationException(validation.Errors);
+
+        var existing = await _db.HKCards
+            .Include(x => x.Items).ThenInclude(i => i.Materials)
+            .FirstOrDefaultAsync(x => x.Id == persisted.Id, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
 
         existing.Name = card.Name;
         existing.Purpose = card.Purpose;
@@ -1965,14 +2003,11 @@ public class HKCardService
 
         // Смена узла допустима только у карты, привязанной к справочному объекту.
         // Номер при этом переформировывается: он выводится из кода узла.
-        if (!existing.IsAutonomous && existing.ObjectLevel == Domain.Enums.HKObjectLevel.Node
-            && existing.NodeId != requestedNodeId)
+        if (!persisted.IsAutonomous && persisted.ObjectLevel == Domain.Enums.HKObjectLevel.Node
+            && persisted.NodeId != requestedNodeId)
         {
-            if (existing.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
-                throw new InvalidOperationException("Изменение узла недоступно для карточки в текущем статусе.");
-
             var hasActiveOnNewNode = await _db.HKCards.AnyAsync(x =>
-                x.Id != existing.Id &&
+                x.Id != persisted.Id &&
                 x.ObjectLevel == Domain.Enums.HKObjectLevel.Node &&
                 x.NodeId == requestedNodeId &&
                 (x.Status == HKCardStatus.Draft || x.Status == HKCardStatus.OnReview || x.Status == HKCardStatus.RevisionRequired));

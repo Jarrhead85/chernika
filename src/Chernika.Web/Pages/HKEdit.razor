@@ -1877,10 +1877,18 @@
 
         if (IsAutonomousMode)
         {
-            // Автономная карта: уровень не выбирается, справочный объект не
-            // нужен, номер формирует сервер из названия.
+            // Автономная карта: справочный объект не нужен, номер формирует
+            // сервер из названия.
+            //
+            // Уровень и режим присваиваются ТОЛЬКО при создании. Undefined —
+            // начальное значение: выводом уровня по структуре он позже будет
+            // заменён на реальный, и повторное присваивание при каждой правке
+            // реквизитов затирало бы этот результат.
             card.IsAutonomous = true;
-            card.ObjectLevel = HKObjectLevel.Undefined;
+            if (IsNew)
+            {
+                card.ObjectLevel = HKObjectLevel.Undefined;
+            }
             card.ComplexId = null;
             card.EquipmentModelId = null;
             card.AggregateId = null;
