@@ -88,6 +88,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         services.AddScoped<NotificationService>();
         services.AddScoped<HKCardValidationService>();
         services.AddScoped<HKCardService>();
+        services.AddScoped<HKApprovalService>();
         services.AddOptions();
         services.Configure<HKExpirationOptions>(o =>
         {

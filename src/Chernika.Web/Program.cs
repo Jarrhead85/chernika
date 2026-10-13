@@ -1,4 +1,4 @@
-using Chernika.Domain;
+﻿using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Models;
 using Chernika.Infrastructure;
@@ -88,6 +88,7 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddScoped<HKCardService>();
+builder.Services.AddScoped<HKApprovalService>();
 builder.Services.AddScoped<HKCardValidationService>();
 builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<EquipmentService>();

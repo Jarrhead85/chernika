@@ -66,7 +66,7 @@ public class HKCardDeleteIntegrationTests
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+        await HKApprovalScenario.SubmitDetailsAsync(s, cardId, _fixture.NormAdminA2.Id);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.OperatorA.Id);
         var (success, error) = await s.HK.DeleteAsync(cardId, "Попытка удаления");
@@ -94,7 +94,7 @@ public class HKCardDeleteIntegrationTests
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+        await HKApprovalScenario.SubmitDetailsAsync(s, cardId, _fixture.NormAdminA2.Id);
 
         s.User.CurrentUserId = Guid.Parse(user.Id);
         var (success, error) = await s.HK.DeleteAsync(cardId, "По согласованию");
@@ -111,8 +111,11 @@ public class HKCardDeleteIntegrationTests
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.RevisionRequired);
+        await HKApprovalScenario.SubmitDetailsAsync(s, cardId, _fixture.NormAdminA2.Id);
+
+        // Возврат выполняет назначенный согласующий командой своего этапа.
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
+        await HKApprovalScenario.ReturnDetailsAsync(s, cardId);
 
         var (success, error) = await s.HK.DeleteAsync(cardId, "Требует доработки, но не актуально");
 
@@ -141,11 +144,7 @@ public class HKCardDeleteIntegrationTests
     public async Task Approved_Card_CannotBeDeleted_EvenBySystemAdmin()
     {
         await using var s = _fixture.CreateScope();
-        var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
-
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.Approved);
+        var cardId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
         var (success, error) = await s.HK.DeleteAsync(cardId, "Попытка удаления");
@@ -158,12 +157,7 @@ public class HKCardDeleteIntegrationTests
     public async Task Archived_Card_CannotBeDeleted_EvenBySystemAdmin()
     {
         await using var s = _fixture.CreateScope();
-        var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
-
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.Approved);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.Archived);
+        var cardId = await CreateArchivedCardAsync(s, _fixture.NormAdminA.Id);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.SystemAdminUser.Id);
         var (success, error) = await s.HK.DeleteAsync(cardId, "Попытка удаления");
@@ -306,38 +300,36 @@ public class HKCardDeleteIntegrationTests
             .Where(l => l.HKCardId == parent.Id).ToListAsync());
     }
 
-    private static async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)
+    /// <summary>
+    /// Карта создаётся в новом сценарии: прежний процесс не поддерживается.
+    /// </summary>
+    private static Task<Guid> CreateDraftCardAsync(TestScope s, string actorId) =>
+        HKApprovalScenario.CreateDraftCardAsync(s, actorId);
+
+    /// <summary>
+    /// Карта в состоянии «утверждена». Состояние задаётся напрямую: окончательное
+    /// принятие состава закрыто до появления хранилища принятой структуры.
+    /// </summary>
+    private static async Task<Guid> CreateApprovedCardAsync(TestScope s, string actorId)
     {
+        var id = await HKApprovalScenario.CreateDraftCardAsync(s, actorId);
         s.User.CurrentUserId = Guid.Parse(actorId);
 
-        var node = new Node { Id = Guid.NewGuid(), Code = "N-" + Guid.NewGuid().ToString("N")[..6], Name = "Узел тест" };
-        var au = new AssemblyUnit { Id = Guid.NewGuid(), Code = "АУ-" + Guid.NewGuid().ToString("N")[..6], Name = "СЕ тест" };
-        s.Db.Nodes.Add(node);
-        s.Db.AssemblyUnits.Add(au);
+        var card = await s.Db.HKCards.SingleAsync(h => h.Id == id);
+        card.Status = HKCardStatus.Approved;
         await s.Db.SaveChangesAsync();
+        return id;
+    }
 
-        var card = new HKCard
-        {
-            ObjectLevel = HKObjectLevel.Node,
-            NodeId = node.Id,
-            Purpose = "Тест удаления",
-            NormativeBasis = "ГОСТ",
-            Items = new List<HKCardItem>
-            {
-                new()
-                {
-                    AssemblyUnitId = au.Id,
-                    Quantity = 1,
-                    Volume = 1,
-                    UnitOfMeasure = "кг",
-                    SortOrder = 1,
-                    Materials = new List<HKCardItemMaterial>(),
-                },
-            },
-        };
+    /// <summary>Карта в состоянии «архив» — для проверок удаления.</summary>
+    private static async Task<Guid> CreateArchivedCardAsync(TestScope s, string actorId)
+    {
+        var id = await HKApprovalScenario.CreateDraftCardAsync(s, actorId);
+        s.User.CurrentUserId = Guid.Parse(actorId);
 
-        var created = await s.HK.CreateAsync(card);
-        Assert.Equal(HKCardStatus.Draft, created.Status);
-        return created.Id;
+        var card = await s.Db.HKCards.SingleAsync(h => h.Id == id);
+        card.Status = HKCardStatus.Archived;
+        await s.Db.SaveChangesAsync();
+        return id;
     }
 }

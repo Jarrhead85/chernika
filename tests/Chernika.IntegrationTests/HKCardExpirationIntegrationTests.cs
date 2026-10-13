@@ -139,17 +139,22 @@ public class HKCardExpirationIntegrationTests
         Assert.Equal(Guid.Empty, statusLog.ChangedByUserId);
     }
 
+    /// <summary>
+    /// Карта в состоянии «утверждена» — предусловие для проверок сроков,
+    /// архивирования и версий.
+    /// <para>
+    /// Состояние задаётся напрямую, а не через согласование: окончательное
+    /// принятие состава закрыто до появления хранилища принятой структуры и
+    /// общего статуса Approved новый процесс пока не создаёт. Проверки сроков и
+    /// архива от этого не зависят — они работают с уже утверждённой картой.
+    /// </para>
+    /// </summary>
     private async Task<Guid> CreateApprovedCardAsync(TestScope s, int expirationDays)
     {
-        var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
-
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        var (success, error) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
-        Assert.True(success, error);
-        (success, error) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.Approved);
-        Assert.True(success, error);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
 
         var card = await s.Db.HKCards.SingleAsync(h => h.Id == cardId);
+        card.Status = HKCardStatus.Approved;
         card.ExpirationDate = DateTime.UtcNow.Date.AddDays(expirationDays);
         await s.Db.SaveChangesAsync();
         return cardId;

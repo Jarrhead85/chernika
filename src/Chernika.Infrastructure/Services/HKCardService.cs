@@ -637,6 +637,20 @@ public class HKCardService
         {
             if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKAttachmentEdit))
                 return (null, null, new UnauthorizedAccessException("Недостаточно прав для работы с вложением ХК."), null);
+
+            // PDF — часть основания и блокируется вместе с реквизитами на
+            // рассмотрении их этапа.
+            if (card.Id != Guid.Empty)
+            {
+                try
+                {
+                    await EnsureDetailsEditableAsync(card.Id, ct);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return (null, null, null, ex);
+                }
+            }
             if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
                 return (null, null, null, new InvalidOperationException("Вложение доступно только для черновика или карты на доработке."));
         }
@@ -929,6 +943,133 @@ public class HKCardService
             .FirstOrDefaultAsync(ct);
 
     /// <summary>
+    /// Есть ли у карты записи этапов согласования.
+    /// <para>
+    /// Карты, созданные до появления модели согласования, записей не имеют.
+    /// Для них действует прежний процесс.
+    /// </para>
+    /// </summary>
+    private Task<bool> HasApprovalStagesAsync(Guid cardId, CancellationToken ct) =>
+        _db.HKCardApprovals.AsNoTracking().AnyAsync(a => a.HKCardId == cardId, ct);
+
+    /// <summary>
+    /// Находится ли этап состава на рассмотрении.
+    /// </summary>
+    private async Task<bool> IsCompositionLockedAsync(Guid cardId, CancellationToken ct)
+    {
+        var state = await _db.HKCardApprovals
+            .AsNoTracking()
+            .Where(a => a.HKCardId == cardId && a.Stage == HKApprovalStage.Composition)
+            .Select(a => (HKApprovalStageState?)a.State)
+            .FirstOrDefaultAsync(ct);
+
+        // Карты без записей этапов — до появления модели согласования.
+        return state == HKApprovalStageState.OnReview;
+    }
+
+    /// <summary>
+    /// Отличается ли переданный набор строк от сохранённого.
+    /// <para>
+    /// Сравниваются сами строки и их материалы, а не только идентификаторы:
+    /// иначе правка количества или замена марки под сохранённым идентификатором
+    /// прошла бы как «ничего не изменилось».
+    /// </para>
+    /// </summary>
+    private async Task<bool> CompositionDiffersAsync(
+        Guid cardId, List<HKCardItem> incoming, CancellationToken ct)
+    {
+        var persisted = await _db.HKCardItems
+            .AsNoTracking()
+            .Include(i => i.Materials)
+            .Where(i => i.HKCardId == cardId)
+            .ToListAsync(ct);
+
+        if (persisted.Count != incoming.Count) return true;
+
+        var persistedById = persisted.ToDictionary(i => i.Id);
+        var incomingIds = incoming.Select(i => i.Id).ToHashSet();
+
+        if (persistedById.Count != incomingIds.Count) return true;
+        if (persistedById.Keys.Any(id => !incomingIds.Contains(id))) return true;
+
+        foreach (var item in incoming)
+        {
+            if (!persistedById.TryGetValue(item.Id, out var saved)) return true;
+
+            if (saved.HKCardNodeId != item.HKCardNodeId) return true;
+            if (saved.AssemblyUnitId != item.AssemblyUnitId) return true;
+            if (saved.Quantity != item.Quantity) return true;
+            if (saved.Volume != item.Volume) return true;
+            if (saved.UnitOfMeasure != item.UnitOfMeasure) return true;
+            if (saved.Periodicity != item.Periodicity) return true;
+            if (saved.Notes != item.Notes) return true;
+            if (saved.SortOrder != item.SortOrder) return true;
+
+            var savedMaterials = saved.Materials
+                .Select(m => (m.Id, m.GsmMaterialId, m.Category))
+                .OrderBy(m => m.Id).ToList();
+            var incomingMaterials = item.Materials
+                .Select(m => (m.Id, m.GsmMaterialId, m.Category))
+                .OrderBy(m => m.Id).ToList();
+
+            if (!savedMaterials.SequenceEqual(incomingMaterials)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Заблокирован ли состав на рассмотрении своего этапа.
+    /// <para>
+    /// Проверяется отдельно от общего статуса карты: при рассмотрении состава
+    /// общий статус карты — «на проверке», но и при рассмотрении реквизитов он
+    /// тот же, а структуру заполнять разрешено.
+    /// </para>
+    /// </summary>
+    private async Task EnsureCompositionEditableAsync(Guid cardId, CancellationToken ct)
+    {
+        var stages = await _db.HKCardApprovals
+            .AsNoTracking()
+            .Where(a => a.HKCardId == cardId)
+            .ToListAsync(ct);
+
+        // Карты без записей этапов — до появления модели согласования; для них
+        // действует прежнее правило по общему статусу.
+        if (stages.Count == 0) return;
+
+        var composition = stages.FirstOrDefault(a => a.Stage == HKApprovalStage.Composition);
+        if (composition is null) return;
+
+        if (composition.State == HKApprovalStageState.OnReview)
+            throw new InvalidOperationException(
+                "Состав и нормы находятся на согласовании: изменение заблокировано.");
+    }
+
+    /// <summary>
+    /// Заблокированы ли реквизиты и основание на рассмотрении своего этапа.
+    /// </summary>
+    private async Task EnsureDetailsEditableAsync(Guid cardId, CancellationToken ct)
+    {
+        var stages = await _db.HKCardApprovals
+            .AsNoTracking()
+            .Where(a => a.HKCardId == cardId)
+            .ToListAsync(ct);
+
+        if (stages.Count == 0) return;
+
+        var details = stages.FirstOrDefault(a => a.Stage == HKApprovalStage.Details);
+        if (details is null) return;
+
+        if (details.State == HKApprovalStageState.OnReview)
+            throw new InvalidOperationException(
+                "Реквизиты и основание находятся на согласовании: изменение заблокировано.");
+
+        if (details.State == HKApprovalStageState.Approved)
+            throw new InvalidOperationException(
+                "Реквизиты и основание приняты: изменение возможно только после возврата этапа.");
+    }
+
+    /// <summary>
     /// Сохранённое состояние карты для решений о допуске к правке.
     /// <para>
     /// Отдельная проекция AsNoTracking, а не отслеживаемый экземпляр: входной
@@ -1158,6 +1299,12 @@ public class HKCardService
             ?? throw new ArgumentException("ХК не найдена.");
         await EnsureEditDraftAccessAsync(access, ct);
 
+        // Состав — вторая часть согласования, и на её рассмотрении он
+        // заблокирован. Проверка идёт по состоянию ЭТАПА, а не по общему
+        // статусу карты: во время рассмотрения реквизитов общий статус тот же
+        // самый, а структуру автор заполнять должен.
+        await EnsureCompositionEditableAsync(cardId, ct);
+
         // Карта загружается ОТСЛЕЖИВАЕМОЙ: её запись обновляется в той же транзакции,
         // чтобы токен xmin участвовал в конкурентной проверке (см. описание метода).
         var card = await _db.HKCards.FirstOrDefaultAsync(x => x.Id == cardId, ct)
@@ -1166,10 +1313,27 @@ public class HKCardService
         if (!card.IsAutonomous)
             throw new InvalidOperationException("Собственное дерево доступно только для автономной ХК.");
 
-        // Проверка редактируемого состояния. EnsureEditDraftAccessAsync её не
-        // делает: по условию метода статус проверяет вызывающий, своим текстом.
-        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+        // Состав блокируется по состоянию СВОЕГО этапа, а не по общему статусу
+        // карты. Общий статус один и тот же и при рассмотрении реквизитов, когда
+        // структуру заполнять положено: автор готовит состав параллельно.
+        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired
+                or HKCardStatus.OnReview))
             throw new InvalidOperationException("Редактирование состава недоступно для карточки в текущем статусе.");
+
+        if (card.Status == HKCardStatus.OnReview)
+        {
+            // OnReview допустим только когда на рассмотрении реквизиты: блокировку
+            // состава проверяет EnsureCompositionEditableAsync ниже.
+            var stages = await _db.HKCardApprovals.AsNoTracking()
+                .Where(a => a.HKCardId == cardId)
+                .ToListAsync(ct);
+
+            if (stages.Count == 0
+                || stages.All(a => a.Stage != HKApprovalStage.Details
+                                   || a.State != HKApprovalStageState.OnReview))
+                throw new InvalidOperationException(
+                    "Состав и нормы находятся на согласовании: изменение заблокировано.");
+        }
 
         if (expectedRowVersion is { } expected && expected != card.RowVersion)
             throw new InvalidOperationException(
@@ -1846,6 +2010,20 @@ public class HKCardService
             card.Items.SelectMany(i => i.Materials).Select(m => m.GsmMaterialId), ct);
 
         _db.HKCards.Add(card);
+
+        // Этапы согласования создаются вместе с картой и без фиктивных дат
+        // принятия: дата решения появляется только после реального решения.
+        foreach (var stage in new[] { HKApprovalStage.Details, HKApprovalStage.Composition })
+        {
+            card.Approvals.Add(new HKCardApproval
+            {
+                Id = Guid.NewGuid(),
+                Stage = stage,
+                State = HKApprovalStageState.Draft,
+                UpdatedAtUtc = now
+            });
+        }
+
         var details = card.IsAutonomous
             ? $"Создана автономная ХК «{card.Name}» с номером {card.Code}."
             : $"Создана ХК уровня «{LevelDisplayName(card.ObjectLevel)}» для объекта «{numberSource}».";
@@ -1936,6 +2114,9 @@ public class HKCardService
         // вызывающий код мог уже изменить его статус, филиал или уровень. Тогда
         // проверки читала бы запрошенные значения и пропускала то, что должна
         // отклонить.
+        // Реквизиты и основание блокируются на рассмотрении СВОЕГО этапа.
+        await EnsureDetailsEditableAsync(card.Id, ct);
+
         var persisted = await _db.HKCards
             .AsNoTracking()
             .Where(c => c.Id == card.Id)
@@ -1949,7 +2130,13 @@ public class HKCardService
         if (actor.BranchId != persisted.BranchId && !await IsSystemAdminAsync(actor))
             throw new UnauthorizedAccessException("Нет доступа к карточке другой организации.");
 
-        if (persisted.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+        // Общий статус не решает, что именно разрешено: при OnReview блокируется
+        // одна часть карты, а другая остаётся доступна. Отсекать здесь весь
+        // OnReview значило бы запретить и правку реквизитов, и заполнение
+        // структуры — обе они блокируются своими проверками этапов.
+        if (persisted.Status is not (HKCardStatus.Draft
+            or HKCardStatus.RevisionRequired
+            or HKCardStatus.OnReview))
             throw new InvalidOperationException("Редактирование недоступно для карточки в текущем статусе.");
 
         if (card.RowVersion != persisted.RowVersion)
@@ -2021,13 +2208,35 @@ public class HKCardService
                 await ResolveObjectCodeAsync(Domain.Enums.HKObjectLevel.Node, requestedNodeId!.Value), ct);
         }
 
+        // ── Состав проверяется отдельно ──
+        // UpdateAsync меняет и реквизиты, и конечные строки. Если состав
+        // заблокирован, передача изменённых строк вместе с разрешёнными
+        // реквизитами обошла бы блокировку молча. Поэтому состав при
+        // заблокированном этапе либо не трогается вовсе, либо отклоняется
+        // целиком — частичное применение здесь означало бы потерю правки.
+        var compositionLocked = await IsCompositionLockedAsync(persisted.Id, ct);
+
         var incomingItems = card.Items.OrderBy(i => i.SortOrder).ToList();
+
+        if (compositionLocked)
+        {
+            var changed = await CompositionDiffersAsync(persisted.Id, incomingItems, ct);
+            if (changed)
+                throw new InvalidOperationException(
+                    "Состав и нормы находятся на согласовании: изменение строк заблокировано.");
+        }
+
         var incomingItemIds = incomingItems.Select(i => i.Id).ToHashSet();
 
         // Желаемое состояние фиксируется НЕЗАвисимым неизменяемым снимком ДО
         // любых операций Remove/Add: входной граф может быть уже отслеживаемым
         // этим же контекстом (так делает HKEdit.razor), и перечисление его
         // коллекций после мутаций EF небезопасно.
+        // При заблокированном составе синхронизация не выполняется вовсе:
+        // состав проверен выше и не изменился, а реквизиты применены и будут
+        // сохранены той же командой.
+        if (!compositionLocked)
+        {
         var desiredItems = incomingItems
             .Select(i => new DesiredItem(
                 i.Id,
@@ -2154,6 +2363,7 @@ public class HKCardService
                 _db.HKCardItems.Add(newItem);
             }
         }
+        }
 
         _db.AuditLogs.Add(new AuditLog
         {
@@ -2206,14 +2416,21 @@ public class HKCardService
         if (permError != null)
             return (false, permError);
 
-        // Одноэтапный процесс не является готовым жизненным циклом автономной
-        // карты: у неё два согласования, и это отдельный этап. Пока он не
-        // реализован, окончательное утверждение через старый процесс запрещено —
-        // иначе карта получила бы утверждённый статус мимо второго согласования.
-        if (card.IsAutonomous && newStatus == HKCardStatus.Approved)
+        // Одноэтапный процесс не является жизненным циклом карты: согласование
+        // идёт по этапам, и каждый переход статуса принадлежит конкретному этапу.
+        // Общий переключатель статуса обошёл бы оба согласования, поэтому для
+        // карт с этапами он закрыт целиком, а не только для утверждения.
+        //
+        // Перевод в архив и удаление здесь сохранены: они не являются этапом
+        // согласования и сохраняют собственный смысл.
+        var isWorkflowStage = newStatus is HKCardStatus.OnReview
+            or HKCardStatus.RevisionRequired
+            or HKCardStatus.Approved;
+
+        if (isWorkflowStage && await HasApprovalStagesAsync(card.Id, ct))
             return (false,
-                "Утверждение автономной ХК пока недоступно: для неё предусмотрены два этапа согласования, " +
-                "и этот процесс ещё не реализован.");
+                "Переход выполняется командами этапов согласования, а не общим переключателем статуса. " +
+                "Этап согласуется адресно: отправьте реквизиты или состав, затем примите или верните этап.");
 
         var oldStatus = card.Status;
         if (!HKCardStatusTransitions.IsAllowed(oldStatus, newStatus))
@@ -2490,6 +2707,11 @@ public class HKCardService
             Id = Guid.NewGuid(),
             Status = HKCardStatus.Draft,
             SupersedesHKCardId = source.Id,
+            // Режим карты переносится: без него копия автономной карты была бы
+            // принята за карту объекта нормирования и потребовала бы кода
+            // объекта, которого у неё нет.
+            IsAutonomous = source.IsAutonomous,
+            Name = source.Name,
             ObjectLevel = source.ObjectLevel,
             ComplexId = source.ComplexId,
             EquipmentModelId = source.EquipmentModelId,

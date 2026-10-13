@@ -1019,6 +1019,46 @@ namespace Chernika.Infrastructure.Migrations
                     b.ToTable("HKCards");
                 });
 
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardApproval", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ApprovedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AssignedApproverUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<Guid>("HKCardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<int>("Stage")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HKCardId", "Stage")
+                        .IsUnique()
+                        .HasDatabaseName("UX_HKCardApprovals_Card_Stage");
+
+                    b.ToTable("HKCardApprovals");
+                });
+
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardAttachment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2850,6 +2890,17 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("SupersedesHKCard");
                 });
 
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardApproval", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCard", "HKCard")
+                        .WithMany("Approvals")
+                        .HasForeignKey("HKCardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("HKCard");
+                });
+
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardAttachment", b =>
                 {
                     b.HasOne("Chernika.Domain.Entities.HKCard", "HKCard")
@@ -3420,6 +3471,8 @@ namespace Chernika.Infrastructure.Migrations
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCard", b =>
                 {
+                    b.Navigation("Approvals");
+
                     b.Navigation("Attachment");
 
                     b.Navigation("ChildComponents");

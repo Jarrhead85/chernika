@@ -92,6 +92,7 @@ public sealed class TwoAdminsFixture : IAsyncLifetime
         services.AddScoped<NotificationService>();
         services.AddScoped<HKCardValidationService>();
         services.AddScoped<HKCardService>();
+        services.AddScoped<HKApprovalService>();
         services.AddScoped<HKCardExpirationService>();
         services.AddScoped<HKExpirationForecastService>();
         services.AddScoped<UserManagementService>();

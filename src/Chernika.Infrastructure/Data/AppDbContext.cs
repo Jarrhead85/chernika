@@ -28,6 +28,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ComplexComposition> ComplexCompositions => Set<ComplexComposition>();
     public DbSet<ComplexCompositionItem> ComplexCompositionItems => Set<ComplexCompositionItem>();
     public DbSet<HKCard> HKCards => Set<HKCard>();
+    public DbSet<HKCardApproval> HKCardApprovals => Set<HKCardApproval>();
     public DbSet<HKCardComponent> HKCardComponents => Set<HKCardComponent>();
     public DbSet<HKCardNode> HKCardNodes => Set<HKCardNode>();
     public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
@@ -434,7 +435,29 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 && x.ChildHKCard.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 
-        modelBuilder.Entity<HKCardItem>(e =>
+        modelBuilder.Entity<HKCardApproval>(e =>
+    {
+        e.HasKey(x => x.Id);
+        e.Property(x => x.Stage).HasConversion<int>();
+        e.Property(x => x.State).HasConversion<int>();
+        e.Property(x => x.AssignedApproverUserId).HasMaxLength(450);
+        // Ссылка на согласующего — на пользователя Identity, а не на карту:
+        // карта удаляется вместе со своими этапами, а назначение — её часть.
+        e.Property(x => x.RowVersion)
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .IsRowVersion();
+        e.HasOne(x => x.HKCard).WithMany(x => x.Approvals)
+            .HasForeignKey(x => x.HKCardId)
+            .OnDelete(DeleteBehavior.Cascade);
+        // Ровно одна запись на пару «карта + этап»: два независимых состояния
+        // без права задвоиться.
+        e.HasIndex(x => new { x.HKCardId, x.Stage })
+            .IsUnique()
+            .HasDatabaseName("UX_HKCardApprovals_Card_Stage");
+    });
+
+    modelBuilder.Entity<HKCardItem>(e =>
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.UnitOfMeasure).HasMaxLength(20);

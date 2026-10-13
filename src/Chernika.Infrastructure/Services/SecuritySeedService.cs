@@ -107,6 +107,10 @@ internal static class RolePermissionDefaults
             // остаются в шаблоне: их коды не удаляются, но переведёнными командами
             // они больше не управляют (см. PermissionPolicyRegistration).
             PermissionCodes.HKWork,
+            // Отправка на согласование — неуровневое право: уровень карты ещё
+            // может быть не определён. Само по себе оно не даёт принятия и
+            // возврата, это отдельные права.
+            PermissionCodes.HKSubmit,
             PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
             PermissionCodes.HKAggregateCreate, PermissionCodes.HKAggregateEditDraft, PermissionCodes.HKAggregateSubmit,
             PermissionCodes.HKEquipmentCreate, PermissionCodes.HKEquipmentEditDraft, PermissionCodes.HKEquipmentSubmit,
@@ -133,6 +137,7 @@ internal static class RolePermissionDefaults
         [
             PermissionCodes.HKView,
             PermissionCodes.HKWork,
+            PermissionCodes.HKSubmit,
             PermissionCodes.HKNodeCreate, PermissionCodes.HKNodeEditDraft, PermissionCodes.HKNodeSubmit,
             PermissionCodes.HKAttachmentView,
             PermissionCodes.HKDeleteDraft, PermissionCodes.HKDeleteRevisionRequired,

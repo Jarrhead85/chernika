@@ -20,6 +20,7 @@ public sealed class TestScope : IAsyncDisposable
         Db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Tasks = scope.ServiceProvider.GetRequiredService<TaskService>();
         HK = scope.ServiceProvider.GetRequiredService<HKCardService>();
+        Approvals = scope.ServiceProvider.GetRequiredService<HKApprovalService>();
         Validation = scope.ServiceProvider.GetRequiredService<HKCardValidationService>();
         Expiration = scope.ServiceProvider.GetRequiredService<HKCardExpirationService>();
         Forecast = scope.ServiceProvider.GetRequiredService<HKExpirationForecastService>();
@@ -49,6 +50,7 @@ public sealed class TestScope : IAsyncDisposable
     public AppDbContext Db { get; }
     public TaskService Tasks { get; }
     public HKCardService HK { get; }
+    public HKApprovalService Approvals { get; }
     public HKCardValidationService Validation { get; }
     public HKCardExpirationService Expiration { get; }
 

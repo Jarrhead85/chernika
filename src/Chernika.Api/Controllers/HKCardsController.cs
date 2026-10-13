@@ -1,4 +1,4 @@
-using Chernika.Api.Contracts;
+﻿using Chernika.Api.Contracts;
 using Chernika.Domain;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
@@ -19,6 +19,7 @@ namespace Chernika.Api.Controllers;
 public class HKCardsController : ControllerBase
 {
     private readonly HKCardService _hkCards;
+    private readonly HKApprovalService _approvals;
     private readonly IAuthorizationService _authorization;
     private readonly AppDbContext _db;
     private readonly IFileStorageService _fileStorage;
@@ -28,6 +29,7 @@ public class HKCardsController : ControllerBase
 
     public HKCardsController(
         HKCardService hkCards,
+        HKApprovalService approvals,
         IAuthorizationService authorization,
         AppDbContext db,
         IFileStorageService fileStorage,
@@ -36,6 +38,7 @@ public class HKCardsController : ControllerBase
         IOptions<FileStorageOptions> fileOptions)
     {
         _hkCards = hkCards;
+        _approvals = approvals;
         _authorization = authorization;
         _db = db;
         _fileStorage = fileStorage;
@@ -152,6 +155,156 @@ public class HKCardsController : ControllerBase
 
         return NoContent();
     }
+
+    // ── Этапы согласования ──
+    // Отдельные команды вместо общего переключателя статуса: этап согласуется
+    // адресно, а общий статус вычисляется из состояний этапов и клиентом не
+    // устанавливается.
+
+    [HttpGet("{id}/approvals")]
+    public async Task<ActionResult<List<HKApprovalStageDto>>> GetApprovals(Guid id)
+    {
+        var stages = await _approvals.EnsureStagesAsync(id);
+        return Ok(stages.Select(ToStageDto).ToList());
+    }
+
+    [HttpGet("{id}/editing-capabilities")]
+    public async Task<ActionResult<HKCardEditingCapabilitiesDto>> GetEditingCapabilities(Guid id)
+    {
+        var card = await _hkCards.GetByIdAsync(id);
+        if (card == null) return NotFound();
+
+        var stages = await _approvals.EnsureStagesAsync(id);
+        var actorId = _currentUser.GetRequiredUserId();
+        var hasWork = await _permissions.HasPermissionAsync(
+            actorId.ToString(), PermissionCodes.HKWork);
+
+        var caps = HKApprovalService.DeriveEditingCapabilities(stages, card.Status, hasWork);
+        return Ok(new HKCardEditingCapabilitiesDto(
+            caps.CanEditDetails, caps.CanEditComposition, caps.CanEditPdf));
+    }
+
+    [HttpPost("{id}/approvals/submit")]
+    public async Task<ActionResult> SubmitApprovalStage(
+        Guid id, [FromBody] SubmitApprovalStageRequest request)
+    {
+        if (!TryParseStage(request.Stage, out var stage)) return BadRequest("Неизвестный этап.");
+
+        try
+        {
+            if (stage == HKApprovalStage.Details)
+                await _approvals.SubmitDetailsAsync(
+                    id, request.ApproverUserId ?? "", request.RowVersion);
+            else
+                await _approvals.SubmitCompositionAsync(id, request.RowVersion);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+                                      or UnauthorizedAccessException)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (HKCardValidationException ex)
+        {
+            return BadRequest(ex.ToUserMessage());
+        }
+
+        return NoContent();
+    }
+
+    [HttpPost("{id}/approvals/decision")]
+    public async Task<ActionResult> DecideApprovalStage(
+        Guid id, [FromBody] ApprovalStageDecisionRequest request)
+    {
+        if (!TryParseStage(request.Stage, out var stage)) return BadRequest("Неизвестный этап.");
+        if (!TryParseDecision(request.Decision, out var decision))
+            return BadRequest("Неизвестное решение: ожидается approve или return.");
+
+        try
+        {
+            if (stage == HKApprovalStage.Details)
+            {
+                if (decision == ApprovalDecision.Approve)
+                    await _approvals.ApproveDetailsAsync(id, request.Comment, request.RowVersion);
+                else
+                    await _approvals.ReturnDetailsAsync(id, request.Comment, request.RowVersion);
+            }
+            else
+            {
+                if (decision == ApprovalDecision.Approve)
+                    // Окончательное принятие состава закрыто до появления
+                    // хранилища принятой структуры.
+                    await _approvals.ApproveCompositionAsync(id, request.Comment, request.RowVersion);
+                else
+                    await _approvals.ReturnCompositionAsync(id, request.Comment, request.RowVersion);
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+                                      or UnauthorizedAccessException)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        return NoContent();
+    }
+
+    private static bool TryParseStage(string? value, out HKApprovalStage stage)
+    {
+        switch (value?.Trim().ToLowerInvariant())
+        {
+            case "details":
+            case "реквизиты":
+                stage = HKApprovalStage.Details;
+                return true;
+            case "composition":
+            case "состав":
+                stage = HKApprovalStage.Composition;
+                return true;
+            default:
+                stage = HKApprovalStage.Details;
+                return false;
+        }
+    }
+
+    private static bool TryParseDecision(string? value, out ApprovalDecision decision)
+    {
+        switch (value?.Trim().ToLowerInvariant())
+        {
+            case "approve":
+                decision = ApprovalDecision.Approve;
+                return true;
+            case "return":
+                decision = ApprovalDecision.Return;
+                return true;
+            default:
+                decision = ApprovalDecision.Approve;
+                return false;
+        }
+    }
+
+    private static HKApprovalStageDto ToStageDto(HKCardApproval approval) => new(
+        StageKey(approval.Stage),
+        StageTitle(approval.Stage),
+        approval.State.ToString(),
+        StateTitle(approval.State),
+        approval.AssignedApproverUserId,
+        approval.ApprovedAtUtc);
+
+    internal static string StageKey(HKApprovalStage stage) =>
+        stage == HKApprovalStage.Details ? "details" : "composition";
+
+    internal static string StageTitle(HKApprovalStage stage) =>
+        stage == HKApprovalStage.Details
+            ? HKApprovalService.DetailsStageTitle
+            : HKApprovalService.CompositionStageTitle;
+
+    internal static string StateTitle(HKApprovalStageState state) => state switch
+    {
+        HKApprovalStageState.Draft => "Черновик",
+        HKApprovalStageState.OnReview => "На рассмотрении",
+        HKApprovalStageState.RevisionRequired => "Возвращено на доработку",
+        HKApprovalStageState.Approved => "Принято",
+        _ => state.ToString()
+    };
 
     [HttpGet("{id}/components")]
     public async Task<ActionResult<List<HKCardComponentDto>>> GetComponents(Guid id)

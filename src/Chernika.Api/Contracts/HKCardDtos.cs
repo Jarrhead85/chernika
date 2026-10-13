@@ -235,15 +235,19 @@ public static class HKCardMapper
 
     public static HKCard FromCreate(CreateHKCardRequest r) => new()
     {
-        IsAutonomous = r.IsAutonomous,
-        // Уровень автономной карты не задаётся: он выводится из структуры, а
-        // пока структуры нет — остаётся неопределённым. Уровень из запроса
-        // игнорируется, иначе можно было бы задать несуществующий уровень.
-        ObjectLevel = r.IsAutonomous ? HKObjectLevel.Undefined : r.ObjectLevel,
-        ComplexId = r.IsAutonomous ? null : r.ComplexId,
-        EquipmentModelId = r.IsAutonomous ? null : r.EquipmentModelId,
-        AggregateId = r.IsAutonomous ? null : r.AggregateId,
-        NodeId = r.IsAutonomous ? null : r.NodeId,
+        // Создание карты старого сценария закрыто: процесс карты единственный,
+        // и он автономный. Переключатель IsAutonomous в контракте сохранён для
+        // совместимости десериализации, но значение из запроса НЕ принимается —
+        // карта всегда создаётся автономной.
+        IsAutonomous = true,
+        // Уровень не задаётся: он выводится из структуры, а пока структуры нет
+        // — остаётся неопределённым. Уровень и справочные ссылки из запроса
+        // игнорируются.
+        ObjectLevel = HKObjectLevel.Undefined,
+        ComplexId = null,
+        EquipmentModelId = null,
+        AggregateId = null,
+        NodeId = null,
         Name = r.Name,
         BranchId = r.BranchId,
         Purpose = r.Purpose,

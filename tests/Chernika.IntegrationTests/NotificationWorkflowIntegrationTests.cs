@@ -18,23 +18,39 @@ public class NotificationWorkflowIntegrationTests
         await using var s = _fixture.CreateScope();
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
 
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
-        var (success, error) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.RevisionRequired, comment: "Уточнить нормы расхода.");
-        Assert.True(success, error);
+        // Отправка и возврат идут командами этапа, а не общим переключателем
+        // статуса: переход принадлежит конкретному этапу согласования.
+        await HKApprovalScenario.SubmitDetailsAsync(s, cardId, _fixture.NormAdminA2.Id);
+
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
+        await s.Approvals.ReturnDetailsAsync(cardId, "Уточнить нормы расхода.",
+            await HKApprovalScenario.VersionAsync(s, cardId));
 
         var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
+        Assert.Equal(HKCardStatus.RevisionRequired, card.Status);
 
+        // Возврат адресует задачу доработки первоначальному автору, и именно она
+        // порождает уведомление.
+        var revision = await s.Db.WorkTasks.AsNoTracking()
+            .SingleAsync(t => !t.IsDeleted && t.EntityType == "HKCard" && t.EntityId == cardId
+                              && t.Type == WorkTaskType.HKRevision);
+
+        // Уведомление о назначении задачи доработки уходит первоначальному
+        // автору и ведёт на саму задачу: переход по этапу больше не порождает
+        // отдельного уведомления «возвращена на доработку».
         var notification = await s.Db.Notifications.AsNoTracking()
-            .SingleAsync(n => n.UserId == _fixture.NormAdminA.Id
-                && n.EntityType == "HKCard" && n.EntityId == cardId
-                && n.Type == NotificationType.HKReturnedForRevision);
+            .SingleAsync(n => n.WorkTaskId == revision.Id);
 
-        Assert.Equal($"ХК {card.Code} возвращена на доработку", notification.Title);
-        Assert.Equal("Уточнить нормы расхода.", notification.Message);
-        Assert.Equal($"/хк/{cardId}", notification.NavigationUrl);
+        Assert.Equal(_fixture.NormAdminA.Id, revision.AssignedToUserId);
+        Assert.Equal(_fixture.NormAdminA.Id, notification.UserId);
+        Assert.Equal(NotificationType.TaskAssigned, notification.Type);
+        Assert.Equal($"/задачи/{revision.Id}", notification.NavigationUrl);
         Assert.False(notification.IsRead);
         Assert.Equal(_fixture.BranchA, notification.BranchId);
+
+        // Уведомления именно о возврате прежнего процесса больше не создаются.
+        Assert.False(await s.Db.Notifications.AsNoTracking().AnyAsync(
+            n => n.Type == NotificationType.HKReturnedForRevision && n.EntityId == cardId));
     }
 
     [Fact]
@@ -43,21 +59,32 @@ public class NotificationWorkflowIntegrationTests
         await using var s = _fixture.CreateScope();
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
 
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
-        var (success, error) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.Approved);
-        Assert.True(success, error);
+        await HKApprovalScenario.SubmitDetailsAsync(s, cardId, _fixture.NormAdminA2.Id);
+
+        // Окончательное принятие состава закрыто, поэтому общего статуса
+        // «утверждена» новый процесс не создаёт. Принятие РЕКВИЗИТОВ доступно,
+        // и уведомление о назначении задачи уходит назначенному согласующему.
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
+        await s.Approvals.ApproveDetailsAsync(cardId, null,
+            await HKApprovalScenario.VersionAsync(s, cardId));
 
         var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
+        Assert.NotEqual(HKCardStatus.Approved, card.Status);
 
-        var notification = await s.Db.Notifications.AsNoTracking()
-            .SingleAsync(n => n.UserId == _fixture.NormAdminA.Id
-                && n.EntityType == "HKCard" && n.EntityId == cardId
-                && n.Type == NotificationType.HKApproved);
+        var details = await HKApprovalScenario.StageAsync(s, cardId, HKApprovalStage.Details);
+        Assert.Equal(HKApprovalStageState.Approved, details.State);
+        Assert.NotNull(details.ApprovedAtUtc);
 
-        Assert.Equal($"ХК {card.Code} утверждена", notification.Title);
-        Assert.Equal($"/хк/{cardId}", notification.NavigationUrl);
-        Assert.False(notification.IsRead);
+        // Принятие реквизитов закрывает задачу рассмотрения; отдельного
+        // уведомления «ХК утверждена» прежнего процесса не создаётся.
+        var reviewTask = await s.Db.WorkTasks.AsNoTracking()
+            .SingleAsync(t => !t.IsDeleted && t.EntityType == "HKCard" && t.EntityId == cardId
+                              && t.Type == WorkTaskType.HKDetailsReview);
+        Assert.Equal(WorkTaskStatus.Completed, reviewTask.Status);
+        Assert.Equal(_fixture.NormAdminA2.Id, reviewTask.CompletedByUserId);
+
+        Assert.False(await s.Db.Notifications.AsNoTracking().AnyAsync(
+            n => n.Type == NotificationType.HKApproved && n.EntityId == cardId));
     }
 
     [Fact]

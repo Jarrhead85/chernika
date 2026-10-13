@@ -433,27 +433,29 @@ public class HKAutonomousCardIntegrationTests
     // ── Жизненный цикл: незавершённый workflow ──
 
     [Fact]
-    public async Task ChangeStatusAsync_Autonomous_CannotBeApprovedByOldWorkflow()
+    public async Task ChangeStatusAsync_Autonomous_CannotBypassStageWorkflow()
     {
+        // Общий переключатель статуса обошёл бы оба согласования: отправку,
+        // принятие и возврат. Для карты с этапами он закрыт целиком, а не
+        // только для утверждения.
         await using var s = await AuthorScopeAsync();
-        var created = await s.HK.CreateAsync(NewAutonomousDraft(_fixture.BranchA, "Без двух этапов"));
+        var created = await s.HK.CreateAsync(NewAutonomousDraft(_fixture.BranchA, "Два этапа"));
+        await s.Approvals.EnsureStagesAsync(created.Id);
 
-        // Карта доводится до состояния «на проверке» напрямую: проверяется
-        // запрет УТВЕРЖДЕНИЯ, а не сама отправка на согласование.
-        var onReview = await s.Db.HKCards.FirstAsync(c => c.Id == created.Id);
-        onReview.Status = HKCardStatus.OnReview;
-        await s.Db.SaveChangesAsync();
-        s.Db.ChangeTracker.Clear();
+        foreach (var status in new[]
+                 {
+                     HKCardStatus.OnReview, HKCardStatus.RevisionRequired, HKCardStatus.Approved
+                 })
+        {
+            var (ok, error) = await s.HK.ChangeStatusAsync(created.Id, status, null, default);
 
-        var (approved, approvedError) = await s.HK.ChangeStatusAsync(
-            created.Id, HKCardStatus.Approved, null, default);
-
-        Assert.False(approved);
-        Assert.NotNull(approvedError);
-        Assert.Contains("два этапа", approvedError!, StringComparison.OrdinalIgnoreCase);
+            Assert.False(ok);
+            Assert.NotNull(error);
+            Assert.Contains("этап", error!, StringComparison.OrdinalIgnoreCase);
+        }
 
         var stored = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == created.Id);
-        Assert.NotEqual(HKCardStatus.Approved, stored.Status);
+        Assert.Equal(HKCardStatus.Draft, stored.Status);
     }
 
     // ── Прежний сценарий не сломан ──

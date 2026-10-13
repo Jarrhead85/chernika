@@ -240,12 +240,7 @@ public class HKCardVersioningIntegrationTests
 
         var oldCard = await s.Db.HKCards.SingleAsync(c => c.Id == oldId);
         var replacement = await s.Db.HKCards.SingleAsync(c => c.Id == replacementId);
-        replacement.Code = oldCard.Code;
-        replacement.Version = "vR2";
-        replacement.NodeId = oldCard.NodeId;
-        replacement.ObjectLevel = oldCard.ObjectLevel;
-        replacement.BranchId = oldCard.BranchId;
-        await s.Db.SaveChangesAsync();
+        await AlignReplacementAsync(s, oldId, replacementId);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         var (success, error) = await s.HK.ArchiveAsync(oldId, replacementId, "Заменена новой версией");
@@ -361,53 +356,34 @@ public class HKCardVersioningIntegrationTests
         var replacement = await s.Db.HKCards.SingleAsync(c => c.Id == replacementId);
         replacement.Code = oldCard.Code;
         replacement.Version = "vR2";
-        replacement.NodeId = oldCard.NodeId;
-        replacement.ObjectLevel = oldCard.ObjectLevel;
         replacement.BranchId = oldCard.BranchId;
         await s.Db.SaveChangesAsync();
     }
 
-    private async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)
-    {
-        s.User.CurrentUserId = Guid.Parse(actorId);
+    /// <summary>
+    /// Карта создаётся в новом сценарии: прежний процесс не поддерживается.
+    /// </summary>
+    private Task<Guid> CreateDraftCardAsync(TestScope s, string actorId) =>
+        HKApprovalScenario.CreateDraftCardAsync(s, actorId);
 
-        var node = new Node { Id = Guid.NewGuid(), Code = "N-" + Guid.NewGuid().ToString("N")[..6], Name = "Узел тест" };
-        var au = new AssemblyUnit { Id = Guid.NewGuid(), Code = "АУ-" + Guid.NewGuid().ToString("N")[..6], Name = "СЕ тест" };
-        s.Db.Nodes.Add(node);
-        s.Db.AssemblyUnits.Add(au);
-        await s.Db.SaveChangesAsync();
-
-        var card = new HKCard
-        {
-            ObjectLevel = HKObjectLevel.Node,
-            NodeId = node.Id,
-            Purpose = "Тест versioning",
-            NormativeBasis = "ГОСТ",
-            Items = new List<HKCardItem>
-            {
-                new()
-                {
-                    AssemblyUnitId = au.Id,
-                    Quantity = 2,
-                    Volume = 1.5m,
-                    UnitOfMeasure = "кг",
-                    SortOrder = 1,
-                    Materials = new List<HKCardItemMaterial>(),
-                },
-            },
-        };
-
-        var created = await s.HK.CreateAsync(card);
-        return created.Id;
-    }
-
+    /// <summary>
+    /// Карта в состоянии «утверждена» — предусловие для проверок версий и
+    /// архивирования.
+    /// <para>
+    /// Состояние задаётся напрямую: окончательное принятие состава закрыто до
+    /// появления хранилища принятой структуры, и новый процесс общего статуса
+    /// Approved пока не создаёт. Версии, архив и удаление от этого не зависят —
+    /// они работают с уже утверждённой картой.
+    /// </para>
+    /// </summary>
     private async Task<Guid> CreateApprovedCardAsync(TestScope s, string actorId)
     {
-        var id = await CreateDraftCardAsync(s, actorId);
+        var id = await HKApprovalScenario.CreateDraftCardAsync(s, actorId);
         s.User.CurrentUserId = Guid.Parse(actorId);
-        await s.HK.ChangeStatusAsync(id, HKCardStatus.OnReview);
-        var (success, error) = await s.HK.ChangeStatusAsync(id, HKCardStatus.Approved);
-        Assert.True(success, error);
+
+        var card = await s.Db.HKCards.SingleAsync(h => h.Id == id);
+        card.Status = HKCardStatus.Approved;
+        await s.Db.SaveChangesAsync();
         return id;
     }
 }

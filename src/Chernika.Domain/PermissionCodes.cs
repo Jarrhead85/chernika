@@ -16,6 +16,17 @@ public static class PermissionCodes
     /// </summary>
     public const string HKWork = "HK.Work";
 
+    /// <summary>
+    /// Отправка карты на согласование. Неуровневое право.
+    /// <para>
+    /// У автономной карты уровень не определён до вывода по структуре, поэтому
+    /// уровневые права отправки для неё неприменимы. Прало не заменяет
+    /// HK.Work: создание и редактирование остаются отдельным правом, и само по
+    /// себе оно не даёт ни утверждения, ни возврата.
+    /// </para>
+    /// </summary>
+    public const string HKSubmit = "HK.Submit";
+
     public const string HKNodeCreate = "HK.Node.Create";
     public const string HKNodeEditDraft = "HK.Node.EditDraft";
     public const string HKNodeSubmit = "HK.Node.Submit";
@@ -94,7 +105,7 @@ public static class PermissionCodes
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>
     {
-        HKView, HKWork, HKNodeCreate, HKNodeEditDraft, HKNodeSubmit,
+        HKView, HKWork, HKSubmit, HKNodeCreate, HKNodeEditDraft, HKNodeSubmit,
         HKAggregateCreate, HKAggregateEditDraft, HKAggregateSubmit,
         HKEquipmentCreate, HKEquipmentEditDraft, HKEquipmentSubmit,
         HKComplexCreate, HKComplexEditDraft, HKComplexSubmit,

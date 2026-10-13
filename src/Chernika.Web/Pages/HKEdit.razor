@@ -19,6 +19,7 @@
 @inject IOptions<FileStorageOptions> FileOptions
 @inject ILogger<HKEdit> Logger
 @inject CircuitDbLock DbLock
+@inject HKApprovalService Approvals
 
 <div class="stack">
     <section class="panel">
@@ -320,6 +321,20 @@
                             {
                                 <div class="readonlyValue">@(card.Name ?? "")</div>
                             }
+                        </div>
+                        }
+                        @if (!IsNew && !detailsStageApproved && canSubmit)
+                        {
+                        <div class="field">
+                            <label for="hk-approver">Согласующий</label>
+                            <select id="hk-approver" class="field-select" @bind="_approverUserId">
+                                <option value="">Выберите согласующего...</option>
+                                @foreach (var u in branchApprovers)
+                                {
+                                    <option value="@u.Id">@u.FullName</option>
+                                }
+                            </select>
+                            <div class="hint">Решение по карте принимает выбранный пользователь, а не роль.</div>
                         </div>
                         }
                         <div class="field">
@@ -937,18 +952,45 @@
                     <div class="formActions hk-form-actions-with-status">
                         <div class="hk-status-inline">
                             <StatusBadge Status="@card.Status" />
-                            @if (!IsNew && card.Status == HKCardStatus.Draft && canSendToApprove)
+                            @if (!IsNew && hasApprovalStages)
                             {
-                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
+                                @foreach (var stage in approvalStages)
+                                {
+                                    <div class="hk-stage-actions">
+                                        <span class="hint">@StageTitle(stage.Stage)</span>
+                                        <span class="hint">@StageStateTitle(stage.State)</span>
+                                        @if (stage.State == HKApprovalStageState.OnReview && stage.AssignedApproverUserId == currentUserId)
+                                        {
+                                            @if (canApprove)
+                                            {
+                                                <button type="button" class="btn primary" @onclick="() => DecideStageAsync(stage.Stage, true)">Принять этап</button>
+                                            }
+                                            @if (canReturn)
+                                            {
+                                                <button type="button" class="btn ghost" @onclick="() => DecideStageAsync(stage.Stage, false)">Вернуть на доработку</button>
+                                            }
+                                        }
+                                        @if (canSubmit && stage.State is HKApprovalStageState.Draft or HKApprovalStageState.RevisionRequired
+                                            && (stage.Stage == HKApprovalStage.Details || detailsStageApproved))
+                                        {
+                                            <button type="button" class="btn primary" @onclick="() => SubmitStageAsync(stage.Stage)">
+                                                @(stage.Stage == HKApprovalStage.Details ? "Отправить реквизиты" : "Отправить состав")
+                                            </button>
+                                        }
+                                    </div>
+                                }
                             }
-                            @if (!IsNew && card.Status == HKCardStatus.RevisionRequired && canSendToApprove)
+                            else
                             {
-                                <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
-                            }
-                            @if (card.Status == HKCardStatus.OnReview && canApprove)
-                            {
-                                <button type="button" class="btn primary" @onclick="ApproveCard">✓ Утвердить</button>
-                                <button type="button" class="btn ghost" @onclick="ReturnForRevision">↩ Вернуть на доработку</button>
+                                @if (!IsNew && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired && canSendToApprove)
+                                {
+                                    <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
+                                }
+                                @if (card.Status == HKCardStatus.OnReview && canApprove)
+                                {
+                                    <button type="button" class="btn primary" @onclick="ApproveCard">✓ Утвердить</button>
+                                    <button type="button" class="btn ghost" @onclick="ReturnForRevision">↩ Вернуть на доработку</button>
+                                }
                             }
                             @if (card.Status == HKCardStatus.Approved && canCreateNewVersion)
                             {
@@ -1196,6 +1238,42 @@
     /// </para>
     /// </summary>
     private bool IsAutonomousMode => IsNew || card.IsAutonomous;
+
+    /// <summary>Этапы согласования карты. Загружаются при открытии.</summary>
+    private List<HKCardApproval> approvalStages = new();
+
+    /// <summary>Карта работает по этапам: у неё есть записи состояний.</summary>
+    private bool hasApprovalStages => approvalStages.Count > 0;
+
+    private bool detailsStageApproved =>
+        approvalStages.Any(a => a.Stage == HKApprovalStage.Details
+                                && a.State == HKApprovalStageState.Approved);
+
+    private bool canSubmit;
+
+    /// <summary>
+    /// Право редактировать карту разбито на части: реквизиты, состав и PDF
+    /// блокируются по разным причинам и в разные моменты. Общий флаг скрывал
+    /// бы это и в интерфейсе, и по факту.
+    /// </summary>
+    private bool canEditDetails = true;
+    private bool canEditComposition = true;
+    private bool canEditPdf = true;
+
+    private static string StageTitle(HKApprovalStage stage) =>
+        stage == HKApprovalStage.Details
+            ? HKApprovalService.DetailsStageTitle
+            : HKApprovalService.CompositionStageTitle;
+
+    private static string StageStateTitle(HKApprovalStageState state) => state switch
+    {
+        HKApprovalStageState.Draft => "Черновик",
+        HKApprovalStageState.OnReview => "На рассмотрении",
+        HKApprovalStageState.RevisionRequired => "Возвращено на доработку",
+        HKApprovalStageState.Approved => "Принято",
+        _ => state.ToString()
+    };
+
     private bool canEdit;
     private bool canSendToApprove;
     private bool canApprove;
@@ -1279,8 +1357,9 @@
     private PendingFile? _pendingFile;
     private int _fileInputKey;
 
-    private bool CanSelectAttachment => canEdit && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
-    private bool CanManageAttachment => !IsNew && canEdit && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
+    // PDF следует за блокировкой реквизитов, а не за общим флагом правки.
+    private bool CanSelectAttachment => canEditPdf && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired or HKCardStatus.OnReview);
+    private bool CanManageAttachment => !IsNew && canEditPdf && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired or HKCardStatus.OnReview;
 
     private string? PendingChipTitle => _attachmentError ?? "Файл будет прикреплён при сохранении";
 
@@ -1569,6 +1648,13 @@
             selectedAggregateId = card.AggregateId ?? Guid.Empty;
             selectedNodeId = card.NodeId ?? Guid.Empty;
             statusStr = card.Status.ToString();
+
+            await LoadApprovalStateAsync(ct);
+            if (canSubmit)
+            {
+                await using var approverLock = await DbLock.WaitAsync();
+                branchApprovers = await GetBranchApproversAsync();
+            }
 
             var canEditLevel = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
             if (ct.IsCancellationRequested) return;
@@ -1867,6 +1953,142 @@
             return;
         }
         Nav.NavigateTo($"/хк/{newCardId.Value}");
+    }
+
+    /// <summary>
+    /// Загружает состояния этапов и пересчитывает права по частям.
+    /// <para>
+    /// Права редактирования берутся из состояния этапов, а не только из
+    /// HK.Work: на рассмотрении реквизитов реквизиты закрыты, а структура
+    /// остаётся доступной.
+    /// </para>
+    /// </summary>
+    private async Task LoadApprovalStateAsync(CancellationToken ct = default)
+    {
+        if (IsNew) return;
+
+        await using (await DbLock.WaitAsync())
+        {
+            approvalStages = (await Approvals.EnsureStagesAsync(card.Id, ct)).ToList();
+            canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
+
+            var hasWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork, ct);
+            var caps = HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
+
+            canEditDetails = caps.CanEditDetails;
+            canEditComposition = caps.CanEditComposition;
+            canEditPdf = caps.CanEditPdf;
+        }
+
+        // Общий флаг оставлен только для полей, не разделённых по частям.
+        canEdit = canEditDetails;
+        canQuickCreate = canEdit;
+    }
+
+    /// <summary>Отправляет этап на согласование.</summary>
+    private async Task SubmitStageAsync(HKApprovalStage stage)
+    {
+        errorMessage = null;
+
+        string? approverUserId = null;
+        if (stage == HKApprovalStage.Details)
+        {
+            if (string.IsNullOrWhiteSpace(_approverUserId))
+            {
+                errorMessage = "Выберите согласующего перед отправкой реквизитов.";
+                return;
+            }
+            approverUserId = _approverUserId;
+        }
+
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                var version = await CurrentRowVersionAsync();
+                if (stage == HKApprovalStage.Details)
+                    await Approvals.SubmitDetailsAsync(card.Id, approverUserId!, version);
+                else
+                    await Approvals.SubmitCompositionAsync(card.Id, version);
+            }
+
+            await LoadApprovalStateAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException
+                                      or ArgumentException)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (HKCardValidationException ex)
+        {
+            errorMessage = ex.ToUserMessage();
+        }
+
+        StateHasChanged();
+    }
+
+    /// <summary>Принимает или возвращает этап.</summary>
+    private async Task DecideStageAsync(HKApprovalStage stage, bool approve)
+    {
+        errorMessage = null;
+
+        try
+        {
+            await using (await DbLock.WaitAsync())
+            {
+                var version = await CurrentRowVersionAsync();
+                if (stage == HKApprovalStage.Details)
+                {
+                    if (approve)
+                        await Approvals.ApproveDetailsAsync(card.Id, null, version);
+                    else
+                        await Approvals.ReturnDetailsAsync(card.Id, null, version);
+                }
+                else
+                {
+                    if (approve)
+                        await Approvals.ApproveCompositionAsync(card.Id, null, version);
+                    else
+                        await Approvals.ReturnCompositionAsync(card.Id, null, version);
+                }
+            }
+
+            await ReloadAfterDecisionAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException
+                                      or ArgumentException)
+        {
+            errorMessage = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    /// <summary>Версия карты, прочитанная при загрузке: основа защиты от гонки решений.</summary>
+    private async Task<uint> CurrentRowVersionAsync()
+    {
+        var reloaded = await HKCardService.GetByIdAsync(card.Id);
+        return reloaded?.RowVersion ?? 0;
+    }
+
+    private async Task ReloadAfterDecisionAsync()
+    {
+        var cardId = card.Id;
+        await LoadCardAsync(cardId, default);
+        await LoadApprovalStateAsync();
+    }
+
+    private string _approverUserId = "";
+    private List<ApplicationUser> branchApprovers = new();
+
+    private async Task<List<ApplicationUser>> GetBranchApproversAsync()
+    {
+        var users = await UserManager.Users
+            .Where(u => u.IsActive && u.BranchId == card.BranchId)
+            .OrderBy(u => u.FullName)
+            .ToListAsync();
+
+        return users;
     }
 
     private async Task SaveCard()

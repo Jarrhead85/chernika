@@ -302,6 +302,11 @@ public class GsmHttpSmokeTests : IClassFixture<ChernikaApiFactory>, IAsyncLifeti
 
         var rowVersion = beforeDto.GetProperty("rowVersion").GetUInt32();
 
+        // Название у автономной карты обязательно и передаётся при правке:
+        // сервер не может восстановить его сам — оно введено автором.
+        var cardName = beforeDto.GetProperty("name").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(cardName));
+
         // Текстовая правка карты.
         var updated = await admin.PutAsJsonAsync($"/api/hkcards/{cardId}", new
         {
@@ -310,6 +315,7 @@ public class GsmHttpSmokeTests : IClassFixture<ChernikaApiFactory>, IAsyncLifeti
             equipmentModelId = (Guid?)null,
             aggregateId = (Guid?)null,
             nodeId,
+            name = cardName,
             purpose = "Правка назначения по HTTP",
             normativeBasis = (string?)null,
             notes = "Проверка HTTP: текстовая правка",
@@ -685,11 +691,10 @@ public class GsmHttpSmokeTests : IClassFixture<ChernikaApiFactory>, IAsyncLifeti
         var response = await client.PostAsJsonAsync("/api/hkcards", new
         {
             branchId = Guid.Parse(_factory.BranchId),
-            objectLevel = Domain.Enums.HKObjectLevel.Node,
-            complexId = (Guid?)null,
-            equipmentModelId = (Guid?)null,
-            aggregateId = (Guid?)null,
-            nodeId,
+            // Создание карты старого сценария закрыто: API принимает только
+            // автономную карту, у которой уровень и справочный объект
+            // не задаются, а название обязательно.
+            name = "Проверка HTTP " + Guid.NewGuid().ToString("N")[..6],
             purpose = "Проверка HTTP",
             normativeBasis = (string?)null,
             notes = (string?)null,

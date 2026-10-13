@@ -102,6 +102,15 @@ public class HKCard
 
     public ICollection<HKCardItem> Items { get; set; } = new List<HKCardItem>();
     public ICollection<HKCardNode> TreeNodes { get; set; } = new List<HKCardNode>();
+
+    /// <summary>
+    /// Состояния этапов согласования: реквизитов и состава.
+    /// <para>
+    /// У карты ровно две записи. Они переключаются независимо: принятые
+    /// реквизиты сохраняются при возврате состава.
+    /// </para>
+    /// </summary>
+    public List<HKCardApproval> Approvals { get; set; } = new();
     public ICollection<HKCardStatusLog> StatusLog { get; set; } = new List<HKCardStatusLog>();
     public ICollection<HKCardComponent> ParentComponents { get; set; } = new List<HKCardComponent>();
     public ICollection<HKCardComponent> ChildComponents { get; set; } = new List<HKCardComponent>();

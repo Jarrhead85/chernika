@@ -36,8 +36,9 @@ public class HKCardRegistryIntegrationTests
         var reviewId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
         var reviewCard = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == reviewId);
 
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(reviewId, HKCardStatus.OnReview);
+        // Статус карты вычисляется из состояний этапов: «на проверке» означает,
+        // что этап реквизитов отправлен назначенному согласующему.
+        await HKApprovalScenario.SubmitDetailsAsync(s, reviewId, _fixture.NormAdminA2.Id);
 
         var result = await s.HK.GetRegistryPageAsync(new HKCardRegistryQuery
         {
@@ -209,15 +210,17 @@ public class HKCardRegistryIntegrationTests
         await using var s = _fixture.CreateScope();
         var cardId = await CreateDraftCardAsync(s, _fixture.NormAdminA.Id);
 
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
-        await s.HK.ChangeStatusAsync(cardId, HKCardStatus.OnReview);
+        await HKApprovalScenario.SubmitDetailsAsync(s, cardId, _fixture.NormAdminA2.Id);
 
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
-        var (returned, _) = await s.HK.ChangeStatusAsync(cardId, HKCardStatus.RevisionRequired, "Вернуть на доработку");
-        Assert.True(returned);
+        await s.Approvals.ReturnDetailsAsync(cardId, "Вернуть на доработку",
+            await HKApprovalScenario.VersionAsync(s, cardId));
 
         var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
         Assert.Equal(HKCardStatus.RevisionRequired, card.Status);
+
+        var details = await HKApprovalScenario.StageAsync(s, cardId, HKApprovalStage.Details);
+        Assert.Equal(HKApprovalStageState.RevisionRequired, details.State);
     }
 
     private async Task<Guid> CreateDraftCardAsync(TestScope s, string actorId)
