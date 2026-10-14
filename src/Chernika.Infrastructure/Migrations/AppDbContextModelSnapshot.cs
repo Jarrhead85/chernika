@@ -876,7 +876,6 @@ namespace Chernika.Infrastructure.Migrations
             modelBuilder.Entity("Chernika.Domain.Entities.HKCard", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<Guid?>("AggregateId")
@@ -901,6 +900,9 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CurrentAcceptedRevisionId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("EffectiveDate")
                         .HasColumnType("timestamp with time zone");
@@ -1015,6 +1017,8 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("Code", "Version")
                         .IsUnique();
+
+                    b.HasIndex("Id", "CurrentAcceptedRevisionId");
 
                     b.ToTable("HKCards");
                 });
@@ -1281,6 +1285,250 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("HKCardId", "SortOrder");
 
                     b.ToTable("HKCardNodes");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AttachmentContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid?>("AttachmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AttachmentOriginalFileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("AttachmentSha256")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<long?>("AttachmentSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AttachmentStorageKey")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTime?>("AttachmentUploadedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CapturedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CapturedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)");
+
+                    b.Property<DateTime?>("EffectiveDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ExpirationDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("HKCardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("IncomingLetterNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("NormativeBasis")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<int>("ObjectLevel")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("OutgoingLetterNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Purpose")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("RequestDetails")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("RequestOrganization")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("RequestReceivedDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RequestSenderFullName")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("RevisionNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("SourceCardRowVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Version")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HKCardId", "Id")
+                        .IsUnique()
+                        .HasDatabaseName("UX_HKCardRevisions_Card_Id");
+
+                    b.HasIndex("HKCardId", "RevisionNumber")
+                        .IsUnique()
+                        .HasDatabaseName("UX_HKCardRevisions_Card_Number");
+
+                    b.ToTable("HKCardRevisions");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AssemblyUnitCode")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid>("AssemblyUnitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AssemblyUnitName")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Periodicity")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("RevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SourceItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("UnitOfMeasure")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<decimal>("Volume")
+                        .HasColumnType("numeric");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RevisionId", "Id")
+                        .IsUnique()
+                        .HasDatabaseName("UX_HKCardRevisionItems_Revision_Id");
+
+                    b.HasIndex("RevisionId", "NodeId");
+
+                    b.ToTable("HKCardRevisionItems");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItemMaterial", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Category")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Nd")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("RevisionItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SourceGsmMaterialId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RevisionItemId");
+
+                    b.ToTable("HKCardRevisionItemMaterials");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionNode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Level")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("RevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SourceNodeId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RevisionId", "Id")
+                        .IsUnique()
+                        .HasDatabaseName("UX_HKCardRevisionNodes_Revision_Id");
+
+                    b.HasIndex("RevisionId", "ParentId");
+
+                    b.ToTable("HKCardRevisionNodes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -2880,11 +3128,19 @@ namespace Chernika.Infrastructure.Migrations
                         .HasForeignKey("SupersedesHKCardId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevision", "CurrentAcceptedRevision")
+                        .WithMany()
+                        .HasForeignKey("Id", "CurrentAcceptedRevisionId")
+                        .HasPrincipalKey("HKCardId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Aggregate");
 
                     b.Navigation("Branch");
 
                     b.Navigation("Complex");
+
+                    b.Navigation("CurrentAcceptedRevision");
 
                     b.Navigation("EquipmentModel");
 
@@ -3016,6 +3272,66 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("HKCard");
 
                     b.Navigation("Parent");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevision", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCard", "HKCard")
+                        .WithMany()
+                        .HasForeignKey("HKCardId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("HKCard");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItem", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevision", "Revision")
+                        .WithMany("Items")
+                        .HasForeignKey("RevisionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevisionNode", "Node")
+                        .WithMany()
+                        .HasForeignKey("RevisionId", "NodeId")
+                        .HasPrincipalKey("RevisionId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Node");
+
+                    b.Navigation("Revision");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItemMaterial", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevisionItem", "RevisionItem")
+                        .WithMany("Materials")
+                        .HasForeignKey("RevisionItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("RevisionItem");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionNode", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevision", "Revision")
+                        .WithMany("Nodes")
+                        .HasForeignKey("RevisionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevisionNode", "Parent")
+                        .WithMany()
+                        .HasForeignKey("RevisionId", "ParentId")
+                        .HasPrincipalKey("RevisionId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Parent");
+
+                    b.Navigation("Revision");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -3499,6 +3815,18 @@ namespace Chernika.Infrastructure.Migrations
                 {
                     b.Navigation("IndividualCardItems");
 
+                    b.Navigation("Materials");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevision", b =>
+                {
+                    b.Navigation("Items");
+
+                    b.Navigation("Nodes");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItem", b =>
+                {
                     b.Navigation("Materials");
                 });
 

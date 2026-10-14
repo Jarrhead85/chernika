@@ -111,6 +111,25 @@ public class HKCard
     /// </para>
     /// </summary>
     public List<HKCardApproval> Approvals { get; set; } = new();
+
+    /// <summary>
+    /// Указатель на последнюю принятую редакцию карты.
+    /// <para>
+    /// У новой карты его нет, и он не создаётся при создании черновика:
+    /// фиктивная принятая редакция означала бы решение, которого не было.
+    /// </para>
+    /// <para>
+    /// Источник истины при чтении принятой структуры — ЭТОТ указатель. Выбор по
+    /// максимальной дате, максимальному номеру или последней созданной записи
+    /// дал бы другую карту при любом расхождении истории.
+    /// </para>
+    /// <para>
+    /// Ссылка замкнута на свою карту составным внешним ключом: указать на
+    /// редакцию соседней карты невозможно на уровне базы.
+    /// </para>
+    /// </summary>
+    public Guid? CurrentAcceptedRevisionId { get; set; }
+    public HKCardRevision? CurrentAcceptedRevision { get; set; }
     public ICollection<HKCardStatusLog> StatusLog { get; set; } = new List<HKCardStatusLog>();
     public ICollection<HKCardComponent> ParentComponents { get; set; } = new List<HKCardComponent>();
     public ICollection<HKCardComponent> ChildComponents { get; set; } = new List<HKCardComponent>();

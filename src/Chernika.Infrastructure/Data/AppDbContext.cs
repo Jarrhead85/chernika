@@ -29,6 +29,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ComplexCompositionItem> ComplexCompositionItems => Set<ComplexCompositionItem>();
     public DbSet<HKCard> HKCards => Set<HKCard>();
     public DbSet<HKCardApproval> HKCardApprovals => Set<HKCardApproval>();
+    public DbSet<HKCardRevision> HKCardRevisions => Set<HKCardRevision>();
+    public DbSet<HKCardRevisionNode> HKCardRevisionNodes => Set<HKCardRevisionNode>();
+    public DbSet<HKCardRevisionItem> HKCardRevisionItems => Set<HKCardRevisionItem>();
+    public DbSet<HKCardRevisionItemMaterial> HKCardRevisionItemMaterials => Set<HKCardRevisionItemMaterial>();
     public DbSet<HKCardComponent> HKCardComponents => Set<HKCardComponent>();
     public DbSet<HKCardNode> HKCardNodes => Set<HKCardNode>();
     public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
@@ -455,6 +459,123 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         e.HasIndex(x => new { x.HKCardId, x.Stage })
             .IsUnique()
             .HasDatabaseName("UX_HKCardApprovals_Card_Stage");
+    });
+
+    // ── Хранилище редакций карты ──
+    //
+    // Снимок не связан живыми внешними ключами с рабочими HKCardNode,
+    // HKCardItem и HKCardItemMaterial: рабочая позиция может быть изменена или
+    // удалена, а принятая структура обязана остаться прежней.
+
+    modelBuilder.Entity<HKCardRevision>(e =>
+    {
+        e.HasKey(x => x.Id);
+        e.Property(x => x.RevisionNumber).IsRequired();
+        e.Property(x => x.CapturedByUserId).HasMaxLength(450).IsRequired();
+        e.Property(x => x.Name).HasMaxLength(HKCard.NameMaxLength);
+        e.Property(x => x.Code).HasMaxLength(HKCard.CodeMaxLength);
+        e.Property(x => x.Version).HasMaxLength(10);
+        e.Property(x => x.ObjectLevel).HasConversion<int>();
+        e.Property(x => x.Purpose).HasMaxLength(2000);
+        e.Property(x => x.NormativeBasis).HasMaxLength(2000);
+        e.Property(x => x.Notes).HasMaxLength(4000);
+        e.Property(x => x.RequestOrganization).HasMaxLength(500);
+        e.Property(x => x.RequestSenderFullName).HasMaxLength(500);
+        e.Property(x => x.RequestDetails).HasMaxLength(2000);
+        e.Property(x => x.IncomingLetterNumber).HasMaxLength(100);
+        e.Property(x => x.OutgoingLetterNumber).HasMaxLength(100);
+        e.Property(x => x.AttachmentOriginalFileName).HasMaxLength(255);
+        e.Property(x => x.AttachmentStorageKey).HasMaxLength(512);
+        e.Property(x => x.AttachmentContentType).HasMaxLength(100);
+        e.Property(x => x.AttachmentSha256).HasMaxLength(128);
+
+        // Позиция карты для составного внешнего клюла «указатель принятой
+        // редакции»: без неё ссылка могла бы указать на редакцию чужой карты.
+        e.HasIndex(x => new { x.HKCardId, x.Id })
+            .IsUnique()
+            .HasDatabaseName("UX_HKCardRevisions_Card_Id");
+
+        // Номер редакции уникален внутри карты и нигде больше.
+        e.HasIndex(x => new { x.HKCardId, x.RevisionNumber })
+            .IsUnique()
+            .HasDatabaseName("UX_HKCardRevisions_Card_Number");
+
+        // Карта владеет редакциями, но удаление запрещено: физическое удаление
+        // карты с её историей означало бы уничтожение принятых снимков.
+        e.HasOne(x => x.HKCard).WithMany()
+            .HasForeignKey(x => x.HKCardId)
+            .OnDelete(DeleteBehavior.Restrict);
+    });
+
+    modelBuilder.Entity<HKCardRevisionNode>(e =>
+    {
+        e.HasKey(x => x.Id);
+        e.Property(x => x.Name).IsRequired();
+        e.Property(x => x.Level).HasConversion<int>();
+
+        e.HasIndex(x => new { x.RevisionId, x.Id })
+            .IsUnique()
+            .HasDatabaseName("UX_HKCardRevisionNodes_Revision_Id");
+
+        // Родитель обязан быть позицией ТОЙ ЖЕ редакции. Простой внешний ключ
+        // разрешил бы собрать дерево из позиций разных редакций.
+        e.HasOne(x => x.Parent).WithMany()
+            .HasForeignKey(x => new { x.RevisionId, x.ParentId })
+            .HasPrincipalKey(x => new { x.RevisionId, x.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        e.HasOne(x => x.Revision).WithMany(x => x.Nodes)
+            .HasForeignKey(x => x.RevisionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    });
+
+    modelBuilder.Entity<HKCardRevisionItem>(e =>
+    {
+        e.HasKey(x => x.Id);
+        e.Property(x => x.AssemblyUnitName).HasMaxLength(500);
+        e.Property(x => x.AssemblyUnitCode).HasMaxLength(500);
+        e.Property(x => x.UnitOfMeasure).HasMaxLength(20);
+        e.Property(x => x.Periodicity).HasMaxLength(256);
+        e.Property(x => x.Notes).HasMaxLength(2000);
+
+        e.HasIndex(x => new { x.RevisionId, x.Id })
+            .IsUnique()
+            .HasDatabaseName("UX_HKCardRevisionItems_Revision_Id");
+
+        // Позиция строки принадлежит той же редакции; null — строка под корнем.
+        e.HasOne(x => x.Node).WithMany()
+            .HasForeignKey(x => new { x.RevisionId, x.NodeId })
+            .HasPrincipalKey(x => new { x.RevisionId, x.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        e.HasOne(x => x.Revision).WithMany(x => x.Items)
+            .HasForeignKey(x => x.RevisionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    });
+
+    modelBuilder.Entity<HKCardRevisionItemMaterial>(e =>
+    {
+        e.HasKey(x => x.Id);
+        e.Property(x => x.Name).HasMaxLength(500);
+        e.Property(x => x.Nd).HasMaxLength(1000);
+        e.Property(x => x.Category).HasConversion<int>();
+
+        // Материал принадлежит своей снимковой строке.
+        e.HasOne(x => x.RevisionItem).WithMany(x => x.Materials)
+            .HasForeignKey(x => x.RevisionItemId)
+            .OnDelete(DeleteBehavior.Restrict);
+    });
+
+    modelBuilder.Entity<HKCard>(e =>
+    {
+        // Указатель принятой редакции замкнут на карту: пара «карта + указатель»
+        // ссылается на пару «карта + идентификатор» РЕДАКЦИЙ этой же карты.
+        // Простой внешний ключ допустил бы указатель на чужую карту.
+        e.HasOne(x => x.CurrentAcceptedRevision)
+            .WithMany()
+            .HasForeignKey(x => new { x.Id, x.CurrentAcceptedRevisionId })
+            .HasPrincipalKey(x => new { x.HKCardId, x.Id })
+            .OnDelete(DeleteBehavior.Restrict);
     });
 
     modelBuilder.Entity<HKCardItem>(e =>

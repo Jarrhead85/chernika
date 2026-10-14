@@ -19,11 +19,19 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(DatabaseConnection.Build(builder.Configuration)));
+// Перехватчик запрещает изменение и удаление зафиксированных редакций карты
+// на любом пути сохранения этого контекста.
+builder.Services.AddScoped<Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor,
+    Chernika.Infrastructure.Data.HKCardRevisionImmutabilityInterceptor>();
+
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
+    options.UseNpgsql(DatabaseConnection.Build(builder.Configuration))
+        .AddInterceptors(sp.GetServices<Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor>()));
 
 builder.Services.AddDbContextFactory<AppDbContext>(
-    options => options.UseNpgsql(DatabaseConnection.Build(builder.Configuration)),
+    (sp, options) =>
+        options.UseNpgsql(DatabaseConnection.Build(builder.Configuration))
+            .AddInterceptors(sp.GetServices<Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor>()),
     ServiceLifetime.Scoped);
 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
@@ -60,6 +68,7 @@ builder.Services.AddAuthorization(options =>
 
 builder.Services.AddScoped<HKCardService>();
 builder.Services.AddScoped<HKApprovalService>();
+builder.Services.AddScoped<HKCardRevisionService>();
 builder.Services.AddScoped<HKCardValidationService>();
 builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<EquipmentService>();

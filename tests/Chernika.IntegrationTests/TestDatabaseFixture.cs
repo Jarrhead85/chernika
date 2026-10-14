@@ -54,8 +54,10 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
             b.SetMinimumLevel(LogLevel.Warning);
             b.AddProvider(Logs);
         });
-        services.AddDbContext<AppDbContext>(o =>
-            o.UseNpgsql(ConnectionString).AddInterceptors(FailingCommandInterceptor.Instance));
+        services.AddDbContext<AppDbContext>((sp, o) =>
+            o.UseNpgsql(ConnectionString)
+                .AddInterceptors(FailingCommandInterceptor.Instance)
+                .AddInterceptors(sp.GetServices<Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor>()));
         services.AddIdentityCore<ApplicationUser>(o =>
             {
                 o.Password.RequiredLength = 1;
@@ -88,7 +90,10 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
         services.AddScoped<NotificationService>();
         services.AddScoped<HKCardValidationService>();
         services.AddScoped<HKCardService>();
+        services.AddScoped<Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor,
+            Chernika.Infrastructure.Data.HKCardRevisionImmutabilityInterceptor>();
         services.AddScoped<HKApprovalService>();
+        services.AddScoped<HKCardRevisionService>();
         services.AddOptions();
         services.Configure<HKExpirationOptions>(o =>
         {
