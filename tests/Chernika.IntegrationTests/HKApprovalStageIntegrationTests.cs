@@ -536,7 +536,7 @@ public class HKApprovalStageIntegrationTests
         // изменило карту, и без версии оно сочло бы себя первым.
         await using var second = await ApproverAsync();
         var stale = staleVersion;
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        await Assert.ThrowsAsync<HkCardVersionConflictException>(
             () => second.Approvals.ReturnDetailsAsync(cardId, null, stale));
     }
 

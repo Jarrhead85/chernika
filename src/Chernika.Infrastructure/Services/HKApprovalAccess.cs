@@ -75,6 +75,20 @@ internal sealed record HkCardAccessContext(
 /// показывать действие, которое всё равно будет отклонено.
 /// </para>
 /// </summary>
+/// <summary>
+/// Конкурентное изменение: версия карты, считанная экраном, не совпадает с
+/// сохранённой, либо строка этапа изменена другим решением.
+/// <para>
+/// Выделенный тип нужен, чтобы HTTP-слой отличал конфликт (409) от недопустимой
+/// команды (400): тот же <see cref="InvalidOperationException"/> раньше означал и то,
+/// и другое.
+/// </para>
+/// </summary>
+public sealed class HkCardVersionConflictException : InvalidOperationException
+{
+    public HkCardVersionConflictException(string message) : base(message) { }
+}
+
 public sealed class HkCardAccessDeniedException : UnauthorizedAccessException
 {
     public HkCardAccessDeniedException(string message) : base(message) { }

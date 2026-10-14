@@ -108,9 +108,10 @@ public class HKApprovalService
         var hasWork = await _permissions.HasPermissionAsync(
             access.ActorUserId.ToString(), PermissionCodes.HKWork, ct);
 
-        return stages.Count == 0
-            ? new HKCardEditingCapabilities(hasWork, hasWork, hasWork)
-            : DeriveEditingCapabilities(stages, access.Card.Status, hasWork);
+        // Отсутствие этапов разбирается наравне с их наличием: запреты
+        // статуса (архивная, удалённая) действуют независимо от того,
+        // созданы этапы или нет.
+        return DeriveEditingCapabilities(stages, access.Card.Status, hasWork);
     }
 
     /// <summary>
@@ -143,48 +144,41 @@ public class HKApprovalService
     /// Даты принятия не выдумываются: у нового этапа их нет.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Создаёт недостающие этапы карты внутри транзакции вызывающей команды.
+    /// <para>
+    /// Вставка идёт одним атомарным <c>INSERT ... ON CONFLICT DO NOTHING</c> по
+    /// уникальному индексу пары «карта + этап» (UX_HKCardApprovals_Card_Stage).
+    /// Поэтому:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>параллельная инициализация не создаёт дубликаты;</item>
+    /// <item>ловить «любое нарушение уникальности» не требуется — такой разбор
+    /// относился бы и к посторонним ограничениям;</item>
+    /// <item>откат не подменяется <c>ChangeTracker.Clear()</c>: это сброс
+    /// отслеживания в памяти, а не откат транзакции;</item>
+    /// <item>состояние после вставки перечитывается, и команда работает только с
+    /// реально сохранёнными строками, а не с отсоединёнными объектами.</item>
+    /// </list>
+    /// <para>Вызывается только из команды и только после проверок доступа.</para>
+    /// </summary>
     private async Task<List<HKCardApproval>> EnsureStagesForCommandAsync(
         Guid cardId, CancellationToken ct)
     {
-        var stages = await _db.HKCardApprovals
-            .Where(a => a.HKCardId == cardId)
-            .ToListAsync(ct);
-
-        var missing = new[] { HKApprovalStage.Details, HKApprovalStage.Composition }
-            .Where(stage => stages.All(a => a.Stage != stage))
-            .ToList();
-
-        if (missing.Count == 0)
-            return stages;
-
         var now = _time.GetUtcNow().UtcDateTime;
-        var created = missing.Select(stage => new HKCardApproval
-        {
-            Id = Guid.NewGuid(),
-            HKCardId = cardId,
-            Stage = stage,
-            State = HKApprovalStageState.Draft,
-            UpdatedAtUtc = now
-        }).ToList();
 
-        _db.HKCardApprovals.AddRange(created);
-
-        try
+        foreach (var stage in new[] { HKApprovalStage.Details, HKApprovalStage.Composition })
         {
-            await _db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
-        {
-            // Параллельная инициализация другой команды выиграла гонку.
-            // Чужие сущности Added откатываются, состояние перечитывается.
-            _db.ChangeTracker.Clear();
+            await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "HKCardApprovals"
+                    ("Id", "HKCardId", "Stage", "State", "UpdatedAtUtc")
+                VALUES ({Guid.NewGuid()}, {cardId}, {(int)stage}, {(int)HKApprovalStageState.Draft}, {now})
+                ON CONFLICT ("HKCardId", "Stage") DO NOTHING
+                """, ct);
         }
 
         return await _db.HKCardApprovals.Where(a => a.HKCardId == cardId).ToListAsync(ct);
     }
-
-    private static bool IsUniqueViolation(DbUpdateException ex) =>
-        ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
 
     /// <summary>
     /// Вычисляет общий статус карты по состояниям этапов.
@@ -230,20 +224,42 @@ public class HKApprovalService
         var details = FindPersistedStage(stages, HKApprovalStage.Details);
         var composition = FindPersistedStage(stages, HKApprovalStage.Composition);
 
+        // У карты, ещё не проходившей ни одной команды, этапов нет — это
+        // допустимое состояние, этапы создаст первая команда. Отсутствие этапа
+        // само по себе редактирование не запрещает: запреты статуса отсечены
+        // выше, а этап, которого нет, заблокировать не может.
         var detailsEditable = hasWorkPermission
-                              && details is not null
-                              && details.State is HKApprovalStageState.Draft
-                                  or HKApprovalStageState.RevisionRequired;
+                              && (details is null
+                                  || details.State is HKApprovalStageState.Draft
+                                      or HKApprovalStageState.RevisionRequired);
 
         var compositionEditable = hasWorkPermission
-                                  && composition is not null
-                                  && composition.State is HKApprovalStageState.Draft
-                                      or HKApprovalStageState.RevisionRequired;
+                                  && (composition is null
+                                      || composition.State is HKApprovalStageState.Draft
+                                          or HKApprovalStageState.RevisionRequired);
 
         return new HKCardEditingCapabilities(
             detailsEditable,
             compositionEditable,
             detailsEditable);
+    }
+
+    /// <summary>
+    /// Приводит конкурентное изменение строки к типу конфликта версии: оно
+    /// означает изменение данных, а не ошибку программы, и принадлежит
+    /// предметной области ответа.
+    /// </summary>
+    private static async Task GuardedAsync(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
     }
 
     private static HKCardApproval? FindStage(IReadOnlyList<HKCardApproval> stages, HKApprovalStage stage) =>
@@ -385,7 +401,16 @@ public class HKApprovalService
     /// структуре.
     /// </para>
     /// </summary>
-    public async Task SubmitDetailsAsync(
+    /// <summary>SubmitDetailsAsync: конкурентное изменение строки приводится к типу
+    /// конфликта версии. Токен строки проверяется не только в финальной
+    /// фиксации: служебные сервисы задач и аудита сохраняют свой контекст и могут
+    /// выполнить отложенное обновление строки этапа раньше, чем управление дойдёт
+    /// до финального сохранения. Приведение типа выполняется на границе команды,
+    /// поэтому подробности PostgreSQL наружу не выходят.</summary>
+    public Task SubmitDetailsAsync(Guid cardId, string approverUserId, uint expectedRowVersion, CancellationToken ct = default) =>
+        GuardedAsync(SubmitDetailsAsyncCore(cardId, approverUserId, expectedRowVersion, ct));
+
+    private async Task SubmitDetailsAsyncCore(
         Guid cardId, string approverUserId, uint expectedRowVersion, CancellationToken ct = default)
     {
         // Доступ проверяется по независимо сохранённому состоянию ДО открытия
@@ -412,6 +437,16 @@ public class HKApprovalService
         var stages = await EnsureStagesForCommandAsync(cardId, ct);
         var details = FindStage(stages, HKApprovalStage.Details)!;
         var card = await LoadCardForWriteAsync(cardId, ct);
+
+        // Версия проверяется ПОВТОРНО по строке, прочитанной внутри транзакции.
+        //
+        // Предварительная проверка по снимку, взятому до открытия транзакции,
+        // защищает от устаревшего экрана, но не от гонки: между этими двумя
+        // чтениями другая команда может зафиксировать изменения. Тогда проигравшая
+        // команда перечитает уже обновлённую строку, токен совпадёт с её
+        // собственной фиксацией, и UPDATE пройдёт — обе команды объявят успех.
+        // Именно это и происходило: обе параллельные отправки проходили.
+        EnsureRowVersion(card.RowVersion, expectedRowVersion);
 
         // Реквизиты проверяются как черновик: без требования структуры и уровня.
         var validation = await _validation.ValidateDraftAsync(card, ct);
@@ -461,7 +496,16 @@ public class HKApprovalService
     /// которой в этом PR нет.
     /// </para>
     /// </summary>
-    public async Task ApproveDetailsAsync(
+    /// <summary>ApproveDetailsAsync: конкурентное изменение строки приводится к типу
+    /// конфликта версии. Токен строки проверяется не только в финальной
+    /// фиксации: служебные сервисы задач и аудита сохраняют свой контекст и могут
+    /// выполнить отложенное обновление строки этапа раньше, чем управление дойдёт
+    /// до финального сохранения. Приведение типа выполняется на границе команды,
+    /// поэтому подробности PostgreSQL наружу не выходят.</summary>
+    public Task ApproveDetailsAsync(Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default) =>
+        GuardedAsync(ApproveDetailsAsyncCore(cardId, comment, expectedRowVersion, ct));
+
+    private async Task ApproveDetailsAsyncCore(
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
         // Право решения, активность пользователя, доступ к карте и назначение
@@ -479,6 +523,12 @@ public class HKApprovalService
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         var card = await LoadCardForWriteAsync(cardId, ct);
+
+        // Повторная проверка версии по строке, прочитанной ВНУТРИ транзакции.
+        // Предварительной проверки по снимку вне транзакции для защиты от
+        // гонки недостаточно: между двумя чтениями другая команда может
+        // зафиксировать изменения, и проигравшая сверит версию с самой собой.
+        EnsureRowVersion(card.RowVersion, expectedRowVersion);
 
         if (details.State != HKApprovalStageState.OnReview)
             throw new InvalidOperationException("Принять реквизиты можно только когда они на рассмотрении.");
@@ -512,7 +562,16 @@ public class HKApprovalService
     /// не отменяет работу над другим.
     /// </para>
     /// </summary>
-    public async Task ReturnDetailsAsync(
+    /// <summary>ReturnDetailsAsync: конкурентное изменение строки приводится к типу
+    /// конфликта версии. Токен строки проверяется не только в финальной
+    /// фиксации: служебные сервисы задач и аудита сохраняют свой контекст и могут
+    /// выполнить отложенное обновление строки этапа раньше, чем управление дойдёт
+    /// до финального сохранения. Приведение типа выполняется на границе команды,
+    /// поэтому подробности PostgreSQL наружу не выходят.</summary>
+    public Task ReturnDetailsAsync(Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default) =>
+        GuardedAsync(ReturnDetailsAsyncCore(cardId, comment, expectedRowVersion, ct));
+
+    private async Task ReturnDetailsAsyncCore(
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
         var access = await BuildDecisionAccessAsync(cardId, PermissionCodes.HKReview, ct);
@@ -528,6 +587,12 @@ public class HKApprovalService
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         var card = await LoadCardForWriteAsync(cardId, ct);
+
+        // Повторная проверка версии по строке, прочитанной ВНУТРИ транзакции.
+        // Предварительной проверки по снимку вне транзакции для защиты от
+        // гонки недостаточно: между двумя чтениями другая команда может
+        // зафиксировать изменения, и проигравшая сверит версию с самой собой.
+        EnsureRowVersion(card.RowVersion, expectedRowVersion);
 
         if (details.State != HKApprovalStageState.OnReview)
             throw new InvalidOperationException("Вернуть реквизиты можно только когда они на рассмотрении.");
@@ -562,7 +627,16 @@ public class HKApprovalService
     /// человек, который принял реквизиты.
     /// </para>
     /// </summary>
-    public async Task SubmitCompositionAsync(
+    /// <summary>SubmitCompositionAsync: конкурентное изменение строки приводится к типу
+    /// конфликта версии. Токен строки проверяется не только в финальной
+    /// фиксации: служебные сервисы задач и аудита сохраняют свой контекст и могут
+    /// выполнить отложенное обновление строки этапа раньше, чем управление дойдёт
+    /// до финального сохранения. Приведение типа выполняется на границе команды,
+    /// поэтому подробности PostgreSQL наружу не выходят.</summary>
+    public Task SubmitCompositionAsync(Guid cardId, uint expectedRowVersion, CancellationToken ct = default) =>
+        GuardedAsync(SubmitCompositionAsyncCore(cardId, expectedRowVersion, ct));
+
+    private async Task SubmitCompositionAsyncCore(
         Guid cardId, uint expectedRowVersion, CancellationToken ct = default)
     {
         var access = await BuildSubmitAccessAsync(cardId, ct);
@@ -598,6 +672,12 @@ public class HKApprovalService
         var details = FindStage(stages, HKApprovalStage.Details)!;
         var composition = FindStage(stages, HKApprovalStage.Composition)!;
         var card = await LoadCardForWriteAsync(cardId, ct);
+
+        // Повторная проверка версии по строке, прочитанной ВНУТРИ транзакции.
+        // Предварительной проверки по снимку вне транзакции для защиты от
+        // гонки недостаточно: между двумя чтениями другая команда может
+        // зафиксировать изменения, и проигравшая сверит версию с самой собой.
+        EnsureRowVersion(card.RowVersion, expectedRowVersion);
 
         // Структура проверяется соответствующими валидаторами. Карта только с
         // конечными строками под корнем допустима.
@@ -638,7 +718,16 @@ public class HKApprovalService
     }
 
     /// <summary>Возвращает состав на доработку. Данные не удаляются.</summary>
-    public async Task ReturnCompositionAsync(
+    /// <summary>ReturnCompositionAsync: конкурентное изменение строки приводится к типу
+    /// конфликта версии. Токен строки проверяется не только в финальной
+    /// фиксации: служебные сервисы задач и аудита сохраняют свой контекст и могут
+    /// выполнить отложенное обновление строки этапа раньше, чем управление дойдёт
+    /// до финального сохранения. Приведение типа выполняется на границе команды,
+    /// поэтому подробности PostgreSQL наружу не выходят.</summary>
+    public Task ReturnCompositionAsync(Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default) =>
+        GuardedAsync(ReturnCompositionAsyncCore(cardId, comment, expectedRowVersion, ct));
+
+    private async Task ReturnCompositionAsyncCore(
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
         var access = await BuildDecisionAccessAsync(cardId, PermissionCodes.HKReview, ct);
@@ -654,6 +743,12 @@ public class HKApprovalService
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         var card = await LoadCardForWriteAsync(cardId, ct);
+
+        // Повторная проверка версии по строке, прочитанной ВНУТРИ транзакции.
+        // Предварительной проверки по снимку вне транзакции для защиты от
+        // гонки недостаточно: между двумя чтениями другая команда может
+        // зафиксировать изменения, и проигравшая сверит версию с самой собой.
+        EnsureRowVersion(card.RowVersion, expectedRowVersion);
 
         if (composition.State != HKApprovalStageState.OnReview)
             throw new InvalidOperationException("Вернуть состав можно только когда он на рассмотрении.");
@@ -719,8 +814,26 @@ public class HKApprovalService
             throw new InvalidOperationException(
                 "Версия карточки не указана. Обновите страницу и повторите попытку.");
 
-        if (card.RowVersion != expectedRowVersion)
+        EnsureRowVersion(card.RowVersion, expectedRowVersion);
+    }
+
+    /// <summary>
+    /// Сверяет версию строки с той, которую знает вызывающий.
+    /// <para>
+    /// Значение обязано быть фактической версией ПРОЧТЁННОЙ СТРОКИ. Проверка по
+    /// значению, прочитанному до открытия транзакции, не защищает от гонки:
+    /// проигравшая команда успевает перечитать уже обновлённую строку и сверить
+    /// её версию с самой собой.
+    /// </para>
+    /// </summary>
+    private static void EnsureRowVersion(uint actualRowVersion, uint expectedRowVersion)
+    {
+        if (expectedRowVersion == 0)
             throw new InvalidOperationException(
+                "Версия карточки не указана. Обновите страницу и повторите попытку.");
+
+        if (actualRowVersion != expectedRowVersion)
+            throw new HkCardVersionConflictException(
                 "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
     }
 

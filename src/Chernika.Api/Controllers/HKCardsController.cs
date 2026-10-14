@@ -172,7 +172,20 @@ public class HKCardsController : ControllerBase
         }
         catch (HkCardAccessDeniedException ex)
         {
-            return Forbid(ex.Message);
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // Отказ доступа приходит разными типами: назначенный отказ доступа к
+            // карте и отказ по правам. Наружу оба должны выглядеть одинаково —
+            // иначе отказ превращается в 500.
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex) when (IsCardMissing(ex))
+        {
+            // Отсутствие карты — 404. Без этой ветки необработанное исключение
+            // превратилось бы в 500 с внутренним текстом.
+            return NotFound();
         }
     }
 
@@ -187,7 +200,18 @@ public class HKCardsController : ControllerBase
         }
         catch (HkCardAccessDeniedException ex)
         {
-            return Forbid(ex.Message);
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // Отказ доступа приходит разными типами: назначенный отказ доступа к
+            // карте и отказ по правам. Наружу оба должны выглядеть одинаково —
+            // иначе отказ превращается в 500.
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex) when (IsCardMissing(ex))
+        {
+            return NotFound();
         }
     }
 
@@ -206,9 +230,10 @@ public class HKCardsController : ControllerBase
                 await _approvals.SubmitCompositionAsync(id, request.RowVersion);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
-                                      or UnauthorizedAccessException)
+                                      or UnauthorizedAccessException
+                                      or HkCardVersionConflictException)
         {
-            return BadRequest(ex.Message);
+            return ToStageError(ex);
         }
         catch (HKCardValidationException ex)
         {
@@ -246,13 +271,47 @@ public class HKCardsController : ControllerBase
             }
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
-                                      or UnauthorizedAccessException)
+                                      or UnauthorizedAccessException
+                                      or HkCardVersionConflictException)
         {
-            return BadRequest(ex.Message);
+            return ToStageError(ex);
         }
 
         return NoContent();
     }
+
+    /// <summary>
+    /// Отличает «карта не найдена» от других ошибок входных данных: по тексту
+    /// сообщения, а не по типу, потому что тип ArgumentException используется
+    /// для обеих ситуаций.
+    /// </summary>
+    private static bool IsCardMissing(Exception ex) =>
+        ex.Message.Contains("не найдена", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Единое соглашение проекта по кодам ответа для команд этапов:
+    /// 403 — отказ доступа, 404 — карта не найдена, 409 — конфликт версии или
+    /// конкурентного решения, 400 — недопустимая команда или ошибка входа.
+    /// <para>
+    /// Тексты внутренних ошибок PostgreSQL наружу не выдаются: они содержат
+    /// имена таблиц, ограничений и внутренних типов и не относятся к предметной
+    /// области ответа.
+    /// </para>
+    /// </summary>
+    private ActionResult ToStageError(Exception ex) => ex switch
+    {
+        HkCardAccessDeniedException denied
+            => StatusCode(StatusCodes.Status403Forbidden, denied.Message),
+        UnauthorizedAccessException denied
+            => StatusCode(StatusCodes.Status403Forbidden, denied.Message),
+        HkCardVersionConflictException conflict
+            => Conflict(conflict.Message),
+        Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException
+            => Conflict("Карточка была изменена другим пользователем. Обновите страницу и повторите попытку."),
+        ArgumentException arg when arg.Message.Contains("не найдена", StringComparison.OrdinalIgnoreCase)
+            => NotFound(),
+        _ => BadRequest(ex.Message),
+    };
 
     private static bool TryParseStage(string? value, out HKApprovalStage stage)
     {

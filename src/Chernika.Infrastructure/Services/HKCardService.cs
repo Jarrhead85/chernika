@@ -1059,6 +1059,24 @@ public class HKCardService
     /// <summary>
     /// Заблокированы ли реквизиты и основание на рассмотрении своего этапа.
     /// </summary>
+    /// <summary>
+    /// Все редактируемые реквизиты карты как они сохранены в БД. Проекция
+    /// отслеживаемого объекта для сравнения непригодна — см. UpdateAsync.
+    /// </summary>
+    private sealed record StoredDetails(
+        string? Name,
+        string? Purpose,
+        string? NormativeBasis,
+        string? Notes,
+        string? RequestOrganization,
+        string? RequestSenderFullName,
+        DateTime? RequestReceivedDate,
+        string? RequestDetails,
+        string? IncomingLetterNumber,
+        string? OutgoingLetterNumber,
+        DateTime? EffectiveDate,
+        DateTime? ExpirationDate);
+
     private async Task EnsureDetailsEditableAsync(Guid cardId, CancellationToken ct)
     {
         var stages = await _db.HKCardApprovals
@@ -2177,6 +2195,27 @@ public class HKCardService
         if (!validation.IsValid)
             throw new HKCardValidationException(validation.Errors);
 
+        // Эталон для сравнения — ОТДЕЛЬНАЯ проекция AsNoTracking по всем
+        // редактируемым полям. Загруженная отслеживаемая сущность брать нельзя:
+        // если входной объект уже отслеживается этим же контекстом (штатный
+        // вызов из HKEdit), запрос вернёт ТОТ ЖЕ экземпляр, и подмена
+        // реквизитов вызывающим кодом стала бы невидимой — команда решила бы,
+        // что реквизиты не менялись, и пропустила бы их вместе с запрещёнными
+        // строками.
+        var storedDetails = await _db.HKCards
+            .AsNoTracking()
+            .Where(c => c.Id == persisted.Id)
+            .Select(c => new StoredDetails(
+                c.Name, c.Purpose, c.NormativeBasis, c.Notes,
+                c.RequestOrganization, c.RequestSenderFullName, c.RequestReceivedDate,
+                c.RequestDetails, c.IncomingLetterNumber, c.OutgoingLetterNumber,
+                c.EffectiveDate, c.ExpirationDate))
+            .FirstOrDefaultAsync(ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+
+        // Отслеживаемый экземпляр нужен только как цель записи. Он может
+        // совпасть с входным объектом — это не мешает: решение о допустимости
+        // уже принято по независимым данным.
         var existing = await _db.HKCards
             .Include(x => x.Items).ThenInclude(i => i.Materials)
             .FirstOrDefaultAsync(x => x.Id == persisted.Id, ct)
@@ -2191,18 +2230,18 @@ public class HKCardService
         // автору сохранить нормы во время рассмотрения реквизитов — он на этом
         // шаге именно для того и работает.
         var detailsChanged =
-            Differs(existing.Name, card.Name)
-            || Differs(existing.Purpose, card.Purpose)
-            || Differs(existing.NormativeBasis, card.NormativeBasis)
-            || Differs(existing.Notes, card.Notes)
-            || Differs(existing.RequestOrganization, card.RequestOrganization)
-            || Differs(existing.RequestSenderFullName, card.RequestSenderFullName)
-            || Differs(existing.RequestReceivedDate, NormalizeUtc(card.RequestReceivedDate))
-            || Differs(existing.RequestDetails, card.RequestDetails)
-            || Differs(existing.IncomingLetterNumber, card.IncomingLetterNumber)
-            || Differs(existing.OutgoingLetterNumber, card.OutgoingLetterNumber)
-            || Differs(existing.EffectiveDate, NormalizeUtc(card.EffectiveDate))
-            || Differs(existing.ExpirationDate, NormalizeUtc(card.ExpirationDate));
+            Differs(storedDetails.Name, card.Name)
+            || Differs(storedDetails.Purpose, card.Purpose)
+            || Differs(storedDetails.NormativeBasis, card.NormativeBasis)
+            || Differs(storedDetails.Notes, card.Notes)
+            || Differs(storedDetails.RequestOrganization, card.RequestOrganization)
+            || Differs(storedDetails.RequestSenderFullName, card.RequestSenderFullName)
+            || Differs(storedDetails.RequestReceivedDate, NormalizeUtc(card.RequestReceivedDate))
+            || Differs(storedDetails.RequestDetails, card.RequestDetails)
+            || Differs(storedDetails.IncomingLetterNumber, card.IncomingLetterNumber)
+            || Differs(storedDetails.OutgoingLetterNumber, card.OutgoingLetterNumber)
+            || Differs(storedDetails.EffectiveDate, NormalizeUtc(card.EffectiveDate))
+            || Differs(storedDetails.ExpirationDate, NormalizeUtc(card.ExpirationDate));
 
         var compositionChanged = await CompositionDiffersAsync(persisted.Id, card.Items.ToList(), ct);
 

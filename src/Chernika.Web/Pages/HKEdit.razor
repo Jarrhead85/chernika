@@ -49,7 +49,7 @@
                     <div class="hk-form-row hk-form-row--request">
                         <div class="field">
                             <label for="hk-request-organization">Организация</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputText id="hk-request-organization" @bind-Value="card.RequestOrganization" class="fieldInput" />
                             }
@@ -60,7 +60,7 @@
                         </div>
                         <div class="field">
                             <label for="hk-request-sender">ФИО отправителя</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputText id="hk-request-sender" @bind-Value="card.RequestSenderFullName" class="fieldInput" />
                             }
@@ -71,7 +71,7 @@
                         </div>
                         <div class="field">
                             <label for="hk-request-date">Дата поступления</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputDate id="hk-request-date" @bind-Value="card.RequestReceivedDate" class="fieldInput" />
                             }
@@ -82,10 +82,10 @@
                         </div>
                         <div class="field hk-letter-numbers-field">
                             <label>Номер документа</label>
-                            <div class="hk-letter-numbers @(canEdit ? "hk-letter-numbers--editable" : null)" role="group" aria-label="Номера входящего и исходящего документов">
+                            <div class="hk-letter-numbers @(canEditDetails ? "hk-letter-numbers--editable" : null)" role="group" aria-label="Номера входящего и исходящего документов">
                                 <div class="hk-letter-number-part">
                                     <label class="sr-only" for="hk-incoming-letter">Входящий номер</label>
-                                    @if (canEdit)
+                                    @if (canEditDetails)
                                     {
                                         <InputText id="hk-incoming-letter" @bind-Value="card.IncomingLetterNumber" class="fieldInput" placeholder="Входящий" />
                                     }
@@ -96,7 +96,7 @@
                                 </div>
                                 <div class="hk-letter-number-part">
                                     <label class="sr-only" for="hk-outgoing-letter">Исходящий номер</label>
-                                    @if (canEdit)
+                                    @if (canEditDetails)
                                     {
                                         <InputText id="hk-outgoing-letter" @bind-Value="card.OutgoingLetterNumber" class="fieldInput" placeholder="Исходящий" />
                                     }
@@ -121,7 +121,7 @@
                                         {
                                             <span class="hki-mat-tag hki-mb-tag">
                                                 <span>@mb.Name</span>
-                                                @if (canEdit)
+                                                @if (canEditDetails)
                                                 {
                                                     <button type="button" class="hki-tag-remove" @onclick="() => RemoveMilitaryBranch(mbId)">×</button>
                                                 }
@@ -130,11 +130,11 @@
                                     }
                                 </div>
                             }
-                            else if (!canEdit)
+                            else if (!canEditDetails)
                             {
                                 <div class="readonlyValue"></div>
                             }
-                            @if (canEdit && !selectedMilitaryBranchIds.Any())
+                            @if (canEditDetails && !selectedMilitaryBranchIds.Any())
                             {
                                 var mbDropId = "mb-drop";
                                 var mbBtnId = "mb-btn";
@@ -172,7 +172,7 @@
                                         <span class="hki-pdf-size">Загрузка…</span>
                                     }
                                     <button type="button" class="hki-pdf-icon" title="Скачать" @onclick="DownloadAttachment">⤓</button>
-                                    @if (canEdit && CanManageAttachment)
+                                    @if (canEditPdf && CanManageAttachment)
                                     {
                                         <label class="hki-pdf-icon" title="Заменить">
                                             <InputFile @key="_fileInputKey" OnChange="HandleAttachmentUpload" accept="application/pdf,.pdf" class="hki-file-input" />
@@ -202,7 +202,7 @@
                                     }
                                 </div>
                             }
-                            else if (canEdit && CanSelectAttachment)
+                            else if (canEditPdf && CanSelectAttachment)
                             {
                                 <label class="fieldInput hki-pdf-empty @(pdfError ? "hki-pdf-chip--error" : null)"
                                        title="@_attachmentError">
@@ -226,7 +226,7 @@
                     <div class="hk-form-row hk-form-row--object">
                         <div class="field hk-request-details-field">
                             <label for="hk-request-details">Реквизиты</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputTextArea id="hk-request-details" @bind-Value="card.RequestDetails" class="fieldInput" />
                             }
@@ -246,7 +246,7 @@
                                     <button type="button"
                                             class="hk-level-segmented-item @(active ? "active" : "")"
                                             role="tab" aria-selected="@active.ToString().ToLower()"
-                                            disabled="@(!IsNew || !canEdit)"
+                                            disabled="@(!IsNew || !canEditDetails)"
                                             @onclick="() => SelectLevel(lvl)">
                                         @LevelName(lvl)
                                     </button>
@@ -264,7 +264,7 @@
                                 var objDropId = "obj-drop";
                                 var objBtnId = "obj-btn";
                             }
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <div id="@objBtnId" class="field-select" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between" @onclick="() => ToggleObjectDropdown(objDropId, objBtnId)">
                                     <span style="flex:1">@(objectEntity != null ? objectEntity : "Выбрать...")</span>
@@ -312,7 +312,7 @@
                         {
                         <div class="field">
                             <label for="hk-card-name">Название ХК</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputText id="hk-card-name" @bind-Value="card.Name" class="fieldInput"
                                            placeholder="Например: Насосный агрегат" />
@@ -353,7 +353,7 @@
                     <div class="hk-form-row hk-form-row--description">
                         <div class="field">
                             <label>Назначение ХК</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputTextArea @bind-Value="card.Purpose" class="fieldInput hk-resizable-textarea" />
                             }
@@ -364,7 +364,7 @@
                         </div>
                         <div class="field">
                             <label>Примечание</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputTextArea @bind-Value="card.Notes" class="fieldInput hk-resizable-textarea" />
                             }
@@ -378,7 +378,7 @@
                     <div class="hk-form-row hk-form-row--dates">
                         <div class="field">
                             <label>Дата начала действия</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputDate @bind-Value="card.EffectiveDate" class="fieldInput" />
                             }
@@ -389,7 +389,7 @@
                         </div>
                         <div class="field">
                             <label>Дата окончания действия</label>
-                            @if (canEdit)
+                            @if (canEditDetails)
                             {
                                 <InputDate @bind-Value="card.ExpirationDate" AdditionalAttributes="@ExpirationDateAttributes()" />
                             }
@@ -400,13 +400,27 @@
                         </div>
                     </div>
 
-                    @if (selectedLevel == HKObjectLevel.Node)
+                    @if (IsAutonomousMode || selectedLevel == HKObjectLevel.Node)
                     {
                     <div class="full-width" style="margin-top:8px">
                         <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Строки ХК</h3>
 
+                        @* Автономная карта хранит собственную структуру, а не дочерние
+                           ХК. Редактор дерева ещё не реализован, поэтому уровень
+                           карты остаётся Undefined и не подставляется под таблицу
+                           прежнего сценария: выдуманный уровень означал бы
+                           структуру, которой нет. *@
+                        @if (IsAutonomousMode)
+                        {
+                            <div class="note" style="margin-bottom:10px;font-size:12px">
+                                Собственная структура автономной карты редактируется
+                                построением дерева — этот редактор ещё не реализован.
+                                Ниже доступны конечные строки, нормы и материалы.
+                            </div>
+                        }
+
                         <div class="hk-items-table-wrapper">
-                        <table class="hk-items-table hk-rows-table @(canEdit ? "hk-rows-editable" : null)">
+                        <table class="hk-items-table hk-rows-table @(canEditComposition ? "hk-rows-editable" : null)">
                             <thead>
                                 <tr>
                                     <th rowspan="2" class="col-num" style="width:32px">№</th>
@@ -442,7 +456,7 @@
                                     <tr @key="item.Id" class="@(_focusItemId == item.Id ? "hki-focus" : "")">
                                         <td class="col-num">@idx</td>
                                         <td class="gsm-selector-cell">
-                                            @if (canEdit)
+                                            @if (canEditComposition)
                                             {
                                                 var au = item.AssemblyUnitId != Guid.Empty ? assemblyUnits.FirstOrDefault(a => a.Id == item.AssemblyUnitId) : null;
                                                 var auDropId = $"au-drop-{item.Id:N}";
@@ -488,7 +502,7 @@
                                             }
                                         </td>
                                         <td>
-                                            @if (canEdit)
+                                            @if (canEditComposition)
                                             {
                                                 <input type="number" @bind:get="item.Quantity == 0 ? null : (int?)item.Quantity"
                                                        @bind:set="@(v => item.Quantity = v ?? 0)" class="hki-td-input" />
@@ -515,13 +529,13 @@
                                                         : "—";
                                                     <div class="hki-mat-tag">
                                                         <span>@matName</span>
-                                                        @if (canEdit)
+                                                        @if (canEditComposition)
                                                         {
                                                             <button type="button" class="hki-tag-remove" @onclick="() => RemoveMaterial(item, mat)">×</button>
                                                         }
                                                     </div>
                                                 }
-                                                @if (canEdit)
+                                                @if (canEditComposition)
                                                 {
                                                     var pickerKey = (item.Id, cat);
                                                     var dropId = $"gsm-drop-{item.Id:N}-{cat}";
@@ -573,7 +587,7 @@
                                             </td>
                                         }
                                         <td>
-                                            @if (canEdit)
+                                            @if (canEditComposition)
                                             {
                                                 <input type="number" @bind:get="item.Volume == 0m ? null : (decimal?)item.Volume"
                                                        @bind:set="@(v => item.Volume = v ?? 0m)" step="0.001" class="hki-td-input" />
@@ -584,7 +598,7 @@
                                             }
                                         </td>
                                         <td>
-                                            @if (canEdit)
+                                            @if (canEditComposition)
                                             {
                                                 <input @bind="item.UnitOfMeasure" class="hki-td-input" />
                                             }
@@ -594,7 +608,7 @@
                                             }
                                         </td>
                                         <td>
-                                            @if (canEdit)
+                                            @if (canEditComposition)
                                             {
                                                 <textarea @bind="item.Periodicity" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
                                             }
@@ -604,7 +618,7 @@
                                             }
                                         </td>
                                         <td>
-                                            @if (canEdit)
+                                            @if (canEditComposition)
                                             {
                                                 <textarea @bind="item.Notes" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
                                             }
@@ -614,7 +628,7 @@
                                             }
                                         </td>
                                         <td class="hki-actions col-actions">
-                                            @if (canEdit)
+                                            @if (canEditComposition)
                                             {
                                                 <button type="button" class="linkBtn" @onclick="() => MoveItem(item, -1)" disabled="@(idx <= 1)" title="Вверх">↑</button>
                                                 <button type="button" class="linkBtn" @onclick="() => MoveItem(item, 1)" disabled="@(idx >= card.Items.Count)" title="Вниз">↓</button>
@@ -632,7 +646,7 @@
                                        открытие блока ничего не добавляют в card.Items:
                                        только «Добавить выбранные» после видимого
                                        списка. *@
-                                    @if (canEdit && (
+                                    @if (canEditComposition && (
                                         _suggestionLoading.Contains(item.Id)
                                         || (_suggestionErrors.TryGetValue(item.Id, out var sErr) && !string.IsNullOrEmpty(sErr))
                                         || HasVisibleSuggestion(item)
@@ -808,18 +822,18 @@
                         </table>
                         </div>
 
-                        @if (canEdit)
+                        @if (canEditComposition)
                         {
                             <button type="button" class="btn" @onclick="AddItem" style="margin-top:4px">+ Добавить строку</button>
                         }
                     </div>
                     }
-                    @if (selectedLevel != HKObjectLevel.Node)
+                    @if (!IsAutonomousMode && selectedLevel != HKObjectLevel.Node)
                     {
                     <div class="full-width" style="margin-top:8px">
                         <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Состав ХК</h3>
 
-                        @if (canEdit)
+                        @if (canEditComposition)
                         {
                         <div style="margin-bottom:12px">
                             <button type="button" class="btn" @onclick="ToggleAddChild">+ Добавить дочернюю ХК</button>
@@ -881,7 +895,7 @@
                                             <td>@comp.ChildObjectName</td>
                                             <td>@AppTime.Fmt(comp.ChildApprovedAt, "dd.MM.yyyy")</td>
                                             <td class="hki-actions col-actions">
-                                                @if (canEdit)
+                                                @if (canEditComposition)
                                                 {
                                                     <button type="button" class="linkBtn" @onclick="() => RemoveComponent(comp.Id)" style="color:var(--bad)" title="Удалить">🗑</button>
                                                 }
@@ -898,7 +912,7 @@
                                             <td>@child.ObjectName</td>
                                             <td>@AppTime.Fmt(child.ApprovedDate, "dd.MM.yyyy")</td>
                                             <td class="hki-actions col-actions">
-                                                @if (canEdit)
+                                                @if (canEditComposition)
                                                 {
                                                     <button type="button" class="linkBtn" @onclick="() => RemovePendingChild(child)" style="color:var(--bad)" title="Удалить">🗑</button>
                                                 }
@@ -1289,6 +1303,20 @@
     };
 
     private bool canEdit;
+
+    /// <summary>
+    /// Сбрасывает редактируемость всех частей разом. Части блокируются по
+    /// разным причинам, поэтому сбрасывать только общий флаг нельзя: оставшиеся
+    /// по умолчанию значения сделали бы поля редактируемыми при запрете.
+    /// </summary>
+    private void ResetEditingFlags()
+    {
+        canEditDetails = false;
+        canEditComposition = false;
+        canEditPdf = false;
+        canEdit = false;
+        canQuickCreate = false;
+    }
     private bool canSendToApprove;
     private bool canApprove;
     private bool canReturn;
@@ -1542,7 +1570,7 @@
                 errorMessage = ex.Message;
                 card = CreateEmptyCard();
                 InitItemDicts();
-                canEdit = false;
+                ResetEditingFlags();
                 canQuickCreate = false;
             }
             return;
@@ -1583,11 +1611,20 @@
         selectedAggregateId = Guid.Empty;
         selectedNodeId = Guid.Empty;
 
+        bool canWorkNew;
         await using (await DbLock.WaitAsync())
         {
-            canEdit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
+            canWorkNew = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
         }
-        canQuickCreate = canEdit;
+
+        // У новой карты этапов нет, и блокировать нечего: редактируемость всех
+        // частей определяется правом HK.Work. Флаги задаются здесь явно —
+        // оставленные по умолчаниюtrue сделали бы поля редактируемыми и без права.
+        canEditDetails = canWorkNew;
+        canEditComposition = canWorkNew;
+        canEditPdf = canWorkNew;
+        canEdit = canEditDetails || canEditComposition;
+        canQuickCreate = canEditComposition;
 
         // Автономная карта сохраняется с пустой структурой, поэтому строка
         // состава заранее не создаётся: её добавит редактор дерева.
@@ -1619,7 +1656,7 @@
         catch (UnauthorizedAccessException ex)
         {
             errorMessage = ex.Message;
-            canEdit = false;
+            ResetEditingFlags();
             canQuickCreate = false;
             _existingActiveCard = null;
             _activeCardWarning = null;
@@ -1643,7 +1680,7 @@
                 errorMessage = "ХК не найдена или у вас нет доступа.";
                 card = CreateEmptyCard();
                 InitItemDicts();
-                canEdit = false;
+                ResetEditingFlags();
                 canQuickCreate = false;
                 _existingActiveCard = null;
                 _activeCardWarning = null;
@@ -1671,10 +1708,14 @@
                 branchApprovers = await GetBranchApproversAsync();
             }
 
-            var canEditLevel = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
+            // Общий флаг выводится из флагов частей, вычисленных этапами в
+            // LoadApprovalStateAsync. Перезаписывать его здесь прежней проверкой
+            // «карта в черновике или на доработке» нельзя: во время рассмотрения
+            // реквизитов такая проверка запрещала бы автору работать с составом,
+            // а во время рассмотрения состава — с реквизитами.
             if (ct.IsCancellationRequested) return;
-            canEdit = canEditLevel && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
-            canQuickCreate = canEdit;
+            canEdit = canEditDetails || canEditComposition;
+            canQuickCreate = canEditComposition;
 
             if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
             {
@@ -1991,9 +2032,10 @@
             canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
 
             var hasWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork, ct);
-            var caps = approvalStages.Count == 0
-                ? new HKCardEditingCapabilities(hasWork, hasWork, hasWork)
-                : HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
+
+            // Отсутствие этапов разбирается наравне с их наличием: архивной и
+            // удалённой карте возвращать полную редактируемость нельзя.
+            var caps = HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
 
             canEditDetails = caps.CanEditDetails;
             canEditComposition = caps.CanEditComposition;

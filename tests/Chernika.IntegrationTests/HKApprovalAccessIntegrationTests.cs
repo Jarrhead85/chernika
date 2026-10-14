@@ -431,7 +431,7 @@ public class HKApprovalAccessIntegrationTests
         var stale = await HKApprovalScenario.VersionAsync(s, cardId);
         Assert.NotEqual(current, stale);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<HkCardVersionConflictException>(() =>
             s.Approvals.SubmitDetailsAsync(cardId, _fixture.NormAdminA2.Id, current));
     }
 
@@ -493,16 +493,12 @@ public class HKApprovalAccessIntegrationTests
 
         // Ровно одно решение состоялось, второе отказано контролируемо.
         Assert.Equal(1, results.Count(r => r is "approved" or "returned"));
-        // Отказ контролируемый. Проигравшая сторона может отклониться на
-        // проверке версии карты (InvalidOperationException) или на токене
-        // xmin строки этапа, если обе успели прочитать одну версию
-        // (DbUpdateConcurrencyException). Оба отказа означают одно: второе
-        // решение не состоялось.
+        // Отказ контролируемый. Проигравшая сторона отклоняется либо на проверке
+        // версии карты, либо на токене xmin строки этапа, если обе успели
+        // прочитать одну исходную версию. Оба отказа приводятся к одному типу
+        // конфликта и означают одно: второе решение не состоялось.
         var refused = results.Single(r => r is not ("approved" or "returned"));
-        Assert.True(
-            refused is nameof(InvalidOperationException)
-            or nameof(DbUpdateConcurrencyException),
-            "Ожидался контролируемый отказ второго решения, получено: " + refused);
+        Assert.Equal(nameof(HkCardVersionConflictException), refused);
 
         // Итоговое состояние одно и соответствует выигравшему решению.
         await using var check = await AuthorAsync();
