@@ -557,7 +557,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     {
         e.HasKey(x => x.Id);
         e.Property(x => x.Name).HasMaxLength(500);
-        e.Property(x => x.Nd).HasMaxLength(1000);
+        // Предела нет намеренно: у GsmMaterial.Nd его тоже нет, и обрезать
+        // сохранённое нормативное обозначение молча нельзя.
+        e.Property(x => x.Nd).IsRequired(false);
         e.Property(x => x.Category).HasConversion<int>();
 
         // Материал принадлежит своей снимковой строке.

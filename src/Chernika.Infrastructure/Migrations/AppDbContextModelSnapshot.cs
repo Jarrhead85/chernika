@@ -1476,8 +1476,7 @@ namespace Chernika.Infrastructure.Migrations
                         .HasColumnType("character varying(500)");
 
                     b.Property<string>("Nd")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
+                        .HasColumnType("text");
 
                     b.Property<Guid>("RevisionItemId")
                         .HasColumnType("uuid");

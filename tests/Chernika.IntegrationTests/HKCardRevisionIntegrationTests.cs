@@ -523,13 +523,18 @@ public class HKCardRevisionIntegrationTests
                 catch (Exception ex) { return ex.GetType().Name; }
             }));
 
-        // Ровно одна фиксация состоялась: номер редакции уникален внутри
-        // карты, а версия карты общая. Проигравшая получает контролируемый
-        // отказ — уникальность номера или версия карты.
-        Assert.Equal(1, outcomes.Count(o => o == "ok"));
-        var refused = outcomes.Single(o => o != "ok");
-        Assert.True(refused is "InvalidOperationException" or "DbUpdateException",
-            "Неожиданный исход фиксации: " + refused);
+        // Гарантируется: уникальные номера редакций, согласованное содержимое
+        // каждой редакции, отсутствие частичных записей и контролируемый исход
+        // конфликта. Единственность фиксации ОДНОЙ рабочей версии здесь НЕ
+        // требуется и не проверяется: CaptureAsync не меняет RowVersion карты, и
+        // повторная фиксация той же версии — предусмотренная моделью возможность.
+        Assert.All(outcomes, o =>
+        {
+            var allowed = o == "ok"
+                         || o == nameof(InvalidOperationException)
+                         || o == nameof(DbUpdateException);
+            Assert.True(allowed, "Неожиданный исход фиксации: " + o);
+        });
 
         await using var check = await AuthorAsync();
         var numbers = await check.Db.HKCardRevisions

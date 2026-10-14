@@ -49,9 +49,11 @@ public sealed class HKCardRevisionImmutabilityInterceptor : SaveChangesIntercept
             if (!IsSnapshot(entry))
                 continue;
 
-            // Added допускается: так создаётся редакция. Modified и Deleted —
-            // нет: редакция неизменяема.
-            if (entry.State is not EntityState.Added)
+            // Added допускается: так создаётся редакция.
+            // Unchanged тоже допускается: снимок может присутствовать в контексте
+            // лишь потому, что его загрузили для чтения или чтобы сослаться на него.
+            // Запрещены именно изменение и удаление: редакция неизменяема.
+            if (entry.State is EntityState.Modified or EntityState.Deleted)
                 throw new InvalidOperationException(
                     "Зафиксированная редакция карты неизменяема. " +
                     "Следующая фиксация создаёт новую редакцию.");
