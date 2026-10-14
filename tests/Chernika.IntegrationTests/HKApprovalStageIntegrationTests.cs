@@ -176,7 +176,7 @@ public class HKApprovalStageIntegrationTests
 
         await using var s = await AuthorAsync();
 
-        var stages = await s.Approvals.EnsureStagesAsync(cardId);
+        var stages = await s.Approvals.GetStagesAsync(cardId);
         var caps = HKApprovalService.DeriveEditingCapabilities(
             stages, HKCardStatus.OnReview, hasWorkPermission: true);
 
@@ -328,7 +328,7 @@ public class HKApprovalStageIntegrationTests
                 new HKCardNodeWrite(Guid.NewGuid(), null, HKObjectLevel.Aggregate, "Агрегат", 1, 0)
             }));
 
-        var stages = await s.Approvals.EnsureStagesAsync(cardId);
+        var stages = await s.Approvals.GetStagesAsync(cardId);
         var caps = HKApprovalService.DeriveEditingCapabilities(
             stages, HKCardStatus.OnReview, hasWorkPermission: true);
 
@@ -350,7 +350,6 @@ public class HKApprovalStageIntegrationTests
         var auId = await CreateAssemblyUnitAsync();
 
         await using var s = await AuthorAsync();
-        await s.Approvals.EnsureStagesAsync(cardId);
 
         await AttachItemAsync(cardId, auId);
 
@@ -512,7 +511,6 @@ public class HKApprovalStageIntegrationTests
             _fixture.BranchA, nameof(UserRole.Operator), PermissionCodes.HKWork);
 
         await using var s = await ScopeAsync(worker);
-        await s.Approvals.EnsureStagesAsync(cardId);
 
         var version = await VersionAsync(s, cardId);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(

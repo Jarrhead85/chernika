@@ -143,6 +143,7 @@ public class TaskService
             EntityId = command.EntityId,
             EntityCodeSnapshot = command.EntityCodeSnapshot,
             EntityTitleSnapshot = command.EntityTitleSnapshot,
+            HKStage = command.HKStage,
             CreatedAtUtc = now,
             DueDateUtc = command.DueDateUtc,
             UpdatedAtUtc = now,

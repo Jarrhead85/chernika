@@ -1,4 +1,4 @@
-using Chernika.Domain.Entities;
+﻿using Chernika.Domain.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -719,6 +719,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Title).HasMaxLength(512).IsRequired();
+            // Этап согласования — данные, а не текст заголовка.
+            e.Property(x => x.HKStage).HasConversion<int>();
             e.Property(x => x.Description).HasMaxLength(4000);
             e.Property(x => x.Type).HasConversion<int>();
             e.Property(x => x.Status).HasConversion<int>();

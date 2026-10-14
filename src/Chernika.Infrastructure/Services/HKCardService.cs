@@ -953,6 +953,17 @@ public class HKCardService
         _db.HKCardApprovals.AsNoTracking().AnyAsync(a => a.HKCardId == cardId, ct);
 
     /// <summary>
+    /// Отличаются ли два значения с точки зрения сохранения.
+    /// <para>
+    /// Пустая строка и null сохраняются одинаково, а значит и не должны считаться
+    /// изменением: иначе пустая форма дала бы ложное «реквизиты изменились».
+    /// </para>
+    /// </summary>
+    private static bool Differs<T>(T? current, T? incoming) =>
+        !EqualityComparer<T?>.Default.Equals(current, incoming)
+        && !(string.IsNullOrWhiteSpace(current as string) && string.IsNullOrWhiteSpace(incoming as string));
+
+    /// <summary>
     /// Находится ли этап состава на рассмотрении.
     /// </summary>
     private async Task<bool> IsCompositionLockedAsync(Guid cardId, CancellationToken ct)
@@ -2114,9 +2125,6 @@ public class HKCardService
         // вызывающий код мог уже изменить его статус, филиал или уровень. Тогда
         // проверки читала бы запрошенные значения и пропускала то, что должна
         // отклонить.
-        // Реквизиты и основание блокируются на рассмотрении СВОЕГО этапа.
-        await EnsureDetailsEditableAsync(card.Id, ct);
-
         var persisted = await _db.HKCards
             .AsNoTracking()
             .Where(c => c.Id == card.Id)
@@ -2174,19 +2182,58 @@ public class HKCardService
             .FirstOrDefaultAsync(x => x.Id == persisted.Id, ct)
             ?? throw new ArgumentException("ХК не найдена.");
 
-        existing.Name = card.Name;
-        existing.Purpose = card.Purpose;
-        existing.NormativeBasis = card.NormativeBasis;
-        existing.Notes = card.Notes;
-        existing.RequestOrganization = card.RequestOrganization;
-        existing.RequestSenderFullName = card.RequestSenderFullName;
-        existing.RequestReceivedDate = NormalizeUtc(card.RequestReceivedDate);
-        existing.RequestDetails = card.RequestDetails;
-        existing.IncomingLetterNumber = card.IncomingLetterNumber;
-        existing.OutgoingLetterNumber = card.OutgoingLetterNumber;
-        existing.EffectiveDate = NormalizeUtc(card.EffectiveDate);
-        existing.ExpirationDate = NormalizeUtc(card.ExpirationDate);
-        existing.UpdatedAt = DateTime.UtcNow;
+        var compositionLocked = await IsCompositionLockedAsync(persisted.Id, ct);
+
+        // ── Что именно изменилось ──
+        // Проверяется по НЕЗАВИСИМОМУ сохранённому состоянию, а не по входу:
+        // блокировка должна отвечать на реальное изменение части, а не на сам
+        // факт вызова команды. Безусловная проверка реквизитов запрещала бы
+        // автору сохранить нормы во время рассмотрения реквизитов — он на этом
+        // шаге именно для того и работает.
+        var detailsChanged =
+            Differs(existing.Name, card.Name)
+            || Differs(existing.Purpose, card.Purpose)
+            || Differs(existing.NormativeBasis, card.NormativeBasis)
+            || Differs(existing.Notes, card.Notes)
+            || Differs(existing.RequestOrganization, card.RequestOrganization)
+            || Differs(existing.RequestSenderFullName, card.RequestSenderFullName)
+            || Differs(existing.RequestReceivedDate, NormalizeUtc(card.RequestReceivedDate))
+            || Differs(existing.RequestDetails, card.RequestDetails)
+            || Differs(existing.IncomingLetterNumber, card.IncomingLetterNumber)
+            || Differs(existing.OutgoingLetterNumber, card.OutgoingLetterNumber)
+            || Differs(existing.EffectiveDate, NormalizeUtc(card.EffectiveDate))
+            || Differs(existing.ExpirationDate, NormalizeUtc(card.ExpirationDate));
+
+        var compositionChanged = await CompositionDiffersAsync(persisted.Id, card.Items.ToList(), ct);
+
+        // Каждая изменённая часть проверяется своей блокировкой. Смешанная
+        // команда с запрещённым изменением отклоняется ЦЕЛИКОМ: частичное
+        // сохранение означало бы потерю одной из частей без предупреждения.
+        if (detailsChanged)
+            await EnsureDetailsEditableAsync(persisted.Id, ct);
+
+        if (compositionChanged && compositionLocked)
+            throw new InvalidOperationException(
+                "Состав и нормы находятся на согласовании: изменение заблокировано.");
+
+        if (detailsChanged)
+        {
+            existing.Name = card.Name;
+            existing.Purpose = card.Purpose;
+            existing.NormativeBasis = card.NormativeBasis;
+            existing.Notes = card.Notes;
+            existing.RequestOrganization = card.RequestOrganization;
+            existing.RequestSenderFullName = card.RequestSenderFullName;
+            existing.RequestReceivedDate = NormalizeUtc(card.RequestReceivedDate);
+            existing.RequestDetails = card.RequestDetails;
+            existing.IncomingLetterNumber = card.IncomingLetterNumber;
+            existing.OutgoingLetterNumber = card.OutgoingLetterNumber;
+            existing.EffectiveDate = NormalizeUtc(card.EffectiveDate);
+            existing.ExpirationDate = NormalizeUtc(card.ExpirationDate);
+        }
+
+        if (detailsChanged || compositionChanged)
+            existing.UpdatedAt = _time.GetUtcNow().UtcDateTime;
 
         // Смена узла допустима только у карты, привязанной к справочному объекту.
         // Номер при этом переформировывается: он выводится из кода узла.
@@ -2214,18 +2261,7 @@ public class HKCardService
         // реквизитами обошла бы блокировку молча. Поэтому состав при
         // заблокированном этапе либо не трогается вовсе, либо отклоняется
         // целиком — частичное применение здесь означало бы потерю правки.
-        var compositionLocked = await IsCompositionLockedAsync(persisted.Id, ct);
-
         var incomingItems = card.Items.OrderBy(i => i.SortOrder).ToList();
-
-        if (compositionLocked)
-        {
-            var changed = await CompositionDiffersAsync(persisted.Id, incomingItems, ct);
-            if (changed)
-                throw new InvalidOperationException(
-                    "Состав и нормы находятся на согласовании: изменение строк заблокировано.");
-        }
-
         var incomingItemIds = incomingItems.Select(i => i.Id).ToHashSet();
 
         // Желаемое состояние фиксируется НЕЗАвисимым неизменяемым снимком ДО

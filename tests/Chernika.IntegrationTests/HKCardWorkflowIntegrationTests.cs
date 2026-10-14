@@ -148,6 +148,8 @@ public class HKCardWorkflowIntegrationTests
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
         await HKApprovalScenario.ReturnDetailsAsync(s, cardId);
 
+        // Повторно отправляет автор: вернувший согласующий не отправляет.
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await HKApprovalScenario.SubmitDetailsAsync(s, cardId, _fixture.NormAdminA2.Id);
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
         await HKApprovalScenario.ReturnDetailsAsync(s, cardId);
@@ -179,6 +181,8 @@ public class HKCardWorkflowIntegrationTests
         var cardId = await HKApprovalScenario.CreateCardWithApprovedDetailsAsync(
             s, _fixture.NormAdminA.Id, _fixture.NormAdminA2.Id);
 
+        // Отправляет автор, а решение принимает назначенный согласующий.
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await HKApprovalScenario.SubmitCompositionAsync(s, cardId);
 
         // Окончательное принятие закрыто до появления хранилища принятой структуры.
@@ -259,8 +263,10 @@ public class HKCardWorkflowIntegrationTests
         Assert.Null(card.ExpirationDate);
 
         // Возврат и повторное принятие не обнуляют дату первого решения.
-        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
+        // Отправляет автор, возвращает назначенный согласующий.
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await HKApprovalScenario.SubmitCompositionAsync(s, cardId);
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
         await HKApprovalScenario.ReturnCompositionAsync(s, cardId);
 
         var detailsAfter = await HKApprovalScenario.StageAsync(s, cardId, HKApprovalStage.Details);

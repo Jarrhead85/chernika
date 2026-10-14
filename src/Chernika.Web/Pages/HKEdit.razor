@@ -1239,8 +1239,22 @@
     /// </summary>
     private bool IsAutonomousMode => IsNew || card.IsAutonomous;
 
-    /// <summary>Этапы согласования карты. Загружаются при открытии.</summary>
-    private List<HKCardApproval> approvalStages = new();
+    /// <summary>
+    /// Состояния этапов, прочитанные при загрузке. Неизменяемый снимок:
+    /// пользователь не может подменить их до отправки команды.
+    /// </summary>
+    private List<PersistedStageState> approvalStages = new();
+
+    /// <summary>
+    /// Версия карты, прочитанная при загрузке, — основа защиты от решения,
+    /// принятого со старого экрана.
+    /// <para>
+    /// Команды этапов передают ИМЕННО её. Перечитывать версию перед командой
+    /// нельзя: тогда действие со старого экрана прошло бы как новое и гонка
+    /// решений перестала бы обнаруживаться.
+    /// </para>
+    /// </summary>
+    private uint loadedRowVersion;
 
     /// <summary>Карта работает по этапам: у неё есть записи состояний.</summary>
     private bool hasApprovalStages => approvalStages.Count > 0;
@@ -1641,6 +1655,7 @@
             }
 
             card = existing;
+            loadedRowVersion = existing.RowVersion;
             _versions = await HKCardService.GetVersionsAsync(cardId, ct);
             selectedLevel = card.ObjectLevel;
             selectedComplexId = card.ComplexId ?? Guid.Empty;
@@ -1880,6 +1895,7 @@
             if (existing != null)
             {
                 card = existing;
+            loadedRowVersion = existing.RowVersion;
                 statusStr = card.Status.ToString();
             }
         }
@@ -1969,11 +1985,15 @@
 
         await using (await DbLock.WaitAsync())
         {
-            approvalStages = (await Approvals.EnsureStagesAsync(card.Id, ct)).ToList();
+            // Чтение этапов не создаёт их. Отсутствие этапов у карты нового
+            // процесса — допустимое состояние до первой команды согласования.
+            approvalStages = (await Approvals.GetStagesAsync(card.Id, ct)).ToList();
             canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
 
             var hasWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork, ct);
-            var caps = HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
+            var caps = approvalStages.Count == 0
+                ? new HKCardEditingCapabilities(hasWork, hasWork, hasWork)
+                : HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
 
             canEditDetails = caps.CanEditDetails;
             canEditComposition = caps.CanEditComposition;
@@ -1981,8 +2001,8 @@
         }
 
         // Общий флаг оставлен только для полей, не разделённых по частям.
-        canEdit = canEditDetails;
-        canQuickCreate = canEdit;
+        canEdit = canEditDetails || canEditComposition;
+        canQuickCreate = canEditComposition;
     }
 
     /// <summary>Отправляет этап на согласование.</summary>
@@ -2005,18 +2025,21 @@
         {
             await using (await DbLock.WaitAsync())
             {
-                var version = await CurrentRowVersionAsync();
+                // Передаётся версия, прочитанная при ЗАГРУЗКЕ экрана.
                 if (stage == HKApprovalStage.Details)
-                    await Approvals.SubmitDetailsAsync(card.Id, approverUserId!, version);
+                    await Approvals.SubmitDetailsAsync(card.Id, approverUserId!, loadedRowVersion);
                 else
-                    await Approvals.SubmitCompositionAsync(card.Id, version);
+                    await Approvals.SubmitCompositionAsync(card.Id, loadedRowVersion);
             }
 
-            await LoadApprovalStateAsync();
+            await ReloadAfterDecisionAsync();
         }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException
                                       or ArgumentException)
         {
+            // При конфликте решение НЕ повторяется со свежей версией: иначе
+            // действие со старого экрана прошло бы как новое. Сообщение
+            // остаётся на экране вместе с несохранённым вводом.
             errorMessage = ex.Message;
         }
         catch (HKCardValidationException ex)
@@ -2036,7 +2059,8 @@
         {
             await using (await DbLock.WaitAsync())
             {
-                var version = await CurrentRowVersionAsync();
+                // Версия загрузки, а не свежая: см. SubmitStageAsync.
+                var version = loadedRowVersion;
                 if (stage == HKApprovalStage.Details)
                 {
                     if (approve)
@@ -2064,17 +2088,16 @@
         StateHasChanged();
     }
 
-    /// <summary>Версия карты, прочитанная при загрузке: основа защиты от гонки решений.</summary>
-    private async Task<uint> CurrentRowVersionAsync()
-    {
-        var reloaded = await HKCardService.GetByIdAsync(card.Id);
-        return reloaded?.RowVersion ?? 0;
-    }
-
+    /// <summary>
+    /// После успешной команды карта и этапы перечитываются, а сохранённая
+    /// версия обновляется: следующая команда с этого экрана должна быть
+    /// основана на новом состоянии.
+    /// </summary>
     private async Task ReloadAfterDecisionAsync()
     {
         var cardId = card.Id;
         await LoadCardAsync(cardId, default);
+        loadedRowVersion = card.RowVersion;
         await LoadApprovalStateAsync();
     }
 

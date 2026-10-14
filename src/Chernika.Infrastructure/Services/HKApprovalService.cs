@@ -6,6 +6,7 @@ using Chernika.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace Chernika.Infrastructure.Services;
 
@@ -76,42 +77,114 @@ public class HKApprovalService
     // ── Чтение состояния ──
 
     /// <summary>
-    /// Возвращает состояния этапов карты, создавая отсутствующие записи.
+    /// Состояния этапов карты для чтения. НИЧЕГО не создаёт и не сохраняет.
     /// <para>
-    /// Отсутствующие этапы — обычное состояние: карта может быть создана до
-    /// появления модели согласования. Они создаются в состоянии
-    /// <see cref="HKApprovalStageState.Draft"/> без фиктивных дат принятия:
-    /// дата принятия выдумывать нельзя, её нет только после реального решения.
+    /// Чтение — побочный эффект не имеет: иначе обычный просмотр карты создавал
+    /// бы записи в БД, и GET-запрос менял бы состояние системы. Отсутствие
+    /// этапов — допустимое состояние, оно возвращается как есть.
     /// </para>
     /// </summary>
-    public async Task<IReadOnlyList<HKCardApproval>> EnsureStagesAsync(
+    public async Task<IReadOnlyList<PersistedStageState>> GetStagesAsync(
         Guid cardId, CancellationToken ct = default)
     {
-        var existing = await _db.HKCardApprovals
+        var access = await BuildReadAccessAsync(cardId, ct);
+        return await ReadStagesAsync(access.Card.Id, ct);
+    }
+
+    /// <summary>
+    /// Возможности правки карты для текущего пользователя.
+    /// <para>
+    /// Считается по сохранённым состояниям этапов. Если этапов ещё нет, карта
+    /// нового процесса ещё не инициализирована: она считается полностью
+    /// редактируемой, иначе первая же правка была бы невозможна.
+    /// </para>
+    /// </summary>
+    public async Task<HKCardEditingCapabilities> GetEditingCapabilitiesAsync(
+        Guid cardId, CancellationToken ct = default)
+    {
+        var access = await BuildReadAccessAsync(cardId, ct);
+        var stages = await ReadStagesAsync(access.Card.Id, ct);
+
+        var hasWork = await _permissions.HasPermissionAsync(
+            access.ActorUserId.ToString(), PermissionCodes.HKWork, ct);
+
+        return stages.Count == 0
+            ? new HKCardEditingCapabilities(hasWork, hasWork, hasWork)
+            : DeriveEditingCapabilities(stages, access.Card.Status, hasWork);
+    }
+
+    /// <summary>
+    /// Отбор сохранённых состояний этапов. Неизменяемая проекция: вызывающий
+    /// код получает снимок, а не отслеживаемые объекты, которые можно менять.
+    /// </summary>
+    private async Task<List<PersistedStageState>> ReadStagesAsync(Guid cardId, CancellationToken ct) =>
+        await _db.HKCardApprovals
+            .AsNoTracking()
+            .Where(a => a.HKCardId == cardId)
+            .Select(a => new PersistedStageState(
+                a.Id, a.Stage, a.State, a.AssignedApproverUserId, a.ApprovedAtUtc, a.RowVersion))
+            .ToListAsync(ct);
+
+    /// <summary>
+    /// Создаёт недостающие этапы ВНУТРИ команды.
+    /// <para>
+    /// Записи добавляются через <see cref="DbSet{HKCardApproval}.Add"/>:
+    /// добавление в локальный список отслеживаемых объектов контекст не
+    /// регистрирует, и этапы молча не сохранялись.
+    /// </para>
+    /// <para>
+    /// Защита от параллельного создания — уникальный индекс
+    /// <c>UX_HKCardApprovals_Card_Stage</c>. Победившая транзакция вставляет
+    /// пару, проигравшая ловит нарушение и перечитывает уже созданные этапы.
+    /// Инициализация идёт ПОСЛЕ проверок доступа и В той же транзакции, что и
+    /// команда, поэтому фиктивных записей вне команды не появляется.
+    /// </para>
+    /// <para>
+    /// Даты принятия не выдумываются: у нового этапа их нет.
+    /// </para>
+    /// </summary>
+    private async Task<List<HKCardApproval>> EnsureStagesForCommandAsync(
+        Guid cardId, CancellationToken ct)
+    {
+        var stages = await _db.HKCardApprovals
             .Where(a => a.HKCardId == cardId)
             .ToListAsync(ct);
 
+        var missing = new[] { HKApprovalStage.Details, HKApprovalStage.Composition }
+            .Where(stage => stages.All(a => a.Stage != stage))
+            .ToList();
+
+        if (missing.Count == 0)
+            return stages;
+
         var now = _time.GetUtcNow().UtcDateTime;
-        var added = false;
-
-        foreach (var stage in new[] { HKApprovalStage.Details, HKApprovalStage.Composition })
+        var created = missing.Select(stage => new HKCardApproval
         {
-            if (existing.Any(a => a.Stage == stage)) continue;
+            Id = Guid.NewGuid(),
+            HKCardId = cardId,
+            Stage = stage,
+            State = HKApprovalStageState.Draft,
+            UpdatedAtUtc = now
+        }).ToList();
 
-            existing.Add(new HKCardApproval
-            {
-                Id = Guid.NewGuid(),
-                HKCardId = cardId,
-                Stage = stage,
-                State = HKApprovalStageState.Draft,
-                UpdatedAtUtc = now
-            });
-            added = true;
+        _db.HKCardApprovals.AddRange(created);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            // Параллельная инициализация другой команды выиграла гонку.
+            // Чужие сущности Added откатываются, состояние перечитывается.
+            _db.ChangeTracker.Clear();
         }
 
-        if (added) await _db.SaveChangesAsync(ct);
-        return existing;
+        return await _db.HKCardApprovals.Where(a => a.HKCardId == cardId).ToListAsync(ct);
     }
+
+    private static bool IsUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
 
     /// <summary>
     /// Вычисляет общий статус карты по состояниям этапов.
@@ -148,14 +221,14 @@ public class HKApprovalService
     /// </para>
     /// </summary>
     public static HKCardEditingCapabilities DeriveEditingCapabilities(
-        IReadOnlyList<HKCardApproval> stages, HKCardStatus status, bool hasWorkPermission)
+        IReadOnlyList<PersistedStageState> stages, HKCardStatus status, bool hasWorkPermission)
     {
         // Архивная и удалённая карта не редактируется ни в одной части.
         if (status is HKCardStatus.Archived or HKCardStatus.Deleted)
             return new HKCardEditingCapabilities(false, false, false);
 
-        var details = FindStage(stages, HKApprovalStage.Details);
-        var composition = FindStage(stages, HKApprovalStage.Composition);
+        var details = FindPersistedStage(stages, HKApprovalStage.Details);
+        var composition = FindPersistedStage(stages, HKApprovalStage.Composition);
 
         var detailsEditable = hasWorkPermission
                               && details is not null
@@ -176,6 +249,131 @@ public class HKApprovalService
     private static HKCardApproval? FindStage(IReadOnlyList<HKCardApproval> stages, HKApprovalStage stage) =>
         stages.FirstOrDefault(s => s.Stage == stage);
 
+    private static PersistedStageState? FindPersistedStage(
+        IReadOnlyList<PersistedStageState> stages, HKApprovalStage stage) =>
+        stages.FirstOrDefault(s => s.Stage == stage);
+
+    // ── Доступ к конкретной карте ──
+
+    /// <summary>
+    /// Доступ на чтение: право просмотра и принадлежность филиалу карты.
+    /// <para>
+    /// Проверяется действующее право, а не только факт входа: индивидуальный
+    /// запрет обязан действовать и на чтении.
+    /// </para>
+    /// </summary>
+    private async Task<HkCardAccessContext> BuildReadAccessAsync(Guid cardId, CancellationToken ct)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKView, ct))
+            throw new UnauthorizedAccessException("Недостаточно прав для просмотра ХК.");
+
+        var card = await LoadPersistedCardAsync(cardId, ct);
+        var kind = await ResolveBranchAccessAsync(card, actorId, ct);
+
+        return new HkCardAccessContext(card, kind, actorId);
+    }
+
+    /// <summary>
+    /// Доступ на отправку этапа: право HK.Submit, филиал карты и первоначальный
+    /// автор.
+    /// <para>
+    /// Отправляет автор. Системный администратор — единственное исключение, и
+    /// оно явное: попадает в значение контекста и в аудит команды. Скрытого
+    /// обхода, при котором любой пользователь с правом отправляет чужую карту,
+    /// здесь нет.
+    /// </para>
+    /// </summary>
+    private async Task<HkCardAccessContext> BuildSubmitAccessAsync(
+        Guid cardId, CancellationToken ct)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKSubmit, ct))
+            throw new UnauthorizedAccessException("Недостаточно прав для отправки ХК на согласование.");
+
+        var card = await LoadPersistedCardAsync(cardId, ct);
+        var kind = await ResolveBranchAccessAsync(card, actorId, ct);
+
+        if (card.AuthorId == actorId)
+            return new HkCardAccessContext(card, kind, actorId);
+
+        if (kind == HkCardAccessKind.SystemAdmin)
+            return new HkCardAccessContext(card, kind, actorId);
+
+        throw new HkCardAccessDeniedException(
+            "Отправить на согласование может первоначальный автор карты.");
+    }
+
+    /// <summary>
+    /// Доступ на решение по этапу: право решения, активность пользователя,
+    /// доступ к карте и назначение согласующим.
+    /// <para>
+    /// Наличие права само по себе не открывает решение: право есть у многих, а
+    /// решение по этой карте принимает тот, кому она адресно направлена.
+    /// </para>
+    /// </summary>
+    private async Task<HkCardAccessContext> BuildDecisionAccessAsync(
+        Guid cardId, string requiredPermission, CancellationToken ct)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        if (!await _permissions.HasPermissionAsync(actorId.ToString(), requiredPermission, ct))
+            throw new UnauthorizedAccessException("Недостаточно прав для решения по этапу.");
+
+        var actor = await _userManager.FindByIdAsync(actorId.ToString());
+        if (actor is null)
+            throw new UnauthorizedAccessException("Пользователь не найден.");
+        if (!actor.IsActive)
+            throw new UnauthorizedAccessException("Пользователь отключён.");
+
+        var card = await LoadPersistedCardAsync(cardId, ct);
+        var kind = await ResolveBranchAccessAsync(card, actorId, ct);
+
+        return new HkCardAccessContext(card, kind, actorId);
+    }
+
+    /// <summary>
+    /// Принадлежность филиалу. Физическая граница данных, а не разрешение на
+    /// действие: индивидуальное разрешение её не обходит.
+    /// </summary>
+    private async Task<HkCardAccessKind> ResolveBranchAccessAsync(
+        PersistedCardState card, Guid actorId, CancellationToken ct)
+    {
+        if (await _permissions.IsSystemAdminAsync(actorId.ToString(), ct))
+            return HkCardAccessKind.SystemAdmin;
+
+        var actor = await _userManager.FindByIdAsync(actorId.ToString());
+        if (actor?.BranchId != card.BranchId)
+            throw new HkCardAccessDeniedException("Нет доступа к ХК другой организации.");
+
+        return HkCardAccessKind.Branch;
+    }
+
+    /// <summary>
+    /// Сохранённые данные карты. Независимая проекция: решение принимается по
+    /// ней, а не по отслеживаемому экземпляру, который вызывающий код мог
+    /// предварительно изменить.
+    /// </summary>
+    private async Task<PersistedCardState> LoadPersistedCardAsync(Guid cardId, CancellationToken ct) =>
+        await _db.HKCards
+            .AsNoTracking()
+            .Where(c => c.Id == cardId)
+            .Select(c => new PersistedCardState(
+                c.Id, c.Status, c.BranchId, c.AuthorId, c.IsAutonomous, c.Code, c.Version, c.RowVersion))
+            .FirstOrDefaultAsync(ct)
+        ?? throw new ArgumentException("ХК не найдена.");
+
+    /// <summary>
+    /// Карта для ЗАПИСИ. Загружается отслеживаемой уже после всех проверок:
+    /// до них объект трогать нельзя, иначе отказ оставил бы подготовленные
+    /// изменения в контексте.
+    /// </summary>
+    private async Task<HKCard> LoadCardForWriteAsync(Guid cardId, CancellationToken ct) =>
+        await _db.HKCards.FirstOrDefaultAsync(c => c.Id == cardId, ct)
+        ?? throw new ArgumentException("ХК не найдена.");
+
     // ── Команды первого этапа ──
 
     /// <summary>
@@ -190,26 +388,30 @@ public class HKApprovalService
     public async Task SubmitDetailsAsync(
         Guid cardId, string approverUserId, uint expectedRowVersion, CancellationToken ct = default)
     {
-        var actorId = _currentUser.GetRequiredUserId();
+        // Доступ проверяется по независимо сохранённому состоянию ДО открытия
+        // транзакции и до любой записи.
+        var access = await BuildSubmitAccessAsync(cardId, ct);
+        var actorId = access.ActorUserId;
 
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKSubmit, ct))
-            throw new UnauthorizedAccessException("Недостаточно прав для отправки ХК на согласование.");
+        EnsureNotTerminal(access.Card);
+        EnsureRowVersion(access.Card, expectedRowVersion);
+
+        var existingStages = await ReadStagesAsync(cardId, ct);
+        var persistedDetails = existingStages.FirstOrDefault(s => s.Stage == HKApprovalStage.Details);
+
+        if (persistedDetails?.State == HKApprovalStageState.OnReview)
+            throw new InvalidOperationException("Реквизиты уже отправлены на согласование.");
+        if (persistedDetails?.State == HKApprovalStageState.Approved)
+            throw new InvalidOperationException("Реквизиты уже приняты.");
+
+        await EnsureApproverUsableAsync(approverUserId, access.Card, PermissionCodes.HKApprove, ct);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
-        var card = await LoadCardForDecisionAsync(cardId, ct);
-        var stages = (await EnsureStagesAsync(cardId, ct)).ToList();
+        // Инициализация этапов — внутри команды и внутри её транзакции.
+        var stages = await EnsureStagesForCommandAsync(cardId, ct);
         var details = FindStage(stages, HKApprovalStage.Details)!;
-
-        EnsureCardRowVersion(card, expectedRowVersion);
-        EnsureCardNotTerminal(card);
-
-        if (details.State == HKApprovalStageState.OnReview)
-            throw new InvalidOperationException("Реквизиты уже отправлены на согласование.");
-        if (details.State == HKApprovalStageState.Approved)
-            throw new InvalidOperationException("Реквизиты уже приняты.");
-
-        await EnsureApproverUsableAsync(approverUserId, card, PermissionCodes.HKApprove, ct);
+        var card = await LoadCardForWriteAsync(cardId, ct);
 
         // Реквизиты проверяются как черновик: без требования структуры и уровня.
         var validation = await _validation.ValidateDraftAsync(card, ct);
@@ -223,6 +425,11 @@ public class HKApprovalService
         card.Status = DeriveOverallStatus(stages);
         card.UpdatedAt = now;
 
+        // Повторная отправка закрывает задачу доработки ЭТОГО этапа.
+        // Задачи другого этапа остаются открытыми: возврат состава не
+        // означает, что реквизиты снова требуют доработки.
+        await CloseStageTasksAsync(card.Id, HKApprovalStage.Details, actorId, null, ct);
+
         await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
             Title: $"{DetailsStageTitle}: {card.Code} v{card.Version}",
             Type: WorkTaskType.HKDetailsReview,
@@ -234,7 +441,8 @@ public class HKApprovalService
             EntityId: card.Id,
             EntityCodeSnapshot: card.Code,
             EntityTitleSnapshot: card.Name,
-            NotifyAssignee: true), ct: ct);
+            NotifyAssignee: true,
+            HKStage: HKApprovalStage.Details), ct: ct);
 
         await _audit.LogAsync(new AuditWriteRequest(
             "HKCard", card.Id.ToString(), "DetailsSubmitted", actorId,
@@ -256,20 +464,21 @@ public class HKApprovalService
     public async Task ApproveDetailsAsync(
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
-        var actorId = _currentUser.GetRequiredUserId();
+        // Право решения, активность пользователя, доступ к карте и назначение
+        // согласующим проверяются по сохранённому состоянию.
+        var access = await BuildDecisionAccessAsync(cardId, PermissionCodes.HKApprove, ct);
+        var actorId = access.ActorUserId;
 
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKApprove, ct))
-            throw new UnauthorizedAccessException("Недостаточно прав для принятия реквизитов.");
+        EnsureNotTerminal(access.Card);
+        EnsureRowVersion(access.Card, expectedRowVersion);
 
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        var card = await LoadCardForDecisionAsync(cardId, ct);
-        var stages = (await EnsureStagesAsync(cardId, ct)).ToList();
+        var stages = (await EnsureStagesForCommandAsync(cardId, ct));
         var details = FindStage(stages, HKApprovalStage.Details)!;
 
-        EnsureCardRowVersion(card, expectedRowVersion);
-        EnsureCardNotTerminal(card);
         EnsureAssignedApprover(details, actorId.ToString());
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var card = await LoadCardForWriteAsync(cardId, ct);
 
         if (details.State != HKApprovalStageState.OnReview)
             throw new InvalidOperationException("Принять реквизиты можно только когда они на рассмотрении.");
@@ -283,7 +492,7 @@ public class HKApprovalService
         card.Status = DeriveOverallStatus(stages);
         card.UpdatedAt = now;
 
-        await CloseStageTasksAsync(card.Id, WorkTaskType.HKDetailsReview, actorId, comment, ct);
+        await CloseReviewTasksAsync(card.Id, HKApprovalStage.Details, actorId, comment, ct);
 
         await _audit.LogAsync(new AuditWriteRequest(
             "HKCard", card.Id.ToString(), "DetailsApproved", actorId,
@@ -306,20 +515,19 @@ public class HKApprovalService
     public async Task ReturnDetailsAsync(
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
-        var actorId = _currentUser.GetRequiredUserId();
+        var access = await BuildDecisionAccessAsync(cardId, PermissionCodes.HKReview, ct);
+        var actorId = access.ActorUserId;
 
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKReview, ct))
-            throw new UnauthorizedAccessException("Недостаточно прав для возврата реквизитов.");
+        EnsureNotTerminal(access.Card);
+        EnsureRowVersion(access.Card, expectedRowVersion);
 
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        var card = await LoadCardForDecisionAsync(cardId, ct);
-        var stages = (await EnsureStagesAsync(cardId, ct)).ToList();
+        var stages = (await EnsureStagesForCommandAsync(cardId, ct));
         var details = FindStage(stages, HKApprovalStage.Details)!;
 
-        EnsureCardRowVersion(card, expectedRowVersion);
-        EnsureCardNotTerminal(card);
         EnsureAssignedApprover(details, actorId.ToString());
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var card = await LoadCardForWriteAsync(cardId, ct);
 
         if (details.State != HKApprovalStageState.OnReview)
             throw new InvalidOperationException("Вернуть реквизиты можно только когда они на рассмотрении.");
@@ -330,8 +538,8 @@ public class HKApprovalService
         card.Status = DeriveOverallStatus(stages);
         card.UpdatedAt = now;
 
-        await CloseStageTasksAsync(card.Id, WorkTaskType.HKDetailsReview, actorId, comment, ct);
-        await CreateAuthorRevisionTaskAsync(card, "Реквизиты возвращены на доработку.", comment, ct);
+        await CloseReviewTasksAsync(card.Id, HKApprovalStage.Details, actorId, comment, ct);
+        await CreateAuthorRevisionTaskAsync(card, HKApprovalStage.Details, "Реквизиты возвращены на доработку.", comment, ct);
 
         await _audit.LogAsync(new AuditWriteRequest(
             "HKCard", card.Id.ToString(), "DetailsReturned", actorId,
@@ -357,31 +565,39 @@ public class HKApprovalService
     public async Task SubmitCompositionAsync(
         Guid cardId, uint expectedRowVersion, CancellationToken ct = default)
     {
-        var actorId = _currentUser.GetRequiredUserId();
+        var access = await BuildSubmitAccessAsync(cardId, ct);
+        var actorId = access.ActorUserId;
 
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKSubmit, ct))
-            throw new UnauthorizedAccessException("Недостаточно прав для отправки состава на согласование.");
+        EnsureNotTerminal(access.Card);
+        EnsureRowVersion(access.Card, expectedRowVersion);
 
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var existing = await ReadStagesAsync(cardId, ct);
+        var detailsState = existing.FirstOrDefault(s => s.Stage == HKApprovalStage.Details);
+        var compositionState = existing.FirstOrDefault(s => s.Stage == HKApprovalStage.Composition);
 
-        var card = await LoadCardForDecisionAsync(cardId, ct);
-        var stages = (await EnsureStagesAsync(cardId, ct)).ToList();
-        var details = FindStage(stages, HKApprovalStage.Details)!;
-        var composition = FindStage(stages, HKApprovalStage.Composition)!;
-
-        EnsureCardRowVersion(card, expectedRowVersion);
-        EnsureCardNotTerminal(card);
-
-        if (details.State != HKApprovalStageState.Approved)
+        if (detailsState?.State != HKApprovalStageState.Approved)
             throw new InvalidOperationException(
                 "Отправить состав на согласование можно только после принятия реквизитов.");
 
-        if (composition.State == HKApprovalStageState.OnReview)
+        if (compositionState?.State == HKApprovalStageState.OnReview)
             throw new InvalidOperationException("Состав уже отправлен на согласование.");
 
-        if (string.IsNullOrWhiteSpace(details.AssignedApproverUserId))
+        if (string.IsNullOrWhiteSpace(detailsState!.AssignedApproverUserId))
             throw new InvalidOperationException(
                 "Не найден назначенный согласующий: отправьте реквизиты на согласование.");
+
+        // Согласующий состава — тот же человек, что принял реквизиты. Перед
+        // повторной отправкой он проверяется заново: мог быть отключён или
+        // потерять полномочия. Заменять его автоматически нельзя.
+        await EnsureApproverUsableAsync(
+            detailsState.AssignedApproverUserId, access.Card, PermissionCodes.HKApprove, ct);
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        var stages = await EnsureStagesForCommandAsync(cardId, ct);
+        var details = FindStage(stages, HKApprovalStage.Details)!;
+        var composition = FindStage(stages, HKApprovalStage.Composition)!;
+        var card = await LoadCardForWriteAsync(cardId, ct);
 
         // Структура проверяется соответствующими валидаторами. Карта только с
         // конечными строками под корнем допустима.
@@ -396,6 +612,8 @@ public class HKApprovalService
         card.Status = DeriveOverallStatus(stages);
         card.UpdatedAt = now;
 
+        await CloseStageTasksAsync(card.Id, HKApprovalStage.Composition, actorId, null, ct);
+
         await _tasks.CreateFromWorkflowAsync(new CreateWorkflowTaskCommand(
             Title: $"{CompositionStageTitle}: {card.Code} v{card.Version}",
             Type: WorkTaskType.HKCompositionReview,
@@ -407,7 +625,8 @@ public class HKApprovalService
             EntityId: card.Id,
             EntityCodeSnapshot: card.Code,
             EntityTitleSnapshot: card.Name,
-            NotifyAssignee: true), ct: ct);
+            NotifyAssignee: true,
+            HKStage: HKApprovalStage.Composition), ct: ct);
 
         await _audit.LogAsync(new AuditWriteRequest(
             "HKCard", card.Id.ToString(), "CompositionSubmitted", actorId,
@@ -422,20 +641,19 @@ public class HKApprovalService
     public async Task ReturnCompositionAsync(
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
-        var actorId = _currentUser.GetRequiredUserId();
+        var access = await BuildDecisionAccessAsync(cardId, PermissionCodes.HKReview, ct);
+        var actorId = access.ActorUserId;
 
-        if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKReview, ct))
-            throw new UnauthorizedAccessException("Недостаточно прав для возврата состава.");
+        EnsureNotTerminal(access.Card);
+        EnsureRowVersion(access.Card, expectedRowVersion);
 
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        var card = await LoadCardForDecisionAsync(cardId, ct);
-        var stages = (await EnsureStagesAsync(cardId, ct)).ToList();
+        var stages = (await EnsureStagesForCommandAsync(cardId, ct));
         var composition = FindStage(stages, HKApprovalStage.Composition)!;
 
-        EnsureCardRowVersion(card, expectedRowVersion);
-        EnsureCardNotTerminal(card);
         EnsureAssignedApprover(composition, actorId.ToString());
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var card = await LoadCardForWriteAsync(cardId, ct);
 
         if (composition.State != HKApprovalStageState.OnReview)
             throw new InvalidOperationException("Вернуть состав можно только когда он на рассмотрении.");
@@ -446,8 +664,8 @@ public class HKApprovalService
         card.Status = DeriveOverallStatus(stages);
         card.UpdatedAt = now;
 
-        await CloseStageTasksAsync(card.Id, WorkTaskType.HKCompositionReview, actorId, comment, ct);
-        await CreateAuthorRevisionTaskAsync(card, "Состав возвращён на доработку.", comment, ct);
+        await CloseReviewTasksAsync(card.Id, HKApprovalStage.Composition, actorId, comment, ct);
+        await CreateAuthorRevisionTaskAsync(card, HKApprovalStage.Composition, "Состав возвращён на доработку.", comment, ct);
 
         await _audit.LogAsync(new AuditWriteRequest(
             "HKCard", card.Id.ToString(), "CompositionReturned", actorId,
@@ -490,8 +708,12 @@ public class HKApprovalService
     /// Версия карты на момент загрузки вызывающего. Без неё два одновременных
     /// решения перезаписали бы друг друга: второе увидело бы уже применённое
     /// состояние и сочло бы себя первым.
+    /// <para>
+    /// Проверяется против снимка из базы, а не против значения, присланного
+    /// клиентом: иначе клиент отправил бы актуальную версию и обошёл гонку.
+    /// </para>
     /// </summary>
-    private static void EnsureCardRowVersion(HKCard card, uint expectedRowVersion)
+    private static void EnsureRowVersion(PersistedCardState card, uint expectedRowVersion)
     {
         if (expectedRowVersion == 0)
             throw new InvalidOperationException(
@@ -502,7 +724,7 @@ public class HKApprovalService
                 "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
     }
 
-    private static void EnsureCardNotTerminal(HKCard card)
+    private static void EnsureNotTerminal(PersistedCardState card)
     {
         if (card.Status is HKCardStatus.Archived or HKCardStatus.Deleted)
             throw new InvalidOperationException(
@@ -538,7 +760,7 @@ public class HKApprovalService
     /// </para>
     /// </summary>
     private async Task EnsureApproverUsableAsync(
-        string approverUserId, HKCard card, string requiredPermission, CancellationToken ct)
+        string approverUserId, PersistedCardState card, string requiredPermission, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(approverUserId))
             throw new InvalidOperationException("Выберите согласующего.");
@@ -565,27 +787,77 @@ public class HKApprovalService
     /// плодит дубликаты: задачи фильтруются по типу, карте и открытому
     /// состоянию.
     /// </summary>
+    /// <summary>
+    /// Закрывает открытые задачи рассмотрения ЭТОГО этапа и пишет аудит по
+    /// каждой закрытой задаче.
+    /// <para>
+    /// Этап берётся из данных задачи, а не из её типа: типы задач рассмотрения
+    /// и доработки общие для обоих этапов, и фильтр только по типу закрыл бы
+    /// чужую. Аудит закрытия теряться не должен — он пишется в той же
+    /// транзакции, что и изменение задачи.
+    /// </para>
+    /// </summary>
     private async Task CloseStageTasksAsync(
-        Guid cardId, WorkTaskType type, Guid actorUserId, string? comment, CancellationToken ct)
+        Guid cardId, HKApprovalStage stage, Guid actorUserId, string? comment, CancellationToken ct)
     {
         var open = await _db.WorkTasks
             .Where(t => !t.IsDeleted
-                && t.Type == type
+                && t.Type == WorkTaskType.HKRevision
                 && t.EntityType == "HKCard"
                 && t.EntityId == cardId
+                && t.HKStage == stage
                 && (t.Status == WorkTaskStatus.Open
                     || t.Status == WorkTaskStatus.InProgress
                     || t.Status == WorkTaskStatus.Overdue))
             .ToListAsync(ct);
 
+        await CloseTasksAsync(open, actorUserId, comment, ct);
+    }
+
+    /// <summary>
+    /// Закрывает открытые задачи рассмотрения этапа: при принятии или возврате
+    /// задача согласующему больше не нужна.
+    /// </summary>
+    private async Task CloseReviewTasksAsync(
+        Guid cardId, HKApprovalStage stage, Guid actorUserId, string? comment, CancellationToken ct)
+    {
+        var reviewType = stage == HKApprovalStage.Details
+            ? WorkTaskType.HKDetailsReview
+            : WorkTaskType.HKCompositionReview;
+
+        var open = await _db.WorkTasks
+            .Where(t => !t.IsDeleted
+                && t.Type == reviewType
+                && t.EntityType == "HKCard"
+                && t.EntityId == cardId
+                && t.HKStage == stage
+                && (t.Status == WorkTaskStatus.Open
+                    || t.Status == WorkTaskStatus.InProgress
+                    || t.Status == WorkTaskStatus.Overdue))
+            .ToListAsync(ct);
+
+        await CloseTasksAsync(open, actorUserId, comment, ct);
+    }
+
+    private async Task CloseTasksAsync(
+        List<WorkTask> tasks, Guid actorUserId, string? comment, CancellationToken ct)
+    {
+        if (tasks.Count == 0) return;
+
         var now = _time.GetUtcNow().UtcDateTime;
-        foreach (var task in open)
+        foreach (var task in tasks)
         {
             task.Status = WorkTaskStatus.Completed;
             task.CompletedAtUtc = now;
             task.CompletedByUserId = actorUserId.ToString();
             task.CompletionComment = string.IsNullOrWhiteSpace(comment) ? null : comment;
             task.UpdatedAtUtc = now;
+
+            await _audit.LogAsync(new AuditWriteRequest(
+                "WorkTask", task.Id.ToString(), "Task.Completed", actorUserId,
+                EntityDisplayName: task.Title,
+                Details: $"Задача закрыта решением по этапу согласования. "
+                         + (string.IsNullOrWhiteSpace(comment) ? string.Empty : comment.Trim())), ct);
         }
     }
 
@@ -594,7 +866,7 @@ public class HKApprovalService
     /// рассмотрения и от любых задач пересчёта ИК.
     /// </summary>
     private async Task CreateAuthorRevisionTaskAsync(
-        HKCard card, string title, string? comment, CancellationToken ct)
+        HKCard card, HKApprovalStage stage, string title, string? comment, CancellationToken ct)
     {
         // Автор хранится как Guid?, а задачи адресуются по ключу Identity (text).
         if (!card.AuthorId.HasValue) return;
@@ -625,6 +897,7 @@ public class HKApprovalService
             EntityId: card.Id,
             EntityCodeSnapshot: card.Code,
             EntityTitleSnapshot: card.Name,
-            NotifyAssignee: true), ct: ct);
+            NotifyAssignee: true,
+            HKStage: stage), ct: ct);
     }
 }

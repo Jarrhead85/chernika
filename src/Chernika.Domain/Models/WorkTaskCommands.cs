@@ -37,7 +37,10 @@ public sealed record CreateWorkflowTaskCommand(
     string? EntityCodeSnapshot = null,
     string? EntityTitleSnapshot = null,
     DateTime? DueDateUtc = null,
-    bool NotifyAssignee = true);
+    bool NotifyAssignee = true,
+    // Этап согласования ХК. Задачи этапов несут его как данные: определить
+    // этап по заголовку нельзя.
+    HKApprovalStage? HKStage = null);
 
 public sealed record AssignWorkTaskCommand(
     Guid TaskId,

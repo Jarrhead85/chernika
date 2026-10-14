@@ -27,6 +27,19 @@ public class WorkTask
     public string? EntityCodeSnapshot { get; set; }
     public string? EntityTitleSnapshot { get; set; }
 
+    /// <summary>
+    /// Этап согласования ХК, к которому относится задача.
+    /// <para>
+    /// Нужен, чтобы повторная отправка закрывала задачу доработки ИМЕННО
+    /// своего этапа и не трогала чужую. Определять этап по тексту заголовка
+    /// ненадёжно: заголовок — это текст, а не данные.
+    /// </para>
+    /// <para>
+    /// null у задач, не относящихся к этапам согласования ХК.
+    /// </para>
+    /// </summary>
+    public HKApprovalStage? HKStage { get; set; }
+
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? DueDateUtc { get; set; }
     public DateTime? StartedAtUtc { get; set; }

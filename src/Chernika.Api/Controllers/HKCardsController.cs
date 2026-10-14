@@ -161,27 +161,34 @@ public class HKCardsController : ControllerBase
     // адресно, а общий статус вычисляется из состояний этапов и клиентом не
     // устанавливается.
 
+    // Чтение этапов НЕ создаёт их: GET-запрос не меняет состояние системы.
     [HttpGet("{id}/approvals")]
     public async Task<ActionResult<List<HKApprovalStageDto>>> GetApprovals(Guid id)
     {
-        var stages = await _approvals.EnsureStagesAsync(id);
-        return Ok(stages.Select(ToStageDto).ToList());
+        try
+        {
+            var stages = await _approvals.GetStagesAsync(id);
+            return Ok(stages.Select(ToStageDto).ToList());
+        }
+        catch (HkCardAccessDeniedException ex)
+        {
+            return Forbid(ex.Message);
+        }
     }
 
     [HttpGet("{id}/editing-capabilities")]
     public async Task<ActionResult<HKCardEditingCapabilitiesDto>> GetEditingCapabilities(Guid id)
     {
-        var card = await _hkCards.GetByIdAsync(id);
-        if (card == null) return NotFound();
-
-        var stages = await _approvals.EnsureStagesAsync(id);
-        var actorId = _currentUser.GetRequiredUserId();
-        var hasWork = await _permissions.HasPermissionAsync(
-            actorId.ToString(), PermissionCodes.HKWork);
-
-        var caps = HKApprovalService.DeriveEditingCapabilities(stages, card.Status, hasWork);
-        return Ok(new HKCardEditingCapabilitiesDto(
-            caps.CanEditDetails, caps.CanEditComposition, caps.CanEditPdf));
+        try
+        {
+            var caps = await _approvals.GetEditingCapabilitiesAsync(id);
+            return Ok(new HKCardEditingCapabilitiesDto(
+                caps.CanEditDetails, caps.CanEditComposition, caps.CanEditPdf));
+        }
+        catch (HkCardAccessDeniedException ex)
+        {
+            return Forbid(ex.Message);
+        }
     }
 
     [HttpPost("{id}/approvals/submit")]
@@ -281,7 +288,7 @@ public class HKCardsController : ControllerBase
         }
     }
 
-    private static HKApprovalStageDto ToStageDto(HKCardApproval approval) => new(
+    private static HKApprovalStageDto ToStageDto(PersistedStageState approval) => new(
         StageKey(approval.Stage),
         StageTitle(approval.Stage),
         approval.State.ToString(),

@@ -440,7 +440,6 @@ public class HKAutonomousCardIntegrationTests
         // только для утверждения.
         await using var s = await AuthorScopeAsync();
         var created = await s.HK.CreateAsync(NewAutonomousDraft(_fixture.BranchA, "Два этапа"));
-        await s.Approvals.EnsureStagesAsync(created.Id);
 
         foreach (var status in new[]
                  {
