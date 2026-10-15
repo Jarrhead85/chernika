@@ -33,7 +33,10 @@ public class AccountServiceIntegrationTests
                 ["FileStorage:RootPath"] = storageDir,
             })
             .Build();
-        var storage = new LocalFileStorageService(configuration, Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalFileStorageService>.Instance);
+        var storage = new LocalFileStorageService(
+            configuration,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalFileStorageService>.Instance,
+            s.Db);
         return new AccountService(
             s.Db, s.User, s.Users, TimeProvider.System, storage,
             new Microsoft.Extensions.Logging.Abstractions.NullLogger<AccountService>(),

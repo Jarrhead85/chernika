@@ -131,7 +131,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
                 ["FileStorage:RootPath"] = storageRoot,
             })
             .Build());
-        services.AddSingleton<IFileStorageService, LocalFileStorageService>();
+        services.AddScoped<IFileStorageService, LocalFileStorageService>();
         Services = services.BuildServiceProvider();
 
         await using var scope = Services.CreateAsyncScope();

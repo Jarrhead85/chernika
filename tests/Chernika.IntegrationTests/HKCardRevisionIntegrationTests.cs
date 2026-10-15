@@ -525,22 +525,38 @@ public class HKCardRevisionIntegrationTests
 
         // Гарантируется: уникальные номера редакций, согласованное содержимое
         // каждой редакции, отсутствие частичных записей и контролируемый исход
-        // конфликта. Единственность фиксации ОДНОЙ рабочей версии здесь НЕ
-        // требуется и не проверяется: CaptureAsync не меняет RowVersion карты, и
-        // повторная фиксация той же версии — предусмотренная моделью возможность.
-        Assert.All(outcomes, o =>
+        // конфликта. Единственность фиксации ОДНОЙ рабочей версии не требуется:
+        // CaptureAsync не меняет RowVersion карты, и повторная фиксация той же
+        // версии — предусмотренная моделью возможность.
+        //
+        // Пустой список успехов успехом НЕ считается: обе фиксации провалиться
+        // не должны.
+        Assert.NotEmpty(outcomes);
+
+        var succeeded = outcomes.Count(o => o == "ok");
+        Assert.True(succeeded >= 1,
+            "Ни одна параллельная фиксация не завершилась успешно: " + string.Join(", ", outcomes));
+
+        // Конфликты допускаются только конкретные и объяснимые.
+        foreach (var refused in outcomes.Where(o => o != "ok"))
         {
-            var allowed = o == "ok"
-                         || o == nameof(InvalidOperationException)
-                         || o == nameof(DbUpdateException);
-            Assert.True(allowed, "Неожиданный исход фиксации: " + o);
-        });
+            Assert.True(refused == nameof(InvalidOperationException)
+                        || refused == nameof(DbUpdateException),
+                "Неожиданный исход фиксации: " + refused);
+        }
 
         await using var check = await AuthorAsync();
         var numbers = await check.Db.HKCardRevisions
             .Where(r => r.HKCardId == cardId)
-            .Select(r => r.RevisionNumber).ToListAsync();
+            .OrderBy(r => r.RevisionNumber)
+            .Select(r => r.RevisionNumber)
+            .ToListAsync();
+
+        // Одинаковых номеров быть не может, и итоговое число редакций обязано
+        // совпадать с числом состоявшихся фиксаций.
         Assert.Equal(numbers.Count, numbers.Distinct().Count());
+        Assert.Equal(succeeded, numbers.Count);
+        Assert.Equal(Enumerable.Range(1, numbers.Count), numbers);
     }
 
     // ── Фиксация не делает ничего из запрещённого ──

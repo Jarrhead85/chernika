@@ -75,7 +75,7 @@ public sealed record HKAcceptedStructureDto(
 /// для этого понадобится.
 /// </para>
 /// </summary>
-public class HKCardRevisionService
+public sealed class HKCardRevisionService
 {
     private readonly AppDbContext _db;
     private readonly ICurrentUserService _currentUser;
@@ -172,12 +172,26 @@ public class HKCardRevisionService
     /// редакции НЕ переключается и статус этапа НЕ меняется.
     /// </para>
     /// </summary>
-    public async Task<Guid> CaptureAsync(Guid cardId, uint expectedCardRowVersion,
+    /// <summary>
+    /// Фиксация рабочей структуры как новой редакции.
+    /// <para>
+    /// Внутренний механизм будущей команды окончательного согласования.
+    /// Право <c>HK.View</c> НЕ является правом создавать редакции, поэтому
+    /// единственной проверки чтения недостаточно: публичная команда выдала бы
+    /// фиксацию любому читателю. Фиксация не вызывается из HTTP и не имеет
+    /// endpoint.
+    /// </para>
+    /// <para>
+    /// Вызывающий — только <c>HKApprovalService</c>, уже проверивший право,
+    /// филиал, назначение согласующим, состояние этапа и ожидаемую версию.
+    /// Контекст операции не принимается из запроса и не может быть подделан DTO.
+    /// </para>
+    /// </summary>
+    internal async Task<Guid> CaptureAsync(Guid cardId, uint expectedCardRowVersion,
         CancellationToken ct = default)
     {
-        // Фиксация — внутренний механизм будущей команды согласования. Она не
-        // принимает контекст доступа из запроса и не открывает endpoint: вызывающий
-        // сценарий обязан проверить доступ сам.
+        // Карта должна существовать и быть доступна: это защита от фиксации
+        // несуществующей карты и от вызова в обход workflow.
         await EnsureReadAccessAsync(cardId, ct);
 
         await using var plan = await ResolveTransactionAsync(ct);

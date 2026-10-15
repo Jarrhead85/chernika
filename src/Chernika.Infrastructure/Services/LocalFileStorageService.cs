@@ -11,10 +11,29 @@ public class LocalFileStorageService : IFileStorageService
 {
     private readonly string _rootPath;
     private readonly ILogger<LocalFileStorageService> _logger;
+    private readonly AppDbContext _db;
 
-    public LocalFileStorageService(IConfiguration config, ILogger<LocalFileStorageService> logger)
+    /// <param name="db">
+    /// Контекст ВЫЗЫВАЮЩЕГО сценария, а не отдельное подключение.
+    /// <para>
+    /// Отдельное подключение не видело бы редакцию, зафиксированную в ещё не
+    /// закрытой транзакции вызывающего, и могло бы обратиться к другой базе,
+    /// чем обслуживаемая карта. Решение о сохранности файла обязано приниматься
+    /// по той же базе и в том же контексте, что и сама операция.
+    /// </para>
+    /// <para>
+    /// Сервис зарегистрирован Scoped — совпадает с временем жизни
+    /// <see cref="AppDbContext"/>. Внедрение scoped-зависимости в singleton
+    /// было бы ошибкой, поэтому тестовые контейнеры используют тот же lifetime.
+    /// </para>
+    /// </param>
+    public LocalFileStorageService(
+        IConfiguration config,
+        ILogger<LocalFileStorageService> logger,
+        AppDbContext db)
     {
         _logger = logger;
+        _db = db;
         _rootPath = config.GetValue<string>("FileStorage:RootPath")
             ?? throw new InvalidOperationException("FileStorage:RootPath is not configured.");
         Directory.CreateDirectory(_rootPath);
@@ -92,31 +111,19 @@ public class LocalFileStorageService : IFileStorageService
     /// <summary>
     /// Есть ли ссылка на файл в зафиксированных редакциях.
     /// <para>
-    /// Снимок хранит ключ хранения, поэтому проверка выполняется по нему, без
-    /// чтения содержимого файла.
+    /// Проверка выполняется по сохранённому ключу хранения, без чтения
+    /// содержимого файла. При сомнении файл сохраняется: лишний файл
+    /// предпочтительнее потери основания редакции, и это не требует очистки
+    /// для своей безопасности.
     /// </para>
     /// </summary>
-    private static async Task<bool> IsReferencedByRevisionAsync(string storageKey, CancellationToken ct)
+    private async Task<bool> IsReferencedByRevisionAsync(string storageKey, CancellationToken ct)
     {
-        // Отдельное подключение: сервис файлов не должен зависеть от текущей
-        // транзакции вызывающего, а решение о сохранности файла принадлежит базе.
-        await using var db = new AppDbContext(
-            new DbContextOptionsBuilder<AppDbContext>()
-                .UseNpgsql(DatabaseConnection.Build(ResolveConfiguration()))
-                .Options);
-
-        return await db.HKCardRevisions
+        // Трекер вызывающего НЕ очищается: запрос и так AsNoTracking, а очистка
+        // уничтожила бы его незавершённые изменения.
+        return await _db.HKCardRevisions
             .AsNoTracking()
             .AnyAsync(r => r.AttachmentStorageKey == storageKey, ct);
-    }
-
-    private static IConfiguration ResolveConfiguration()
-    {
-        var builder = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddEnvironmentVariables();
-        return builder.Build();
     }
 
     private string GetFullPath(string storageKey)

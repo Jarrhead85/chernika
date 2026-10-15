@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Chernika.Domain\Chernika.Domain.csproj" />
@@ -26,4 +26,11 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <!-- Внутренние механизмы (например, фиксация редакции) вызываются только
+         проверенным workflow внутри сборки. Тестам нужен прямой доступ к ним;
+         это не создаёт production-дыры: тестовая сборка в поставку не входит. -->
+    <InternalsVisibleTo Include="Chernika.IntegrationTests" />
+  </ItemGroup>
 </Project>
