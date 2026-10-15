@@ -47,6 +47,7 @@ public class HKApprovalService
     private readonly AuditService _audit;
     private readonly HKCardRevisionService _revisions;
     private readonly NotificationService _notifications;
+    private readonly IFileStorageService _fileStorage;
     private readonly TaskService _tasks;
     private readonly TimeProvider _time;
     private readonly ILogger<HKApprovalService> _logger;
@@ -61,6 +62,7 @@ public class HKApprovalService
         TaskService tasks,
         HKCardRevisionService revisions,
         NotificationService notifications,
+        IFileStorageService fileStorage,
         TimeProvider time,
         ILogger<HKApprovalService> logger)
     {
@@ -73,6 +75,7 @@ public class HKApprovalService
         _tasks = tasks;
         _revisions = revisions;
         _notifications = notifications;
+        _fileStorage = fileStorage;
         _time = time;
         _logger = logger;
     }
@@ -261,12 +264,49 @@ public class HKApprovalService
         {
             await task;
         }
+        catch (OperationCanceledException)
+        {
+            // Настоящая отмена запроса: это не конкурентный исход и подменять его
+            // конфликтом нельзя. Признак отмены доходит до вызывающего как есть.
+            throw;
+        }
         catch (DbUpdateConcurrencyException)
         {
-            throw new HkCardVersionConflictException(
-                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+            throw VersionConflict();
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg)
+        {
+            // Различаются конкретные конкурентные ситуации.
+            switch (pg.SqlState)
+            {
+                // Ошибка сериализации и взаимоблокировка: конкурентные решения.
+                case PostgresErrorCodes.SerializationFailure:
+                case PostgresErrorCodes.DeadlockDetected:
+                    throw VersionConflict();
+
+                // Нарушение уникальности: конкурентная фиксация редакции.
+                case PostgresErrorCodes.UniqueViolation when
+                    pg.ConstraintName is "UX_HKCardRevisions_Card_Number"
+                        or "UX_HKCardApprovals_Card_Stage":
+                    throw VersionConflict();
+
+                // Прочая ошибка базы: внутренние подробности пользователю не
+                // выдаются, но и конфликтом она не называется.
+                default:
+                    throw new InvalidOperationException(
+                        "Не удалось выполнить операцию согласования. Повторите попытку.");
+            }
+        }
+        catch (PostgresException pg) when (
+            pg.SqlState is PostgresErrorCodes.SerializationFailure
+                or PostgresErrorCodes.DeadlockDetected)
+        {
+            throw VersionConflict();
         }
     }
+
+    private static HkCardVersionConflictException VersionConflict() =>
+        new("Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
 
     private static HKCardApproval? FindStage(IReadOnlyList<HKCardApproval> stages, HKApprovalStage stage) =>
         stages.FirstOrDefault(s => s.Stage == stage);
@@ -818,101 +858,112 @@ public class HKApprovalService
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
         // ── Проверки ДО транзакции: право, активность, филиал, карта ──
+        // Решение о доступе принимается по сохранённому состоянию, а не по
+        // объектам, которые вызывающий код мог загрузить и изменить.
         var access = await BuildDecisionAccessAsync(cardId, PermissionCodes.HKApprove, ct);
         var actorId = access.ActorUserId;
 
         EnsureNotTerminal(access.Card);
         EnsureRowVersion(access.Card, expectedRowVersion);
 
-        var stages = await EnsureStagesForCommandAsync(cardId, ct);
-        var details = FindStage(stages, HKApprovalStage.Details)!;
-        var composition = FindStage(stages, HKApprovalStage.Composition)!;
+        // Этапы ТОЛЬКО читаются. Для окончательного принятия они уже должны
+        // существовать: состав обязан был пройти отправку. Создавать этапы
+        // попутно с принятием нельзя — принятие не имеет права материализовать
+        // состояние, которого не было.
+        var preStages = await ReadStagesAsync(cardId, ct);
+        var preDetails = preStages.FirstOrDefault(s => s.Stage == HKApprovalStage.Details);
+        var preComposition = preStages.FirstOrDefault(s => s.Stage == HKApprovalStage.Composition);
 
-        // Решение принимает назначенный согласующий, а не любой пользователь с
-        // правом. Обхода назначения для SystemAdmin здесь нет.
-        EnsureAssignedApprover(composition, actorId.ToString());
-
-        // Реквизиты и основание должны быть приняты раньше состава.
-        if (details.State != HKApprovalStageState.Approved)
+        if (preDetails is null || preComposition is null)
             throw new InvalidOperationException(
-                "Принять состав можно только после принятия реквизитов и основания.");
+                "У карты отсутствуют этапы согласования: окончательное принятие невозможно.");
 
-        if (composition.State != HKApprovalStageState.OnReview)
-            throw new InvalidOperationException("Принять состав можно только когда он на рассмотрении.");
+        EnsureCompositionApprovable(preDetails, preComposition, actorId.ToString());
 
-        // Оба этапа рассматривает один конкретный согласующий.
-        if (details.AssignedApproverUserId != composition.AssignedApproverUserId)
-            throw new InvalidOperationException(
-                "Согласующий состава не совпадает с согласующим реквизитов.");
-
-        // Повторное принятие ничего не делает: следующая редакция не создаётся.
-        if (composition.State == HKApprovalStageState.Approved)
-            throw new InvalidOperationException("Состав уже принят.");
-
+        // ── Общая транзакция принадлежит этой команде ──
         await using var tx = await _db.Database.BeginTransactionAsync(
             System.Data.IsolationLevel.RepeatableRead, ct);
 
-        // ── Повторная проверка по строке, прочитанной ВНУТРИ транзакции ──
+        // ── Независимое чтение сохранённого состояния ВНУТРИ транзакции ──
+        // Отслеживаемые строки читаются ЗДЕСЬ и только для записи. Решение
+        // принимается по проекциям: повторный tracking-запрос отслеживаемой сущности
+        // вернул бы тот же экземпляр и не увидел бы изменений из базы.
+        var persistedCard = await LoadPersistedCardAsync(cardId, ct);
+        EnsureNotTerminal(persistedCard);
+        EnsureRowVersion(persistedCard, expectedRowVersion);
+
+        var stages = await ReadStagesAsync(cardId, ct);
+        var detailsState = stages.FirstOrDefault(s => s.Stage == HKApprovalStage.Details);
+        var compositionState = stages.FirstOrDefault(s => s.Stage == HKApprovalStage.Composition);
+
+        if (detailsState is null || compositionState is null)
+            throw new InvalidOperationException("Этапы согласования отсутствуют.");
+
+        // Те же условия, что и до транзакции, но по данным из базы.
+        EnsureCompositionApprovable(detailsState, compositionState, actorId.ToString());
+
+        // ── Строки для записи ──
+        // Отслеживаемые экземпляры могли быть изменены вызывающим кодом, поэтому
+        // охраняемые поля возвращаются к сохранённым значениям ДО проверки и записи.
         var card = await LoadCardForWriteAsync(cardId, ct);
-        EnsureRowVersion(card.RowVersion, expectedRowVersion);
+        RestoreGuardedFields(card, persistedCard);
 
-        var freshComposition = await _db.HKCardApprovals
-            .FirstAsync(a => a.Id == composition.Id, ct);
+        var details = await _db.HKCardApprovals.FirstAsync(a => a.Id == detailsState.Id, ct);
+        var composition = await _db.HKCardApprovals.FirstAsync(a => a.Id == compositionState.Id, ct);
 
-        if (freshComposition.State != HKApprovalStageState.OnReview)
-            throw new InvalidOperationException("Состав уже не находится на рассмотрении.");
+        // Версии этапов проверяются по сохранённым значениям: конкурентное
+        // изменение строки должно отклониться, а не перезаписаться молча.
+        EnsureStageRowVersion(detailsState, details, "реквизитов");
+        EnsureStageRowVersion(compositionState, composition, "состава");
 
-        // Принимаемые данные проходят ту же проверку, что и перед отправкой:
-        // принять нельзя то, что не было бы допущено к отправке.
-        var validation = await _validation.ValidateDraftAsync(card, ct);
+        // Охраняемые поля этапов тоже возвращаются к сохранённым.
+        details.State = detailsState.State;
+        details.AssignedApproverUserId = detailsState.AssignedApproverUserId;
+        details.ApprovedAtUtc = detailsState.ApprovedAtUtc;
+        composition.State = compositionState.State;
+        composition.AssignedApproverUserId = compositionState.AssignedApproverUserId;
+        composition.ApprovedAtUtc = compositionState.ApprovedAtUtc;
+
+        // ── Полная проверка принимаемого состава ──
+        // ValidateDraftAsync проверяет только реквизиты. Окончательное принятие
+        // публикует структуру, поэтому проверяется всё, что попадёт в снимок.
+        var validation = await _validation.ValidateForApprovalAsync(card, ct);
         if (!validation.IsValid)
             throw new HKCardValidationException(validation.Errors);
+
+        // ── Существующее вложение должно быть доступно и цело ──
+        await EnsureAttachmentUsableAsync(cardId, ct);
 
         var previousRevisionId = card.CurrentAcceptedRevisionId;
         var previousStatus = card.Status;
         var now = _time.GetUtcNow().UtcDateTime;
 
         // ── 1-3. Фиксация сохранённой рабочей структуры ──
-        // Фиксация выполняется ВНУТРИ общей транзакции: отдельной не открывает и
-        // общую не коммитит. При ошибке здесь принятие не продолжается.
         var revisionId = await _revisions.CaptureAsync(
             cardId, card.RowVersion, now, actorId.ToString(), ct);
 
-        // Редакция обязана принадлежать этой карте.
         var belongs = await _db.HKCardRevisions
             .AsNoTracking()
             .AnyAsync(r => r.Id == revisionId && r.HKCardId == cardId, ct);
         if (!belongs)
             throw new InvalidOperationException("Редакция не принадлежит этой карте.");
 
-        // ── 4. Переключение указателя на принятую редакцию ──
-        // Указатель назначается ДО принятия этапа: снимок уже создан и откатывается
-        // вместе со всей операцией.
+        // ── 4. Указатель на принятую структуру ──
         card.CurrentAcceptedRevisionId = revisionId;
 
         // ── 5-6. Принятие этапа состава ──
-        freshComposition.State = HKApprovalStageState.Approved;
-        freshComposition.ApprovedAtUtc = now;
-        freshComposition.UpdatedAtUtc = now;
+        composition.State = HKApprovalStageState.Approved;
+        composition.ApprovedAtUtc = now;
+        composition.UpdatedAtUtc = now;
 
-        // Данные решения (AcceptedAtUtc, AcceptedByUserId) уже записаны при создании
-        // редакции: она неизменяема с момента фиксации. Технический CapturedAtUtc
-        // датой утверждения не подменяется.
-
-        // ── 7. Общий статус карты ──
-        // DeriveOverallStatus не рассматривает Approved, поэтому итог задаётся
-        // явно: оба этапа приняты, и карта утверждена.
+        // ── 7-8. Статус карты и сведения о решении ──
         card.Status = HKCardStatus.Approved;
         card.UpdatedAt = now;
-
-        // ── 8. Сведения о согласующем и дате утверждения карты ──
         card.ReviewerId = actorId;
         if (!card.ApprovedDate.HasValue)
             card.ApprovedDate = now;
 
-        // ── 9. Закрытие задач рассмотрения состава ──
-        // Закрываются задачи ИМЕННО этого этапа; задачи реквизитов и доработки не
-        // трогаются.
+        // ── 9. Закрытие задач этого этапа ──
         await CloseReviewTasksAsync(card.Id, HKApprovalStage.Composition, actorId, comment, ct);
         await CloseStageTasksAsync(card.Id, HKApprovalStage.Composition, actorId, comment, ct);
 
@@ -941,8 +992,6 @@ public class HKApprovalService
             EntityDisplayName: $"{card.Code} v{card.Version}",
             Details: "Редакция принята как последняя принятая структура карты."), ct);
 
-        // Уведомление первоначальному автору. Запись откатывается вместе с
-        // операцией: внешних необратимых отправок до Commit не выполняется.
         if (card.AuthorId.HasValue)
         {
             await _notifications.AddAsync(
@@ -953,16 +1002,123 @@ public class HKApprovalService
                     $"Карта {card.Code} версии {card.Version} принята: состав и нормы утверждены.",
                     EntityType: "HKCard",
                     EntityId: card.Id,
-                    NavigationUrl: $"/hk/{card.Id}",
+                    // Маршрут страницы карты объявлен как @page "/хк/{Id:guid}".
+                    NavigationUrl: $"/хк/{card.Id}",
                     BranchId: card.BranchId,
-                    // Ключ исключает повторное уведомление при повторном запросе.
                     DeduplicationKey: $"hk-accepted-{card.Id}-{revisionId}"),
                 ct);
         }
 
-        // ── 11. Фиксация транзакции ──
+        // ── 11. Фиксация ──
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// Условия, при которых состав можно принять. Проверяется по сохранённым
+    /// состояниям этапов, а не по отслеживаемым экземплярам.
+    /// </summary>
+    private static void EnsureCompositionApprovable(
+        PersistedStageState details, PersistedStageState composition, string actorId)
+    {
+        // Решение принимает назначенный согласующий, а не любой пользователь с
+        // правом. Обхода назначения для SystemAdmin здесь нет.
+        if (string.IsNullOrWhiteSpace(composition.AssignedApproverUserId))
+            throw new InvalidOperationException(
+                "Этап не направлен конкретному согласующему: отправьте его на согласование.");
+
+        if (composition.AssignedApproverUserId != actorId)
+            throw new UnauthorizedAccessException(
+                "Решение по составу принимает назначенный согласующий.");
+
+        if (details.State != HKApprovalStageState.Approved)
+            throw new InvalidOperationException(
+                "Принять состав можно только после принятия реквизитов и основания.");
+
+        if (composition.State == HKApprovalStageState.Approved)
+            throw new InvalidOperationException("Состав уже принят.");
+
+        if (composition.State != HKApprovalStageState.OnReview)
+            throw new InvalidOperationException("Принять состав можно только когда он на рассмотрении.");
+
+        // Оба этапа рассматривает один конкретный согласующий.
+        if (details.AssignedApproverUserId != composition.AssignedApproverUserId)
+            throw new InvalidOperationException(
+                "Согласующий состава не совпадает с согласующим реквизитов.");
+    }
+
+    /// <summary>
+    /// Токен строки этапа сверяется с сохранённым: конкурентное изменение должно
+    /// отклониться, а не перезаписаться молча.
+    /// </summary>
+    private static void EnsureStageRowVersion(
+        PersistedStageState persisted, HKCardApproval tracked, string stageName)
+    {
+        if (tracked.RowVersion != persisted.RowVersion)
+            throw new HkCardVersionConflictException(
+                $"Этап {stageName} изменён другим пользователем. Обновите страницу и повторите попытку.");
+    }
+
+    /// <summary>
+    /// Возвращает охраняемые поля карты к СОХРАНЁННЫМ значениям.
+    /// <para>
+    /// Отслеживаемый экземпляр — тот же объект, который вызывающий код мог
+    /// изменить заранее. Без возврата к сохранённым значениям команда записала бы
+    /// подменённые статус, филиал, автора или указатель принятой редакции.
+    /// </para>
+    /// </summary>
+    private static void RestoreGuardedFields(HKCard card, PersistedCardState persisted)
+    {
+        card.Status = persisted.Status;
+        card.BranchId = persisted.BranchId;
+        card.AuthorId = persisted.AuthorId;
+        card.Code = persisted.Code;
+        card.Version = persisted.Version;
+    }
+
+    /// <summary>
+    /// Существующее вложение должно существовать и совпадать с сохранёнными
+    /// метаданными: принятая структура не может ссылаться на недоступный файл.
+    /// <para>
+    /// PDF не обязателен для всех карт: требование действующего первого этапа
+    /// сохраняется, проверяется только то вложение, которое уже есть.
+    /// </para>
+    /// </summary>
+    private async Task EnsureAttachmentUsableAsync(Guid cardId, CancellationToken ct)
+    {
+        var attachment = await _db.HKCardAttachments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.HKCardId == cardId, ct);
+
+        if (attachment is null)
+            return;
+
+        Stream stream;
+        try
+        {
+            stream = await _fileStorage.OpenReadAsync(attachment.StorageKey, ct);
+        }
+        catch (FileNotFoundException)
+        {
+            throw new InvalidOperationException(
+                "Файл PDF-скана не найден: принять состав с таким основанием нельзя.");
+        }
+
+        await using (stream)
+        {
+            if (attachment.SizeBytes > 0 && stream.Length != attachment.SizeBytes)
+                throw new InvalidOperationException(
+                    "Размер PDF-скана не совпадает с сохранённым: основание повреждено.");
+
+            if (!string.IsNullOrWhiteSpace(attachment.Sha256))
+            {
+                var actual = Convert.ToHexString(
+                    await System.Security.Cryptography.SHA256.HashDataAsync(stream, ct));
+                if (!string.Equals(actual, attachment.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "Контрольная сумма PDF-скана не совпадает с сохранённой: основание повреждено.");
+            }
+        }
     }
 
     // ── Общие проверки ──

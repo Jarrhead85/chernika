@@ -1387,6 +1387,70 @@ READ** — тем же, который `HKCardRevisionService` принимае�
 Сценарий начала доработки принятой карты в этом PR не реализован. До него карта
 доступна только для чтения.
 
+
+#### 7.3.1. Целостность и безопасность окончательного принятия (PR № 6.1)
+
+##### Таблица замечаний
+
+| Замечание | Фактическое место | Исправление | Тест |
+|---|---|---|---|
+Этапы грузились tracking-запросом до транзакции; повторный запрос отслеживаемой сущности не обновляет её из БД | `ApproveCompositionAsyncCore` | Решение принимается по проекциям `AsNoTracking`, прочитанным **внутри** транзакции; отслеживаемые строки берутся только для записи | `ApproveComposition_IgnoresTamperedTrackedStage` |
+Охраняемые поля карты могли быть подменены вызывающим кодом | то же | `RestoreGuardedFields` возвращает статус, филиал, автора, код и версию к сохранённым | тот же |
+Токен строки этапа не сверялся | то же | `EnsureStageRowVersion` сверяет `RowVersion` с сохранённым | `ApproveComposition_SeesChangeMadeByAnotherContext` |
+Принятие материализовало этапы попутно | `EnsureStagesForCommandAsync` до транзакции | Этапы только **читаются**; отсутствие этапа — понятный отказ без записи | `ApproveComposition_WithoutStages_CreatesNothing` |
+Проверялись только реквизиты | `ValidateDraftAsync` | `ValidateForApprovalAsync` — полная проверка принимаемого состава | `ApproveComposition_SavedCompositionWithoutRows_IsRefused` |
+`HKCardItemService` без проверок вовсе | `ReplaceMaterialsAsync` | Права, активность, филиал, состояние карты и этапа, доступность ГСМ, версия | пять тестов `ReplaceMaterials_*` |
+Основание проверялось только по метаданным | `CaptureAsync` | `EnsureAttachmentUsableAsync`: доступность файла, размер, SHA-256 | `ApproveComposition_WithMissingPdfFile_*`, `..._WithCorruptedPdfFile_*` |
+Любая ошибка PostgreSQL считалась исходом гонки | `GuardedAsync` | Различаются сериализация, взаимоблокировка, ожидаемая уникальность, прочая ошибка БД и настоящая отмена | `Decision_LosingRace_ReturnsConflict` |
+Ссылка уведомления вела на несуществующий маршрут | `NavigationUrl` | `/хк/{card.Id}` — маршрут объявлен как `@page "/хк/{Id:guid}"` | — |
+Тест менял назначение согласующего у ВСЕХ карт общей БД | `CreateApproverWithoutApproveAsync` | Фильтр по конкретной карте, восстановление в `finally` | весь набор |
+
+##### Таблица команд записи и их блокировок
+
+| Команда | HK.Work | Филиал | Блокировка состояния |
+|---|---|---|---|
+`UpdateAsync` (реквизиты и строки) | да | да | `Approved`; указатель принятой редакции; реквизиты — по этапу |
+`SaveTreeAsync` | да | да | то же + `Composition.OnReview`/`Approved` |
+`SaveAttachmentAsync`, `DeleteAttachmentAsync` | `HKAttachmentEdit` | да | то же + `Details.OnReview`/`Approved` |
+`HKCardItemService.ReplaceMaterialsAsync` | да | да | `Approved`; указатель; `Composition.OnReview`/`Approved`; `Archived`/`Deleted` |
+`ChangeStatusAsync` → `Approved` | — | — | **запрещён полностью** |
+
+Во время рассмотрения реквизитов автор по-прежнему может заполнять разрешённые
+строки и материалы: блокирует этап состава, а не общий статус.
+
+##### Конкурентные отказы
+
+| Ситуация | Приведённый тип |
+|---|---|
+`DbUpdateConcurrencyException` | `HkCardVersionConflictException` |
+Сериализация (`40001`), взаимоблокировка (`40P01`) | `HkCardVersionConflictException` |
+Уникальность `UX_HKCardRevisions_Card_Number` или `UX_HKCardApprovals_Card_Stage` | `HkCardVersionConflictException` |
+Прочая ошибка БД | `InvalidOperationException` без внутренних текстов |
+`OperationCanceledException` | проходит как отмена запроса, конфликтом не подменяется |
+
+##### Проверка PDF в команде принятия
+
+Если у карты есть вложение, до фиксации проверяется доступность файла, размер и
+совпадение SHA-256 с сохранённой контрольной суммой. PDF не становится
+обязательным для всех карт: действующее требование первого этапа сохраняется,
+проверяется только уже существующее вложение.
+
+При недоступном или повреждённом файле — понятный отказ: этап не принят, указатель
+не изменён, редакция не создана.
+
+Механизм сохранности файла по-прежнему не даёт межпроцессной гарантии: это решение
+по данным, а не блокировка файловой системы.
+
+##### API чтения
+
+`GET /api/HKCards/{id}/accepted-structure` и
+`GET /api/HKCards/{id}/accepted-structure/{revisionId}`.
+
+Проверки выполняет сервис: `HK.View`, активность, филиал, принадлежность редакции
+карте. Отсутствие принятой структуры — `204`. Карта чужого филиала — `403`.
+Отсутствующая карта и редакция чужой карты — `404`. `StorageKey` и пути в ответ
+не выдаются. GET ничего не создаёт и не переключает.
+
 ### 9.5. Выполнено в PR № 4.1
 
 | Команда | Результат |

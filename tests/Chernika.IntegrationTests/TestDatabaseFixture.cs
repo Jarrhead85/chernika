@@ -94,6 +94,7 @@ public sealed class TestDatabaseFixture : IAsyncLifetime
             Chernika.Infrastructure.Data.HKCardRevisionImmutabilityInterceptor>();
         services.AddScoped<HKApprovalService>();
         services.AddScoped<HKCardRevisionService>();
+        services.AddScoped<HKCardItemService>();
         services.AddOptions();
         services.Configure<HKExpirationOptions>(o =>
         {

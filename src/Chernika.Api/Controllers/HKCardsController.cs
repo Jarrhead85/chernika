@@ -20,6 +20,7 @@ public class HKCardsController : ControllerBase
 {
     private readonly HKCardService _hkCards;
     private readonly HKApprovalService _approvals;
+    private readonly HKCardRevisionService _revisions;
     private readonly IAuthorizationService _authorization;
     private readonly AppDbContext _db;
     private readonly IFileStorageService _fileStorage;
@@ -30,6 +31,7 @@ public class HKCardsController : ControllerBase
     public HKCardsController(
         HKCardService hkCards,
         HKApprovalService approvals,
+        HKCardRevisionService revisions,
         IAuthorizationService authorization,
         AppDbContext db,
         IFileStorageService fileStorage,
@@ -39,6 +41,7 @@ public class HKCardsController : ControllerBase
     {
         _hkCards = hkCards;
         _approvals = approvals;
+        _revisions = revisions;
         _authorization = authorization;
         _db = db;
         _fileStorage = fileStorage;
@@ -162,6 +165,85 @@ public class HKCardsController : ControllerBase
     // устанавливается.
 
     // Чтение этапов НЕ создаёт их: GET-запрос не меняет состояние системы.
+    /// <summary>
+    /// Последняя принятая структура карты — read-only.
+    /// <para>
+    /// Источник — указатель <c>CurrentAcceptedRevisionId</c>, а не последняя
+    /// созданная редакция. Отсутствие принятой структуры возвращается явным
+    /// 204: подстановка рабочего дерева означала бы, что черновик выдан за
+    /// принятую карту.
+    /// </para>
+    /// <para>
+    /// Проверки выполняет сервис: HK.View, активность пользователя, филиал и
+    /// принадлежность редакции карте. GET ничего не создаёт и не переключает.
+    /// </para>
+    /// </summary>
+    [HttpGet("{id}/accepted-structure")]
+    [ProducesResponseType(typeof(HKAcceptedStructureDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<HKAcceptedStructureDto>> GetAcceptedStructure(
+        Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var accepted = await _revisions.GetAcceptedAsync(id, ct);
+
+            // Принятой структуры ещё нет — это не ошибка и не пустой объект.
+            if (accepted is null)
+                return NoContent();
+
+            return Ok(accepted);
+        }
+        catch (HkCardAccessDeniedException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex) when (IsCardMissing(ex))
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// Конкретная сохранённая редакция карты — read-only.
+    /// <para>
+    /// Редакция чужой карты не раскрывается: пользователь без доступа к карте
+    /// получает 404, как при отсутствии редакции.
+    /// </para>
+    /// </summary>
+    [HttpGet("{id}/accepted-structure/{revisionId}")]
+    [ProducesResponseType(typeof(HKAcceptedStructureDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<HKAcceptedStructureDto>> GetAcceptedRevision(
+        Guid id, Guid revisionId, CancellationToken ct)
+    {
+        try
+        {
+            var revision = await _revisions.GetRevisionAsync(id, revisionId, ct);
+            return revision is null ? NoContent() : Ok(revision);
+        }
+        catch (HkCardAccessDeniedException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex) when (IsCardMissing(ex))
+        {
+            // Включает «редакция не найдена» — принадлежность карте не раскрывается.
+            return NotFound();
+        }
+    }
+
     [HttpGet("{id}/approvals")]
     public async Task<ActionResult<List<HKApprovalStageDto>>> GetApprovals(Guid id)
     {

@@ -265,8 +265,18 @@ public class HKCompositionApprovalIntegrationTests
         var reader = await CreateApproverWithoutApproveAsync();
         var version = await VersionAsync(reader, cardId);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => reader.Approvals.ApproveCompositionAsync(cardId, null, version));
+        try
+        {
+            // Назначение меняется ТОЛЬКО у этой карты и восстанавливается.
+            await AssignCompositionApproverAsync(cardId, reader.User.CurrentUserId!.Value.ToString());
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(
+                () => reader.Approvals.ApproveCompositionAsync(cardId, null, version));
+        }
+        finally
+        {
+            await AssignCompositionApproverAsync(cardId, _fixture.NormAdminA2.Id);
+        }
 
         await using var check = await AsAsync(_fixture.NormAdminA.Id);
         Assert.Null(await check.Db.HKCards.AsNoTracking()
@@ -746,10 +756,22 @@ public class HKCompositionApprovalIntegrationTests
         setup.Permissions.InvalidateCache(user.Id);
 
         var scope = await AsAsync(user.Id);
+        return scope;
+    }
+
+    /// <summary>
+    /// Назначает пользователя согласующим состава ТОЛЬКО у указанной карты.
+    /// <para>
+    /// Раньше обновлялись все этапы Composition общей тестовой базы, и назначение
+    /// согласующего у чужих карт менялось вместе с этим тестом. Общая база живёт
+    /// между тестами, поэтому такое изменение заражало последующие прогоны.
+    /// </para>
+    /// </summary>
+    private async Task AssignCompositionApproverAsync(Guid cardId, string userId)
+    {
         await using var assign = _fixture.CreateScope();
         await assign.Db.HKCardApprovals
-            .Where(a => a.Stage == HKApprovalStage.Composition)
-            .ExecuteUpdateAsync(a => a.SetProperty(x => x.AssignedApproverUserId, user.Id));
-        return scope;
+            .Where(a => a.HKCardId == cardId && a.Stage == HKApprovalStage.Composition)
+            .ExecuteUpdateAsync(a => a.SetProperty(x => x.AssignedApproverUserId, userId));
     }
 }

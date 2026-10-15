@@ -251,6 +251,86 @@ public class HKApprovalStageHttpIntegrationTests : IClassFixture<ChernikaApiFact
         Assert.Equal(HttpStatusCode.BadRequest, badDecision.StatusCode);
     }
 
+    // ── Чтение принятой структуры ──
+
+    /// <summary>
+    /// GET принятой структуры не создаёт и не переключает данные.
+    /// До назначения указателя ответ — 204, а не рабочее дерево.
+    /// </summary>
+    [Fact]
+    public async Task GetAcceptedStructure_WithoutPointer_ReturnsNoContent()
+    {
+        var cardId = await SeedCardAsync();
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.GetAsync($"/api/HKCards/{cardId}/accepted-structure");
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    /// <summary>Карта чужого филиала — 403, принятая структура не раскрывается.</summary>
+    [Fact]
+    public async Task GetAcceptedStructure_OtherBranch_ReturnsForbidden()
+    {
+        var otherBranch = await SeedOtherBranchAsync();
+        var cardId = await SeedCardAsync(otherBranch);
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.GetAsync($"/api/HKCards/{cardId}/accepted-structure");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>Отсутствующая карта — 404.</summary>
+    [Fact]
+    public async Task GetAcceptedStructure_UnknownCard_ReturnsNotFound()
+    {
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.GetAsync(
+            $"/api/HKCards/{Guid.NewGuid()}/accepted-structure");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Ответ принятой структуры не содержит ни ключа хранения, ни пути файловой
+    /// системы.
+    /// </summary>
+    [Fact]
+    public async Task GetAcceptedStructure_DoesNotExposeStorageKey()
+    {
+        var cardId = await SeedCardAsync();
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.GetAsync($"/api/HKCards/{cardId}/accepted-structure");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain("StorageKey", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AttachmentStorageKey", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("chernika-tests-storage", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Конкурентный проигрыш решения даёт 409, а не 500 и не произвольный 400.
+    /// </summary>
+    [Fact]
+    public async Task Decision_LosingRace_ReturnsConflict()
+    {
+        var cardId = await SeedCardAsync(withStages: true);
+
+        // Версия заведомо устаревшая: версия карты на экране уже не совпадает.
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.PostAsJsonAsync(
+            $"/api/HKCards/{cardId}/approvals/decision",
+            new { stage = "details", decision = "return", rowVersion = 1u });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Npgsql", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SQLSTATE", body, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Чтение без права просмотра — 403, а не тихая выдача этапов по одному
     /// известному идентификатору.
