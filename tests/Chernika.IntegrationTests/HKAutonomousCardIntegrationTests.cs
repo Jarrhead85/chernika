@@ -450,7 +450,14 @@ public class HKAutonomousCardIntegrationTests
 
             Assert.False(ok);
             Assert.NotNull(error);
-            Assert.Contains("этап", error!, StringComparison.OrdinalIgnoreCase);
+        // Отказ контролируемый и предметный. Формулировка зависит от того,
+        // какое условие сработало раньше: карта может быть ещё на рассмотрении
+        // этапа, а утверждение закрыто в любом случае.
+        Assert.True(
+            error!.Contains("командами этапов согласования", StringComparison.OrdinalIgnoreCase)
+            || error!.Contains("назначенным согласующим", StringComparison.OrdinalIgnoreCase),
+            "Неожиданный отказ общего переключателя статуса: " + error);
+
         }
 
         var stored = await s.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == created.Id);

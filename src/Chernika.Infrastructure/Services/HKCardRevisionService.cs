@@ -62,7 +62,9 @@ public sealed record HKAcceptedStructureDto(
     DateTime? ExpirationDate,
     bool HasAttachment,
     IReadOnlyList<HKAcceptedNodeDto> Nodes,
-    IReadOnlyList<HKAcceptedItemDto> Items);
+    IReadOnlyList<HKAcceptedItemDto> Items,
+    DateTime? AcceptedAtUtc,
+    string? AcceptedByUserId);
 
 /// <summary>
 /// Хранилище редакций собственной структуры карты.
@@ -187,7 +189,11 @@ public sealed class HKCardRevisionService
     /// Контекст операции не принимается из запроса и не может быть подделан DTO.
     /// </para>
     /// </summary>
-    internal async Task<Guid> CaptureAsync(Guid cardId, uint expectedCardRowVersion,
+    internal async Task<Guid> CaptureAsync(
+        Guid cardId,
+        uint expectedCardRowVersion,
+        DateTime? acceptedAtUtc = null,
+        string? acceptedByUserId = null,
         CancellationToken ct = default)
     {
         // Карта должна существовать и быть доступна: это защита от фиксации
@@ -300,6 +306,13 @@ public sealed class HKCardRevisionService
             AttachmentSizeBytes = attachment?.SizeBytes,
             AttachmentSha256 = attachment?.Sha256,
             AttachmentUploadedAtUtc = attachment?.UploadedAt,
+
+            // Данные решения задаются ПРИ СОЗДАНИИ. Редакция неизменяема с момента
+            // фиксации, поэтому дописывать их после неё нельзя: перехватчик
+            // неизменяемости отклонит изменение. Фиксация без решения (внутренние
+            // сценарии и проверки) оставляет их пустыми.
+            AcceptedAtUtc = acceptedAtUtc,
+            AcceptedByUserId = acceptedByUserId,
         };
 
         // Только Добавление: редакция неизменяема с момента фиксации.
@@ -582,6 +595,10 @@ public sealed class HKCardRevisionService
                     .Select(m => new HKAcceptedMaterialDto(
                         m.SourceGsmMaterialId, m.Category, m.Name, m.Nd))
                     .ToList()))
-            .ToList());
+            .ToList(),
+            // Дата решения отделена от CapturedAtUtc: фиксация — технический
+            // момент снятия снимка, решение — момент принятия.
+            r.AcceptedAtUtc,
+            r.AcceptedByUserId);
     }
 }

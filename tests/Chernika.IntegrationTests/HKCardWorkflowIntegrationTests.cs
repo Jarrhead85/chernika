@@ -174,7 +174,7 @@ public class HKCardWorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task FinalApproval_Closed_AndNoIkRecalculationTasks()
+    public async Task FinalApproval_PublishesRevision_AndNoIkRecalculationTasks()
     {
         await using var s = _fixture.CreateScope();
 
@@ -185,16 +185,17 @@ public class HKCardWorkflowIntegrationTests
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
         await HKApprovalScenario.SubmitCompositionAsync(s, cardId);
 
-        // Окончательное принятие закрыто до появления хранилища принятой структуры.
+        // Окончательное принятие выполняет назначенный согласующий.
         s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA2.Id);
         var version = await HKApprovalScenario.VersionAsync(s, cardId);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => s.Approvals.ApproveCompositionAsync(cardId, null, version));
-        Assert.Contains("хранилище", ex.Message, StringComparison.OrdinalIgnoreCase);
+        await s.Approvals.ApproveCompositionAsync(cardId, null, version);
 
-        // Общий статус Approved не выставляется.
+        // Общий статус Approved выставляется, указатель принятой редакции задан.
         var card = await s.Db.HKCards.AsNoTracking().SingleAsync(h => h.Id == cardId);
-        Assert.NotEqual(HKCardStatus.Approved, card.Status);
+        Assert.Equal(HKCardStatus.Approved, card.Status);
+        Assert.NotNull(card.CurrentAcceptedRevisionId);
+        s.Db.ChangeTracker.Clear();
+        Assert.Equal(1, await s.Db.HKCardRevisions.CountAsync(r => r.HKCardId == cardId));
 
         // Задачи пересчёта ИК согласованием не создаются.
         // Проверка ограничена ЭКЗЕМПЛЯРОМ этой карты: общая тестовая БД живёт

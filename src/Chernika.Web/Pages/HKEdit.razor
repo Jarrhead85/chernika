@@ -20,6 +20,7 @@
 @inject ILogger<HKEdit> Logger
 @inject CircuitDbLock DbLock
 @inject HKApprovalService Approvals
+@inject HKCardRevisionService Revisions
 
 <div class="stack">
     <section class="panel">
@@ -966,6 +967,13 @@
                     <div class="formActions hk-form-actions-with-status">
                         <div class="hk-status-inline">
                             <StatusBadge Status="@card.Status" />
+                            @if (!IsNew && acceptedRevisionNumber is { } acceptedNumber)
+                            {
+                                var acceptedCaption = "ХК принята. Принятая структура: редакция №" + acceptedNumber;
+                                if (acceptedAtUtc is { } acceptedAt)
+                                    acceptedCaption += ", дата решения " + AppTime.Fmt(acceptedAt, "dd.MM.yyyy");
+                                <div class="hint">@acceptedCaption</div>
+                            }
                             @if (!IsNew && hasApprovalStages)
                             {
                                 @foreach (var stage in approvalStages)
@@ -977,7 +985,7 @@
                                         {
                                             @if (canApprove)
                                             {
-                                                <button type="button" class="btn primary" @onclick="() => DecideStageAsync(stage.Stage, true)">Принять этап</button>
+                                                <button type="button" class="btn primary" @onclick="() => DecideStageAsync(stage.Stage, true)">@(stage.Stage == HKApprovalStage.Composition ? "Принять состав и нормы" : "Принять этап")</button>
                                             }
                                             @if (canReturn)
                                             {
@@ -1320,6 +1328,16 @@
     private bool canSendToApprove;
     private bool canApprove;
     private bool canReturn;
+
+    /// <summary>
+    /// Номер и дата решения по последней принятой структуре.
+    /// <para>
+    /// Показывается только по указателю карты, а не по последней созданной
+    /// редакции: последняя может быть и непринятой фиксацией.
+    /// </para>
+    /// </summary>
+    private int? acceptedRevisionNumber;
+    private DateTime? acceptedAtUtc;
     private bool canArchive;
     private bool canWork;
     private bool canCreateNewVersion;
@@ -2040,6 +2058,13 @@
             canEditDetails = caps.CanEditDetails;
             canEditComposition = caps.CanEditComposition;
             canEditPdf = caps.CanEditPdf;
+
+            // Сведения о принятой структуре читаются ЧЕРЕЗ СЕРВИС: он проверяет
+            // HK.View, активность и филиал, и берёт редакцию по указателю карты,
+            // а не по последней созданной записи.
+            var accepted = await Revisions.GetAcceptedAsync(card.Id, ct);
+            acceptedRevisionNumber = accepted?.RevisionNumber;
+            acceptedAtUtc = accepted?.AcceptedAtUtc;
         }
 
         // Общий флаг оставлен только для полей, не разделённых по частям.

@@ -405,23 +405,43 @@ public class HKApprovalStageIntegrationTests
             (await StageAsync(cardId, HKApprovalStage.Composition)).State);
     }
 
+    /// <summary>
+    /// Хранилище принятой структуры появилось, поэтому окончательное принятие
+    /// больше не закрыто. Проверяется, что команду выполняет назначенный
+    /// согласующий, и что она связывает редакцию, указатель и статус.
+    /// </summary>
     [Fact]
-    public async Task ApproveComposition_WithoutStorage_IsRefused()
+    public async Task ApproveComposition_ByAssignedApprover_PublishesRevision()
     {
         var cardId = await PrepareCompositionOnReviewAsync();
 
         await using var approver = await ApproverAsync();
         var version = await VersionAsync(approver, cardId);
+        await approver.Approvals.ApproveCompositionAsync(cardId, null, version);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => approver.Approvals.ApproveCompositionAsync(cardId, null, version));
+        await using var check = await AuthorAsync();
+        var card = await check.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+        Assert.Equal(HKCardStatus.Approved, card.Status);
+        Assert.NotNull(card.CurrentAcceptedRevisionId);
+        Assert.Equal(1, await check.Db.HKCardRevisions.CountAsync(r => r.HKCardId == cardId));
+    }
 
-        Assert.Contains("хранилище", ex.Message, StringComparison.OrdinalIgnoreCase);
+    /// <summary>Посторонний пользователь принять состав не может.</summary>
+    [Fact]
+    public async Task ApproveComposition_ByStranger_IsRefused()
+    {
+        var cardId = await PrepareCompositionOnReviewAsync();
 
-        // Общий статус Approved не выставляется.
+        await using var stranger = await AuthorAsync();
+        var version = await VersionAsync(stranger, cardId);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => stranger.Approvals.ApproveCompositionAsync(cardId, null, version));
+
         await using var check = await AuthorAsync();
         var card = await check.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
         Assert.NotEqual(HKCardStatus.Approved, card.Status);
+        Assert.Null(card.CurrentAcceptedRevisionId);
     }
 
     // ── Общий статус ──
@@ -470,7 +490,14 @@ public class HKApprovalStageIntegrationTests
         {
             var (ok, error) = await s.HK.ChangeStatusAsync(cardId, status, null, default);
             Assert.False(ok);
-            Assert.Contains("этап", error!, StringComparison.OrdinalIgnoreCase);
+            // Отказ контролируемый и предметный. Формулировка зависит от того,
+        // какое условие сработало раньше: карта может быть ещё на рассмотрении
+        // этапа, а утверждение закрыто в любом случае.
+        Assert.True(
+            error!.Contains("командами этапов согласования", StringComparison.OrdinalIgnoreCase)
+            || error!.Contains("назначенным согласующим", StringComparison.OrdinalIgnoreCase),
+            "Неожиданный отказ общего переключателя статуса: " + error);
+
         }
     }
 

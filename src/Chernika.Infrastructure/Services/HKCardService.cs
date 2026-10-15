@@ -638,6 +638,17 @@ public class HKCardService
             if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKAttachmentEdit))
                 return (null, null, new UnauthorizedAccessException("Недостаточно прав для работы с вложением ХК."), null);
 
+            // Принятая карта не принимает замену и удаление основания: файл,
+            // на который ссылается опубликованная редакция, должен остаться прежним.
+            try
+            {
+                EnsureNotAccepted(card);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return (null, null, null, ex);
+            }
+
             // PDF — часть основания и блокируется вместе с реквизитами на
             // рассмотрении их этапа.
             if (card.Id != Guid.Empty)
@@ -934,12 +945,14 @@ public class HKCardService
     /// </para>
     /// </summary>
     private sealed record CardAccessInfo(
-        Domain.Enums.HKObjectLevel ObjectLevel, Guid BranchId, HKCardStatus Status, bool IsAutonomous);
+        Domain.Enums.HKObjectLevel ObjectLevel, Guid BranchId, HKCardStatus Status,
+        bool IsAutonomous, Guid? CurrentAcceptedRevisionId);
 
     private async Task<CardAccessInfo?> LoadCardAccessAsync(Guid cardId, CancellationToken ct) =>
         await _db.HKCards.AsNoTracking()
             .Where(x => x.Id == cardId)
-            .Select(x => new CardAccessInfo(x.ObjectLevel, x.BranchId, x.Status, x.IsAutonomous))
+            .Select(x => new CardAccessInfo(
+                x.ObjectLevel, x.BranchId, x.Status, x.IsAutonomous, x.CurrentAcceptedRevisionId))
             .FirstOrDefaultAsync(ct);
 
     /// <summary>
@@ -1037,6 +1050,42 @@ public class HKCardService
     /// тот же, а структуру заполнять разрешено.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Принятая карта не редактируется ни одной командой записи.
+    /// <para>
+    /// Источник истины — общий статус Approved и наличие указателя принятой
+    /// редакции. Проверки только по состоянию этапа недостаточно: после принятия
+    /// этап Approved, а прежняя проверка блокировала только OnReview — и
+    /// опубликованное содержание оставалось редактируемым.
+    /// </para>
+    /// <para>
+    /// Сценарий начала доработки принятой карты в этом PR не реализован: до него
+    /// карта остаётся доступной только для чтения.
+    /// </para>
+    /// </summary>
+    /// <summary>Та же проверка для полной сущности карты (путь вложений).</summary>
+    private static void EnsureNotAccepted(HKCard card)
+    {
+        if (card.Status == HKCardStatus.Approved)
+            throw new InvalidOperationException(
+                "ХК принята: опубликованное содержание недоступно для изменения.");
+
+        if (card.CurrentAcceptedRevisionId.HasValue)
+            throw new InvalidOperationException(
+                "У карты есть принятая структура: изменение заблокировано до начала доработки.");
+    }
+
+    private static void EnsureNotAccepted(CardAccessInfo card)
+    {
+        if (card.Status == HKCardStatus.Approved)
+            throw new InvalidOperationException(
+                "ХК принята: опубликованное содержание недоступно для изменения.");
+
+        if (card.CurrentAcceptedRevisionId.HasValue)
+            throw new InvalidOperationException(
+                "У карты есть принятая структура: изменение заблокировано до начала доработки.");
+    }
+
     private async Task EnsureCompositionEditableAsync(Guid cardId, CancellationToken ct)
     {
         var stages = await _db.HKCardApprovals
@@ -1054,6 +1103,12 @@ public class HKCardService
         if (composition.State == HKApprovalStageState.OnReview)
             throw new InvalidOperationException(
                 "Состав и нормы находятся на согласовании: изменение заблокировано.");
+
+        // Принятый этап тоже закрывает состав. Прежняя проверка смотрела только на
+        // OnReview, и после принятия опубликованный состав оставался редактируемым.
+        if (composition.State == HKApprovalStageState.Approved)
+            throw new InvalidOperationException(
+                "Состав и нормы приняты: изменение заблокировано.");
     }
 
     /// <summary>
@@ -1151,6 +1206,8 @@ public class HKCardService
 
         if (actor.BranchId != card.BranchId && !await IsSystemAdminAsync(actor))
             throw new UnauthorizedAccessException("Нет доступа к карточке другой организации.");
+
+        EnsureNotAccepted(card);
     }
 
     /// <summary>
@@ -2499,13 +2556,23 @@ public class HKCardService
         // Перевод в архив и удаление здесь сохранены: они не являются этапом
         // согласования и сохраняют собственный смысл.
         var isWorkflowStage = newStatus is HKCardStatus.OnReview
-            or HKCardStatus.RevisionRequired
-            or HKCardStatus.Approved;
+            or HKCardStatus.RevisionRequired;
 
         if (isWorkflowStage && await HasApprovalStagesAsync(card.Id, ct))
             return (false,
                 "Переход выполняется командами этапов согласования, а не общим переключателем статуса. " +
                 "Этап согласуется адресно: отправьте реквизиты или состав, затем примите или верните этап.");
+
+        // Утверждение ЗАКРЫТО целиком, независимо от наличия этапов.
+        //
+        // Раньше запрет действовал только для карт с этапами, и карта без этапов
+        // могла получить утверждённый статус мимо согласования: без снимка
+        // структуры, без назначенного согласующего и без задач. Утверждать карту
+        // может только назначенный согласующий команда ApproveCompositionAsync.
+        if (newStatus == HKCardStatus.Approved)
+            return (false,
+                "Утверждение выполняется назначенным согласующим при окончательном принятии состава " +
+                "и недоступно через общий переключатель статуса.");
 
         var oldStatus = card.Status;
         if (!HKCardStatusTransitions.IsAllowed(oldStatus, newStatus))

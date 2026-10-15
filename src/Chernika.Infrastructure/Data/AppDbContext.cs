@@ -488,6 +488,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         e.Property(x => x.AttachmentStorageKey).HasMaxLength(512);
         e.Property(x => x.AttachmentContentType).HasMaxLength(100);
         e.Property(x => x.AttachmentSha256).HasMaxLength(128);
+        e.Property(x => x.AcceptedByUserId).HasMaxLength(450);
 
         // Позиция карты для составного внешнего клюла «указатель принятой
         // редакции»: без неё ссылка могла бы указать на редакцию чужой карты.

@@ -88,6 +88,25 @@ public class HKCardRevision
     /// </summary>
     public string? AttachmentSha256 { get; set; }
 
+    // ── Данные решения ──
+    //
+    // Отдельны от CapturedAtUtc: фиксация — технический момент снятия снимка,
+    // решение — момент, когда назначенный согласующий принял состав. Выдавать
+    // одно за другое нельзя. Заполняются при создании редакции и с этого момента
+    // неизменны, как и сама редакция.
+
+    /// <summary>
+    /// Момент принятия редакции назначенным согласующим. null у редакции,
+    /// зафиксированной, но ещё не принятой.
+    /// </summary>
+    public DateTime? AcceptedAtUtc { get; set; }
+
+    /// <summary>
+    /// Кто принял. Ключ Identity (Users.Id — text), как и остальные ссылки на
+    /// пользователя в проекте.
+    /// </summary>
+    public string? AcceptedByUserId { get; set; }
+
     public DateTime? AttachmentUploadedAtUtc { get; set; }
 
     public List<HKCardRevisionNode> Nodes { get; set; } = new();
