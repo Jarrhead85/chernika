@@ -100,7 +100,6 @@ builder.Services.AddScoped<HKApprovalService>();
 builder.Services.AddScoped<HKCardRevisionService>();
 builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<HKCardValidationService>();
-builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<EquipmentService>();
 builder.Services.AddScoped<GsmMaterialService>();
 builder.Services.AddScoped<ReferenceCatalogService>();

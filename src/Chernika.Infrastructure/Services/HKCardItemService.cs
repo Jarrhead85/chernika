@@ -13,32 +13,44 @@ public class HKCardItemService
     private readonly ICurrentUserService _currentUser;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IPermissionService _permissions;
+    private readonly AuditService _audit;
 
     public HKCardItemService(
         AppDbContext db,
         ICurrentUserService currentUser,
         UserManager<ApplicationUser> userManager,
-        IPermissionService permissions)
+        IPermissionService permissions,
+        AuditService audit)
     {
         _db = db;
         _currentUser = currentUser;
         _userManager = userManager;
         _permissions = permissions;
+        _audit = audit;
     }
 
     /// <summary>
-    /// Замена норм и материалов строки.
+    /// Замена норм и материалов строки — ЗАЩИЩЁННАЯ ЕДИНИЦА РАБОТЫ.
     /// <para>
-    /// Раньше проверок не было вовсе: команда работала с любой картой и любым
-    /// пользователем, минуя права доступа и блокировки этапов. Теперь используются
-    /// те же механизмы, что и в остальных командах карты, новой системы
-    /// авторизации не вводится.
+    /// Раньше метод проверял доступ и состояние, менял отслеживаемый граф и
+    /// возвращался, а сохранение выполнял произвольный последующий
+    /// <c>SaveChanges</c> уже без проверок. Такая граница не защищает запись.
+    /// </para>
+    /// <para>
+    /// Теперь проверки и фактическая запись выполняются в одной транзакции с
+    /// КОНФЛИКТУЮЩИМ УСЛОВИЕМ по <see cref="HKCard.RowVersion"/>: проверка версии
+    /// и сама запись в одном операторе. Повторный SELECT перед сохранением гонку
+    /// не закрывал — закрывает условие UPDATE.
     /// </para>
     /// </summary>
     public async Task ReplaceMaterialsAsync(Guid hkCardItemId,
         IEnumerable<(Guid GsmMaterialId, GsmCategory Category)> materials,
         CancellationToken ct = default)
     {
+        // Вход материализуется один раз: перечисление дважды могло бы дать разные
+        // наборы при изменении источника между проверкой и записью.
+        var requested = (materials ?? Array.Empty<(Guid, GsmCategory)>()).ToList();
+
         var actorId = _currentUser.GetRequiredUserId();
 
         var actor = await _userManager.FindByIdAsync(actorId.ToString())
@@ -53,7 +65,7 @@ public class HKCardItemService
             .AsNoTracking()
             .Where(i => i.Id == hkCardItemId)
             .Select(i => new { i.HKCardId })
-            .FirstOrDefaultAsync()
+            .FirstOrDefaultAsync(ct)
             ?? throw new ArgumentException("Строка ХК не найдена.");
 
         var card = await _db.HKCards
@@ -66,52 +78,139 @@ public class HKCardItemService
                 c.CurrentAcceptedRevisionId,
                 c.RowVersion
             })
-            .FirstOrDefaultAsync()
+            .FirstOrDefaultAsync(ct)
             ?? throw new ArgumentException("ХК не найдена.");
 
         if (actor.BranchId != card.BranchId && !await _permissions.IsSystemAdminAsync(actorId.ToString()))
             throw new UnauthorizedAccessException("Нет доступа к карточке другой организации.");
 
         await EnsureCardWritableAsync(card.Status, card.CurrentAcceptedRevisionId, item.HKCardId, ct);
+        await EnsureMaterialsAssignableAsync(requested, ct);
 
-        // Назначаемые марки должны существовать и быть доступны: принятая или
-        // проверяемая карта не должна получать ссылку на удалённый справочник.
-        var requested = materials.Select(m => m.GsmMaterialId).Distinct().ToList();
-        var available = await _db.GsmMaterials
-            .Where(g => requested.Contains(g.Id))
-            .Select(g => g.Id)
-            .ToListAsync();
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
-        var missing = requested.Except(available).ToList();
-        if (missing.Count > 0)
-            throw new InvalidOperationException(
-                "Выбрана марка ГСМ, недоступная для назначения. Обновите список и повторите.");
-
-        // Конкурентный переход карты в принятое состояние отсекается версией:
-        // строка должна остаться той же, на которую опирались проверки.
+        // Повторное чтение внутри транзакции: блокировка могла наступить между
+        // проверкой и записью.
         var current = await _db.HKCards
             .AsNoTracking()
             .Where(c => c.Id == item.HKCardId)
-            .Select(c => c.RowVersion)
-            .FirstAsync();
-        if (current != card.RowVersion)
-            throw new InvalidOperationException(
-                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+            .Select(c => new { c.Status, c.CurrentAcceptedRevisionId, c.RowVersion })
+            .FirstAsync(ct);
 
+        if (current.RowVersion != card.RowVersion)
+        {
+            await tx.RollbackAsync(ct);
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
+
+        await EnsureCardWritableAsync(current.Status, current.CurrentAcceptedRevisionId, item.HKCardId, ct);
+
+        // КОНФЛИКТУЮЩЕЕ УСЛОВИЕ ЗАПИСИ. Если версия карты успела измениться
+        // (защищённое состояние наступило, отправка ушла, принятие состоялось),
+        // UPDATE не затронет ни одной строки и EF вернёт конкурентное
+        // исключение. Проверки до этого места гонку не закрывали.
+        // Колонка версии объявлена как "xmin" типа xid, а параметр uint Npgsql
+        // выводит как bigint: прямое сравнение даёт "оператор не существует:
+        // xid = bigint". Приведение выполняется явным текстовым маршрутом.
+        var updated = await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "HKCards" SET "UpdatedAt" = "UpdatedAt"
+            WHERE "Id" = {item.HKCardId}
+              AND "xmin"::text::bigint = {card.RowVersion}
+            """, ct);
+
+        if (updated != 1)
+        {
+            await tx.RollbackAsync(ct);
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
+
+        // Набор заменяется целиком и только теперь. Частично удалённый набор
+        // невозможен: удаление и вставка идут в одной транзакции.
         var existing = await _db.HKCardItemMaterials
             .Where(m => m.HKCardItemId == hkCardItemId)
-            .ToListAsync();
+            .ToListAsync(ct);
         _db.HKCardItemMaterials.RemoveRange(existing);
 
-        var newMaterials = materials.Select(m => new HKCardItemMaterial
+        _db.HKCardItemMaterials.AddRange(requested.Select(m => new HKCardItemMaterial
         {
             Id = Guid.NewGuid(),
             HKCardItemId = hkCardItemId,
             GsmMaterialId = m.GsmMaterialId,
             Category = m.Category
-        }).ToList();
+        }));
 
-        await _db.HKCardItemMaterials.AddRangeAsync(newMaterials);
+        await _audit.LogAsync(new AuditWriteRequest(
+            "HKCardItem", hkCardItemId.ToString(), "MaterialsReplaced", actorId,
+            EntityDisplayName: $"Строка ХК {hkCardItemId}",
+            Details: $"Нормы и материалы заменены: {requested.Count} позиций."), ct);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await tx.RollbackAsync(ct);
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
+    }
+
+    /// <summary>
+    /// Действующие правила назначения ГСМ из основного пути ХК, а не проверка
+    /// одного лишь наличия идентификатора.
+    /// <para>
+    /// Категория задаётся явно и не выводится из справочных связей аналогов.
+    /// Прежние <c>Type</c>/<c>Gost</c> не восстанавливаются: их в модели нет.
+    /// </para>
+    /// <para>
+    /// Сохранённая историческая ссылка, которой нет в проверяемом наборе,
+    /// ничего не требует: правило относится к НОВОМУ назначению.
+    /// </para>
+    /// </summary>
+    private async Task EnsureMaterialsAssignableAsync(
+        List<(Guid GsmMaterialId, GsmCategory Category)> requested, CancellationToken ct)
+    {
+        if (requested.Count == 0)
+            return;
+
+        // Категория определена: неопределённое значение означало бы запись,
+        // которую нельзя ни прочитать, ни согласовать.
+        if (requested.Any(m => !Enum.IsDefined(m.Category)))
+            throw new InvalidOperationException("Категория материала не определена.");
+
+        // Дубликаты в пределах категории: одна и та же марка дважды в одной
+        // категории означает задвоение строки.
+        var duplicates = requested
+            .GroupBy(m => (m.GsmMaterialId, m.Category))
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key.GsmMaterialId)
+            .ToList();
+        if (duplicates.Count > 0)
+            throw new InvalidOperationException(
+                "В одной категории повторяется одна и та же марка ГСМ.");
+
+        var ids = requested.Select(m => m.GsmMaterialId).Distinct().ToList();
+        var available = await _db.GsmMaterials
+            .Where(g => ids.Contains(g.Id))
+            .Select(g => new { g.Id, g.IsDeleted, g.IsDraft })
+            .ToListAsync(ct);
+
+        var missing = ids.Except(available.Select(a => a.Id)).ToList();
+        if (missing.Count > 0)
+            throw new InvalidOperationException(
+                "Выбрана марка ГСМ, отсутствующая в справочнике. Обновите список и повторите.");
+
+        var notAssignable = available
+            .Where(a => a.IsDeleted || a.IsDraft)
+            .Select(a => a.Id)
+            .ToList();
+        if (notAssignable.Count > 0)
+            throw new InvalidOperationException(
+                "Выбрана марка ГСМ, недоступная для назначения: удалена или является черновиком.");
     }
 
     /// <summary>
@@ -127,8 +226,7 @@ public class HKCardItemService
         HKCardStatus status, Guid? acceptedRevisionId, Guid cardId, CancellationToken ct)
     {
         if (status is HKCardStatus.Archived or HKCardStatus.Deleted)
-            throw new InvalidOperationException(
-                "Карточка не редактируется в текущем состоянии.");
+            throw new InvalidOperationException("Карточка не редактируется в текущем состоянии.");
 
         if (status == HKCardStatus.Approved)
             throw new InvalidOperationException(
@@ -153,7 +251,6 @@ public class HKCardItemService
                 "Состав и нормы находятся на согласовании: изменение заблокировано.");
 
         if (composition == HKApprovalStageState.Approved)
-            throw new InvalidOperationException(
-                "Состав и нормы приняты: изменение заблокировано.");
+            throw new InvalidOperationException("Состав и нормы приняты: изменение заблокировано.");
     }
 }

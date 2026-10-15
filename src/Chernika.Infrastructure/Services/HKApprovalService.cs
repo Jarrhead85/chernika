@@ -866,6 +866,10 @@ public class HKApprovalService
         EnsureNotTerminal(access.Card);
         EnsureRowVersion(access.Card, expectedRowVersion);
 
+        // Несохранённые изменения вызывающего отсекаются до чтения и записи:
+        // промежуточный SaveChanges при фиксации выполнил бы их попутно.
+        EnsureNoPendingCallerChanges(cardId);
+
         // Этапы ТОЛЬКО читаются. Для окончательного принятия они уже должны
         // существовать: состав обязан был пройти отправку. Создавать этапы
         // попутно с принятием нельзя — принятие не имеет права материализовать
@@ -880,6 +884,8 @@ public class HKApprovalService
 
         EnsureCompositionApprovable(preDetails, preComposition, actorId.ToString());
 
+        try
+        {
         // ── Общая транзакция принадлежит этой команде ──
         await using var tx = await _db.Database.BeginTransactionAsync(
             System.Data.IsolationLevel.RepeatableRead, ct);
@@ -1012,6 +1018,81 @@ public class HKApprovalService
         // ── 11. Фиксация ──
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            // Откат PostgreSQL отменяет ЗАПИСИ, но не восстанавливает объекты
+            // ChangeTracker. Без этого следующий SaveChanges того же scope дописал
+            // бы отменённые строки снимка, указатель, аудит и уведомление.
+            await RecoverAfterFailureAsync();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Явное завершение неуспешной единицы работы.
+    /// <para>
+    /// Записи, появившиеся в трекере после начала команды, отделяются: они
+    /// принадлежат отменённой попытке. Записи, существовавшие ранее, и были
+    /// перечитаны — но к моменту отказа несохранённых изменений вызывающего уже
+    /// быть не может: команда отклонила их до любой записи.
+    /// </para>
+    /// <para>
+    /// Отменённая попытка не удаляется из базы и не компенсируется: единственный
+    /// источник истины — транзакция. Восстановление касается только состояния
+    /// объектов в памяти, чтобы scope стал пригоден для следующей работы.
+    /// </para>
+    /// </summary>
+    private async Task RecoverAfterFailureAsync()
+    {
+        // Набор записей, которые пишет команда принятия.
+        //
+        // Порядок обязателен: дети отделяются раньше родителя. Отделение
+        // заголовка снимка при ещё отслеживаемых строках обрывает связь, и EF
+        // бросает исключение вместо отсоединения — отмена решения не должна
+        // приводить к выходу из catch с потерей исходной ошибки.
+        //
+        // Перечисление берётся из DbSet.Local, а не из снимка
+        // ChangeTracker.Entries(): после прерванного SaveChanges состав
+        // отложенных записей определяется EF, и снимок неполон.
+        //
+        // Проверка несохранённых изменений вызывающего выполнялась ДО любой
+        // записи, поэтому отделяемое здесь принадлежит отменённой попытке, а не
+        // вводу пользователя.
+        DetachAll(_db.HKCardRevisionItemMaterials.Local);
+        DetachAll(_db.HKCardRevisionItems.Local);
+        DetachAll(_db.HKCardRevisionNodes.Local);
+        DetachAll(_db.HKCardRevisions.Local);
+        DetachAll(_db.AuditLogs.Local);
+        DetachAll(_db.Notifications.Local);
+        DetachAll(_db.HKCardStatusLogs.Local);
+
+        // Изменённые и удалённые записи вызывающего возвращаются к сохранённым.
+        foreach (var entry in _db.ChangeTracker.Entries()
+            .Where(e => e.State is Microsoft.EntityFrameworkCore.EntityState.Modified
+                or Microsoft.EntityFrameworkCore.EntityState.Deleted)
+            .ToList())
+        {
+            await entry.ReloadAsync();
+        }
+    }
+
+    /// <summary>
+    /// Отсоединяет добавленные и помеченные к удалению записи набора.
+    /// Изменённые не трогаются: их состояние разбирает вызывающий после
+    /// восстановления.
+    /// </summary>
+    private void DetachAll<T>(IEnumerable<T> local) where T : class
+    {
+        foreach (var entity in local.ToList())
+        {
+            var entry = _db.Entry(entity);
+            if (entry.State is Microsoft.EntityFrameworkCore.EntityState.Added
+                or Microsoft.EntityFrameworkCore.EntityState.Deleted)
+            {
+                entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+            }
+        }
     }
 
     /// <summary>
@@ -1057,6 +1138,93 @@ public class HKApprovalService
         if (tracked.RowVersion != persisted.RowVersion)
             throw new HkCardVersionConflictException(
                 $"Этап {stageName} изменён другим пользователем. Обновите страницу и повторите попытку.");
+    }
+
+    /// <summary>
+    /// Отказывает, если в контексте остались несохранённые изменения вызывающего.
+    /// <para>
+    /// Команда принимает решение по сохранённым данным. Промежуточный
+    /// <c>SaveChanges</c> внутри фиксации выполнил бы отложенные изменения того же
+    /// контекста: правку формы, добавленную сущность, изменённые в памяти
+    /// наименования. Ввод пользователя при этом либо записался бы попутно без
+    /// спроса, либо потерялся бы — оба исхода неверны.
+    /// </para>
+    /// <para>
+    /// <c>ChangeTracker.Clear()</c> здесь не применяется: он уничтожил бы ввод
+    /// молча. Вместо этого — понятный отказ ДО любой записи, с предложением
+    /// сохранить или обновить данные.
+    /// </para>
+    /// </summary>
+    private void EnsureNoPendingCallerChanges(Guid cardId)
+    {
+        var pending = _db.ChangeTracker.Entries()
+            .Where(e => e.State is EntityState.Added or EntityState.Modified
+                                or EntityState.Deleted)
+            .ToList();
+
+        // Записи самой команды ещё не существуют: команда начинается с этого
+        // момента, и всё подозрительное принадлежит вызывающему коду.
+        if (pending.Count == 0)
+            return;
+
+        var foreign = pending
+            .Where(e => !IsCardEntity(e, cardId))
+            .Select(e => e.Metadata.Name)
+            .Distinct()
+            .ToList();
+
+        var cardChanges = pending
+            .Where(e => IsCardEntity(e, cardId))
+            .SelectMany(e => e.Properties
+                .Where(pr => pr.IsModified || e.State == EntityState.Added)
+                .Select(pr => pr.Metadata.Name))
+            .Distinct()
+            .ToList();
+
+        if (foreign.Count == 0 && cardChanges.Count == 0)
+            return;
+
+        var details = new List<string>();
+        if (foreign.Count > 0)
+            details.Add("несохранённые изменения сущностей: "
+                        + string.Join(", ", foreign.Take(3)));
+        if (cardChanges.Count > 0)
+            details.Add("несохранённые изменения карты: "
+                        + string.Join(", ", cardChanges.Take(5)));
+
+        throw new InvalidOperationException(
+            "В контексте есть несохранённые изменения ("
+            + string.Join("; ", details)
+            + "). Сохраните или отмените их перед решением по согласованию.");
+    }
+
+    /// <summary>
+    /// Относится ли отслеживаемая сущность к карте, за которую принимается решение.
+    /// </summary>
+    private static bool IsCardEntity(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry entry, Guid cardId)
+    {
+        if (entry.Entity is HKCard card)
+            return card.Id == cardId;
+
+        if (entry.Entity is HKCardItem item)
+            return item.HKCardId == cardId;
+
+        if (entry.Entity is HKCardItemMaterial material)
+        {
+            if (material.HKCardItemId == Guid.Empty)
+                return false;
+
+            // Строка может быть ещё не сохранена: её карта уже в контексте.
+            return entry.Context.Entry(material)
+                       ?.Reference(x => x.HKCardItem)?.TargetEntry?.Entity is HKCardItem trackedItem
+                   ? trackedItem.HKCardId == cardId
+                   : true;
+        }
+
+        if (entry.Entity is HKCardNode node)
+            return node.HKCardId == cardId;
+
+        return false;
     }
 
     /// <summary>

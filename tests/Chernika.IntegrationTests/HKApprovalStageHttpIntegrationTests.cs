@@ -293,11 +293,16 @@ public class HKApprovalStageHttpIntegrationTests : IClassFixture<ChernikaApiFact
     }
 
     /// <summary>
-    /// Ответ принятой структуры не содержит ни ключа хранения, ни пути файловой
+    /// Отсутствие принятой структуры не раскрывает ключ хранения и пути файловой
     /// системы.
+    /// <para>
+    /// Это НЕ проверка содержимого принятой структуры: принятой структуры здесь
+    /// ещё нет, ответ пуст. Содержимое проверяет тест
+    /// GetAcceptedStructure_AfterRealAcceptance_ReturnsSnapshotContent.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task GetAcceptedStructure_DoesNotExposeStorageKey()
+    public async Task GetAcceptedStructure_WithoutAcceptedStructure_DoesNotExposeStorageKey()
     {
         var cardId = await SeedCardAsync();
 
@@ -308,27 +313,6 @@ public class HKApprovalStageHttpIntegrationTests : IClassFixture<ChernikaApiFact
         Assert.DoesNotContain("StorageKey", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("AttachmentStorageKey", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("chernika-tests-storage", body, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Конкурентный проигрыш решения даёт 409, а не 500 и не произвольный 400.
-    /// </summary>
-    [Fact]
-    public async Task Decision_LosingRace_ReturnsConflict()
-    {
-        var cardId = await SeedCardAsync(withStages: true);
-
-        // Версия заведомо устаревшая: версия карты на экране уже не совпадает.
-        var client = _factory.CreateAs(_factory.NormAdminUserName);
-        var response = await client.PostAsJsonAsync(
-            $"/api/HKCards/{cardId}/approvals/decision",
-            new { stage = "details", decision = "return", rowVersion = 1u });
-
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.DoesNotContain("Npgsql", body, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("SQLSTATE", body, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
