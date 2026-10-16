@@ -247,7 +247,12 @@
                                         @if (card.IsAutonomous)
                                         {
                                             <td>@(card.Name ?? "")<br/><span class="muted">автономная карта</span></td>
-                                            <td class="muted">не определён</td>
+                                            @* Уровень автономной карты вычислен из её собственной
+                                               структуры: «не определён» показывается только при
+                                               реальном Undefined, а не для всех автономных карт.
+                                               Справочные ObjectCode/ObjectName фиктивно не
+                                               заполняются: у автономной карты их нет. *@
+                                            <td>@LevelName(card.ObjectLevel)</td>
                                         }
                                         else
                                         {

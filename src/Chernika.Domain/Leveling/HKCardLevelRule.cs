@@ -15,8 +15,8 @@ public sealed record HKTreePosition(Guid Id, Guid? ParentId, HKObjectLevel Level
 /// Неизменяемое описание собственной структуры карты.
 /// <para>
 /// Уровень выводится ТОЛЬКО из этого описания: название, номер, порядок и
-/// справочные связи уровня не определяют. Изменение порядка позиций на результат
-/// не влияет — используется только набор уровней верхних позиций.
+/// справочные связи уровня не определяют. Изменение порядка позиций на
+/// результат не влияет — используется только набор уровней верхних позиций.
 /// </para>
 /// </summary>
 public sealed record HKTreeShape(
@@ -46,19 +46,12 @@ public enum HKCardLevelStatus
 
 /// <summary>Результат определения уровня карты.</summary>
 public sealed record HKCardLevelRuleResult(
-    /// <summary>Вычисленный уровень; Undefined, если не определён.</summary>
     HKObjectLevel CardLevel,
-
-    /// <summary>Статус: определён / пусто / нужен выбор / недопустимо.</summary>
     HKCardLevelStatus Status,
-
-    /// <summary>Требуется ли явный выбор при верхнем узле.</summary>
     bool NeedsNodeRootChoice,
-
-    /// <summary>Ошибки допустимости структуры; пусто при допустимой структуре.</summary>
     IReadOnlyList<string> StructureErrors)
 {
-    /// <summary>Структура допустима и уровень однозначно определён.</summary>
+    /// <summary>Уровень однозначно определён.</summary>
     public bool IsDetermined => Status is HKCardLevelStatus.Determined;
 
     /// <summary>Структура допустима (вне зависимости от того, определён ли уровень).</summary>
@@ -68,26 +61,23 @@ public sealed record HKCardLevelRuleResult(
 /// <summary>
 /// Единое переиспользуемое правило определения уровня ХК по собственной структуре.
 /// <para>
-/// Доменное правило: не зависит от EF Core, HTTP и Blazor. Получает неизменяемое
-/// описание структуры и специальный выбор, возвращает результат со всеми
-/// необходимыми различениями. Исключений для нормальных состояний пустого
-/// черновика не порождает.
+/// Доменное правило: не зависит от EF Core, HTTP и Blazor. Некорректное
+/// описание даёт <see cref="HKCardLevelStatus.StructureInvalid"/>, а не
+/// случайное исключение. Нормальные состояния черновика исключениями не
+/// являются.
 /// </para>
 /// </summary>
 public static class HKCardLevelRule
 {
     /// <summary>
-    /// Старшинство уровней: от старшего к младшему. Уровень карты определяется
-    /// САМЫМ СТАРШИМ уровнем верхних позиций. Числовые значения enum для
-    /// старшинства не используются: они обратны.
+    /// Уровни, допустимые у структурной позиции дерева, в порядке старшинства:
+    /// от старшего к младшему.
+    /// <para>
+    /// <see cref="HKObjectLevel.Complex"/> здесь отсутствует намеренно:
+    /// Complex — уровень самой ХК-корня, а не структурной позиции. Позиция
+    /// Complex отклоняется как дополнительная копия корня.
+    /// </para>
     /// </summary>
-    private static readonly (HKObjectLevel Level, int Seniority)[] SeniorityMap =
-    {
-        (HKObjectLevel.Complex, 0),
-        (HKObjectLevel.EquipmentModel, 1),
-        (HKObjectLevel.Aggregate, 2),
-        (HKObjectLevel.Node, 3)
-    };
 
     /// <summary>Допустимые значения специального выбора при верхнем узле.</summary>
     private static readonly HKObjectLevel[] NodeRootChoices =
@@ -111,24 +101,24 @@ public static class HKCardLevelRule
         var errors = ValidateStructure(shape);
 
         // Недопустимый выбор — отдельная ошибка: его не смешивают с отсутствием
-        // выбора. Отсутствие выбора — нормальное состояние, недопустимое значение
-        // — ошибка.
+        // выбора. Отсутствие выбора — нормальное состояние.
         var choiceInvalid = nodeRootChoice.HasValue
             && !NodeRootChoices.Contains(nodeRootChoice.Value);
 
         if (choiceInvalid)
         {
             errors.Add(
-                $"Выбор уровня верхнего узла принимает только значения " +
+                "Выбор уровня верхнего узла принимает только значения " +
                 $"{string.Join(" / ", NodeRootChoices)}.");
         }
 
         var top = shape.TopPositions;
 
-        // Кандидат уровня определяется по старшему верхнему уровню и от допустимости
-        // структуры не зависит: наличие старшей позиции не делает автоматически
+        // Кандидат уровня определяется по старшему верхнему уровню и от
+        // допустимости структуры не зависит: наличие старшей позиции не делает
         // допустимыми пропуски и связи остальных позиций.
-        var candidate = ResolveCandidate(top, shape.RootTerminalRows, nodeRootChoice, out var needsChoice);
+        var candidate = ResolveCandidate(top, shape.RootTerminalRows, nodeRootChoice,
+            out var needsChoice);
 
         // Непригодное значение выбора — это ошибка, а не требование выбора.
         if (choiceInvalid)
@@ -146,7 +136,6 @@ public static class HKCardLevelRule
                     ? HKCardLevelStatus.NodeRootChoiceRequired
                     : HKCardLevelStatus.Determined;
 
-        // При пустой структуре уровень неопределён, и это не ошибка.
         var level = status is HKCardLevelStatus.Determined
             ? candidate
             : HKObjectLevel.Undefined;
@@ -155,20 +144,13 @@ public static class HKCardLevelRule
     }
 
     /// <summary>
-    /// Старший уровень верхних позиций дерева.
+    /// Кандидат уровня карты по старшей верхней позиции.
     /// <para>
-    /// null, если верхних позиций нет (пустая структура). Нужен командам, которые
-    /// должны проверить фактический верхний уровень по сохранённым данным.
+    /// Уровень карты на ступень выше уровня своей старшей верхней позиции:
+    /// верхнее изделие даёт ХК комплекса, верхний агрегат — ХК изделия.
+    /// Исключение — верхний узел: между ним и изделием два допустимых уровня,
+    /// поэтому нужен явный выбор.
     /// </para>
-    /// </summary>
-    public static HKObjectLevel? SeniorTopLevel(HKTreeShape shape)
-    {
-        var top = shape.TopPositions;
-        return top.Count == 0 ? null : top.MinBy(p => Seniority(p.Level)).Level;
-    }
-
-    /// <summary>
-    /// Кандидат уровня по старшему верхнему уровню.
     /// </summary>
     private static HKObjectLevel ResolveCandidate(
         IReadOnlyList<HKTreePosition> top, int rootTerminalRows,
@@ -183,13 +165,16 @@ public static class HKCardLevelRule
             return rootTerminalRows > 0 ? HKObjectLevel.Node : HKObjectLevel.Undefined;
         }
 
-        var senior = top.MinBy(p => Seniority(p.Level));
+        // top.Count > 0, поэтому MinBy возвращает позицию; проверка пустоты
+        // оставлена явно, чтобы компилятор не требовал заглушек.
+        var senior = top.MinBy(p => Seniority(p.Level))
+            ?? throw new ArgumentException("Верхние позиции отсутствуют.", nameof(top));
 
         return senior.Level switch
         {
-            HKObjectLevel.Complex => HKObjectLevel.Complex,
-            HKObjectLevel.EquipmentModel => HKObjectLevel.EquipmentModel,
-            // Верхний агрегат — ХК изделия.
+            // Верхнее изделие → ХК комплекса.
+            HKObjectLevel.EquipmentModel => HKObjectLevel.Complex,
+            // Верхний агрегат → ХК изделия.
             HKObjectLevel.Aggregate => HKObjectLevel.EquipmentModel,
             // Верхний узел: выбор между агрегатом и изделием. Автоматически
             // агрегат не выбирается.
@@ -199,6 +184,7 @@ public static class HKCardLevelRule
                 HKObjectLevel.EquipmentModel => HKObjectLevel.EquipmentModel,
                 _ => SetNeedsChoice(out needsChoice)
             },
+            // Complex в дереве недопустим и отсекается проверкой структуры.
             _ => HKObjectLevel.Undefined
         };
     }
@@ -210,10 +196,42 @@ public static class HKCardLevelRule
     }
 
     /// <summary>
-    /// Старшинство уровня: 0 — старший (комплекс), больше — младше.
+    /// Старший уровень верхних позиций дерева.
+    /// <para>
+    /// null, если верхних позиций нет. Нужен командам, которые проверяют
+    /// фактический верхний уровень по сохранённым данным.
+    /// </para>
+    /// </summary>
+    public static HKObjectLevel? SeniorTopLevel(HKTreeShape shape)
+    {
+        var top = shape.TopPositions;
+        if (top.Count == 0)
+            return null;
+
+        var senior = top.MinBy(p => Seniority(p.Level));
+        return senior is null ? null : senior.Level;
+    }
+
+    /// <summary>
+    /// Старшинство уровня позиции: меньше — старше.
+    /// <para>
+    /// Неизвестный уровень НЕ считается старшим: он получает
+    /// <see cref="int.MaxValue"/> и отсекается проверкой структуры. Значение по
+    /// умолчанию для кортежа ранее молча делало мусор самым старшим.
+    /// </para>
     /// </summary>
     private static int Seniority(HKObjectLevel level) =>
-        SeniorityMap.FirstOrDefault(m => m.Level == level).Seniority;
+        SeniorityMap.TryGetValue(level, out var seniority)
+            ? seniority
+            : int.MaxValue;
+
+    private static readonly Dictionary<HKObjectLevel, int> SeniorityMap =
+        new()
+        {
+            [HKObjectLevel.EquipmentModel] = 0,
+            [HKObjectLevel.Aggregate] = 1,
+            [HKObjectLevel.Node] = 2
+        };
 
     /// <summary>
     /// Допустимость самого дерева. Отдельно от уровня: вычисленный кандидат не
@@ -227,13 +245,38 @@ public static class HKCardLevelRule
         if (positions.Count == 0)
             return errors;
 
-        var byId = positions.ToDictionary(p => p.Id);
+        // Повторяющиеся идентификаторы — ошибка описания, а не исключение
+        // словаря: ToDictionary на дублях падал бы случайно.
+        var byId = new Dictionary<Guid, HKTreePosition>();
+        foreach (var p in positions)
+        {
+            if (p.Id == Guid.Empty)
+            {
+                errors.Add("Позиция: идентификатор не должен быть пустым.");
+                continue;
+            }
+
+            if (!byId.TryAdd(p.Id, p))
+            {
+                errors.Add($"Позиция {p.Id}: идентификатор встречается в наборе дважды.");
+            }
+        }
 
         foreach (var p in positions)
         {
             if (!Enum.IsDefined(p.Level))
             {
                 errors.Add($"Позиция {p.Id}: неизвестное значение уровня {(int)p.Level}.");
+                continue;
+            }
+
+            // Complex — уровень самой ХК-корня. Дополнительная копия корня в
+            // собственном дереве не нужна и отклоняется.
+            if (p.Level == HKObjectLevel.Complex)
+            {
+                errors.Add(
+                    $"Позиция {p.Id}: уровень Complex недопустим в собственном дереве — " +
+                    "это уровень самой карты, а не её структурной позиции.");
                 continue;
             }
 

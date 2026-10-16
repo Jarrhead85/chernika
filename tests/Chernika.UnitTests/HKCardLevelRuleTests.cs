@@ -6,9 +6,9 @@ namespace Chernika.UnitTests;
 /// <summary>
 /// Правило определения уровня ХК по собственной структуре.
 /// <para>
-/// Проверяется чистое доменное правило: без EF, HTTP и БД. Каждый тест
-/// фиксирует одну согласованную сторону — что уровень выводится из
-/// структуры, а не из названия, номера, порядка или справочных связей.
+/// Проверяется чистое доменное правило: без EF, HTTP и БД. Кандидат уровня и
+/// допустимость дерева — разные результаты; некорректное описание даёт
+/// <c>StructureInvalid</c>, а не исключение.
 /// </para>
 /// </summary>
 public class HKCardLevelRuleTests
@@ -21,7 +21,7 @@ public class HKCardLevelRuleTests
         IReadOnlyList<HKTreePosition> positions, int rootTerminalRows = 0) =>
         new(positions, rootTerminalRows);
 
-    // ── Базовые случаи определения ──
+    // ── Таблица определения уровня ──
 
     [Fact]
     public void EmptyCard_IsUndefinedAndNotAnError()
@@ -31,10 +31,9 @@ public class HKCardLevelRuleTests
         Assert.Equal(HKCardLevelStatus.Empty, result.Status);
         Assert.Equal(HKObjectLevel.Undefined, result.CardLevel);
         Assert.Empty(result.StructureErrors);
-        Assert.False(result.NeedsNodeRootChoice);
-        Assert.True(result.IsStructureValid);
     }
 
+    /// <summary>Только конечные строки под корнем — ХК узла.</summary>
     [Fact]
     public void OnlyTerminalRowsUnderRoot_IsNodeCard()
     {
@@ -45,6 +44,7 @@ public class HKCardLevelRuleTests
         Assert.Equal(HKObjectLevel.Node, result.CardLevel);
     }
 
+    /// <summary>Верхний агрегат — ХК изделия.</summary>
     [Fact]
     public void TopAggregate_IsEquipmentModelCard()
     {
@@ -54,20 +54,64 @@ public class HKCardLevelRuleTests
         Assert.Equal(HKCardLevelStatus.Determined, result.Status);
     }
 
+    /// <summary>
+    /// Верхнее изделие — ХК комплекса. Это единственный способ получить
+    /// Complex: отдельная позиция Complex для этого не нужна.
+    /// </summary>
     [Fact]
-    public void TopEquipmentModel_IsEquipmentModelCard()
+    public void TopEquipmentModel_IsComplexCard()
     {
         var result = HKCardLevelRule.Resolve(Shape(new[] { Pos(HKObjectLevel.EquipmentModel) }));
 
-        Assert.Equal(HKObjectLevel.EquipmentModel, result.CardLevel);
+        Assert.Equal(HKObjectLevel.Complex, result.CardLevel);
+        Assert.Equal(HKCardLevelStatus.Determined, result.Status);
     }
 
+    /// <summary>Изделие с вложенными агрегатами и узлами — тоже ХК комплекса.</summary>
     [Fact]
-    public void TopComplex_IsComplexCard()
+    public void TopEquipmentModel_WithNestedAggregateAndNode_IsComplexCard()
+    {
+        var equipment = Guid.NewGuid();
+        var aggregate = Guid.NewGuid();
+
+        var result = HKCardLevelRule.Resolve(Shape(new[]
+        {
+            Pos(HKObjectLevel.EquipmentModel, id: equipment),
+            Pos(HKObjectLevel.Aggregate, parent: equipment, id: aggregate),
+            Pos(HKObjectLevel.Node, parent: aggregate),
+            Pos(HKObjectLevel.Node, parent: equipment)
+        }));
+
+        Assert.True(result.IsStructureValid);
+        Assert.Equal(HKObjectLevel.Complex, result.CardLevel);
+    }
+
+    /// <summary>
+    /// Позиция Complex — дополнительная копия корня и отклоняется понятной
+    /// доменной ошибкой.
+    /// </summary>
+    [Fact]
+    public void ComplexPosition_IsRejectedAsRootCopy()
     {
         var result = HKCardLevelRule.Resolve(Shape(new[] { Pos(HKObjectLevel.Complex) }));
 
-        Assert.Equal(HKObjectLevel.Complex, result.CardLevel);
+        Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
+        Assert.Contains(result.StructureErrors, e => e.Contains("Complex"));
+        Assert.Equal(HKObjectLevel.Undefined, result.CardLevel);
+    }
+
+    [Fact]
+    public void ComplexPosition_AnywhereInTree_IsRejected()
+    {
+        var parent = Guid.NewGuid();
+        var result = HKCardLevelRule.Resolve(Shape(new[]
+        {
+            Pos(HKObjectLevel.EquipmentModel, id: parent),
+            Pos(HKObjectLevel.Complex, parent: parent)
+        }));
+
+        Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
+        Assert.Contains(result.StructureErrors, e => e.Contains("Complex"));
     }
 
     // ── Верхний узел: явный выбор ──
@@ -102,7 +146,21 @@ public class HKCardLevelRuleTests
         Assert.Equal(HKObjectLevel.EquipmentModel, result.CardLevel);
     }
 
-    /// <summary>Отсутствие выбора и недопустимое значение выбора — разные вещи.</summary>
+    /// <summary>
+    /// Действующий выбор при верхнем узле: NeedsNodeRootChoice ложно, выбор
+    /// применим и даёт уровень.
+    /// </summary>
+    [Fact]
+    public void TopNode_WithChoice_DoesNotRequireChoice()
+    {
+        var result = HKCardLevelRule.Resolve(
+            Shape(new[] { Pos(HKObjectLevel.Node) }), HKObjectLevel.Aggregate);
+
+        Assert.True(result.IsStructureValid);
+        Assert.False(result.NeedsNodeRootChoice);
+        Assert.Equal(HKCardLevelStatus.Determined, result.Status);
+    }
+
     [Fact]
     public void InvalidChoiceValue_IsRejectedAndNotMixedWithMissingChoice()
     {
@@ -127,18 +185,17 @@ public class HKCardLevelRuleTests
 
     /// <summary>
     /// Порядок позиций не влияет на уровень. Вход правила не содержит поля
-    /// порядка вовсе, поэтому проверить его влияние структурно невозможно;
-    /// перестановка набора — тоже.
+    /// порядка вовсе; перестановка набора — тоже.
     /// </summary>
     [Fact]
     public void OrderOfPositions_DoesNotChangeLevel()
     {
-        var complex = Pos(HKObjectLevel.Complex);
-        var aggregate = Pos(HKObjectLevel.Aggregate);
+        var equipment = Pos(HKObjectLevel.EquipmentModel);
+        var aggregate = Pos(HKObjectLevel.Aggregate, parent: equipment.Id);
         var node = Pos(HKObjectLevel.Node, parent: aggregate.Id);
 
-        var forward = HKCardLevelRule.Resolve(Shape(new[] { complex, aggregate, node }));
-        var reversed = HKCardLevelRule.Resolve(Shape(new[] { node, aggregate, complex }));
+        var forward = HKCardLevelRule.Resolve(Shape(new[] { equipment, aggregate, node }));
+        var reversed = HKCardLevelRule.Resolve(Shape(new[] { node, aggregate, equipment }));
 
         Assert.Equal(forward.CardLevel, reversed.CardLevel);
         Assert.Equal(HKObjectLevel.Complex, forward.CardLevel);
@@ -147,42 +204,37 @@ public class HKCardLevelRuleTests
     [Fact]
     public void SeveralTopPositions_AreAnalysedAsWholeSet()
     {
-        // Узел и комплекс: старший определяет кандидата, узел не теряется.
+        // Узел и агрегат: старший определяет кандидата, узел не теряется.
         var result = HKCardLevelRule.Resolve(Shape(new[]
         {
             Pos(HKObjectLevel.Node),
-            Pos(HKObjectLevel.Complex)
+            Pos(HKObjectLevel.Aggregate)
         }));
 
-        Assert.Equal(HKObjectLevel.Complex, result.CardLevel);
+        Assert.Equal(HKObjectLevel.EquipmentModel, result.CardLevel);
         Assert.Equal(HKCardLevelStatus.Determined, result.Status);
     }
 
-    /// <summary>
-    /// Старший уровень берётся из всего набора верхних позиций, а не из первой
-    /// запрошенной: агрегат и узел вместе дают уровень узла с требованием выбора,
-    /// но Complex в наборе перебивает обоих.
-    /// </summary>
     [Fact]
     public void MixedTopLevels_SeniorPositionWins()
     {
-        var withAggregateAndNode = HKCardLevelRule.Resolve(Shape(new[]
+        var aggregateAndNode = HKCardLevelRule.Resolve(Shape(new[]
         {
             Pos(HKObjectLevel.Aggregate),
             Pos(HKObjectLevel.Node)
         }));
-        Assert.Equal(HKObjectLevel.EquipmentModel, withAggregateAndNode.CardLevel);
+        Assert.Equal(HKObjectLevel.EquipmentModel, aggregateAndNode.CardLevel);
 
-        var withNodeAggregateEquipment = HKCardLevelRule.Resolve(Shape(new[]
+        // Изделие перебивает и агрегата, и узел.
+        var all = HKCardLevelRule.Resolve(Shape(new[]
         {
             Pos(HKObjectLevel.Node),
             Pos(HKObjectLevel.Aggregate),
             Pos(HKObjectLevel.EquipmentModel)
         }));
-        Assert.Equal(HKObjectLevel.EquipmentModel, withNodeAggregateEquipment.CardLevel);
+        Assert.Equal(HKObjectLevel.Complex, all.CardLevel);
     }
 
-    /// <summary>Одноимённые позиции не объединяются: каждая учитывается сама по себе.</summary>
     [Fact]
     public void SeveralPositions_AreNotCollapsed()
     {
@@ -203,26 +255,29 @@ public class HKCardLevelRuleTests
     public void AllowedSkips_AreAccepted()
     {
         // Изделие содержит узел без агрегата.
-        var complexToNode = HKCardLevelRule.Resolve(Shape(new[]
+        var equipment = Guid.NewGuid();
+        var equipmentToNode = HKCardLevelRule.Resolve(Shape(new[]
         {
-            Pos(HKObjectLevel.Complex),
-            Pos(HKObjectLevel.Node, parent: null)
+            Pos(HKObjectLevel.EquipmentModel, id: equipment),
+            Pos(HKObjectLevel.Node, parent: equipment)
         }));
-        Assert.True(complexToNode.IsStructureValid);
+        Assert.True(equipmentToNode.IsStructureValid);
 
         // Агрегат содержит узел.
+        var aggregate = Guid.NewGuid();
         var aggregateToNode = HKCardLevelRule.Resolve(Shape(new[]
         {
-            Pos(HKObjectLevel.Aggregate),
-            Pos(HKObjectLevel.Node)
+            Pos(HKObjectLevel.Aggregate, id: aggregate),
+            Pos(HKObjectLevel.Node, parent: aggregate)
         }));
         Assert.True(aggregateToNode.IsStructureValid);
 
         // Изделие содержит агрегат.
+        var equipment2 = Guid.NewGuid();
         var equipmentToAggregate = HKCardLevelRule.Resolve(Shape(new[]
         {
-            Pos(HKObjectLevel.EquipmentModel),
-            Pos(HKObjectLevel.Aggregate)
+            Pos(HKObjectLevel.EquipmentModel, id: equipment2),
+            Pos(HKObjectLevel.Aggregate, parent: equipment2)
         }));
         Assert.True(equipmentToAggregate.IsStructureValid);
     }
@@ -230,7 +285,6 @@ public class HKCardLevelRuleTests
     [Fact]
     public void AggregateMayContainNode_AndEquipmentMayContainNodeWithoutAggregate()
     {
-        // Агрегат может содержать узел.
         var aggregate = Guid.NewGuid();
         var result = HKCardLevelRule.Resolve(Shape(new[]
         {
@@ -240,7 +294,6 @@ public class HKCardLevelRuleTests
         Assert.True(result.IsStructureValid);
         Assert.Equal(HKObjectLevel.EquipmentModel, result.CardLevel);
 
-        // Изделие может содержать узел без агрегата.
         var equipment = Guid.NewGuid();
         var skip = HKCardLevelRule.Resolve(Shape(new[]
         {
@@ -248,6 +301,7 @@ public class HKCardLevelRuleTests
             Pos(HKObjectLevel.Node, parent: equipment)
         }));
         Assert.True(skip.IsStructureValid);
+        Assert.Equal(HKObjectLevel.Complex, skip.CardLevel);
     }
 
     // ── Запрещённые связи ──
@@ -257,11 +311,24 @@ public class HKCardLevelRuleTests
     {
         var nodeParent = Guid.NewGuid();
 
-        // Узел не может содержать агрегат: это движение вверх.
         var result = HKCardLevelRule.Resolve(Shape(new[]
         {
             Pos(HKObjectLevel.Node, id: nodeParent),
             Pos(HKObjectLevel.Aggregate, parent: nodeParent)
+        }));
+
+        Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
+        Assert.Contains(result.StructureErrors, e => e.Contains("вверх"));
+    }
+
+    [Fact]
+    public void MovingFromAggregateToEquipment_IsForbidden()
+    {
+        var aggregate = Guid.NewGuid();
+        var result = HKCardLevelRule.Resolve(Shape(new[]
+        {
+            Pos(HKObjectLevel.Aggregate, id: aggregate),
+            Pos(HKObjectLevel.EquipmentModel, parent: aggregate)
         }));
 
         Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
@@ -285,7 +352,8 @@ public class HKCardLevelRuleTests
     public void SelfReference_IsForbidden()
     {
         var id = Guid.NewGuid();
-        var result = HKCardLevelRule.Resolve(Shape(new[] { Pos(HKObjectLevel.Node, parent: id, id: id) }));
+        var result = HKCardLevelRule.Resolve(
+            Shape(new[] { Pos(HKObjectLevel.Node, parent: id, id: id) }));
 
         Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
     }
@@ -298,7 +366,7 @@ public class HKCardLevelRuleTests
 
         var result = HKCardLevelRule.Resolve(Shape(new[]
         {
-            Pos(HKObjectLevel.Complex, parent: b, id: a),
+            Pos(HKObjectLevel.EquipmentModel, parent: b, id: a),
             Pos(HKObjectLevel.Aggregate, parent: a, id: b)
         }));
 
@@ -308,11 +376,10 @@ public class HKCardLevelRuleTests
     [Fact]
     public void ParentOutsideTree_IsForbidden()
     {
-        // Родитель принадлежит другой карте — в наборе этой карты его нет.
         var foreignParent = Guid.NewGuid();
         var result = HKCardLevelRule.Resolve(Shape(new[]
         {
-            Pos(HKObjectLevel.Complex),
+            Pos(HKObjectLevel.EquipmentModel),
             Pos(HKObjectLevel.Aggregate, parent: foreignParent)
         }));
 
@@ -338,6 +405,67 @@ public class HKCardLevelRuleTests
         Assert.Contains(result.StructureErrors, e => e.Contains("неизвестное"));
     }
 
+    // ── Устойчивость описания ──
+
+    /// <summary>
+    /// Повторяющиеся идентификаторы — некорректное описание, а не повод падать
+    /// исключением словаря.
+    /// </summary>
+    [Fact]
+    public void DuplicateIds_ReturnInvalidInsteadOfThrowing()
+    {
+        var id = Guid.NewGuid();
+        var result = HKCardLevelRule.Resolve(Shape(new[]
+        {
+            Pos(HKObjectLevel.Aggregate, id: id),
+            Pos(HKObjectLevel.Node, id: id)
+        }));
+
+        Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
+        Assert.Contains(result.StructureErrors, e => e.Contains("дважды"));
+    }
+
+    [Fact]
+    public void EmptyGuid_IsRejected()
+    {
+        var result = HKCardLevelRule.Resolve(
+            Shape(new[] { Pos(HKObjectLevel.Aggregate, id: Guid.Empty) }));
+
+        Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
+        Assert.Contains(result.StructureErrors, e => e.Contains("пустым"));
+    }
+
+    /// <summary>
+    /// Неизвестный уровень не считается старшим: иначе мусор перебил бы
+    /// настоящую старшую позицию.
+    /// </summary>
+    [Fact]
+    public void UnknownLevel_DoesNotOutrankEquipmentModel()
+    {
+        var equipment = Guid.NewGuid();
+        var result = HKCardLevelRule.Resolve(Shape(new[]
+        {
+            Pos(HKObjectLevel.EquipmentModel, id: equipment),
+            Pos((HKObjectLevel)77, parent: equipment)
+        }));
+
+        Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
+    }
+
+    [Fact]
+    public void SeniorTopLevel_ReportsSeniorPositionLevel()
+    {
+        var shape = Shape(new[]
+        {
+            Pos(HKObjectLevel.Node),
+            Pos(HKObjectLevel.EquipmentModel)
+        });
+
+        Assert.Equal(HKObjectLevel.EquipmentModel, HKCardLevelRule.SeniorTopLevel(shape));
+        Assert.Null(HKCardLevelRule.SeniorTopLevel(
+            Shape(Array.Empty<HKTreePosition>())));
+    }
+
     // ── Устаревший выбор ──
 
     /// <summary>
@@ -347,7 +475,6 @@ public class HKCardLevelRuleTests
     [Fact]
     public void StaleChoice_DoesNotAffectAnotherRoot()
     {
-        // Старший верхний уровень — агрегат, выбор от узла остался в базе.
         var result = HKCardLevelRule.Resolve(
             Shape(new[] { Pos(HKObjectLevel.Aggregate) }), HKObjectLevel.Aggregate);
 
@@ -355,52 +482,37 @@ public class HKCardLevelRuleTests
         Assert.False(result.NeedsNodeRootChoice);
     }
 
-    [Fact]
-    public void StaleChoice_DoesNotTurnNodeIntoAggregateAutomatically()
-    {
-        // Выбор EquipmentModel от прошлого узла и новый узел без нового выбора:
-        // выбор применяется, но Aggregate автоматически не подставляется.
-        var result = HKCardLevelRule.Resolve(
-            Shape(new[] { Pos(HKObjectLevel.Node) }), HKObjectLevel.EquipmentModel);
-
-        Assert.Equal(HKObjectLevel.EquipmentModel, result.CardLevel);
-    }
-
     // ── Разделение уровня и допустимости ──
 
-    /// <summary>
-    /// Вычисленный кандидат уровня не делает некорректное дерево допустимым.
-    /// </summary>
     [Fact]
     public void ValidLevelCandidate_DoesNotMakeInvalidTreeValid()
     {
-        var nodeParent = Guid.NewGuid();
+        var parent = Guid.NewGuid();
         var result = HKCardLevelRule.Resolve(Shape(new[]
         {
-            Pos(HKObjectLevel.Complex),
-            Pos(HKObjectLevel.Complex, parent: nodeParent, id: nodeParent)
+            Pos(HKObjectLevel.EquipmentModel),
+            Pos(HKObjectLevel.Aggregate, id: parent),
+            Pos(HKObjectLevel.Aggregate, parent: parent)
         }));
 
         Assert.Equal(HKCardLevelStatus.StructureInvalid, result.Status);
         Assert.Equal(HKObjectLevel.Undefined, result.CardLevel);
     }
 
-    /// <summary>Кандидат уровня и допустимость — разные результаты.</summary>
     [Fact]
     public void LevelCandidateAndStructureValidity_AreSeparateResults()
     {
-        // Старшая позиция — узел: кандидат уровня есть, но без выбора он не определён.
         var needsChoice = HKCardLevelRule.Resolve(Shape(new[] { Pos(HKObjectLevel.Node) }));
         Assert.True(needsChoice.IsStructureValid);
         Assert.True(needsChoice.NeedsNodeRootChoice);
+        Assert.False(needsChoice.IsDetermined);
 
-        // Та же структура с выбором: уровень определён.
         var determined = HKCardLevelRule.Resolve(
             Shape(new[] { Pos(HKObjectLevel.Node) }), HKObjectLevel.Aggregate);
         Assert.True(determined.IsDetermined);
+        Assert.True(determined.IsStructureValid);
     }
 
-    /// <summary>Пустая структура — нормальное состояние черновика, не исключение.</summary>
     [Fact]
     public void EmptyStructure_DoesNotThrow()
     {

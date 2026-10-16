@@ -65,17 +65,40 @@ public class HKCardLevelIntegrationTests
         Assert.Equal(HKObjectLevel.EquipmentModel, await LevelAsync(cardId));
     }
 
+    /// <summary>
+    /// Верхнее изделие даёт ХК комплекса — единственный путь к уровню Complex.
+    /// </summary>
     [Fact]
-    public async Task SaveTree_TopComplex_SetsComplexLevel()
+    public async Task SaveTree_TopEquipmentModel_SetsComplexLevel()
     {
         await using var s = As(_fixture.NormAdminA.Id);
         var cardId = await HKApprovalScenario.CreateDraftCardAsync(
             s, _fixture.NormAdminA.Id, withRow: false);
 
         await s.HK.SaveTreeAsync(cardId,
-            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Complex, "Комплекс") });
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.EquipmentModel, "Изделие") });
 
         Assert.Equal(HKObjectLevel.Complex, await LevelAsync(cardId));
+    }
+
+    /// <summary>
+    /// Позиция Complex — дополнительная копия корня: сохранить её нельзя, и
+    /// ничего не сохраняется наполовину.
+    /// </summary>
+    [Fact]
+    public async Task SaveTree_TopComplexPosition_IsRejected()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => s.HK.SaveTreeAsync(cardId,
+                new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Complex, "Комплекс") }));
+
+        await using var read = _fixture.CreateScope();
+        Assert.Equal(0, await read.Db.HKCardNodes.CountAsync(n => n.HKCardId == cardId));
+        Assert.Equal(HKObjectLevel.Undefined, await LevelAsync(cardId));
     }
 
     /// <summary>
@@ -246,6 +269,394 @@ public class HKCardLevelIntegrationTests
         Assert.Equal(HKObjectLevel.EquipmentModel, card.ObjectLevel);
     }
 
+    // ── Сохранение специального выбора при верхнем узле ──
+
+    /// <summary>
+    /// Выбор верхнего узла переживает сохранение дерева, сохранение строк и
+    /// правку реквизитов. NeedsNodeRootChoice означает «выбор ещё необходим»,
+    /// а не «выбор неприменим»: по нему сбрасывать действующий выбор нельзя.
+    /// </summary>
+    [Theory]
+    [InlineData(HKObjectLevel.Aggregate)]
+    [InlineData(HKObjectLevel.EquipmentModel)]
+    public async Task NodeRootChoice_SurvivesTreeRowAndDetailsSaves(HKObjectLevel choice)
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var nodeId = Guid.NewGuid();
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(nodeId, null, HKObjectLevel.Node, "Узел") });
+        await s.HK.SetNodeRootCardLevelAsync(cardId, choice, await VersionAsync(s, cardId));
+
+        // Повторное сохранение того же дерева.
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(nodeId, null, HKObjectLevel.Node, "Узел иной") });
+        await AssertChoiceAsync(cardId, choice);
+
+        // Сохранение строки под корнем.
+        var unitId = await UnitAsync();
+        var card = await s.HK.GetByIdAsync(cardId);
+        card!.Items.Add(new HKCardItem
+        {
+            Id = Guid.NewGuid(),
+            AssemblyUnitId = unitId,
+            Quantity = 1,
+            SortOrder = 1
+        });
+        await s.HK.UpdateAsync(card);
+        await AssertChoiceAsync(cardId, choice);
+
+        // Правка только реквизитов.
+        var again = await s.HK.GetByIdAsync(cardId);
+        again!.Notes = "правка реквизитов " + Suffix();
+        await s.HK.UpdateAsync(again);
+        await AssertChoiceAsync(cardId, choice);
+
+        // Итог: уровень определён, состав отправляется.
+        await AssertChoiceAsync(cardId, choice);
+
+        await HKApprovalScenario.SubmitDetailsAsync(
+            s, cardId, _fixture.NormAdminA2.Id);
+        await HKApprovalScenario.ApproveDetailsAsync(As(_fixture.NormAdminA2.Id), cardId);
+        await HKApprovalScenario.SubmitCompositionAsync(s, cardId);
+
+        Assert.Equal(HKApprovalStageState.OnReview,
+            (await HKApprovalScenario.StageAsync(s, cardId, HKApprovalStage.Composition)).State);
+    }
+
+    private async Task AssertChoiceAsync(Guid cardId, HKObjectLevel expected)
+    {
+        await using var read = _fixture.CreateScope();
+        var card = await read.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+
+        Assert.Equal(expected, card.NodeRootCardLevel);
+        Assert.Equal(expected, card.ObjectLevel);
+    }
+
+    /// <summary>
+    /// После возврата к структуре, начинающейся с узла, старый выбор не действует:
+    /// требуется новый явный выбор.
+    /// </summary>
+    [Fact]
+    public async Task StructureBackToNode_RequiresFreshChoice()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var nodeId = Guid.NewGuid();
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(nodeId, null, HKObjectLevel.Node, "Узел") });
+        await s.HK.SetNodeRootCardLevelAsync(
+            cardId, HKObjectLevel.Aggregate, await VersionAsync(s, cardId));
+
+        // Старший верхний уровень меняется — выбор сбрасывается.
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(nodeId, null, HKObjectLevel.Aggregate, "Агрегат") });
+        await using (var after = _fixture.CreateScope())
+        {
+            var card = await after.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+            Assert.Null(card.NodeRootCardLevel);
+            Assert.Equal(HKObjectLevel.EquipmentModel, card.ObjectLevel);
+        }
+
+        // Возврат к узлу: новый выбор требуется явно.
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(nodeId, null, HKObjectLevel.Node, "Узел снова") });
+
+        await using var read = As(_fixture.NormAdminA2.Id);
+        var projection = await read.HK.GetLevelProjectionAsync(cardId);
+        Assert.True(projection.NeedsNodeRootChoice);
+        Assert.Equal(HKObjectLevel.Undefined,
+            (await read.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId)).ObjectLevel);
+    }
+
+    // ── Сценарии конечных строк ──
+
+    /// <summary>Добавление первой строки под корнем: Undefined → Node.</summary>
+    [Fact]
+    public async Task AddingFirstRowUnderRoot_ChangesLevelUndefinedToNode()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        Assert.Equal(HKObjectLevel.Undefined, await LevelAsync(cardId));
+
+        var card = await s.HK.GetByIdAsync(cardId);
+        card!.Items.Add(new HKCardItem
+        {
+            Id = Guid.NewGuid(),
+            AssemblyUnitId = await UnitAsync(),
+            Quantity = 1,
+            SortOrder = 1
+        });
+        await s.HK.UpdateAsync(card);
+
+        Assert.Equal(HKObjectLevel.Node, await LevelAsync(cardId));
+    }
+
+    /// <summary>Удаление последней строки при отсутствии позиций: Node → Undefined.</summary>
+    [Fact]
+    public async Task RemovingLastRowWithoutPositions_ChangesLevelNodeToUndefined()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: true);
+
+        Assert.Equal(HKObjectLevel.Node, await LevelAsync(cardId));
+
+        var card = await s.HK.GetByIdAsync(cardId);
+        card!.Items.Clear();
+        await s.HK.UpdateAsync(card);
+
+        Assert.Equal(HKObjectLevel.Undefined, await LevelAsync(cardId));
+    }
+
+    /// <summary>
+    /// Перенос строки под позицию сохраняет её идентификатор, нормы и материалы.
+    /// Без переноса узла пересчёт видел бы прежнюю привязку.
+    /// </summary>
+    [Fact]
+    public async Task MovingRowUnderPosition_KeepsIdNormsAndMaterials()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var unitId = await UnitAsync();
+        var gsmId = await GsmAsync();
+
+        var draft = await s.HK.GetByIdAsync(cardId);
+        var itemId = Guid.NewGuid();
+        draft!.Items.Add(new HKCardItem
+        {
+            Id = itemId,
+            AssemblyUnitId = unitId,
+            Quantity = 4,
+            Volume = 2.5m,
+            SortOrder = 1,
+            Materials =
+            {
+                new HKCardItemMaterial
+                {
+                    Id = Guid.NewGuid(),
+                    GsmMaterialId = gsmId,
+                    Category = GsmCategory.Primary
+                }
+            }
+        });
+        await s.HK.UpdateAsync(draft);
+
+        Assert.Equal(HKObjectLevel.Node, await LevelAsync(cardId));
+
+        // Верхняя позиция-агрегат поднимает уровень до изделия.
+        var nodeId = Guid.NewGuid();
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(nodeId, null, HKObjectLevel.Aggregate, "Агрегат") });
+        Assert.Equal(HKObjectLevel.EquipmentModel, await LevelAsync(cardId));
+
+        // Перенос той же строки под позицию.
+        var moving = await s.HK.GetByIdAsync(cardId);
+        moving!.Items.Single().HKCardNodeId = nodeId;
+        await s.HK.UpdateAsync(moving);
+
+        await using var read = _fixture.CreateScope();
+        var stored = await read.Db.HKCardItems.AsNoTracking()
+            .SingleAsync(i => i.HKCardId == cardId);
+
+        Assert.Equal(itemId, stored.Id);
+        Assert.Equal(nodeId, stored.HKCardNodeId);
+        Assert.Equal(4, stored.Quantity);
+        Assert.Equal(2.5m, stored.Volume);
+        Assert.Equal(1, await read.Db.HKCardItemMaterials.CountAsync(
+            m => m.HKCardItemId == itemId && m.GsmMaterialId == gsmId));
+    }
+
+    /// <summary>Перенос строки обратно под корень сохраняет её данные.</summary>
+    [Fact]
+    public async Task MovingRowBackUnderRoot_PersistsNullNode()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var nodeId = Guid.NewGuid();
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(nodeId, null, HKObjectLevel.Aggregate, "Агрегат") });
+
+        var card = await s.HK.GetByIdAsync(cardId);
+        var itemId = Guid.NewGuid();
+        card!.Items.Add(new HKCardItem
+        {
+            Id = itemId,
+            HKCardNodeId = nodeId,
+            AssemblyUnitId = await UnitAsync(),
+            Quantity = 1,
+            SortOrder = 1
+        });
+        await s.HK.UpdateAsync(card);
+
+        // Обратно под корень.
+        var back = await s.HK.GetByIdAsync(cardId);
+        back!.Items.Single().HKCardNodeId = null;
+        await s.HK.UpdateAsync(back);
+
+        await using var read = _fixture.CreateScope();
+        var stored = await read.Db.HKCardItems.AsNoTracking()
+            .SingleAsync(i => i.HKCardId == cardId);
+
+        Assert.Equal(itemId, stored.Id);
+        Assert.Null(stored.HKCardNodeId);
+    }
+
+    [Fact]
+    public async Task UpdatingSeveralRowsAtOnce_RecomputesLevelFromFinalSet()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var unitId = await UnitAsync();
+        var card = await s.HK.GetByIdAsync(cardId);
+        for (var i = 1; i <= 3; i++)
+        {
+            card!.Items.Add(new HKCardItem
+            {
+                Id = Guid.NewGuid(),
+                AssemblyUnitId = unitId,
+                Quantity = i,
+                SortOrder = i
+            });
+        }
+        await s.HK.UpdateAsync(card);
+        Assert.Equal(HKObjectLevel.Node, await LevelAsync(cardId));
+
+        // Одновременное изменение: две строки остаются, одна удаляется.
+        var edit = await s.HK.GetByIdAsync(cardId);
+        var removedId = edit!.Items.OrderBy(i => i.SortOrder).First().Id;
+        var toRemove = edit.Items.First(i => i.Id == removedId);
+        edit.Items.Remove(toRemove);
+        foreach (var row in edit.Items)
+        {
+            row.Quantity += 1;
+        }
+        await s.HK.UpdateAsync(edit);
+
+        await using var read = _fixture.CreateScope();
+        Assert.Equal(2, await read.Db.HKCardItems.CountAsync(i => i.HKCardId == cardId));
+        Assert.False(await read.Db.HKCardItems.AsNoTracking()
+            .AnyAsync(i => i.Id == removedId));
+        Assert.Equal(HKObjectLevel.Node, await LevelAsync(cardId));
+    }
+
+    /// <summary>Правка норм и материалов без изменения структуры не меняет уровень.</summary>
+    [Fact]
+    public async Task SavingNormsAndMaterials_KeepsLevel()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: true);
+
+        var before = await LevelAsync(cardId);
+        var gsmId = await GsmAsync();
+
+        var card = await s.HK.GetByIdAsync(cardId);
+        var row = card!.Items.Single();
+        row.Quantity = 9;
+        row.Materials.Add(new HKCardItemMaterial
+        {
+            Id = Guid.NewGuid(),
+            GsmMaterialId = gsmId,
+            Category = GsmCategory.Reserve
+        });
+        await s.HK.UpdateAsync(card);
+
+        Assert.Equal(before, await LevelAsync(cardId));
+        await using var read = _fixture.CreateScope();
+        Assert.Equal(1, await read.Db.HKCardItemMaterials.CountAsync(
+            m => m.HKCardItemId == row.Id && m.GsmMaterialId == gsmId));
+    }
+
+    /// <summary>
+    /// Конфликт версии не оставляет частичного пересчёта: уровень соответствует
+    /// сохранённым данным, а не той структуре, которую команда готовила.
+    /// </summary>
+    [Fact]
+    public async Task VersionConflict_LeavesNoPartialLevelRecalculation()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        Assert.Equal(HKObjectLevel.Undefined, await LevelAsync(cardId));
+
+        var card = await s.HK.GetByIdAsync(cardId);
+        card!.Items.Add(new HKCardItem
+        {
+            Id = Guid.NewGuid(),
+            AssemblyUnitId = await UnitAsync(),
+            Quantity = 1,
+            SortOrder = 1
+        });
+
+        // Конкурентное изменение версии между загрузкой и сохранением.
+        var stale = card;
+        await using (var other = _fixture.CreateScope())
+        {
+            var row = await other.Db.HKCards.FirstAsync(c => c.Id == cardId);
+            row.UpdatedAt = DateTime.UtcNow.AddMinutes(5);
+            await other.Db.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAnyAsync<Exception>(() => s.HK.UpdateAsync(stale));
+
+        await using var read = _fixture.CreateScope();
+        Assert.Equal(0, await read.Db.HKCardItems.CountAsync(i => i.HKCardId == cardId));
+        Assert.Equal(HKObjectLevel.Undefined,
+            (await read.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId)).ObjectLevel);
+    }
+
+    private async Task<Guid> UnitAsync()
+    {
+        await using var s = _fixture.CreateScope();
+        var unit = new AssemblyUnit
+        {
+            Id = Guid.NewGuid(),
+            Code = "АУ-" + Suffix(),
+            Name = "СЕ тест"
+        };
+        s.Db.AssemblyUnits.Add(unit);
+        await s.Db.SaveChangesAsync();
+        return unit.Id;
+    }
+
+    /// <summary>
+    /// Марка, пригодная для новой строки ХК: опубликована и классифицирована.
+    /// </summary>
+    private async Task<Guid> GsmAsync()
+    {
+        await using var s = _fixture.CreateScope();
+        var gsm = new GsmMaterial
+        {
+            Id = Guid.NewGuid(),
+            Name = "М-" + Suffix(),
+            Nd = "ТУ " + Suffix()
+        };
+        s.Db.GsmMaterials.Add(gsm);
+        s.Db.GsmMaterialClassifications.Add(new GsmMaterialClassification
+        {
+            Id = Guid.NewGuid(),
+            GsmMaterialId = gsm.Id,
+            GroupName = "Группа " + Suffix(),
+            SubgroupName = "Подгруппа " + Suffix()
+        });
+        await s.Db.SaveChangesAsync();
+        return gsm.Id;
+    }
+
     // ── Согласование ──
 
     /// <summary>
@@ -371,7 +782,7 @@ public class HKCardLevelIntegrationTests
         var treeVersion = await VersionAsync(writer, cardId);
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => writer.HK.SaveTreeAsync(cardId,
-                new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Complex, "Комплекс") },
+                new[] { Node(Guid.NewGuid(), null, HKObjectLevel.EquipmentModel, "Изделие") },
                 treeVersion));
 
         Assert.Equal(levelBefore, await LevelAsync(cardId));
@@ -439,7 +850,7 @@ public class HKCardLevelIntegrationTests
             .Select(c => new { c.Code, c.Name, c.Version }).FirstAsync();
 
         await s.HK.SaveTreeAsync(cardId,
-            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Complex, "Комплекс") });
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.EquipmentModel, "Изделие") });
 
         await using var after = _fixture.CreateScope();
         var afterCard = await after.Db.HKCards.AsNoTracking()
@@ -450,6 +861,118 @@ public class HKCardLevelIntegrationTests
         Assert.Equal(beforeCard.Name, afterCard.Name);
         Assert.Equal(beforeCard.Version, afterCard.Version);
         Assert.StartsWith("ХК-", afterCard.Code);
+    }
+
+    // ── Реальная проекция реестра ──
+
+    /// <summary>
+    /// Реестр отдаёт фактический вычисленный уровень автономной карты через
+    /// настоящую проекцию GetRegistryPageAsync, а не прямым чтением HKCards.
+    /// Справочные ObjectCode/ObjectName остаются пустыми: у автономной карты их
+    /// нет, и фиктивно они не заполняются.
+    /// </summary>
+    [Fact]
+    public async Task RegistryProjection_ShowsDerivedLevelOfAutonomousCard()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+
+        var equipmentCard = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+        await s.HK.SaveTreeAsync(equipmentCard,
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.EquipmentModel, "Изделие") });
+
+        var aggregateCard = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+        await s.HK.SaveTreeAsync(aggregateCard,
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Aggregate, "Агрегат") });
+
+        var emptyCard = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var page = await s.HK.GetRegistryPageAsync(new HKCardRegistryQuery
+        {
+            Page = 1,
+            PageSize = 500
+        });
+
+        var rows = page.Items
+            .Where(r => r.Id == equipmentCard || r.Id == aggregateCard || r.Id == emptyCard)
+            .ToList();
+
+        Assert.Equal(3, rows.Count);
+
+        var complex = rows.Single(r => r.Id == equipmentCard);
+        Assert.True(complex.IsAutonomous);
+        Assert.Equal(HKObjectLevel.Complex, complex.ObjectLevel);
+        Assert.Null(complex.ObjectCode);
+        Assert.Null(complex.ObjectName);
+
+        var equipment = rows.Single(r => r.Id == aggregateCard);
+        Assert.Equal(HKObjectLevel.EquipmentModel, equipment.ObjectLevel);
+
+        var undefined = rows.Single(r => r.Id == emptyCard);
+        Assert.Equal(HKObjectLevel.Undefined, undefined.ObjectLevel);
+    }
+
+    /// <summary>
+    /// Фильтр уровня работает по вычисленному уровню и не зависит от наличия
+    /// справочных привязок.
+    /// </summary>
+    [Fact]
+    public async Task RegistryProjection_FiltersByDerivedLevel()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+
+        var equipmentCard = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+        await s.HK.SaveTreeAsync(equipmentCard,
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.EquipmentModel, "Изделие") });
+
+        var page = await s.HK.GetRegistryPageAsync(new HKCardRegistryQuery
+        {
+            Page = 1,
+            PageSize = 500,
+            ObjectLevel = HKObjectLevel.Complex
+        });
+
+        Assert.Contains(page.Items, r => r.Id == equipmentCard);
+
+        // Фильтр не требует справочной привязки: ComplexId остаётся пустым.
+        await using var read = _fixture.CreateScope();
+        Assert.Null((await read.Db.HKCards.AsNoTracking()
+            .FirstAsync(c => c.Id == equipmentCard)).ComplexId);
+    }
+
+    /// <summary>
+    /// DTO чтения отдаёт сохранённый уровень, специальный выбор, признак
+    /// необходимости выбора и понятную причину. GET ничего не записывает.
+    /// </summary>
+    [Fact]
+    public async Task DetailProjection_CarriesLevelChoiceAndReason()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        await s.HK.SaveTreeAsync(cardId,
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Node, "Узел") });
+
+        var versionBefore = await VersionAsync(s, cardId);
+
+        var card = await s.HK.GetByIdAsync(cardId);
+        var projection = await s.HK.GetLevelProjectionAsync(cardId);
+
+        Assert.NotNull(projection);
+        Assert.Null(card!.NodeRootCardLevel);
+        Assert.Equal(HKObjectLevel.Undefined, card.ObjectLevel);
+        Assert.True(projection.NeedsNodeRootChoice);
+        Assert.Equal(HKCardLevelStatus.NodeRootChoiceRequired, projection.Status);
+
+        // GET ничего не записал.
+        Assert.Equal(versionBefore, await VersionAsync(s, cardId));
+        await using var read = _fixture.CreateScope();
+        Assert.Null((await read.Db.HKCards.AsNoTracking()
+            .FirstAsync(c => c.Id == cardId)).NodeRootCardLevel);
     }
 
     // ── Доступ ──

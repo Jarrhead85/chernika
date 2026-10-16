@@ -1598,10 +1598,16 @@ public class HKCardService
             }
         }
 
-        // Уровень карты выводится из собственной структуры. Правило применяется
-        // до записи: недопустимая структура отклоняется, а не сохраняется
-        // наполовину.
-        await ApplyTreeLevelAsync(card, positions, ct);
+        // Уровень карты выводится из собственной структуры. Команда меняет
+        // позиции, но не строки, поэтому итоговые строки — сохранённые.
+        var treeRootRows = await _db.HKCardItems
+            .AsNoTracking()
+            .CountAsync(i => i.HKCardId == cardId && i.HKCardNodeId == null, ct);
+
+        ApplyTreeLevel(
+            card,
+            positions.Select(p => new HKTreePosition(p.Id, p.ParentId, p.Level)).ToList(),
+            treeRootRows);
 
         // Аудит — тем же AuditService, что и остальные операции с ХК.
         await _audit.CreateLogAsync(new AuditWriteRequest(
@@ -1638,29 +1644,25 @@ public class HKCardService
     // ── Уровень карты из собственной структуры ──
 
     /// <summary>
-    /// Пересчитывает рабочий ObjectLevel из итоговой структуры и применяет его к
-    /// отслеживаемой карте.
+    /// Пересчитывает рабочий ObjectLevel по ИТОГОВОЙ структуре команды.
     /// <para>
-    /// Правило применяется ДО SaveChanges: недопустимая структура отклоняется, а не
-    /// сохраняется наполовину. Специальный выбор сохраняется только пока он
-    /// применим: когда старшая верхняя позиция перестаёт быть узлом, выбор
-    /// сбрасывается и перестаёт влиять на вычисление.
+    /// Правило получает именно тот набор, который команда собирается сохранить:
+    /// итоговые позиции и ИТОГОВОЕ количество конечных строк под корнем. Чтение
+    /// строк из базы здесь было бы чтением ПРЕЖДЕНИЯ: строки команды ещё не
+    /// сохранены, и уровень оказался бы старым при уже сохранённых строках.
+    /// </para>
+    /// <para>
+    /// Применяется до SaveChanges: недопустимая структура отклоняется, а не
+    /// сохраняется наполовину.
     /// </para>
     /// </summary>
-    private async Task ApplyTreeLevelAsync(
-        HKCard card, IReadOnlyList<HKCardNodeWrite> positions, CancellationToken ct)
+    private static void ApplyTreeLevel(
+        HKCard card, IReadOnlyList<HKTreePosition> positions, int rootTerminalRows)
     {
         if (!card.IsAutonomous)
             return;
 
-        var rootRows = await _db.HKCardItems
-            .AsNoTracking()
-            .CountAsync(i => i.HKCardId == card.Id && i.HKCardNodeId == null, ct);
-
-        var shape = new HKTreeShape(
-            positions.Select(p => new HKTreePosition(p.Id, p.ParentId, p.Level)).ToList(),
-            rootRows);
-
+        var shape = new HKTreeShape(positions, rootTerminalRows);
         var result = HKCardLevelRule.Resolve(shape, card.NodeRootCardLevel);
 
         if (!result.IsStructureValid)
@@ -1668,41 +1670,29 @@ public class HKCardService
                 "Структура недопустима: " + string.Join("; ", result.StructureErrors));
 
         card.ObjectLevel = result.CardLevel;
-        card.NodeRootCardLevel = result.NeedsNodeRootChoice ? card.NodeRootCardLevel : null;
+
+        // Специальный выбор живёт ровно пока старшая верхняя позиция — узел.
+        // NeedsNodeRootChoice для этого НЕ годится: оно означает, что выбор
+        // ещё необходим, а не что сохранённый выбор применим. Иначе действующий
+        // выбор сбрасывался бы при каждом сохранении дерева или строк.
+        card.NodeRootCardLevel = HKCardLevelRule.SeniorTopLevel(shape) == HKObjectLevel.Node
+            ? card.NodeRootCardLevel
+            : null;
     }
 
     /// <summary>
-    /// Пересчитывает рабочий ObjectLevel из СОХРАНЁННОЙ структуре карты.
-    /// <para>
-    /// Используется после синхронизации конечных строк: учитывается итоговый набор
-    /// строк, а не только прежнее состояние базы. Для неавтономных карт уровень
-    /// приходит из справочного объекта и не пересчитывается.
-    /// </para>
+    /// Сохранённые структурные позиции карты — для команд, которые их не меняют.
     /// </summary>
-    private async Task ApplyStoredTreeLevelAsync(HKCard card, CancellationToken ct)
+    private async Task<IReadOnlyList<HKTreePosition>> LoadTreePositionsAsync(
+        Guid cardId, CancellationToken ct)
     {
-        if (!card.IsAutonomous)
-            return;
-
         var nodes = await _db.HKCardNodes
             .AsNoTracking()
-            .Where(n => n.HKCardId == card.Id)
+            .Where(n => n.HKCardId == cardId)
             .Select(n => new HKTreePosition(n.Id, n.ParentId, n.Level))
             .ToListAsync(ct);
 
-        var rootRows = await _db.HKCardItems
-            .AsNoTracking()
-            .CountAsync(i => i.HKCardId == card.Id && i.HKCardNodeId == null, ct);
-
-        var shape = new HKTreeShape(nodes, rootRows);
-        var result = HKCardLevelRule.Resolve(shape, card.NodeRootCardLevel);
-
-        if (!result.IsStructureValid)
-            throw new InvalidOperationException(
-                "Структура недопустима: " + string.Join("; ", result.StructureErrors));
-
-        card.ObjectLevel = result.CardLevel;
-        card.NodeRootCardLevel = result.NeedsNodeRootChoice ? card.NodeRootCardLevel : null;
+        return nodes;
     }
 
     /// <summary>
@@ -2567,6 +2557,7 @@ public class HKCardService
             .Select(i => new DesiredItem(
                 i.Id,
                 i.HKCardId,
+                i.HKCardNodeId,
                 i.AssemblyUnitId,
                 i.Quantity,
                 i.Volume,
@@ -2647,6 +2638,10 @@ public class HKCardService
 
             if (existingItem != null)
             {
+                // Перенос строки под позицию и обратно под корень — часть
+                // состава: без переноса узла пересчёт уровня видел бы прежнюю
+                // привязку.
+                existingItem.HKCardNodeId = desired.HKCardNodeId;
                 existingItem.AssemblyUnitId = desired.AssemblyUnitId;
                 existingItem.Quantity = desired.Quantity;
                 existingItem.Volume = desired.Volume;
@@ -2691,10 +2686,17 @@ public class HKCardService
         }
         }
 
-        // Уровень пересчитывается по ИТОГОВОМУ набору конечных строк, а не по
-        // прежнему состоянию базы. Правка только названия, назначения, норм или
-        // ГСМ уровень меняет не должно: структура при этом не меняется.
-        await ApplyStoredTreeLevelAsync(card, ct);
+        // Уровень пересчитывается по ИТОГОВОМУ набору строк команды. При
+        // заблокированном составе строки не меняются — берётся сохранённое
+        // количество. Правка только названия, назначения, норм или ГСМ уровень
+        // не меняет: структура при этом не меняется.
+        var finalRootRows = compositionLocked
+            ? await _db.HKCardItems.AsNoTracking()
+                .CountAsync(i => i.HKCardId == card.Id && i.HKCardNodeId == null, ct)
+            : incomingItems.Count(i => i.HKCardNodeId == null);
+
+        ApplyTreeLevel(
+            card, await LoadTreePositionsAsync(card.Id, ct), finalRootRows);
 
         _db.AuditLogs.Add(new AuditLog
         {
@@ -3651,6 +3653,7 @@ public class HKCardService
     private sealed record DesiredItem(
         Guid Id,
         Guid HKCardId,
+        Guid? HKCardNodeId,
         Guid AssemblyUnitId,
         int Quantity,
         decimal Volume,

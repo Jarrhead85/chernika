@@ -333,6 +333,17 @@ public class HKApprovalService
                 throw new InvalidOperationException(
                     "Структура недопустима: " + string.Join("; ", result.StructureErrors));
         }
+
+        // Сохранённый уровень обязан совпадать с вычисленным по итоговой
+        // структуре. Несовпадение означает, что карта изменилась мимо команды,
+        // обновляющей уровень: отправлять состав нельзя, а исправлять уровень
+        // молча в команде отправки нельзя тем более.
+        if (card.ObjectLevel != result.CardLevel)
+        {
+            throw new InvalidOperationException(
+                $"Сохранённый уровень {card.ObjectLevel} не соответствует вычисленному " +
+                $"по структуре {result.CardLevel}. Сохраните карту заново и повторите отправку.");
+        }
     }
 
     /// <summary>

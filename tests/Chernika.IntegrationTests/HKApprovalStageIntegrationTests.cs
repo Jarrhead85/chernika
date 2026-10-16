@@ -308,6 +308,12 @@ public class HKApprovalStageIntegrationTests
         await AttachItemAsync(cardId, auId, null);
 
         await using var s = await AuthorAsync();
+
+        // Строка добавлена напрямую, поэтому рабочий уровень приводится к
+        // согласованному со структурой: уровень выводится из неё, и без этого
+        // отправка состава правомерно отказала бы в несоответствии.
+        await HKApprovalScenario.ApplyDerivedLevelAsync(s, cardId);
+
         await s.Approvals.SubmitCompositionAsync(cardId, await VersionAsync(s, cardId));
 
         Assert.Equal(HKApprovalStageState.OnReview,
