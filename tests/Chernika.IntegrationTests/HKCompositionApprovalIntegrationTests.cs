@@ -169,6 +169,11 @@ public class HKCompositionApprovalIntegrationTests
         });
         await s.Db.SaveChangesAsync();
 
+        // Старшая верхняя позиция — узел: уровень без явного выбора не
+        // определён, и отправка состава была бы недоступна.
+        await HKApprovalScenario.ChooseNodeRootLevelAsync(
+            s, cardId, HKObjectLevel.Aggregate);
+
         return cardId;
     }
 

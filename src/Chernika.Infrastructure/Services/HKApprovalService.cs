@@ -1,4 +1,5 @@
 ﻿using Chernika.Domain;
+using Chernika.Domain.Leveling;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
@@ -303,6 +304,91 @@ public class HKApprovalService
         {
             throw VersionConflict();
         }
+    }
+
+    /// <summary>
+    /// Отправка состава недоступна, пока уровень карты не определён однозначно.
+    /// <para>
+    /// Первый этап (реквизиты) этой проверки не требует: пустое дерево, Undefined
+    /// и отсутствующий выбор верхнего узла отправку реквизитов не блокируют.
+    /// </para>
+    /// </summary>
+    private async Task EnsureLevelDeterminedAsync(HKCard card, CancellationToken ct)
+    {
+        if (!card.IsAutonomous)
+            return;
+
+        var result = await ResolveStoredLevelAsync(card.Id, ct);
+
+        switch (result.Status)
+        {
+            case HKCardLevelStatus.NodeRootChoiceRequired:
+                throw new InvalidOperationException(
+                    "Старшая позиция карты — узел: выберите уровень карты " +
+                    "(агрегат или изделие) перед отправкой состава.");
+            case HKCardLevelStatus.Empty:
+                throw new InvalidOperationException(
+                    "Структура карты не задана: добавьте позиции или конечные строки.");
+            case HKCardLevelStatus.StructureInvalid:
+                throw new InvalidOperationException(
+                    "Структура недопустима: " + string.Join("; ", result.StructureErrors));
+        }
+    }
+
+    /// <summary>
+    /// Принятие проверяет, что сохранённый ObjectLevel соответствует итоговой
+    /// структуре. Несоответствие и неоднозначность — отказ с необходимостью
+    /// доработки, а не автоматическая подстановка уровня.
+    /// </summary>
+    private async Task EnsureAcceptedLevelConsistentAsync(HKCard card, CancellationToken ct)
+    {
+        if (!card.IsAutonomous)
+            return;
+
+        var result = await ResolveStoredLevelAsync(card.Id, ct);
+
+        if (result.Status is HKCardLevelStatus.Empty
+            or HKCardLevelStatus.NodeRootChoiceRequired)
+        {
+            throw new InvalidOperationException(
+                "Уровень карты не определён однозначно: доработайте структуру " +
+                "и выбор перед принятием.");
+        }
+
+        if (!result.IsStructureValid)
+        {
+            throw new InvalidOperationException(
+                "Структура недопустима: " + string.Join("; ", result.StructureErrors));
+        }
+
+        if (card.ObjectLevel != result.CardLevel)
+        {
+            throw new InvalidOperationException(
+                $"Сохранённый уровень {card.ObjectLevel} не соответствует вычисленному " +
+                $"по структуре {result.CardLevel}. Доработайте карту и отправьте заново.");
+        }
+    }
+
+    /// <summary>Применяет правило уровня к сохранённой структуре карты.</summary>
+    private async Task<HKCardLevelRuleResult> ResolveStoredLevelAsync(Guid cardId, CancellationToken ct)
+    {
+        var nodes = await _db.HKCardNodes
+            .AsNoTracking()
+            .Where(n => n.HKCardId == cardId)
+            .Select(n => new HKTreePosition(n.Id, n.ParentId, n.Level))
+            .ToListAsync(ct);
+
+        var rootRows = await _db.HKCardItems
+            .AsNoTracking()
+            .CountAsync(i => i.HKCardId == cardId && i.HKCardNodeId == null, ct);
+
+        var card = await _db.HKCards.AsNoTracking()
+            .Where(c => c.Id == cardId)
+            .Select(c => new { c.NodeRootCardLevel })
+            .FirstAsync(ct);
+
+        return HKCardLevelRule.Resolve(
+            new HKTreeShape(nodes, rootRows), card.NodeRootCardLevel);
     }
 
     private static HkCardVersionConflictException VersionConflict() =>
@@ -731,6 +817,10 @@ public class HKApprovalService
         if (!validation.IsValid)
             throw new HKCardValidationException(validation.Errors);
 
+        // Отправка состава недоступна, пока уровень не определён однозначно:
+        // при неразрешённой неоднозначности верхнего узла или пустой структуре.
+        await EnsureLevelDeterminedAsync(card, ct);
+
         var now = _time.GetUtcNow().UtcDateTime;
         composition.State = HKApprovalStageState.OnReview;
         composition.AssignedApproverUserId = details.AssignedApproverUserId;
@@ -936,6 +1026,11 @@ public class HKApprovalService
         var validation = await _validation.ValidateForApprovalAsync(card, ct);
         if (!validation.IsValid)
             throw new HKCardValidationException(validation.Errors);
+
+        // Принятие повторно проверяет соответствие сохранённого уровня итоговой
+        // структуре ПО СОХРАНЁННЫМ данным внутри транзакции. Уровень молча не
+        // исправляется: согласующему не передаётся другая характеристика.
+        await EnsureAcceptedLevelConsistentAsync(card, ct);
 
         // ── Существующее вложение должно быть доступно и цело ──
         await EnsureAttachmentUsableAsync(cardId, ct);

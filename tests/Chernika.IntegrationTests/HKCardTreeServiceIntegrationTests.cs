@@ -667,11 +667,14 @@ public class HKCardTreeServiceIntegrationTests
 
     // ── Доступ по единому праву HK.Work ──
 
+    /// <summary>
+    /// Сохранение дерева выводит рабочий уровень, и HK.Work работает независимо
+    /// от результата. Прежняя предпосылка — «уровень остаётся Undefined после
+    /// сохранения» — отменена: уровень считается из структуры.
+    /// </summary>
     [Fact]
-    public async Task SaveTree_HkWork_Allows_UndefinedLevel()
+    public async Task SaveTree_DerivesLevelFromStructure_AndHkWorkIsEnough()
     {
-        // Уровень карты ещё не выведен: остаётся Undefined, и HK.Work
-        // должно работать именно в этом состоянии.
         var cardId = await CreateAutonomousCardAsync();
         await using var scope = await AuthorScopeAsync();
 
@@ -679,7 +682,32 @@ public class HKCardTreeServiceIntegrationTests
             new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Aggregate, "Агрегат") });
 
         var card = await scope.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+
+        // Верхний агрегат даёт ХК изделия.
+        Assert.Equal(HKObjectLevel.EquipmentModel, card.ObjectLevel);
+        Assert.Single(await ReadTreeAsync(cardId));
+    }
+
+    /// <summary>
+    /// Верхний узел без выбора оставляет уровень неопределённым, но сохранение
+    /// черновика и работа по HK.Work остаются доступны.
+    /// </summary>
+    [Fact]
+    public async Task SaveTree_TopNodeWithoutChoice_KeepsLevelUndefinedButSaves()
+    {
+        var cardId = await CreateAutonomousCardAsync();
+        await using var scope = await AuthorScopeAsync();
+
+        await scope.HK.SaveTreeAsync(cardId,
+            new[] { Node(Guid.NewGuid(), null, HKObjectLevel.Node, "Узел") });
+
+        var card = await scope.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
         Assert.Equal(HKObjectLevel.Undefined, card.ObjectLevel);
+
+        var projection = await scope.HK.GetLevelProjectionAsync(cardId);
+        Assert.True(projection.NeedsNodeRootChoice);
+
+        // Черновик сохранён: выбор делается отдельной командой.
         Assert.Single(await ReadTreeAsync(cardId));
     }
 

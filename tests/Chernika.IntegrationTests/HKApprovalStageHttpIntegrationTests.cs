@@ -315,6 +315,143 @@ public class HKApprovalStageHttpIntegrationTests : IClassFixture<ChernikaApiFact
         Assert.DoesNotContain("chernika-tests-storage", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ── Контракт выбора уровня верхнего узла ──
+
+    /// <summary>
+    /// Карта со старшей верхней позицией-узлом: выбор применяется, уровень
+    /// сохраняется атомарно вместе с выбором.
+    /// </summary>
+    [Fact]
+    public async Task SetNodeRootLevel_WithNodeRoot_Succeeds()
+    {
+        var cardId = await SeedCardWithNodeRootAsync();
+        var version = await CardVersionAsync(cardId);
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.PostAsJsonAsync(
+            $"/api/HKCards/{cardId}/node-root-level",
+            new { choice = 3, rowVersion = version });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var card = await db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+
+        Assert.Equal(HKObjectLevel.Aggregate, card.NodeRootCardLevel);
+        Assert.Equal(HKObjectLevel.Aggregate, card.ObjectLevel);
+    }
+
+    /// <summary>Выбор неприменим, когда старшая верхняя позиция — не узел.</summary>
+    [Fact]
+    public async Task SetNodeRootLevel_WhenTopIsNotNode_ReturnsBadRequest()
+    {
+        var cardId = await SeedCardAsync();
+        var version = await CardVersionAsync(cardId);
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.PostAsJsonAsync(
+            $"/api/HKCards/{cardId}/node-root-level",
+            new { choice = 3, rowVersion = version });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.Null((await db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId))
+            .NodeRootCardLevel);
+    }
+
+    /// <summary>Устаревшая версия — 409, а не 500 и не произвольный 400.</summary>
+    [Fact]
+    public async Task SetNodeRootLevel_WithStaleRowVersion_ReturnsConflict()
+    {
+        var cardId = await SeedCardWithNodeRootAsync();
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.PostAsJsonAsync(
+            $"/api/HKCards/{cardId}/node-root-level",
+            new { choice = 3, rowVersion = 1u });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        var body = await BodyAsync(response);
+        Assert.DoesNotContain("Npgsql", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SQLSTATE", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Недопустимое значение выбора отклоняется сервером.</summary>
+    [Fact]
+    public async Task SetNodeRootLevel_WithInvalidChoice_ReturnsBadRequest()
+    {
+        var cardId = await SeedCardWithNodeRootAsync();
+        var version = await CardVersionAsync(cardId);
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.PostAsJsonAsync(
+            $"/api/HKCards/{cardId}/node-root-level",
+            new { choice = 1, rowVersion = version });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// DTO чтения отдаёт вычисленный уровень, выбор, признак необходимости
+    /// выбора и понятную причину.
+    /// </summary>
+    [Fact]
+    public async Task GetById_ExposesDerivedLevelAndChoiceReason()
+    {
+        var cardId = await SeedCardWithNodeRootAsync();
+
+        var client = _factory.CreateAs(_factory.NormAdminUserName);
+        var response = await client.GetAsync($"/api/HKCards/{cardId}");
+        response.EnsureSuccessStatusCode();
+
+        using var doc = System.Text.Json.JsonDocument.Parse(await BodyAsync(response));
+        var root = doc.RootElement;
+
+        Assert.Equal((int)HKObjectLevel.Undefined, root.GetProperty("objectLevel").GetInt32());
+        Assert.True(root.GetProperty("needsNodeRootChoice").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(
+            root.GetProperty("levelReason").GetString()));
+    }
+
+    /// <summary>Карта со старшей верхней позицией-узлом.</summary>
+    private async Task<Guid> SeedCardWithNodeRootAsync()
+    {
+        var cardId = await SeedCardAsync();
+
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        db.HKCardNodes.Add(new HKCardNode
+        {
+            Id = Guid.NewGuid(),
+            HKCardId = cardId,
+            ParentId = null,
+            Level = HKObjectLevel.Node,
+            Name = "Узел " + Suffix(),
+            Quantity = 1,
+            SortOrder = 0
+        });
+
+        var card = await db.HKCards.FirstAsync(c => c.Id == cardId);
+        card.ObjectLevel = HKObjectLevel.Undefined;
+        card.NodeRootCardLevel = null;
+
+        await db.SaveChangesAsync();
+        return cardId;
+    }
+
+    private async Task<uint> CardVersionAsync(Guid cardId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.HKCards.AsNoTracking()
+            .Where(c => c.Id == cardId).Select(c => c.RowVersion).FirstAsync();
+    }
+
     /// <summary>
     /// Чтение без права просмотра — 403, а не тихая выдача этапов по одному
     /// известному идентификатору.

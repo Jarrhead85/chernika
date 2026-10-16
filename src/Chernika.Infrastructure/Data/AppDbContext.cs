@@ -360,6 +360,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.Version).HasMaxLength(10).IsRequired();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.ObjectLevel).HasConversion<int>();
+            e.Property(x => x.NodeRootCardLevel).HasConversion<int>();
             e.Property(x => x.IsAutonomous).HasDefaultValue(false);
             e.Property(x => x.Purpose).HasMaxLength(2000);
             e.Property(x => x.NormativeBasis).HasMaxLength(2000);

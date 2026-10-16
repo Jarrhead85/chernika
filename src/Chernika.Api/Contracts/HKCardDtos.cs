@@ -1,4 +1,6 @@
+using Chernika.Domain;
 using Chernika.Domain.Entities;
+using Chernika.Domain.Leveling;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
 
@@ -63,7 +65,18 @@ public record HKCardDetailDto(
     string Version,
     HKCardStatus Status,
     HKObjectLevel ObjectLevel,
+    /// <summary>
+    /// Вычисленный уровень карты. Для автономной карты — из собственной
+    /// структуры. Показывается как есть: «не определён» только при реальном
+    /// Undefined, а не для всех автономных карт.
+    /// </summary>
     bool IsAutonomous,
+    /// <summary>Сохранённый специальный выбор при верхнем узле.</summary>
+    HKObjectLevel? NodeRootCardLevel,
+    /// <summary>Требуется ли явный пользовательский выбор уровня.</summary>
+    bool NeedsNodeRootChoice,
+    /// <summary>Понятная причина неопределённости уровня.</summary>
+    string? LevelReason,
     Guid BranchId,
     string? BranchName,
     Guid? ComplexId,
@@ -91,6 +104,18 @@ public record HKCardDetailDto(
     Guid? SupersedesHKCardId,
     IReadOnlyList<HKCardItemDto> Items,
     IReadOnlyList<Chernika.Domain.Models.HKCardVersionDto> Versions);
+
+/// <summary>
+/// Узкий контракт специального выбора для карты, старшая верхняя позиция
+/// которой — узел.
+/// <para>
+/// Принимает ТОЛЬКО выбранный допустимый вариант и ожидаемую версию карты.
+/// Общий уровень объекта как команда смены уровня не принимает.
+/// </para>
+/// </summary>
+public record SetNodeRootCardLevelRequest(
+    HKObjectLevel Choice,
+    uint RowVersion);
 
 public record HKCardItemDto(
     Guid Id,
@@ -186,8 +211,13 @@ public static class HKCardMapper
         _ => null
     };
 
-    public static HKCardDetailDto ToDetail(HKCard c, IReadOnlyList<HKCardVersionDto>? versions = null) => new(
+    public static HKCardDetailDto ToDetail(
+        HKCard c, IReadOnlyList<HKCardVersionDto>? versions = null,
+        Domain.Leveling.HKCardLevelRuleResult? level = null) => new(
         c.Id, c.Code, c.Name, c.Version, c.Status, c.ObjectLevel, c.IsAutonomous,
+        c.NodeRootCardLevel,
+        level?.NeedsNodeRootChoice ?? false,
+        level is null ? null : LevelReason(level),
         c.BranchId, c.Branch?.Name,
         c.ComplexId, c.EquipmentModelId, c.AggregateId, c.NodeId,
         GetObjectName(c),
@@ -201,6 +231,19 @@ public static class HKCardMapper
         c.SupersedesHKCardId,
         c.Items.Select(ToItemDto).ToList(),
         versions ?? Array.Empty<HKCardVersionDto>());
+
+    /// <summary>Понятная причина неопределённости уровня для показа пользователю.</summary>
+    private static string? LevelReason(Domain.Leveling.HKCardLevelRuleResult level) =>
+        level.Status switch
+        {
+            Domain.Leveling.HKCardLevelStatus.Empty =>
+                "Структура не задана: уровень определится после добавления позиций или строк.",
+            Domain.Leveling.HKCardLevelStatus.NodeRootChoiceRequired =>
+                "Старшая позиция карты — узел: выберите уровень (агрегат или изделие).",
+            Domain.Leveling.HKCardLevelStatus.StructureInvalid =>
+                "Структура недопустима: " + string.Join("; ", level.StructureErrors),
+            _ => null
+        };
 
     private static HKCardItemDto ToItemDto(HKCardItem i) =>
         new(

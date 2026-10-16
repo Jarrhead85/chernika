@@ -1,5 +1,6 @@
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
+using Chernika.Domain.Leveling;
 using Microsoft.EntityFrameworkCore;
 
 namespace Chernika.IntegrationTests;
@@ -55,7 +56,47 @@ internal static class HKApprovalScenario
         }
 
         var created = await s.HK.CreateAsync(card);
+
+        // Рабочий уровень выводится из собственной структуры. Фикстура создаёт
+        // структуру напрямую, минуя команды карты, поэтому уровень приводится к
+        // согласованному здесь: иначе карта ушла бы на согласование с
+        // Undefined при фактически определимом уровне.
+        await ApplyDerivedLevelAsync(s, created.Id);
+
         return created.Id;
+    }
+
+    /// <summary>
+    /// Пересчитывает рабочий уровень по сохранённой структуре карты.
+    /// </summary>
+    public static async Task ApplyDerivedLevelAsync(TestScope s, Guid cardId)
+    {
+        var nodes = await s.Db.HKCardNodes.AsNoTracking()
+            .Where(n => n.HKCardId == cardId)
+            .Select(n => new HKTreePosition(n.Id, n.ParentId, n.Level))
+            .ToListAsync();
+
+        var rootRows = await s.Db.HKCardItems.AsNoTracking()
+            .CountAsync(i => i.HKCardId == cardId && i.HKCardNodeId == null);
+
+        var card = await s.Db.HKCards.FirstAsync(c => c.Id == cardId);
+
+        var result = HKCardLevelRule.Resolve(
+            new HKTreeShape(nodes, rootRows), card.NodeRootCardLevel);
+
+        card.ObjectLevel = result.CardLevel;
+        await s.Db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Делает явный выбор уровня для карты, старшая верхняя позиция которой —
+    /// узел. Без выбора отправка состава недоступна.
+    /// </summary>
+    public static async Task ChooseNodeRootLevelAsync(
+        TestScope s, Guid cardId, HKObjectLevel choice)
+    {
+        var version = await VersionAsync(s, cardId);
+        await s.HK.SetNodeRootCardLevelAsync(cardId, choice, version);
     }
 
     public static async Task<uint> VersionAsync(TestScope s, Guid cardId)

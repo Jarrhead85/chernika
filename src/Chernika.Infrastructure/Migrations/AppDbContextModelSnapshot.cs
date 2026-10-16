@@ -929,6 +929,9 @@ namespace Chernika.Infrastructure.Migrations
                     b.Property<Guid?>("NodeId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("NodeRootCardLevel")
+                        .HasColumnType("integer");
+
                     b.Property<string>("NormativeBasis")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");

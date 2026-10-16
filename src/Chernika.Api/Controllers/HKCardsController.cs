@@ -71,7 +71,9 @@ public class HKCardsController : ControllerBase
         var card = await _hkCards.GetByIdAsync(id);
         if (card == null) return NotFound();
         var versions = await _hkCards.GetVersionsAsync(id);
-        return Ok(HKCardMapper.ToDetail(card, versions));
+        // Проекция уровня — read-only: GET не пересчитывает и не записывает.
+        var level = await _hkCards.GetLevelProjectionAsync(id);
+        return Ok(HKCardMapper.ToDetail(card, versions, level));
     }
 
     [HttpPost]
@@ -128,6 +130,51 @@ public class HKCardsController : ControllerBase
             return BadRequest(ex.ToUserMessage());
         }
         return NoContent();
+    }
+
+    /// <summary>
+    /// Специальный выбор уровня для карты, старшая верхняя позиция которой —
+    /// узел.
+    /// <para>
+    /// Принимается только выбранный допустимый вариант (агрегат или изделие) и
+    /// ожидаемая версия. Выбор и вычисленный уровень сохраняются атомарно.
+    /// Фактический верхний уровень проверяется по сохранённой структуре: если он
+    /// не узел, выбор неприменим.
+    /// </para>
+    /// </summary>
+    [HttpPost("{id}/node-root-level")]
+    [Authorize(Policy = "EditHK")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SetNodeRootLevel(
+        Guid id, [FromBody] SetNodeRootCardLevelRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _hkCards.SetNodeRootCardLevelAsync(
+                id, request.Choice, request.RowVersion, ct);
+            return NoContent();
+        }
+        catch (ArgumentException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (HkCardVersionConflictException ex)
+        {
+            return Conflict(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpPost("{id}/status")]

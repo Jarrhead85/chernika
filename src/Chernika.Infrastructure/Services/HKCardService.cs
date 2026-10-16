@@ -1,4 +1,5 @@
 using Chernika.Domain;
+using Chernika.Domain.Leveling;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
@@ -946,13 +947,15 @@ public class HKCardService
     /// </summary>
     private sealed record CardAccessInfo(
         Domain.Enums.HKObjectLevel ObjectLevel, Guid BranchId, HKCardStatus Status,
-        bool IsAutonomous, Guid? CurrentAcceptedRevisionId);
+        bool IsAutonomous, Guid? CurrentAcceptedRevisionId,
+        Domain.Enums.HKObjectLevel? NodeRootCardLevel);
 
     private async Task<CardAccessInfo?> LoadCardAccessAsync(Guid cardId, CancellationToken ct) =>
         await _db.HKCards.AsNoTracking()
             .Where(x => x.Id == cardId)
             .Select(x => new CardAccessInfo(
-                x.ObjectLevel, x.BranchId, x.Status, x.IsAutonomous, x.CurrentAcceptedRevisionId))
+                x.ObjectLevel, x.BranchId, x.Status, x.IsAutonomous, x.CurrentAcceptedRevisionId,
+                x.NodeRootCardLevel))
             .FirstOrDefaultAsync(ct);
 
     /// <summary>
@@ -1595,6 +1598,11 @@ public class HKCardService
             }
         }
 
+        // Уровень карты выводится из собственной структуры. Правило применяется
+        // до записи: недопустимая структура отклоняется, а не сохраняется
+        // наполовину.
+        await ApplyTreeLevelAsync(card, positions, ct);
+
         // Аудит — тем же AuditService, что и остальные операции с ХК.
         await _audit.CreateLogAsync(new AuditWriteRequest(
             "HKCard",
@@ -1625,6 +1633,192 @@ public class HKCardService
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+    }
+
+    // ── Уровень карты из собственной структуры ──
+
+    /// <summary>
+    /// Пересчитывает рабочий ObjectLevel из итоговой структуры и применяет его к
+    /// отслеживаемой карте.
+    /// <para>
+    /// Правило применяется ДО SaveChanges: недопустимая структура отклоняется, а не
+    /// сохраняется наполовину. Специальный выбор сохраняется только пока он
+    /// применим: когда старшая верхняя позиция перестаёт быть узлом, выбор
+    /// сбрасывается и перестаёт влиять на вычисление.
+    /// </para>
+    /// </summary>
+    private async Task ApplyTreeLevelAsync(
+        HKCard card, IReadOnlyList<HKCardNodeWrite> positions, CancellationToken ct)
+    {
+        if (!card.IsAutonomous)
+            return;
+
+        var rootRows = await _db.HKCardItems
+            .AsNoTracking()
+            .CountAsync(i => i.HKCardId == card.Id && i.HKCardNodeId == null, ct);
+
+        var shape = new HKTreeShape(
+            positions.Select(p => new HKTreePosition(p.Id, p.ParentId, p.Level)).ToList(),
+            rootRows);
+
+        var result = HKCardLevelRule.Resolve(shape, card.NodeRootCardLevel);
+
+        if (!result.IsStructureValid)
+            throw new InvalidOperationException(
+                "Структура недопустима: " + string.Join("; ", result.StructureErrors));
+
+        card.ObjectLevel = result.CardLevel;
+        card.NodeRootCardLevel = result.NeedsNodeRootChoice ? card.NodeRootCardLevel : null;
+    }
+
+    /// <summary>
+    /// Пересчитывает рабочий ObjectLevel из СОХРАНЁННОЙ структуре карты.
+    /// <para>
+    /// Используется после синхронизации конечных строк: учитывается итоговый набор
+    /// строк, а не только прежнее состояние базы. Для неавтономных карт уровень
+    /// приходит из справочного объекта и не пересчитывается.
+    /// </para>
+    /// </summary>
+    private async Task ApplyStoredTreeLevelAsync(HKCard card, CancellationToken ct)
+    {
+        if (!card.IsAutonomous)
+            return;
+
+        var nodes = await _db.HKCardNodes
+            .AsNoTracking()
+            .Where(n => n.HKCardId == card.Id)
+            .Select(n => new HKTreePosition(n.Id, n.ParentId, n.Level))
+            .ToListAsync(ct);
+
+        var rootRows = await _db.HKCardItems
+            .AsNoTracking()
+            .CountAsync(i => i.HKCardId == card.Id && i.HKCardNodeId == null, ct);
+
+        var shape = new HKTreeShape(nodes, rootRows);
+        var result = HKCardLevelRule.Resolve(shape, card.NodeRootCardLevel);
+
+        if (!result.IsStructureValid)
+            throw new InvalidOperationException(
+                "Структура недопустима: " + string.Join("; ", result.StructureErrors));
+
+        card.ObjectLevel = result.CardLevel;
+        card.NodeRootCardLevel = result.NeedsNodeRootChoice ? card.NodeRootCardLevel : null;
+    }
+
+    /// <summary>
+    /// Загружает описание собственной структуры карты для применения правила.
+    /// </summary>
+    private async Task<HKTreeShape> LoadTreeShapeAsync(Guid cardId, CancellationToken ct)
+    {
+        var nodes = await _db.HKCardNodes
+            .AsNoTracking()
+            .Where(n => n.HKCardId == cardId)
+            .Select(n => new HKTreePosition(n.Id, n.ParentId, n.Level))
+            .ToListAsync(ct);
+
+        var rootRows = await _db.HKCardItems
+            .AsNoTracking()
+            .CountAsync(i => i.HKCardId == cardId && i.HKCardNodeId == null, ct);
+
+        return new HKTreeShape(nodes, rootRows);
+    }
+
+    /// <summary>
+    /// Read-only проекция уровня карты для DTO чтения.
+    /// <para>
+    /// GET не пересчитывает и не записывает уровень: метод только читает сохранённые
+    /// данные и применяет правило. Побочного UPDATE при открытии карты нет.
+    /// </para>
+    /// </summary>
+    public async Task<HKCardLevelRuleResult> GetLevelProjectionAsync(
+        Guid cardId, CancellationToken ct = default)
+    {
+        var access = await LoadCardAccessAsync(cardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+        await EnsureCardReadAccessAsync(access, ct);
+
+        // У неавтономной карты уровень приходит из справочного объекта и из
+        // собственной структуры не выводится.
+        if (!access.IsAutonomous)
+            return new HKCardLevelRuleResult(
+                access.ObjectLevel, HKCardLevelStatus.Determined, false,
+                Array.Empty<string>());
+
+        var shape = await LoadTreeShapeAsync(cardId, ct);
+        return HKCardLevelRule.Resolve(shape, access.NodeRootCardLevel);
+    }
+
+    /// <summary>
+    /// Устанавливает специальный пользовательский выбор для карты, старшая верхняя
+    /// позиция которой — узел.
+    /// <para>
+    /// Узкий контракт: принимает только выбранный допустимый вариант и ожидаемую
+    /// версию. Общий ObjectLevel как команду смены уровня не принимает. Выбор и
+    /// вычисленный уровень сохраняются атомарно.
+    /// </para>
+    /// </summary>
+    public async Task<HKCardLevelRuleResult> SetNodeRootCardLevelAsync(
+        Guid cardId, HKObjectLevel choice, uint expectedRowVersion,
+        CancellationToken ct = default)
+    {
+        var actorId = _currentUser.GetRequiredUserId();
+
+        var access = await LoadCardAccessAsync(cardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+        await EnsureEditDraftAccessAsync(access, ct);
+        await EnsureCompositionEditableAsync(cardId, ct);
+
+        if (!access.IsAutonomous)
+            throw new InvalidOperationException(
+                "Специальный выбор уровня доступен только автономной ХК.");
+
+        // Допустимые значения проверяются ДО любой записи: иначе недопустимый
+        // выбор отвергало бы ограничение базы уже как внутренняя ошибка.
+        if (choice is not (HKObjectLevel.Aggregate or HKObjectLevel.EquipmentModel))
+            throw new InvalidOperationException(
+                "Выбор уровня верхнего узла принимает только значения " +
+                "Aggregate или EquipmentModel.");
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        var card = await _db.HKCards.FirstOrDefaultAsync(x => x.Id == cardId, ct)
+            ?? throw new ArgumentException("ХК не найдена.");
+
+        if (expectedRowVersion is { } expected && expected != card.RowVersion)
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+        // Фактический верхний уровень — по сохранённым данным, а не по запросу.
+        var shape = await LoadTreeShapeAsync(cardId, ct);
+        var current = HKCardLevelRule.Resolve(shape, card.NodeRootCardLevel);
+
+        if (!current.IsStructureValid)
+            throw new InvalidOperationException(
+                "Структура недопустима: " + string.Join("; ", current.StructureErrors));
+
+        // Выбор применим только когда старшая верхняя позиция — узел.
+        if (HKCardLevelRule.SeniorTopLevel(shape) != HKObjectLevel.Node)
+            throw new InvalidOperationException(
+                "Специальный выбор применим только когда старшая верхняя позиция карты — узел. " +
+                "Сначала измените структуру.");
+
+        card.NodeRootCardLevel = choice;
+        var applied = HKCardLevelRule.Resolve(shape, choice);
+        card.ObjectLevel = applied.CardLevel;
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        card.UpdatedAt = now > card.UpdatedAt ? now : card.UpdatedAt.AddTicks(1);
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "HKCard", cardId.ToString(), "NodeRootCardLevelSet", actorId,
+            EntityDisplayName: $"{card.Code} v{card.Version}",
+            Details: $"Выбран уровень верхнего узла: {choice}. " +
+                     $"Вычисленный уровень карты: {applied.CardLevel}."), ct);
+
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return applied;
     }
 
     public async Task<List<HKCardComponentDto>> GetComponentsAsync(Guid cardId, CancellationToken ct = default)
@@ -2496,6 +2690,11 @@ public class HKCardService
             }
         }
         }
+
+        // Уровень пересчитывается по ИТОГОВОМУ набору конечных строк, а не по
+        // прежнему состоянию базы. Правка только названия, назначения, норм или
+        // ГСМ уровень меняет не должно: структура при этом не меняется.
+        await ApplyStoredTreeLevelAsync(card, ct);
 
         _db.AuditLogs.Add(new AuditLog
         {
