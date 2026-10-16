@@ -85,7 +85,7 @@ public class HKCardItemService
             throw new UnauthorizedAccessException("Нет доступа к карточке другой организации.");
 
         await EnsureCardWritableAsync(card.Status, card.CurrentAcceptedRevisionId, item.HKCardId, ct);
-        await EnsureMaterialsAssignableAsync(requested, ct);
+        await HKCardMaterialAssignment.EnsureAssignableAsync(_db, requested, ct);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
@@ -171,48 +171,6 @@ public class HKCardItemService
     /// ничего не требует: правило относится к НОВОМУ назначению.
     /// </para>
     /// </summary>
-    private async Task EnsureMaterialsAssignableAsync(
-        List<(Guid GsmMaterialId, GsmCategory Category)> requested, CancellationToken ct)
-    {
-        if (requested.Count == 0)
-            return;
-
-        // Категория определена: неопределённое значение означало бы запись,
-        // которую нельзя ни прочитать, ни согласовать.
-        if (requested.Any(m => !Enum.IsDefined(m.Category)))
-            throw new InvalidOperationException("Категория материала не определена.");
-
-        // Дубликаты в пределах категории: одна и та же марка дважды в одной
-        // категории означает задвоение строки.
-        var duplicates = requested
-            .GroupBy(m => (m.GsmMaterialId, m.Category))
-            .Where(g => g.Count() > 1)
-            .Select(g => g.Key.GsmMaterialId)
-            .ToList();
-        if (duplicates.Count > 0)
-            throw new InvalidOperationException(
-                "В одной категории повторяется одна и та же марка ГСМ.");
-
-        var ids = requested.Select(m => m.GsmMaterialId).Distinct().ToList();
-        var available = await _db.GsmMaterials
-            .Where(g => ids.Contains(g.Id))
-            .Select(g => new { g.Id, g.IsDeleted, g.IsDraft })
-            .ToListAsync(ct);
-
-        var missing = ids.Except(available.Select(a => a.Id)).ToList();
-        if (missing.Count > 0)
-            throw new InvalidOperationException(
-                "Выбрана марка ГСМ, отсутствующая в справочнике. Обновите список и повторите.");
-
-        var notAssignable = available
-            .Where(a => a.IsDeleted || a.IsDraft)
-            .Select(a => a.Id)
-            .ToList();
-        if (notAssignable.Count > 0)
-            throw new InvalidOperationException(
-                "Выбрана марка ГСМ, недоступная для назначения: удалена или является черновиком.");
-    }
-
     /// <summary>
     /// Состав карты записывается только в разрешённом состоянии.
     /// <para>
