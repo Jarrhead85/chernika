@@ -35,6 +35,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<HKCardRevisionItemMaterial> HKCardRevisionItemMaterials => Set<HKCardRevisionItemMaterial>();
     public DbSet<HKCardComponent> HKCardComponents => Set<HKCardComponent>();
     public DbSet<HKCardNode> HKCardNodes => Set<HKCardNode>();
+    public DbSet<HKCardSection> HKCardSections => Set<HKCardSection>();
     public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
     public DbSet<HKCardItemMaterial> HKCardItemMaterials => Set<HKCardItemMaterial>();
     public DbSet<HKCardStatusLog> HKCardStatusLogs => Set<HKCardStatusLog>();
@@ -404,6 +405,26 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.HasQueryFilter(x => x.Status != Chernika.Domain.Enums.HKCardStatus.Deleted);
         });
 
+        // Раздел карты — визуальная группа, а не структурная позиция: у него нет
+        // количества экземпляров и собственных норм, и на уровень карты он не
+        // влияет.
+        modelBuilder.Entity<HKCardSection>(e =>
+        {
+            e.ToTable("HKCardSections");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.SectionType).HasConversion<int>();
+            e.HasOne(x => x.HKCard).WithMany().HasForeignKey(x => x.HKCardId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Раздел принадлежит конкретной карте: чужая ветка в раздел другой
+            // карты попасть не может.
+            e.HasIndex(x => new { x.HKCardId, x.SortOrder })
+                .HasDatabaseName("IX_HKCardSections_HKCardId_SortOrder");
+            e.HasIndex(x => new { x.HKCardId, x.SectionType })
+                .IsUnique()
+                .HasDatabaseName("UX_HKCardSections_HKCardId_SectionType");
+        });
+
         modelBuilder.Entity<HKCardNode>(e =>
         {
             e.HasKey(x => x.Id);
@@ -422,6 +443,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasPrincipalKey(x => new { x.HKCardId, x.Id })
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.HKCardId, x.SortOrder });
+
+            // Принадлежность разделу задаётся только у верхней позиции
+            // (ParentId = null); вложенные позиции наследуют раздел корня.
+            e.HasOne(x => x.Section).WithMany(x => x.Nodes).HasForeignKey(x => x.SectionId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<HKCardComponent>(e =>
@@ -597,6 +623,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasPrincipalKey(x => new { x.HKCardId, x.Id })
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.AssemblyUnit).WithMany(x => x.HKCardItems).HasForeignKey(x => x.AssemblyUnitId);
+
+            // Принадлежность разделу задаётся только у строки под корнем карты.
+            e.HasOne(x => x.Section).WithMany(x => x.Items).HasForeignKey(x => x.SectionId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<HKCardItemMaterial>(e =>

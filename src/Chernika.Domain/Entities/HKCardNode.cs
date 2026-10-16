@@ -24,4 +24,16 @@ public class HKCardNode
     public string Name { get; set; } = string.Empty;
     public int Quantity { get; set; } = 1;
     public int SortOrder { get; set; }
+
+    /// <summary>
+    /// Раздел самостоятельной ветки.
+    /// <para>
+    /// Заполняется ТОЛЬКО у верхней позиции (<see cref="ParentId"/> = null).
+    /// У вложенной позиции значение равно null: она наследует раздел своего
+    /// корня. Независимо редактируемый раздел у каждого вложенного узла создал
+    /// бы противоречивую принадлежность одной ветки.
+    /// </para>
+    /// </summary>
+    public Guid? SectionId { get; set; }
+    public HKCardSection? Section { get; set; }
 }

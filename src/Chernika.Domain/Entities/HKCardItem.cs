@@ -16,6 +16,17 @@ public class HKCardItem
     public string? Notes { get; set; }
     public int SortOrder { get; set; }
 
+    /// <summary>
+    /// Раздел самостоятельной конечной строки.
+    /// <para>
+    /// Заполняется ТОЛЬКО у строки непосредственно под корнем карты
+    /// (<see cref="HKCardNodeId"/> = null). Строка под структурной позицией
+    /// наследует раздел ветки этой позиции.
+    /// </para>
+    /// </summary>
+    public Guid? SectionId { get; set; }
+    public HKCardSection? Section { get; set; }
+
     public ICollection<HKCardItemMaterial> Materials { get; set; } = new List<HKCardItemMaterial>();
     public ICollection<IndividualCardItem> IndividualCardItems { get; set; } = new List<IndividualCardItem>();
 }

@@ -1190,6 +1190,9 @@ namespace Chernika.Infrastructure.Migrations
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
+                    b.Property<Guid?>("SectionId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("SortOrder")
                         .HasColumnType("integer");
 
@@ -1204,6 +1207,8 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AssemblyUnitId");
+
+                    b.HasIndex("SectionId");
 
                     b.HasIndex("HKCardId", "HKCardNodeId");
 
@@ -1276,12 +1281,17 @@ namespace Chernika.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(1);
 
+                    b.Property<Guid?>("SectionId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("SortOrder")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
 
                     b.HasKey("Id");
+
+                    b.HasIndex("SectionId");
 
                     b.HasIndex("HKCardId", "ParentId");
 
@@ -1538,6 +1548,33 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("RevisionId", "ParentId");
 
                     b.ToTable("HKCardRevisionNodes");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardSection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("HKCardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SectionType")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HKCardId", "SectionType")
+                        .IsUnique()
+                        .HasDatabaseName("UX_HKCardSections_HKCardId_SectionType");
+
+                    b.HasIndex("HKCardId", "SortOrder")
+                        .HasDatabaseName("IX_HKCardSections_HKCardId_SortOrder");
+
+                    b.ToTable("HKCardSections", (string)null);
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -3213,6 +3250,11 @@ namespace Chernika.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Chernika.Domain.Entities.HKCardSection", "Section")
+                        .WithMany("Items")
+                        .HasForeignKey("SectionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Chernika.Domain.Entities.HKCardNode", "HKCardNode")
                         .WithMany()
                         .HasForeignKey("HKCardId", "HKCardNodeId")
@@ -3224,6 +3266,8 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("HKCard");
 
                     b.Navigation("HKCardNode");
+
+                    b.Navigation("Section");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardItemMaterial", b =>
@@ -3272,6 +3316,11 @@ namespace Chernika.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Chernika.Domain.Entities.HKCardSection", "Section")
+                        .WithMany("Nodes")
+                        .HasForeignKey("SectionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Chernika.Domain.Entities.HKCardNode", "Parent")
                         .WithMany()
                         .HasForeignKey("HKCardId", "ParentId")
@@ -3281,6 +3330,8 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("HKCard");
 
                     b.Navigation("Parent");
+
+                    b.Navigation("Section");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevision", b =>
@@ -3341,6 +3392,17 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("Parent");
 
                     b.Navigation("Revision");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardSection", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCard", "HKCard")
+                        .WithMany()
+                        .HasForeignKey("HKCardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("HKCard");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -3837,6 +3899,13 @@ namespace Chernika.Infrastructure.Migrations
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItem", b =>
                 {
                     b.Navigation("Materials");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardSection", b =>
+                {
+                    b.Navigation("Items");
+
+                    b.Navigation("Nodes");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.IndividualCard", b =>
