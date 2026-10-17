@@ -117,6 +117,11 @@ public class HKCard
     public ICollection<HKCardNode> TreeNodes { get; set; } = new List<HKCardNode>();
 
     /// <summary>
+    /// Разделы карты. Пустая коллекция — «разделов нет», а не запись базы:
+    /// разделы не создаются автоматически при открытии карты.
+    /// </summary>
+    public ICollection<HKCardSection> Sections { get; set; } = new List<HKCardSection>();
+
     /// Состояния этапов согласования: реквизитов и состава.
     /// <para>
     /// У карты ровно две записи. Они переключаются независимо: принятые

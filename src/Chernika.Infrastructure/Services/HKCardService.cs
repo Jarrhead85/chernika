@@ -549,6 +549,9 @@ public class HKCardService
             // AttachGsmMaterialsIgnoringSoftDeleteAsync.
             .Include(x => x.Items).ThenInclude(i => i.Materials)
             .Include(x => x.StatusLog.OrderByDescending(s => s.ChangedAt))
+            // Разделы читаются вместе с деревом: редактор отображает их без
+            // отдельного запроса. Навигация пуста, когда разделов нет.
+            .Include(x => x.Sections.OrderBy(s => s.SortOrder))
             .FirstOrDefaultAsync(x => x.Id == id, ct);
 
         if (card is not null)

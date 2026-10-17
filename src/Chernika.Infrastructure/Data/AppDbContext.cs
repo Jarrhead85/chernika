@@ -414,7 +414,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             e.ToTable("HKCardSections");
             e.HasKey(x => x.Id);
             e.Property(x => x.SectionType).HasConversion<int>();
-            e.HasOne(x => x.HKCard).WithMany().HasForeignKey(x => x.HKCardId)
+            e.HasOne(x => x.HKCard).WithMany(x => x.Sections).HasForeignKey(x => x.HKCardId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             // Раздел принадлежит конкретной карте: чужая ветка в раздел другой
