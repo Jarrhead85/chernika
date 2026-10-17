@@ -177,6 +177,52 @@ public class HKCardsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Атомарное сохранение собственной структуры карты: разделы, позиции,
+    /// конечные строки и материалы переносятся одной транзакцией.
+    /// <para>
+    /// Проверки вложенности уровней, принадлежности разделам и согласованности
+    /// материалов выполняет сервис; HTTP-слой только транслирует отказы в коды:
+    /// конфликт версии — 409, доступ — 403, отсутствие карты — 404, прочее — 400.
+    /// Служебные свойства карты (номер, статус, автор) командой не меняются.
+    /// </para>
+    /// </summary>
+    [HttpPut("{id}/structure")]
+    [Authorize(Policy = "EditHK")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SaveStructure(
+        Guid id, [FromBody] SaveHKCardStructureCommand command, CancellationToken ct)
+    {
+        if (command.CardId != id)
+            return BadRequest("Идентификатор карты в адресе и в команде различаются.");
+
+        try
+        {
+            await _hkCards.SaveStructureAsync(command, ct);
+            return NoContent();
+        }
+        catch (HkCardVersionConflictException ex)
+        {
+            return Conflict(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
     [HttpPost("{id}/status")]
     public async Task<ActionResult> ChangeStatus(Guid id, [FromBody] StatusChangeRequest request)
     {
@@ -242,6 +288,42 @@ public class HKCardsController : ControllerBase
                 return NoContent();
 
             return Ok(accepted);
+        }
+        catch (HkCardAccessDeniedException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex) when (IsCardMissing(ex))
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// Итоги последней принятой редакции — read-only.
+    /// <para>
+    /// Считаются из снимковых Quantity/Volume/UnitOfMeasure и принадлежности
+    /// разделам; рабочие количества принятой структуры не используются.
+    /// Отсутствие принятой редакции — явный 204: подстановка расчёта по
+    /// рабочему дереву означала бы, что черновик выдан за принятую карту.
+    /// </para>
+    /// </summary>
+    [HttpGet("{id}/accepted-totals")]
+    [ProducesResponseType(typeof(HKAcceptedTotalsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<HKAcceptedTotalsDto>> GetAcceptedTotals(
+        Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var totals = await _revisions.GetAcceptedTotalsAsync(id, ct);
+            return totals is null ? NoContent() : Ok(totals);
         }
         catch (HkCardAccessDeniedException ex)
         {
