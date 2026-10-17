@@ -1939,6 +1939,79 @@ Undefined. Позиция `Complex` отклоняется. Выбор `NodeRoot
 Редакция, принятая до появления разделов, читается без разделов: снимковых
 разделов у неё нет, и подстановка рабочих не выполняется.
 
+#### 7.3.6. Выполнено по PR № 8
+
+##### Коммиты 1–3
+
+- `5077927` — модель разделов, нумерация `HKStructureNumbering`, формулы
+  `HKStructureTotals`, миграция `20261016093554`.
+- `7b3d5d0` — атомарное сохранение `SaveStructureAsync`, 13 интеграционных
+  тестов `HKCardStructureSaveIntegrationTests`.
+- `9ad2346` — снимки разделов (`HKCardRevisionSection`), миграция
+  `20261016121415`, `GetAcceptedAsync`/`GetAcceptedTotalsAsync`, 6 тестов
+  `HKCardRevisionSectionsIntegrationTests`.
+
+##### Коммит 4 — редактор структуры (`dbd19c1`)
+
+`HKEdit.razor`: одна общая таблица, тело которой обходится
+`HKStructureNumbering.EditorRows()` с диспетчеризацией по
+`HKStructureRowKind` (раздел / позиция / терминальная строка). Терминальные
+ячейки — прежний механизм материалов, предложений и селекторов, без
+дублирования. Панель разделов применяется только к НОВОЙ верхней ветке.
+Скрытие ветки (свернуть/раскрыть) локально, номера считаются по полной
+структуре при каждом рендере.
+
+Локальное состояние: `_sections`, `_newBranchSection`, `_collapsed`,
+`_childLevelChoice`, `_confirmDeletePositionId` (удаление позиции — только с
+подтверждением и перечнем затрагиваемого содержимого), `_structureError`,
+`_structureDirty`, `_nodeRootChoice`, `_topPositionLevel`.
+
+Двухпутьевое сохранение: реквизиты — прежний `SaveCard`/`UpdateAsync`;
+структура — кнопка «Сохранить структуру» с `SaveStructureAsync` и
+`expectedRowVersion`, номера `SortOrder` нормализуются по отображаемому
+порядку. При несохранённых правках структуры обычное сохранение реквизитов
+блокируется предупреждением: отслеживаемый EF-граф нельзя записывать в обход
+серверной проверки дерева (`CompositionDiffersAsync` сравнивает
+`HKCardNodeId`).
+
+Связанные правки: навигация `HKCard.Sections` (в конфигурации
+`HKCardSection` явно указано `WithMany(x => x.Sections)` — иначе EF создавал
+в тени второй внешний ключ), публичный `HKStructureTotals.CalculatePositionTotals`
+для панелей «на один экземпляр»/«всего» без дублирования формул.
+
+##### Коммит 5 — HTTP-контракт (`b68f112`)
+
+`HKCardsController`:
+
+| Endpoint | Метод | Коды |
+|---|---|---|
+| `PUT api/hkcards/{id}/structure` | атомарное сохранение | 204; 409 — `HkCardVersionConflictException`; 403; 404; 400 — в т.ч. рассогласование адреса и команды |
+| `GET api/hkcards/{id}/accepted-totals` | итоги принятой редакции | 204 — редакции нет; 200; 403; 404 |
+
+Тело запроса — `SaveHKCardStructureCommand` как есть: без промежуточного DTO.
+Политика — `EditHK`, проверки прав внутри сервиса сохраняются.
+Тесты `HKCardStructureHttpIntegrationTests` (4): граф + уровень в БД + 409 на
+устаревшую версию; 400 на рассогласование `CardId`; 404 на отсутствующую
+карту; 204/404 на итогах принятой редакции.
+
+##### Проверки коммитов 4–5
+
+| Команда | Результат |
+|---|---|
+| `dotnet build src\Chernika.Infrastructure` перед патчем редактора | 0 ошибок |
+| `dotnet build Chernika.sln -v:q` | 0 ошибок |
+| `dotnet ef migrations has-pending-model-changes` (`chernika_migtest`) | «No changes have been made to the model since the last migration» |
+| `dotnet test tests\Chernika.UnitTests` | 113 из 113 |
+| `dotnet test tests\Chernika.IntegrationTests --filter "FullyQualifiedName~HKCardRevision|FullyQualifiedName~HKApproval|FullyQualifiedName~HKComposition|FullyQualifiedName~HKRecordIntegrity|FullyQualifiedName~HKCard..."` (целевые, без полного прогона) | 332 из 332 |
+| `dotnet test ... --filter "FullyQualifiedName~HKCardStructureHttp"` | 4 из 4 |
+| `dotnet test ... --filter "FullyQualifiedName~GsmHttpSmoke"` (HTTP-слой контроллера не задет) | 11 из 11 |
+| `git diff --check` | замечаний нет |
+
+Полный интеграционный прогон автоматически не запускался — решение владельца.
+Enum значения передаются в HTTP-тестах числами: конвертер строк enum в
+приложении не настроен, и числовой формат — то, во что клиент .NET
+сериализует enum по умолчанию.
+
 ### 9.5. Выполнено в PR № 4.1
 
 | Команда | Результат |
