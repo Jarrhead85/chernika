@@ -109,6 +109,7 @@ public class HKCardRevision
 
     public DateTime? AttachmentUploadedAtUtc { get; set; }
 
+    public List<HKCardRevisionSection> Sections { get; set; } = new();
     public List<HKCardRevisionNode> Nodes { get; set; } = new();
     public List<HKCardRevisionItem> Items { get; set; } = new();
 }
@@ -127,6 +128,17 @@ public class HKCardRevisionNode
 
     public Guid RevisionId { get; set; }
     public HKCardRevision Revision { get; set; } = null!;
+
+    /// <summary>
+    /// Раздел самостоятельной ветки в снимке.
+    /// <para>
+    /// Заполняется только у верхней позиции: у вложенной значение равно null,
+    /// раздел наследуется от корня. Живая ссылка на рабочий раздел не читается —
+    /// принятая редакция воспроизводится из снимка.
+    /// </para>
+    /// </summary>
+    public Guid? SectionId { get; set; }
+    public HKCardRevisionSection? Section { get; set; }
 
     /// <summary>
     /// Родитель ВНУТРИ той же редакции. null — верхняя позиция.
@@ -165,6 +177,15 @@ public class HKCardRevisionItem
 
     public Guid? NodeId { get; set; }
     public HKCardRevisionNode? Node { get; set; }
+
+    /// <summary>
+    /// Раздел самостоятельной конечной строки в снимке.
+    /// <para>
+    /// Заполняется только у строки непосредственно под корнем редакции.
+    /// </para>
+    /// </summary>
+    public Guid? SectionId { get; set; }
+    public HKCardRevisionSection? Section { get; set; }
 
     /// <summary>Идентификатор рабочей строки. Справочное значение.</summary>
     public Guid SourceItemId { get; set; }
@@ -211,4 +232,24 @@ public class HKCardRevisionItemMaterial
 
     public string? Name { get; set; }
     public string? Nd { get; set; }
+}
+
+/// <summary>
+/// Снимок раздела принятой редакции.
+/// <para>
+/// Раздел принимается вместе со структурой: принятая карта показывает ту же
+/// группировку, что была согласована. Читать раздел через живую ссылку на
+/// рабочий HKCardSection нельзя — принятая редакция воспроизводится из снимка.
+/// </para>
+/// </summary>
+public class HKCardRevisionSection
+{
+    public Guid Id { get; set; }
+    public Guid RevisionId { get; set; }
+    public HKCardRevision Revision { get; set; } = null!;
+
+    /// <summary>Тип раздела: Oils, Greases или Fuels.</summary>
+    public HKCardSectionType SectionType { get; set; }
+
+    public int SortOrder { get; set; }
 }

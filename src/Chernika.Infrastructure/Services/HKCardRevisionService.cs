@@ -16,7 +16,8 @@ public sealed record HKAcceptedNodeDto(
     HKObjectLevel Level,
     string Name,
     int Quantity,
-    int SortOrder);
+    int SortOrder,
+    Guid? SectionId);
 
 /// <summary>Снимок материала принятой строки для чтения.</summary>
 public sealed record HKAcceptedMaterialDto(
@@ -38,7 +39,34 @@ public sealed record HKAcceptedItemDto(
     string? Periodicity,
     string? Notes,
     int SortOrder,
+    Guid? SectionId,
     IReadOnlyList<HKAcceptedMaterialDto> Materials);
+
+/// <summary>
+/// Итоги принятой редакции.
+/// <para>
+/// Считаются ТОЛЬКО из снимковых Quantity, Volume, UnitOfMeasure и
+/// принадлежности разделам. Актуальные рабочие количества и справочные
+/// значения для принятой структуры не используются.
+/// </para>
+/// </summary>
+public sealed record HKAcceptedTotalsDto(
+    IReadOnlyList<HKAcceptedSectionTotalsDto> Sections,
+    IReadOnlyList<Domain.Structure.HKMeasuredTotal> WithoutSection,
+    IReadOnlyList<Domain.Structure.HKMeasuredTotal> Overall);
+
+/// <summary>Итог раздела принятой редакции.</summary>
+public sealed record HKAcceptedSectionTotalsDto(
+    Guid SectionId,
+    string Name,
+    IReadOnlyList<Domain.Structure.HKMeasuredTotal> Totals);
+
+/// <summary>Раздел принятой редакции, прочитанный из снимка.</summary>
+public sealed record HKAcceptedSectionDto(
+    Guid SectionId,
+    HKCardSectionType SectionType,
+    string Name,
+    int SortOrder);
 
 /// <summary>
 /// Редакция карты, прочитанная для показа.
@@ -63,6 +91,15 @@ public sealed record HKAcceptedStructureDto(
     bool HasAttachment,
     IReadOnlyList<HKAcceptedNodeDto> Nodes,
     IReadOnlyList<HKAcceptedItemDto> Items,
+    /// <summary>
+    /// Разделы принятой редакции.
+    /// <para>
+    /// Читаются из СНИМКА, а не из рабочих HKCardSection: принятая карта
+    /// не должна меняться вместе с рабочей.
+    /// </para>
+    /// </summary>
+    IReadOnlyList<HKAcceptedSectionDto> Sections,
+
     DateTime? AcceptedAtUtc,
     string? AcceptedByUserId);
 
@@ -189,6 +226,27 @@ public sealed class HKCardRevisionService
     /// Контекст операции не принимается из запроса и не может быть подделан DTO.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Переводит рабочий раздел в его снимок.
+    /// <para>
+    /// Раздел, не попавший в снимок, означал бы потерянную принадлежность
+    /// ветки: молча превращать её в «без раздела» нельзя.
+    /// </para>
+    /// </summary>
+    private static Guid? ResolveSnapshotSectionId(
+        Guid? sectionId, Dictionary<Guid, Guid> map)
+    {
+        if (sectionId is null)
+            return null;
+
+        if (!map.TryGetValue(sectionId.Value, out var snapshotId))
+            throw new InvalidOperationException(
+                "Раздел ветки не найден в исходном наборе. Фиксация отклонена: " +
+                "потеря принадлежности раздела недопустима.");
+
+        return snapshotId;
+    }
+
     internal async Task<Guid> CaptureAsync(
         Guid cardId,
         uint expectedCardRowVersion,
@@ -315,7 +373,31 @@ public sealed class HKCardRevisionService
             AcceptedByUserId = acceptedByUserId,
         };
 
-        // Только Добавление: редакция неизменяема с момента фиксации.
+        // Разделы фиксируются в снимке вместе со структурой: принятая карта
+        // показывает ту же группировку, что была согласована. Читать раздел
+        // через живую ссылку рабочей карты нельзя.
+        var sections = await _db.HKCardSections
+            .AsNoTracking()
+            .Where(s => s.HKCardId == cardId)
+            .OrderBy(s => s.SortOrder)
+            .ToListAsync(ct);
+
+        var sectionMap = new Dictionary<Guid, Guid>();
+        foreach (var section in sections)
+        {
+            var snapshot = new HKCardRevisionSection
+            {
+                Id = Guid.NewGuid(),
+                RevisionId = revision.Id,
+                SectionType = section.SectionType,
+                SortOrder = section.SortOrder
+            };
+
+            sectionMap[section.Id] = snapshot.Id;
+            revision.Sections.Add(snapshot);
+        }
+
+
         var nodeIdMap = new Dictionary<Guid, Guid>();
         foreach (var node in nodes)
         {
@@ -328,6 +410,12 @@ public sealed class HKCardRevisionService
                 Name = node.Name,
                 Quantity = node.Quantity,
                 SortOrder = node.SortOrder,
+
+                // Раздел верхней позиции фиксируется в снимке. Вложенная
+                // позиция наследует раздел корня и значения не получает.
+                SectionId = node.ParentId is null
+                    ? ResolveSnapshotSectionId(node.SectionId, sectionMap)
+                    : null,
             };
             nodeIdMap[node.Id] = snapshot.Id;
             revision.Nodes.Add(snapshot);
@@ -358,6 +446,7 @@ public sealed class HKCardRevisionService
             {
                 Id = Guid.NewGuid(),
                 RevisionId = revision.Id,
+                SectionId = ResolveSnapshotSectionId(item.SectionId, sectionMap),
                 SourceItemId = item.Id,
                 NodeId = ResolveSnapshotNodeId(item, nodeIdMap),
                 AssemblyUnitId = item.AssemblyUnitId,
@@ -531,6 +620,101 @@ public sealed class HKCardRevisionService
     }
 
     /// <summary>
+    /// Итоги принятой редакции, посчитанные из снимка.
+    /// <para>
+    /// Расчётный механизм тот же, что и для рабочего дерева: формулы не
+    /// дублируются, различаются только входные данные.
+    /// </para>
+    /// </summary>
+    public async Task<HKAcceptedTotalsDto?> GetAcceptedTotalsAsync(
+        Guid cardId, CancellationToken ct = default)
+    {
+        await EnsureReadAccessAsync(cardId, ct);
+
+        var pointer = await _db.HKCards
+            .AsNoTracking()
+            .Where(c => c.Id == cardId)
+            .Select(c => c.CurrentAcceptedRevisionId)
+            .FirstOrDefaultAsync(ct);
+
+        if (pointer is null)
+            return null;
+
+        var sections = await _db.HKCardRevisionSections
+            .AsNoTracking()
+            .Where(s => s.RevisionId == pointer.Value)
+            .OrderBy(s => s.SortOrder)
+            .Select(s => new
+            {
+                s.Id,
+                s.SectionType,
+                Name = Domain.Structure.HKSectionNames.NameOf(s.SectionType),
+                s.SortOrder
+            })
+            .ToListAsync(ct);
+
+        var nodes = (await _db.HKCardRevisionNodes
+            .AsNoTracking()
+            .Where(n => n.RevisionId == pointer.Value)
+            .OrderBy(n => n.SortOrder)
+            .Select(n => new
+            {
+                n.Id,
+                n.ParentId,
+                n.Level,
+                n.Name,
+                n.Quantity,
+                n.SortOrder,
+                // EF не переводит шаблон is null в SQL: верхность проверяется
+                // прямым сравнением, а вложенные позиции наследуют раздел корня.
+                TopSectionId = n.ParentId == null ? n.SectionId : (Guid?)null
+            })
+            .ToListAsync(ct))
+            .Select(n => new Domain.Structure.HKStructureNodeInput(
+                n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder, n.TopSectionId))
+            .ToList();
+
+        var items = (await _db.HKCardRevisionItems
+            .AsNoTracking()
+            .Where(i => i.RevisionId == pointer.Value)
+            .OrderBy(i => i.SortOrder)
+            .Select(i => new
+            {
+                i.Id,
+                i.NodeId,
+                i.Quantity,
+                i.Volume,
+                i.UnitOfMeasure,
+                i.SortOrder,
+                // Принадлежность хранится только у строки под корнем.
+                TopSectionId = i.NodeId == null ? i.SectionId : (Guid?)null
+            })
+            .ToListAsync(ct))
+            .Select(i => new Domain.Structure.HKStructureItemInput(
+                i.Id, i.NodeId, i.Quantity, i.Volume, i.UnitOfMeasure, i.SortOrder,
+                i.TopSectionId))
+            .ToList();
+
+        var input = new Domain.Structure.HKStructureInput(
+            sections.Select(s => new Domain.Structure.HKStructureSectionInput(
+                s.Id, s.SectionType, s.SortOrder)).ToList(),
+            nodes, items);
+
+        // Один и тот же механизм, что и для рабочего дерева: формулы не
+        // дублируются.        // Один и тот же механизм, что и для рабочего дерева: формулы не
+        // дублируются.
+        var totals = Domain.Structure.HKStructureTotals.Calculate(input);
+
+        return new HKAcceptedTotalsDto(
+            totals.Sections.Select(s => new HKAcceptedSectionTotalsDto(
+                s.SectionId,
+                sections.Single(x => x.Id == s.SectionId).Name,
+                s.Totals)).ToList(),
+            totals.WithoutSection!.Totals,
+            totals.Overall);
+    }
+
+    /// <summary>
     /// Конкретная сохранённая редакция в пределах доступа к карте.
     /// <para>
     /// Проверяется принадлежность редакции той же карте: по одному известному
@@ -566,6 +750,12 @@ public sealed class HKCardRevisionService
         if (r is null)
             return null;
 
+        var sections = await _db.HKCardRevisionSections
+            .AsNoTracking()
+            .Where(s => s.RevisionId == revisionId)
+            .OrderBy(s => s.SortOrder)
+            .ToListAsync(ct);
+
         var items = await _db.HKCardRevisionItems
             .AsNoTracking()
             .Where(i => i.RevisionId == revisionId)
@@ -585,17 +775,23 @@ public sealed class HKCardRevisionService
             r.AttachmentStorageKey is not null,
             r.Nodes
                 .OrderBy(n => n.SortOrder)
-                .Select(n => new HKAcceptedNodeDto(n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder))
+                .Select(n => new HKAcceptedNodeDto(
+                    n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder, n.SectionId))
                 .ToList(),
             items.Select(i => new HKAcceptedItemDto(
                 i.Id, i.NodeId, i.AssemblyUnitId,
                 i.AssemblyUnitCode, i.AssemblyUnitName,
                 i.Quantity, i.Volume, i.UnitOfMeasure, i.Periodicity, i.Notes, i.SortOrder,
+                i.SectionId,
                 materials.Where(m => m.RevisionItemId == i.Id)
                     .Select(m => new HKAcceptedMaterialDto(
                         m.SourceGsmMaterialId, m.Category, m.Name, m.Nd))
                     .ToList()))
             .ToList(),
+            sections.Select(s => new HKAcceptedSectionDto(
+                    s.Id, s.SectionType,
+                    Domain.Structure.HKSectionNames.NameOf(s.SectionType), s.SortOrder))
+                .ToList(),
             // Дата решения отделена от CapturedAtUtc: фиксация — технический
             // момент снятия снимка, решение — момент принятия.
             r.AcceptedAtUtc,

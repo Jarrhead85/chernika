@@ -36,6 +36,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<HKCardComponent> HKCardComponents => Set<HKCardComponent>();
     public DbSet<HKCardNode> HKCardNodes => Set<HKCardNode>();
     public DbSet<HKCardSection> HKCardSections => Set<HKCardSection>();
+    public DbSet<HKCardRevisionSection> HKCardRevisionSections => Set<HKCardRevisionSection>();
     public DbSet<HKCardItem> HKCardItems => Set<HKCardItem>();
     public DbSet<HKCardItemMaterial> HKCardItemMaterials => Set<HKCardItemMaterial>();
     public DbSet<HKCardStatusLog> HKCardStatusLogs => Set<HKCardStatusLog>();
@@ -535,6 +536,26 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             .OnDelete(DeleteBehavior.Restrict);
     });
 
+    // Снимок раздела принятой редакции. Собственная таблица, а не ссылка на
+    // рабочий HKCardSection: принятая редакция воспроизводится из снимка и не
+    // должна зависеть от последующих правок рабочей карты.
+    modelBuilder.Entity<HKCardRevisionSection>(e =>
+    {
+        e.ToTable("HKCardRevisionSections");
+        e.HasKey(x => x.Id);
+        e.Property(x => x.SectionType).HasConversion<int>();
+
+        e.HasOne(x => x.Revision).WithMany(x => x.Sections)
+            .HasForeignKey(x => x.RevisionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        e.HasIndex(x => new { x.RevisionId, x.SortOrder })
+            .HasDatabaseName("IX_HKCardRevisionSections_RevisionId_SortOrder");
+        e.HasIndex(x => new { x.RevisionId, x.SectionType })
+            .IsUnique()
+            .HasDatabaseName("UX_HKCardRevisionSections_RevisionId_SectionType");
+    });
+
     modelBuilder.Entity<HKCardRevisionNode>(e =>
     {
         e.HasKey(x => x.Id);
@@ -549,6 +570,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // разрешил бы собрать дерево из позиций разных редакций.
         e.HasOne(x => x.Parent).WithMany()
             .HasForeignKey(x => new { x.RevisionId, x.ParentId })
+            .HasPrincipalKey(x => new { x.RevisionId, x.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Раздел верхней позиции — снимок ТОЙ ЖЕ редакции.
+        e.HasOne(x => x.Section).WithMany()
+            .HasForeignKey(x => new { x.RevisionId, x.SectionId })
             .HasPrincipalKey(x => new { x.RevisionId, x.Id })
             .OnDelete(DeleteBehavior.Restrict);
 

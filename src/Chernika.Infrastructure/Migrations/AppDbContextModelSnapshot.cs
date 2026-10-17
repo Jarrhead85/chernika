@@ -1458,6 +1458,9 @@ namespace Chernika.Infrastructure.Migrations
                     b.Property<Guid>("RevisionId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("SectionId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("SortOrder")
                         .HasColumnType("integer");
 
@@ -1472,6 +1475,8 @@ namespace Chernika.Infrastructure.Migrations
                         .HasColumnType("numeric");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("SectionId");
 
                     b.HasIndex("RevisionId", "Id")
                         .IsUnique()
@@ -1533,6 +1538,9 @@ namespace Chernika.Infrastructure.Migrations
                     b.Property<Guid>("RevisionId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("SectionId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("SortOrder")
                         .HasColumnType("integer");
 
@@ -1547,7 +1555,36 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("RevisionId", "ParentId");
 
+                    b.HasIndex("RevisionId", "SectionId");
+
                     b.ToTable("HKCardRevisionNodes");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionSection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SectionType")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RevisionId", "SectionType")
+                        .IsUnique()
+                        .HasDatabaseName("UX_HKCardRevisionSections_RevisionId_SectionType");
+
+                    b.HasIndex("RevisionId", "SortOrder")
+                        .HasDatabaseName("IX_HKCardRevisionSections_RevisionId_SortOrder");
+
+                    b.ToTable("HKCardRevisionSections", (string)null);
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardSection", b =>
@@ -3353,6 +3390,10 @@ namespace Chernika.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevisionSection", "Section")
+                        .WithMany()
+                        .HasForeignKey("SectionId");
+
                     b.HasOne("Chernika.Domain.Entities.HKCardRevisionNode", "Node")
                         .WithMany()
                         .HasForeignKey("RevisionId", "NodeId")
@@ -3362,6 +3403,8 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("Node");
 
                     b.Navigation("Revision");
+
+                    b.Navigation("Section");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItemMaterial", b =>
@@ -3389,7 +3432,26 @@ namespace Chernika.Infrastructure.Migrations
                         .HasPrincipalKey("RevisionId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevisionSection", "Section")
+                        .WithMany()
+                        .HasForeignKey("RevisionId", "SectionId")
+                        .HasPrincipalKey("RevisionId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Parent");
+
+                    b.Navigation("Revision");
+
+                    b.Navigation("Section");
+                });
+
+            modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionSection", b =>
+                {
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevision", "Revision")
+                        .WithMany("Sections")
+                        .HasForeignKey("RevisionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("Revision");
                 });
@@ -3894,6 +3956,8 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("Items");
 
                     b.Navigation("Nodes");
+
+                    b.Navigation("Sections");
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevisionItem", b =>
