@@ -1840,7 +1840,7 @@
         // Набор марок карточки сменился — кэш названий сбрасывается.
         _materialNames = null;
 
-        Logger.LogInformation("HKEdit.LoadCardAsync начало: {Id}", requestedId);
+        Logger.LogDebug("HKEdit.LoadCardAsync начало: {Id}", requestedId);
 
         try
         {
@@ -1863,6 +1863,14 @@
                 ResetEditingFlags();
                 canQuickCreate = false;
             }
+            else
+            {
+                Logger.LogWarning(ex, "HKEdit.LoadCardAsync ошибка загрузки: {Id}", requestedId);
+            }
+
+            // Страница не должна оставаться в состоянии загрузки: иначе
+            // ошибка выглядит как бесконечное ожидание.
+            _loading = false;
             return;
         }
 
@@ -1870,7 +1878,7 @@
 
         _loadedCardId = requestedId;
         _loading = false;
-        Logger.LogInformation("HKEdit.LoadCardAsync завершение: {Id}", requestedId);
+        Logger.LogDebug("HKEdit.LoadCardAsync завершение: {Id}", requestedId);
     }
 
     private async Task InitCreateModeAsync()
@@ -1985,7 +1993,9 @@
 
             card = existing;
             loadedRowVersion = existing.RowVersion;
+            Logger.LogDebug("HKEdit.LoadCardCore: карта прочитана, версии {Id}", cardId);
             _versions = await HKCardService.GetVersionsAsync(cardId, ct);
+            Logger.LogDebug("HKEdit.LoadCardCore: версии прочитаны {Id}", cardId);
             selectedLevel = card.ObjectLevel;
             selectedComplexId = card.ComplexId ?? Guid.Empty;
             selectedModelId = card.EquipmentModelId ?? Guid.Empty;
@@ -1993,12 +2003,18 @@
             selectedNodeId = card.NodeId ?? Guid.Empty;
             statusStr = card.Status.ToString();
             // Разделы и локальное состояние редактора структуры — вместе с картой.
+            Logger.LogDebug("HKEdit.LoadCardCore: состояние структуры {Id}", cardId);
             await InitStructureStateAsync(ct);
+            Logger.LogDebug("HKEdit.LoadCardCore: структура прочитана {Id}", cardId);
 
             await LoadApprovalStateAsync(ct);
+            Logger.LogDebug("HKEdit.LoadCardCore: этапы прочитаны {Id}", cardId);
             if (canSubmit)
             {
-                await using var approverLock = await DbLock.WaitAsync();
+                // Отдельный захват блокировки здесь был бы ВЛОЖЕННЫМ: внешний
+                // using уже держит семафор, а семафор нереентерабельный. Второй
+                // WaitAsync ждал бы сам себя — страница висела бы в состоянии
+                // «Загрузка…» без единой ошибки в журнале.
                 branchApprovers = await GetBranchApproversAsync();
             }
 

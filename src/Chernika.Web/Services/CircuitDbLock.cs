@@ -11,22 +11,28 @@ public sealed class CircuitDbLock : IDisposable
     private bool _disposed;
 
     /// <summary>
-    /// Признак того, что текущий асинхронный поток уже удерживает лок.
-    /// Семафор нереентерабельный, поэтому вложенный захват — это гарантированный
-    /// дедлок; лучше упасть сразу с понятной ошибкой, чем подвесить circuit.
+    /// Глубина захвата в этом circuit.
+    /// <para>
+    /// Счётчик живёт в самом объекте, а не в <c>AsyncLocal</c>: значение,
+    /// присвоенное внутри <c>async</c>-метода, теряется при возврате к
+    /// вызывающему коду, и проверка вложенного захвата молча не срабатывала.
+    /// Вложенный захват приводил не к отказу, а к вечному ожиданию семафора,
+    /// который держал сам же внешний захват, — страница висела в состоянии
+    /// «Загрузка…» без единой ошибки в журнале.
+    /// </para>
     /// </summary>
-    private static readonly AsyncLocal<bool> _heldByCurrentFlow = new();
+    private int _depth;
 
     public async Task<IAsyncDisposable> WaitAsync(CancellationToken ct = default)
     {
-        if (_heldByCurrentFlow.Value)
+        if (_depth > 0)
             throw new InvalidOperationException(
                 "Вложенный захват CircuitDbLock недопустим: семафор нереентерабельный, " +
                 "это приводит к взаимной блокировке circuit.");
 
         await _gate.WaitAsync(ct);
-        _heldByCurrentFlow.Value = true;
-        return new ReleaseScope(_gate);
+        _depth++;
+        return new ReleaseScope(this);
     }
 
     public void Dispose()
@@ -38,19 +44,22 @@ public sealed class CircuitDbLock : IDisposable
 
     private sealed class ReleaseScope : IAsyncDisposable
     {
-        private readonly SemaphoreSlim _gate;
+        private readonly CircuitDbLock _owner;
         private bool _released;
 
-        public ReleaseScope(SemaphoreSlim gate) => _gate = gate;
+        public ReleaseScope(CircuitDbLock owner) => _owner = owner;
 
         public ValueTask DisposeAsync()
         {
             if (_released) return ValueTask.CompletedTask;
             _released = true;
-            _heldByCurrentFlow.Value = false;
+
+            if (_owner._depth > 0)
+                _owner._depth--;
+
             try
             {
-                _gate.Release();
+                _owner._gate.Release();
             }
             catch (ObjectDisposedException)
             {
