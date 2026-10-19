@@ -628,7 +628,7 @@
                         @if (IsAutonomousMode || selectedLevel == HKObjectLevel.Node)
                         {
                         <div class="full-width" style="margin-top:8px">
-                            <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Строки ХК</h3>
+                            <h3 class="hk-editor-strong">Строки ХК</h3>
 
                             @* Автономная карта хранит собственную структуру, а не дочерние
                                ХК. Разделы — необязательная группировка над деревом: они
@@ -637,7 +637,7 @@
                                к НОВОЙ верхней ветке и не меняет раздел уже выбранной. *@
                             @if (IsAutonomousMode && IsNew)
                             {
-                                <div class="note" style="margin-bottom:10px;font-size:12px">
+                                <div class="note hk-editor-note">
                                     Сначала сохраните черновик ХК: реквизиты —
                                     по кнопке «Сохранить черновик» под формой.
                                     После этого здесь появится редактор структуры:
@@ -648,9 +648,9 @@
 
                             @if (IsAutonomousMode)
                             {
-                                <div class="hk-section-panel" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                                    <span style="font-size:12px;color:var(--muted)">Раздел новой ветки:</span>
-                                    <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
+                                <div class="hk-section-panel">
+                                    <span class="hki-muted-sm">Раздел новой ветки:</span>
+                                    <button type="button" class="btn ghost hk-editor-chip"
                                             aria-pressed="@(NewBranchSectionId is null)"
                                             disabled="@(!canEditStructure)"
                                             @onclick="() => SelectNewBranchSection(null)">
@@ -658,7 +658,7 @@
                                     </button>
                                     @foreach (var panelType in new[] { HKCardSectionType.Oils, HKCardSectionType.Greases, HKCardSectionType.Fuels })
                                     {
-                                        <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
+                                        <button type="button" class="btn ghost hk-editor-chip"
                                                 aria-pressed="@(NewBranchSectionId is { } chosen && chosen == _structure?.Sections.FirstOrDefault(s => s.SectionType == panelType)?.Id)"
                                                 disabled="@(!canEditStructure)"
                                                 @onclick="() => SelectNewBranchSection(panelType)">
@@ -669,24 +669,24 @@
 
                                 @if (canEditComposition)
                                 {
-                                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                                        <span style="font-size:12px;color:var(--muted)">Верхняя позиция:</span>
-                                        <select @bind="_topPositionLevel" class="hki-td-input" style="width:110px;font-size:12px">
+                                    <div class="hk-editor-toolbar">
+                                        <span class="hki-muted-sm">Верхняя позиция:</span>
+                                        <select @bind="_topPositionLevel" class="hki-td-input hk-editor-select hk-editor-select--narrow">
                                             <option value="@HKObjectLevel.EquipmentModel">Изделие</option>
                                             <option value="@HKObjectLevel.Aggregate">Агрегат</option>
                                             <option value="@HKObjectLevel.Node">Узел</option>
                                         </select>
-                                        <button type="button" class="btn" style="padding:2px 10px;font-size:12px"
+                                        <button type="button" class="btn hk-editor-chip"
                                                 @onclick="AddTopPosition">+ Добавить позицию</button>
                                     </div>
 
                                     @if (NeedsNodeRootChoice)
                                     {
-                                        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:12px">
+                                        <div class="hk-editor-toolbar hki-muted-sm">
                                             <span style="color:var(--muted)">ХК уровня:</span>
                                             <select value="@(NodeRootChoiceKey)"
                                                     @onchange="e => SetNodeRootChoice((string)e.Value!)"
-                                                    class="hki-td-input" style="width:150px;font-size:12px">
+                                                    class="hki-td-input hk-editor-select">
                                                 <option value="">— выберите —</option>
                                                 <option value="Aggregate">ХК агрегата</option>
                                                 <option value="EquipmentModel">ХК изделия</option>
@@ -698,7 +698,7 @@
 
                                 @if (_structureError is { } structureErrorText)
                                 {
-                                    <div class="note" style="margin-bottom:10px;font-size:12px" role="alert">
+                                    <div class="note hk-editor-note" role="alert">
                                         @structureErrorText
                                     </div>
                                 }
@@ -743,7 +743,7 @@
                                             @* Раздел — визуальная группа: без количества
                                                и собственных норм, только номер и название. *@
                                             <tr @key="@($"sec{er.Row.SectionId}")" class="hki-section-row">
-                                                <td colspan="11" style="font-weight:700;font-size:13px">
+                                                <td colspan="11" class="hk-editor-strong">
                                                     @(er.Row.Number) @(er.Row.Name)
                                                 </td>
                                             </tr>
@@ -756,34 +756,34 @@
                                             var nodeAllowedLvls = AllowedChildLevels(node);
                                             <tr @key="@($"node{node.Id}")" class="hki-position-row">
                                                 <td class="col-num">@er.Row.Number</td>
-                                                <td colspan="10" style="padding-left:@(er.Row.Depth * 14)px">
-                                                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;overflow:hidden">
-                                                        <span style="width:20px;text-align:center">
+                                                <td colspan="10" class="hk-editor-cell" style="--indent:@(er.Row.Depth * 14)px">
+                                                    <div class="hk-editor-row">
+                                                        <span class="hk-editor-collapse">
                                                             @if (canEditComposition && nodeChildCount > 0)
                                                             {
                                                                 <button type="button" class="linkBtn" @onclick="() => ToggleCollapse(node.Id)"
                                                                         title="@(nodeExpanded ? "Свернуть" : "Раскрыть")">@(nodeExpanded ? "▾" : "▸")</button>
                                                             }
                                                         </span>
-                                                        <span class="tag" style="font-size:11px">@LevelTitle(node.Level)</span>
+                                                        <span class="tag hki-muted-xs">@LevelTitle(node.Level)</span>
                                                         @if (canEditComposition)
                                                         {
-                                                            <input @bind="node.Name" style="flex:1;min-width:110px;font-weight:600"
+                                                            <input @bind="node.Name" class="hk-editor-name"
                                                                    placeholder="Название позиции" />
-                                                            <span style="font-size:11px;color:var(--muted)"> Кол-во:</span>
+                                                            <span class="hki-muted-xs"> Кол-во:</span>
                                                             <input type="number"
                                                                    @bind:get="node.Quantity == 0 ? null : (int?)node.Quantity"
                                                                    @bind:set="@(v => node.Quantity = v ?? 0)"
-                                                                   class="hki-td-input" style="width:56px" />
+                                                                   class="hki-td-input hk-editor-num" />
                                                         }
                                                         else
                                                         {
                                                             <b>@node.Name</b>
-                                                            <span style="font-size:12px;color:var(--muted)">× @node.Quantity</span>
+                                                            <span class="hki-muted-sm">× @node.Quantity</span>
                                                         }
                                                         @if (IsAutonomousMode && node.ParentId is null)
                                                         {
-                                                            <span class="tag" style="font-size:11px;color:var(--muted)">
+                                                            <span class="tag hki-muted-xs">
                                                                 @(SectionNameOf(node.SectionId))
                                                             </span>
                                                         }
@@ -793,7 +793,7 @@
                                                             {
                                                                 <select value="@(SectionKey(node.SectionId))"
                                                                         @onchange="ev => ChangeTopNodeSection(node, (string)ev.Value!)"
-                                                                        class="hki-td-input" style="width:120px;font-size:12px" title="Раздел ветки">
+                                                                        class="hki-td-input hk-editor-select" title="Раздел ветки">
                                                                     <option value="">Без раздела</option>
                                                                     @foreach (var sec in EditorSections)
                                                                     {
@@ -805,16 +805,16 @@
                                                             {
                                                                 <select value="@(ChildLevelKey(node.Id, nodeAllowedLvls))"
                                                                         @onchange="ev => SetChildLevelChoice(node, (string)ev.Value!)"
-                                                                        class="hki-td-input" style="width:100px;font-size:12px" title="Уровень новой дочерней позиции">
+                                                                        class="hki-td-input hk-editor-select hk-editor-select--narrow" title="Уровень новой дочерней позиции">
                                                                     @foreach (var lv in nodeAllowedLvls)
                                                                     {
                                                                         <option value="@lv">@LevelTitle(lv)</option>
                                                                     }
                                                                 </select>
-                                                                <button type="button" class="linkBtn" style="font-size:12px"
+                                                                <button type="button" class="linkBtn hki-link-xs"
                                                                         @onclick="() => AddChildPosition(node)" title="Добавить дочернюю позицию">+ Позиция</button>
                                                             }
-                                                            <button type="button" class="linkBtn" style="font-size:12px"
+                                                            <button type="button" class="linkBtn hki-link-xs"
                                                                     @onclick="() => AddRowUnder(node)" title="Добавить конечную строку под позицией">+ СЕ</button>
                                                             <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(node, null, -1)"
                                                                     disabled="@(!CanMove(node, null, -1))" title="Вверх">↑</button>
@@ -822,7 +822,7 @@
                                                                     disabled="@(!CanMove(node, null, 1))" title="Вниз">↓</button>
                                                             @if (node.ParentId is not null)
                                                             {
-                                                                <button type="button" class="linkBtn" style="font-size:12px"
+                                                                <button type="button" class="linkBtn hki-link-xs"
                                                                         @onclick="() => MoveUnderRoot(node)" title="Перенести под корень">↥ корень</button>
                                                             }
                                                             <button type="button" class="linkBtn" @onclick="() => AskDeletePosition(node)"
@@ -1014,7 +1014,7 @@
                                                 {
                                                     <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(null, item, -1)" disabled="@(!CanMove(null, item, -1))" title="Вверх">↑</button>
                                                     <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(null, item, 1)" disabled="@(!CanMove(null, item, 1))" title="Вниз">↓</button>
-                                                    <button type="button" class="linkBtn" @onclick="() => RemoveItem(item)" style="color:var(--bad)" title="Удалить">🗑</button>
+                                                    <button type="button" class="linkBtn hki-danger" @onclick="() => RemoveItem(item)" title="Удалить">🗑</button>
                                                 }
                                             </td>
                                         </tr>
@@ -1205,11 +1205,11 @@
                                         {
                                             <tr @key="@($"seci{item.Id}")" class="hki-note-row">
                                                 <td></td>
-                                                <td colspan="10" style="font-size:11px;color:var(--muted);padding-left:@(er.Row.Depth * 14)px">
+                                                <td colspan="10" class="hk-editor-cell hki-muted-xs" style="--indent:@(er.Row.Depth * 14)px">
                                                     Раздел строки:
                                                     <select value="@(SectionKey(item.SectionId))"
                                                             @onchange="ev => ChangeRootItemSection(item, (string)ev.Value!)"
-                                                            class="hki-td-input" style="width:120px;font-size:11px">
+                                                            class="hki-td-input hk-editor-select hk-editor-select--tiny">
                                                         <option value="">Без раздела</option>
                                                         @foreach (var sec in EditorSections)
                                                         {
@@ -1227,7 +1227,7 @@
 
                             @if (canEditComposition)
                             {
-                                <button type="button" class="btn" @onclick="AddItem" style="margin-top:4px">+ Добавить строку</button>
+                                <button type="button" class="btn hk-editor-gap--sm" @onclick="AddItem">+ Добавить строку</button>
                             }
 
                             @if (IsAutonomousMode && canEditComposition)
@@ -1236,14 +1236,14 @@
                                    позиции, строки и материалы одной транзакцией. Конфликт
                                    версий не повторяется автоматом и не уничтожает
                                    локальный ввод. *@
-                                <button type="button" class="btn primary" style="margin-top:8px"
+                                <button type="button" class="btn primary hk-editor-gap"
                                         disabled="@IsNew"
                                         title="@(IsNew ? "Сначала сохраните черновик ХК" : "Сохранить структуру целиком")"
                                         @onclick="SaveStructureAsync">Сохранить структуру</button>
 
                                 @if (_structureDirty && !_loading)
                                 {
-                                    <span style="font-size:11px;color:var(--muted);margin-left:6px">
+                                    <span class="hki-muted-xs" style="margin-left:6px">
                                         в структуре есть несохранённые изменения
                                     </span>
                                 }
@@ -1252,7 +1252,7 @@
                             @if (IsAutonomousMode)
                             {
                                 var summary = BuildSummary();
-                                <div class="hk-totals" style="margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px">
+                                <div class="hk-totals">
                                     <div style="font-weight:700;margin-bottom:4px">
                                         Итоги ХК
                                         <span style="font-weight:400;color:var(--muted)">
@@ -1279,10 +1279,10 @@
                                     var confirmRow = EditorRows().FirstOrDefault(r => r.Item?.Id == confirmLineId);
                                     if (confirmRow?.Item is not null)
                                     {
-                                        <div class="hk-delete-confirm" style="margin-top:8px;padding:8px 10px;border:1px solid var(--bad);border-radius:8px;font-size:12px;background:var(--panel2)">
+                                        <div class="hk-delete-confirm">
                                             <b>Удалить строку?</b>
                                             <span>@_confirmImpactText</span>
-                                            <div style="margin-top:4px;display:flex;gap:6px">
+                                            <div class="hk-editor-actions">
                                                 <button type="button" class="btn" style="color:var(--bad)" @onclick="ConfirmDeleteItem">Удалить</button>
                                                 <button type="button" class="btn ghost" @onclick="CancelDeleteItem">Отмена</button>
                                             </div>
@@ -1295,10 +1295,10 @@
                                     var confirmNode = _structure?.NodeById(confirmId);
                                     if (confirmNode is not null)
                                     {
-                                        <div class="hk-delete-confirm" style="margin-top:8px;padding:8px 10px;border:1px solid var(--bad);border-radius:8px;font-size:12px;background:var(--panel2)">
+                                        <div class="hk-delete-confirm">
                                             <b>Удалить «@confirmNode.Name»?</b>
                                             <span>@DeleteImpactText(confirmId)</span>
-                                            <div style="margin-top:4px;display:flex;gap:6px">
+                                            <div class="hk-editor-actions">
                                                 <button type="button" class="btn" style="color:var(--bad)" @onclick="ConfirmDeletePosition">Удалить</button>
                                                 <button type="button" class="btn ghost" @onclick="CancelDeletePosition">Отмена</button>
                                             </div>

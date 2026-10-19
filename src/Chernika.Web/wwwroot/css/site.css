@@ -2062,3 +2062,183 @@ input:-webkit-autofill:focus {
 .hkReadinessOpen{
   margin-top:10px;
 }
+
+/* ── Редактор собственной структуры ХК ─────────────────────────────────────
+   Оформление редактора задано классами: разметка не содержит произвольных
+   inline-стилей, а отступ вложенности передаётся CSS-переменной. */
+
+.hk-editor-toolbar {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.hk-editor-toolbar--wide {
+    gap: 8px;
+}
+
+.hk-editor-chip {
+    padding: 2px 10px;
+    font-size: 12px;
+}
+
+.hk-editor-note {
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+.hk-editor-gap {
+    margin-top: 8px;
+}
+
+.hk-editor-gap--sm {
+    margin-top: 4px;
+}
+
+.hk-editor-strong {
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.hk-editor-name {
+    flex: 1;
+    min-width: 110px;
+    font-weight: 600;
+}
+
+.hk-editor-num {
+    width: 56px;
+}
+
+.hk-editor-select {
+    width: 120px;
+    font-size: 12px;
+}
+
+.hk-editor-select--narrow {
+    width: 100px;
+}
+
+.hk-editor-select--tiny {
+    width: 72px;
+    font-size: 11px;
+}
+
+.hk-editor-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    overflow: hidden;
+}
+
+.hk-editor-cell {
+    padding-left: var(--indent, 0px);
+}
+
+.hk-editor-collapse {
+    width: 20px;
+    text-align: center;
+}
+
+.hk-editor-actions {
+    margin-top: 4px;
+    display: flex;
+    gap: 6px;
+}
+
+.hki-muted-xs {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.hki-muted-sm {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.hki-link-xs {
+    font-size: 12px;
+}
+
+.hki-danger {
+    color: var(--bad);
+}
+
+.hki-section-row {
+    background: var(--panel2);
+}
+
+.hki-position-row {
+    background: transparent;
+}
+
+.hki-focus {
+    background: rgba(79, 140, 255, 0.06);
+}
+
+.hki-note-row {
+    background: transparent;
+}
+
+.hki-mat-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius2, 8px);
+    font-size: 11px;
+}
+
+.hki-tag-remove {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.hki-tag-remove:hover,
+.hki-tag-remove:focus-visible {
+    color: var(--bad);
+}
+
+.hki-add-mat {
+    font-size: 11px;
+    padding: 1px 6px;
+}
+
+.hk-totals {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+.hk-delete-confirm {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--bad);
+    border-radius: 8px;
+    font-size: 12px;
+    background: var(--panel2);
+}
+
+.hk-section-panel {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.hk-section-panel .btn[aria-pressed="true"] {
+    border-color: var(--accent, #4f8cff);
+    font-weight: 650;
+    color: var(--text);
+}
