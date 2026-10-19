@@ -403,665 +403,6 @@
                         </div>
                     </div>
 
-                    @if (IsAutonomousMode || selectedLevel == HKObjectLevel.Node)
-                    {
-                    <div class="full-width" style="margin-top:8px">
-                        <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Строки ХК</h3>
-
-                        @* Автономная карта хранит собственную структуру, а не дочерние
-                           ХК. Разделы — необязательная группировка над деревом: они
-                           не являются уровнями техники, не умножают потребность и
-                           не влияют на определение уровня карты. Панель применяется
-                           к НОВОЙ верхней ветке и не меняет раздел уже выбранной. *@
-                        @if (IsAutonomousMode)
-                        {
-                            <div class="hk-section-panel" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                                <span style="font-size:12px;color:var(--muted)">Раздел новой ветки:</span>
-                                <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
-                                        disabled="@(!canEditComposition)"
-                                        @onclick="() => SelectNewBranchSection(null)">
-                                    Без раздела
-                                </button>
-                                @foreach (var panelType in new[] { HKCardSectionType.Oils, HKCardSectionType.Greases, HKCardSectionType.Fuels })
-                                {
-                                    <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
-                                            disabled="@(!canEditComposition)"
-                                            @onclick="() => SelectNewBranchSection(panelType)">
-                                        @HKSectionNames.NameOf(panelType)
-                                    </button>
-                                }
-                            </div>
-
-                            @if (canEditComposition)
-                            {
-                                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                                    <span style="font-size:12px;color:var(--muted)">Верхняя позиция:</span>
-                                    <select @bind="_topPositionLevel" class="hki-td-input" style="width:110px;font-size:12px">
-                                        <option value="@HKObjectLevel.EquipmentModel">Изделие</option>
-                                        <option value="@HKObjectLevel.Aggregate">Агрегат</option>
-                                        <option value="@HKObjectLevel.Node">Узел</option>
-                                    </select>
-                                    <button type="button" class="btn" style="padding:2px 10px;font-size:12px"
-                                            @onclick="AddTopPosition">+ Добавить позицию</button>
-                                </div>
-
-                                @if (NeedsNodeRootChoice)
-                                {
-                                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:12px">
-                                        <span style="color:var(--muted)">ХК уровня:</span>
-                                        <select value="@(NodeRootChoiceKey)"
-                                                @onchange="e => SetNodeRootChoice((string)e.Value!)"
-                                                class="hki-td-input" style="width:150px;font-size:12px">
-                                            <option value="">— выберите —</option>
-                                            <option value="Aggregate">ХК агрегата</option>
-                                            <option value="EquipmentModel">ХК изделия</option>
-                                        </select>
-                                        <span style="color:var(--muted)">(старшая верхняя позиция — узел)</span>
-                                    </div>
-                                }
-                            }
-
-                            @if (_structureError is { } structureErrorText)
-                            {
-                                <div class="note" style="margin-bottom:10px;font-size:12px" role="alert">
-                                    @structureErrorText
-                                </div>
-                            }
-                        }
-
-                        @if (!IsAutonomousMode)
-                        {
-
-                        <div class="hk-items-table-wrapper">
-                        <table class="hk-items-table hk-rows-table @(canEditComposition ? "hk-rows-editable" : null)">
-                            <thead>
-                                <tr>
-                                    <th rowspan="2" class="col-num" style="width:32px">№</th>
-                                    <th rowspan="2" class="col-wrap">Сборочная единица</th>
-                                    <th rowspan="2" class="col-wrap" style="width:55px" title="Количество сборных единиц">
-                                        <span class="th-wide">Кол-во СЕ</span><span class="th-narrow">СЕ</span>
-                                    </th>
-                                    <th colspan="4" class="col-wrap">Наименование и обозначение марок ГСМ</th>
-                                    <th rowspan="2" class="col-wrap" style="width:70px" title="Масса/Объём">
-                                        <span class="th-wide">Масса/Объём</span><span class="th-narrow">Масса</span>
-                                    </th>
-                                    <th rowspan="2" class="col-wrap" style="width:40px" title="Единицы измерения">
-                                        <span class="th-wide">Ед. изм.</span><span class="th-narrow">Ед.</span>
-                                    </th>
-                                    <th rowspan="2">Периодичность</th>
-                                    <th rowspan="2" class="col-wrap">Примечание</th>
-                                    <th rowspan="2" class="col-actions"></th>
-                                </tr>
-                                <tr>
-                                    <th>Основные</th>
-                                    <th>Дублирующие</th>
-                                    <th>Резервные</th>
-                                    <th>Зарубежные</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @{
-                                    var idx = 0;
-                                }
-                                @foreach (var er in EditorRows())
-                                {
-                                    idx = er.Index + 1;
-                                    @if (er.Row.Kind == HKStructureRowKind.Section)
-                                    {
-                                        @* Раздел — визуальная группа: без количества
-                                           и собственных норм, только номер и название. *@
-                                        <tr @key="@($"sec{er.Row.SectionId}")" class="hki-section-row">
-                                            <td colspan="11" style="font-weight:700;font-size:13px">
-                                                @(er.Row.Number) @(er.Row.Name)
-                                            </td>
-                                        </tr>
-                                    }
-                                    else if (er.Row.Kind == HKStructureRowKind.Position)
-                                    {
-                                        var node = er.Node!;
-                                        var nodeExpanded = !IsCollapsed(node.Id);
-                                        var nodeChildCount = CountChildRows(node.Id);
-                                        var nodeAllowedLvls = AllowedChildLevels(node);
-                                        <tr @key="@($"node{node.Id}")" class="hki-position-row">
-                                            <td class="col-num">@er.Row.Number</td>
-                                            <td colspan="10" style="padding-left:@(er.Row.Depth * 14)px">
-                                                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;overflow:hidden">
-                                                    <span style="width:20px;text-align:center">
-                                                        @if (canEditComposition && nodeChildCount > 0)
-                                                        {
-                                                            <button type="button" class="linkBtn" @onclick="() => ToggleCollapse(node.Id)"
-                                                                    title="@(nodeExpanded ? "Свернуть" : "Раскрыть")">@(nodeExpanded ? "▾" : "▸")</button>
-                                                        }
-                                                    </span>
-                                                    <span class="tag" style="font-size:11px">@LevelTitle(node.Level)</span>
-                                                    @if (canEditComposition)
-                                                    {
-                                                        <input @bind="node.Name" style="flex:1;min-width:110px;font-weight:600"
-                                                               placeholder="Название позиции" />
-                                                        <span style="font-size:11px;color:var(--muted)"> Кол-во:</span>
-                                                        <input type="number"
-                                                               @bind:get="node.Quantity == 0 ? null : (int?)node.Quantity"
-                                                               @bind:set="@(v => node.Quantity = v ?? 0)"
-                                                               class="hki-td-input" style="width:56px" />
-                                                    }
-                                                    else
-                                                    {
-                                                        <b>@node.Name</b>
-                                                        <span style="font-size:12px;color:var(--muted)">× @node.Quantity</span>
-                                                    }
-                                                    @if (IsAutonomousMode && node.ParentId is null)
-                                                    {
-                                                        <span class="tag" style="font-size:11px;color:var(--muted)">
-                                                            @(SectionNameOf(node.SectionId))
-                                                        </span>
-                                                    }
-                                                    @if (canEditComposition)
-                                                    {
-                                                        @if (node.ParentId is null)
-                                                        {
-                                                            <select value="@(SectionKey(node.SectionId))"
-                                                                    @onchange="ev => ChangeTopNodeSection(node, (string)ev.Value!)"
-                                                                    class="hki-td-input" style="width:120px;font-size:12px" title="Раздел ветки">
-                                                                <option value="">Без раздела</option>
-                                                                @foreach (var sec in _sections.OrderBy(s => s.SortOrder))
-                                                                {
-                                                                    <option value="@sec.Id">@HKSectionNames.NameOf(sec.SectionType)</option>
-                                                                }
-                                                            </select>
-                                                        }
-                                                        @if (nodeAllowedLvls.Count > 0)
-                                                        {
-                                                            <select value="@(ChildLevelKey(node.Id, nodeAllowedLvls))"
-                                                                    @onchange="ev => SetChildLevelChoice(node, (string)ev.Value!)"
-                                                                    class="hki-td-input" style="width:100px;font-size:12px" title="Уровень новой дочерней позиции">
-                                                                @foreach (var lv in nodeAllowedLvls)
-                                                                {
-                                                                    <option value="@lv">@LevelTitle(lv)</option>
-                                                                }
-                                                            </select>
-                                                            <button type="button" class="linkBtn" style="font-size:12px"
-                                                                    @onclick="() => AddChildPosition(node)" title="Добавить дочернюю позицию">+ Позиция</button>
-                                                        }
-                                                        <button type="button" class="linkBtn" style="font-size:12px"
-                                                                @onclick="() => AddRowUnder(node)" title="Добавить конечную строку под позицией">+ СЕ</button>
-                                                        <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(node, null, -1)"
-                                                                disabled="@(!CanMove(node, null, -1))" title="Вверх">↑</button>
-                                                        <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(node, null, 1)"
-                                                                disabled="@(!CanMove(node, null, 1))" title="Вниз">↓</button>
-                                                        @if (node.ParentId is not null)
-                                                        {
-                                                            <button type="button" class="linkBtn" style="font-size:12px"
-                                                                    @onclick="() => MoveUnderRoot(node)" title="Перенести под корень">↥ корень</button>
-                                                        }
-                                                        <button type="button" class="linkBtn" @onclick="() => AskDeletePosition(node)"
-                                                                style="color:var(--bad)" title="Удалить позицию">🗑</button>
-                                                    }
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    }
-                                    else
-                                    {
-                                        var item = er.Item;
-                                        <tr @key="item.Id" class="@(_focusItemId == item.Id ? "hki-focus" : "")">
-                                        <td class="col-num">@er.Row.Number</td>
-                                        <td class="gsm-selector-cell">
-                                            @if (canEditComposition)
-                                            {
-                                                var au = item.AssemblyUnitId != Guid.Empty ? assemblyUnits.FirstOrDefault(a => a.Id == item.AssemblyUnitId) : null;
-                                                var auDropId = $"au-drop-{item.Id:N}";
-                                                var auBtnId = $"au-btn-{item.Id:N}";
-                                                var auKey = item.Id;
-                                                @if (au != null)
-                                                {
-                                                    <div id="@auBtnId" class="hki-mat-tag" @onclick="() => ToggleAuDropdown(auKey, auDropId, auBtnId)" style="cursor:pointer">
-                                                        <span>@au.Code — @au.Name</span>
-                                                        <button type="button" class="hki-tag-remove" @onclick="() => ClearAssemblyUnit(item)" @onclick:stopPropagation="true">×</button>
-                                                    </div>
-                                                }
-                                                else
-                                                {
-                                                    <button type="button" id="@auBtnId" class="btn ghost hki-add-mat" @onclick="() => ToggleAuDropdown(auKey, auDropId, auBtnId)">— не выбрано —</button>
-                                                }
-                                                @if (_auOpen.GetValueOrDefault(auKey))
-                                                {
-                                                    <div id="@auDropId" class="gsm-dropdown">
-                                                        <input class="gsm-dropdown-search" @bind="_auSearch[auKey]" @oninput="() => { }" placeholder="Поиск..." />
-                                                        @if (canQuickCreate)
-                                                        {
-                                                            <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateAssemblyUnit(auKey); }">
-                                                                <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_auSearch.GetValueOrDefault(auKey)) ? "Создать новый" : $"Создать «{_auSearch[auKey]}»")
-                                                            </button>
-                                                        }
-                                                        <div class="gsm-dropdown-divider" role="separator"></div>
-                                                        @foreach (var a in FilteredAssemblyUnits(auKey))
-                                                        {
-                                                            <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectAu(item, a)">@a.Code — @a.Name</div>
-                                                        }
-                                                        @if (!FilteredAssemblyUnits(auKey).Any())
-                                                        {
-                                                            <div class="hki-search-empty">Нет совпадений</div>
-                                                        }
-                                                    </div>
-                                                }
-                                            }
-                                            else
-                                            {
-                                                var au = assemblyUnits.FirstOrDefault(a => a.Id == item.AssemblyUnitId);
-                                                <span>@(au != null ? $"{au.Code} — {au.Name}" : "")</span>
-                                            }
-                                        </td>
-                                        <td>
-                                            @if (canEditComposition)
-                                            {
-                                                <input type="number" @bind:get="item.Quantity == 0 ? null : (int?)item.Quantity"
-                                                       @bind:set="@(v => item.Quantity = v ?? 0)" class="hki-td-input" />
-                                            }
-                                            else
-                                            {
-                                                <span>@item.Quantity</span>
-                                            }
-                                        </td>
-                                        @foreach (var cat in new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign })
-                                        {
-                                            <td class="hki-mat-cell gsm-selector-cell">
-                                                @{
-                                                    var matsInCat = item.Materials.Where(m => m.Category == cat).ToList();
-                                                }
-                                                @foreach (var mat in matsInCat)
-                                                {
-                                                    // Название берётся из объединённого набора (выбор +
-                                                    // уже сохранённые марки карточки): марка, ставшая
-                                                    // недоступной для нового выбора, не должна выглядеть
-                                                    // как «—» в существующей строке ХК.
-                                                    var matName = MaterialNames.TryGetValue(mat.GsmMaterialId, out var nm)
-                                                        ? nm
-                                                        : "—";
-                                                    <div class="hki-mat-tag">
-                                                        <span>@matName</span>
-                                                        @if (canEditComposition)
-                                                        {
-                                                            <button type="button" class="hki-tag-remove" @onclick="() => RemoveMaterial(item, mat)">×</button>
-                                                        }
-                                                    </div>
-                                                }
-                                                @if (canEditComposition)
-                                                {
-                                                    var pickerKey = (item.Id, cat);
-                                                    var dropId = $"gsm-drop-{item.Id:N}-{cat}";
-                                                    var btnId = $"gsm-btn-{item.Id:N}-{cat}";
-                                                    <div>
-                                                        <button type="button" id="@btnId" class="btn ghost hki-add-mat" @onclick="() => ToggleMatDrop(pickerKey, dropId, btnId)">+ Добавить</button>
-                                                        @if (_matOpen.GetValueOrDefault(pickerKey))
-                                                        {
-                                                            <div id="@dropId" class="gsm-dropdown">
-                                                                <input class="gsm-dropdown-search" @bind="_matSearch[pickerKey]"
-                                                                       @oninput="() => { }"
-                                                                       placeholder="Поиск..." />
-                                                                @if (canQuickCreate)
-                                                                {
-                                                                    <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateGsmMaterial(item.Id, cat); }">
-                                                                        <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_matSearch.GetValueOrDefault(pickerKey)) ? "Создать новый" : $"Создать «{_matSearch[pickerKey]}»")
-                                                                    </button>
-                                                                }
-                                                                <div class="gsm-dropdown-divider" role="separator"></div>
-                                                                @* Группировка — по классификации марки (одна группа,
-                                                                   перечень подгрупп), а не по прежнему Type. *@
-                                                                @foreach (var group in FilteredGsmMaterials(cat, item)
-                                                                           .GroupBy(m => GsmGroupLabel(m)))
-                                                                {
-                                                                    <div class="gsm-dropdown-group-label">@group.Key</div>
-                                                                    @foreach (var mat in group)
-                                                                    {
-                                                                        @* Связи здесь не подсказываются: предложение
-                                                                               связанных ГСМ живёт отдельным блоком
-                                                                               строки и появляется сразу после
-                                                                               явного выбора основной марки. Прежняя
-                                                                               подсказка в списке category читала
-                                                                               связи, загруженные при инициализации,
-                                                                               и для марки, выбранной позже, её
-                                                                               не знала. *@
-                                                                        <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMaterial(item, cat, mat.Id)">
-                                                                            <span>@mat.Name</span>
-                                                                        </div>
-                                                                    }
-                                                                }
-                                                                @if (!FilteredGsmMaterials(cat, item).Any())
-                                                                {
-                                                                    <div class="hki-search-empty">Нет совпадений</div>
-                                                                }
-                                                            </div>
-                                                        }
-                                                    </div>
-                                                }
-                                            </td>
-                                        }
-                                        <td>
-                                            @if (canEditComposition)
-                                            {
-                                                <input type="number" @bind:get="item.Volume == 0m ? null : (decimal?)item.Volume"
-                                                       @bind:set="@(v => item.Volume = v ?? 0m)" step="0.001" class="hki-td-input" />
-                                            }
-                                            else
-                                            {
-                                                <span>@item.Volume.ToString("F0")</span>
-                                            }
-                                        </td>
-                                        <td>
-                                            @if (canEditComposition)
-                                            {
-                                                <input @bind="item.UnitOfMeasure" class="hki-td-input" />
-                                            }
-                                            else
-                                            {
-                                                <span>@item.UnitOfMeasure</span>
-                                            }
-                                        </td>
-                                        <td>
-                                            @if (canEditComposition)
-                                            {
-                                                <textarea @bind="item.Periodicity" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
-                                            }
-                                            else
-                                            {
-                                                <span>@item.Periodicity</span>
-                                            }
-                                        </td>
-                                        <td>
-                                            @if (canEditComposition)
-                                            {
-                                                <textarea @bind="item.Notes" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
-                                            }
-                                            else
-                                            {
-                                                <span>@item.Notes</span>
-                                            }
-                                        </td>
-                                        <td class="hki-actions col-actions">
-                                            @if (canEditComposition)
-                                            {
-                                                <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(null, item, -1)" disabled="@(!CanMove(null, item, -1))" title="Вверх">↑</button>
-                                                <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(null, item, 1)" disabled="@(!CanMove(null, item, 1))" title="Вниз">↓</button>
-                                                <button type="button" class="linkBtn" @onclick="() => RemoveItem(item)" style="color:var(--bad)" title="Удалить">🗑</button>
-                                            }
-                                        </td>
-                                    </tr>
-                                    @* ── Предложение связанных ГСМ по строке ──────────────
-                                       Показывается сразу после явного выбора основной
-                                       марки, без перезагрузки страницы. Уже сохранённая
-                                       строка получает ту же возможность по видимой
-                                       команде «Проверить связи» — удалять и заново
-                                       выбирать основную марку ради просмотра связей
-                                       не требуется. Ни выбор основной марки, ни
-                                       открытие блока ничего не добавляют в card.Items:
-                                       только «Добавить выбранные» после видимого
-                                       списка. *@
-                                    @if (canEditComposition && (
-                                        _suggestionLoading.Contains(item.Id)
-                                        || (_suggestionErrors.TryGetValue(item.Id, out var sErr) && !string.IsNullOrEmpty(sErr))
-                                        || HasVisibleSuggestion(item)
-                                        || (suggestionAddedCount > 0 && _suggestionAddedFor == item.Id)
-                                        || (suggestionSkippedCount > 0 && _suggestionSkippedFor == item.Id)
-                                        || HasPrimaryMaterial(item)))
-                                    {
-                                        <tr class="hki-suggestion-row">
-                                            <td colspan="11">
-                                                <div class="hki-suggestion">
-                                                    @if (_suggestionLoading.Contains(item.Id))
-                                                    {
-                                                        <div class="hki-suggestionLine">Проверяем связанные ГСМ…</div>
-                                                    }
-                                                    else if (_suggestionErrors.TryGetValue(item.Id, out var loadError) && !string.IsNullOrEmpty(loadError))
-                                                    {
-                                                        @* Ошибка чтения НЕ выдаётся за «связей нет»:
-                                                           иначе пользователь решил бы, что
-                                                           рекомендаций не существует. *@
-                                                        <div class="hki-suggestionLine hki-suggestionError" role="alert">
-                                                            <span>@loadError</span>
-                                                            <button type="button" class="linkBtn" @onclick="() => ReloadSuggestionsAsync(item)">Повторить</button>
-                                                        </div>
-                                                    }
-                                                    else if (HasVisibleSuggestion(item))
-                                                    {
-                                                        <div class="hki-suggestionLine">
-                                                            <span>
-                                                                Связанные ГСМ по основным маркам строки:
-                                                                @foreach (var src in SuggestionsFor(item).Where(s => s.Suggestions.Count > 0))
-                                                                {
-                                                                    <span class="hki-suggestionSource">
-                                                                        «@src.PrimaryName» — @src.Suggestions.Count(x => x.IsAddable) из @src.Suggestions.Count
-                                                                    </span>
-                                                                }
-                                                                <span class="hki-suggestionSource">(@SuggestionSummary(item))</span>
-                                                            </span>
-                                                            <button type="button" class="linkBtn"
-                                                                    @onclick="() => ToggleSuggestionOpen(item)">
-                                                                @(_suggestionOpen.Contains(item.Id) ? "Скрыть варианты" : "Посмотреть варианты")
-                                                            </button>
-                                                        </div>
-
-                                                        @if (!HasAddableSuggestion(item))
-                                                        {
-                                                            @* Все аналоги недоступны: список показан, чтобы
-                                                               сами связи были видны, но подтверждать
-                                                               нечего. *@
-                                                            <div class="hki-suggestionLine hki-suggestionDone">
-                                                                Все связанные марки недоступны для строки ХК — причина указана у каждой позиции.
-                                                            </div>
-                                                        }
-
-                                                        @if (_suggestionOpen.Contains(item.Id))
-                                                        {
-                                                            <div class="hki-suggestionPanel">
-                                                                @foreach (var src in SuggestionsFor(item))
-                                                                {
-                                                                    @* Категории без вариантов не показываются: пустая группа —
-                                                                       шум. Порядок фиксирован, а не «как сложилось». *@
-                                                                    var groups = new[] { GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign }
-                                                                        .Select(c => (
-                                                                            Category: c,
-                                                                            Options: src.Suggestions
-                                                                                .Where(x => x.Categories.Contains(c))
-                                                                                .ToList()))
-                                                                        .Where(t => t.Options.Count > 0)
-                                                                        .ToList();
-                                                                    <div class="hki-suggestionGroup">
-                                                                        <div class="hki-suggestionGroupTitle">Связано с «@src.PrimaryName»</div>
-                                                                        @foreach (var (category, options) in groups)
-                                                                        {
-                                                                            <div class="hki-suggestionCategory">
-                                                                                <div class="hki-suggestionCategoryTitle">
-                                                                                    @GsmRelationSuggestion.CategoryLabel(category)
-                                                                                </div>
-                                                                                @foreach (var o in options)
-                                                                                {
-                                                                                    var already = SuggestionAlreadyInRow(item, o.MaterialId, category);
-                                                                                    <label class="hki-suggestionOption @(already ? "hki-suggestionOptionAlready" : "") @(o.IsAddable ? "" : "hki-suggestionOptionBlocked")">
-                                                                                        <input type="checkbox"
-                                                                                               checked="@IsPicked(item.Id, o.MaterialId, category)"
-                                                                                               disabled="@(already || !o.IsAddable)"
-                                                                                               @onchange="() => ToggleSuggestionPick(item, o.MaterialId, category)" />
-                                                                                        <span class="hki-suggestionName">@o.Name</span>
-                                                                                        @if (!string.IsNullOrWhiteSpace(o.Nd))
-                                                                                        {
-                                                                                            <span class="hki-suggestionNd mono">НД: @o.Nd</span>
-                                                                                        }
-                                                                                        @if (!string.IsNullOrWhiteSpace(o.Note))
-                                                                                        {
-                                                                                            <span class="hki-suggestionNote">Примечание связи: @o.Note</span>
-                                                                                        }
-                                                                                        @if (already)
-                                                                                        {
-                                                                                            <span class="tag">Уже в строке</span>
-                                                                                        }
-                                                                                        else if (!o.IsAddable)
-                                                                                        {
-                                                                                            <span class="tag warn">@o.UnavailableReason</span>
-                                                                                        }
-                                                                                    </label>
-                                                                                }
-                                                                            </div>
-                                                                        }
-                                                                    </div>
-                                                                }
-
-                                                                <div class="hki-suggestionActions">
-                                                                    @* Кнопка активна, только если есть отмеченные варианты,
-                                                                       которые всё ещё предлагаются И доступны. Устаревшая
-                                                                       отметка не должна превращаться в строку ХК. *@
-                                                                    <button type="button" class="btn primary"
-                                                                            disabled="@(PickedAddableCount(item) == 0)"
-                                                                            @onclick="() => ConfirmSuggestions(item)">
-                                                                        Добавить выбранные
-                                                                    </button>
-                                                                    <button type="button" class="btn ghost" @onclick="() => CancelSuggestions(item)">Отмена</button>
-                                                                    <span class="hki-suggestionHint">
-                                                                        По умолчанию ничего не отмечено. Добавленные варианты становятся обычными строками: удалить их можно только отдельным действием.
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        }
-                                                    }
-                                                    else if (HasPrimaryMaterial(item))
-                                                    {
-                                                        @* Предложения ещё не запрашивались. У сохранённой ХК это
-                                                           единственный способ увидеть связи своей основной
-                                                           марки, не удаляя и не выбирая её заново. *@
-                                                        <div class="hki-suggestionLine">
-                                                            <span class="hki-suggestionHint">
-                                                                Связи основных марок строки не загружены.
-                                                            </span>
-                                                            <button type="button" class="btn ghost" @onclick="() => CheckRelationsCommandAsync(item)">
-                                                                Проверить связи
-                                                            </button>
-                                                        </div>
-                                                    }
-
-                                                    @* Подтверждение подключено отдельным блоком, а не как
-                                                       «иначе» в цепочке выше: после добавления связи в
-                                                       справочнике никуда не делись, поэтому список
-                                                       вариантов остаётся видимым и показывает их как
-                                                       «Уже в строке». Ветка-«иначе» в этом случае
-                                                       не выполнялась бы, и подтверждение не появлялось
-                                                       бы вовсе. *@
-                                                    @if (_suggestionAddedFor == item.Id && suggestionAddedCount > 0)
-                                                    {
-                                                        <div class="hki-suggestionLine hki-suggestionDone">
-                                                            <span>
-                                                                Добавлено вариантов: @suggestionAddedCount. Это обычные строки ХК — их можно удалить как любую другую строку.
-                                                            </span>
-                                                            <button type="button" class="linkBtn" @onclick="DismissSuggestionAdded">Скрыть</button>
-                                                        </div>
-                                                    }
-
-                                                    @if (_suggestionSkippedFor == item.Id && suggestionSkippedCount > 0)
-                                                    {
-                                                        <div class="hki-suggestionLine hki-suggestionError" role="alert">
-                                                            <span>
-                                                                Не добавлено: @suggestionSkippedCount. Связь была изменена или удалена либо марка стала недоступна — нажмите «Проверить связи» и выберите заново.
-                                                            </span>
-                                                            <button type="button" class="linkBtn" @onclick="DismissSuggestionAdded">Скрыть</button>
-                                                        </div>
-                                                    }
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    }
-                                    @* Строка под корнем автономной карты может иметь
-                                       собственный раздел: селект только для такой строки. *@
-                                    @if (IsAutonomousMode && canEditComposition && item.HKCardNodeId is null)
-                                    {
-                                        <tr @key="@($"seci{item.Id}")" class="hki-note-row">
-                                            <td></td>
-                                            <td colspan="10" style="font-size:11px;color:var(--muted);padding-left:@(er.Row.Depth * 14)px">
-                                                Раздел строки:
-                                                <select value="@(SectionKey(item.SectionId))"
-                                                        @onchange="ev => ChangeRootItemSection(item, (string)ev.Value!)"
-                                                        class="hki-td-input" style="width:120px;font-size:11px">
-                                                    <option value="">Без раздела</option>
-                                                    @foreach (var sec in _sections.OrderBy(s => s.SortOrder))
-                                                    {
-                                                        <option value="@sec.Id">@HKSectionNames.NameOf(sec.SectionType)</option>
-                                                    }
-                                                </select>
-                                            </td>
-                                        </tr>
-                                    }
-                                    }
-                                }
-                            </tbody>
-                        </table>
-                        </div>
-
-                        @if (canEditComposition)
-                        {
-                            <button type="button" class="btn" @onclick="AddItem" style="margin-top:4px">+ Добавить строку</button>
-                        }
-                        }
-
-                        @if (IsAutonomousMode && canEditComposition)
-                        {
-                            @* Кнопка сохранения атомарно переносит в базу разделы,
-                               позиции, строки и материалы одной транзакцией. Конфликт
-                               версий не повторяется автоматом и не уничтожает
-                               локальный ввод. *@
-                            <button type="button" class="btn primary" style="margin-top:8px"
-                                    disabled="@IsNew"
-                                    title="@(IsNew ? "Сначала сохраните черновик ХК" : "Сохранить структуру целиком")"
-                                    @onclick="SaveStructureAsync">Сохранить структуру</button>
-
-                            @if (_structureDirty && !_loading)
-                            {
-                                <span style="font-size:11px;color:var(--muted);margin-left:6px">
-                                    в структуре есть несохранённые изменения
-                                </span>
-                            }
-                        }
-
-                        @if (IsAutonomousMode)
-                        {
-                            var summary = BuildSummary();
-                            <div class="hk-totals" style="margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px">
-                                <div style="font-weight:700;margin-bottom:4px">
-                                    Итоги ХК
-                                    <span style="font-weight:400;color:var(--muted)">
-                                        (предварительный расчёт редактора; не является итогом принятой карты)
-                                    </span>
-                                </div>
-                                @foreach (var sectionTotal in summary.Totals.Sections)
-                                {
-                                    var sectionName = SectionNameById(sectionTotal.SectionId, summary.Sections);
-                                    <div>@sectionName: @FormatTotals(sectionTotal.Totals)</div>
-                                }
-                                @if (summary.Totals.WithoutSection is { } withoutSection && withoutSection.Totals.Count > 0)
-                                {
-                                    <div>Без раздела: @FormatTotals(withoutSection.Totals)</div>
-                                }
-                                @if (summary.Totals.Overall.Count > 0)
-                                {
-                                    <div style="margin-top:4px;font-weight:700">Вся ХК: @FormatTotals(summary.Totals.Overall)</div>
-                                }
-                            </div>
-
-                            @if (_confirmDeletePositionId is { } confirmId)
-                            {
-                                var confirmNode = card.TreeNodes.FirstOrDefault(n => n.Id == confirmId);
-                                if (confirmNode != null)
-                                {
-                                    <div class="hk-delete-confirm" style="margin-top:8px;padding:8px 10px;border:1px solid var(--bad);border-radius:8px;font-size:12px;background:var(--panel2)">
-                                        <b>Удалить «@confirmNode.Name»?</b>
-                                        <span>@DeleteImpactText(confirmNode)</span>
-                                        <div style="margin-top:4px;display:flex;gap:6px">
-                                            <button type="button" class="btn" style="color:var(--bad)" @onclick="ConfirmDeletePosition">Удалить</button>
-                                            <button type="button" class="btn ghost" @onclick="CancelDeletePosition">Отмена</button>
-                                        </div>
-                                    </div>
-                                }
-                            }
-                        }
-                    }
-                    </div>
-                    }
                     @if (!IsAutonomousMode && selectedLevel != HKObjectLevel.Node)
                     {
                     <div class="full-width" style="margin-top:8px">
@@ -1282,6 +623,662 @@
                     <ValidationSummary />
                 </div>
             </EditForm>
+
+                        @if (IsAutonomousMode || selectedLevel == HKObjectLevel.Node)
+                        {
+                        <div class="full-width" style="margin-top:8px">
+                            <h3 style="font-size:14px;font-weight:700;margin:0 0 10px">Строки ХК</h3>
+
+                            @* Автономная карта хранит собственную структуру, а не дочерние
+                               ХК. Разделы — необязательная группировка над деревом: они
+                               не являются уровнями техники, не умножают потребность и
+                               не влияют на определение уровня карты. Панель применяется
+                               к НОВОЙ верхней ветке и не меняет раздел уже выбранной. *@
+                            @if (IsAutonomousMode)
+                            {
+                                <div class="hk-section-panel" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                                    <span style="font-size:12px;color:var(--muted)">Раздел новой ветки:</span>
+                                    <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
+                                            disabled="@(!canEditComposition)"
+                                            @onclick="() => SelectNewBranchSection(null)">
+                                        Без раздела
+                                    </button>
+                                    @foreach (var panelType in new[] { HKCardSectionType.Oils, HKCardSectionType.Greases, HKCardSectionType.Fuels })
+                                    {
+                                        <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
+                                                disabled="@(!canEditComposition)"
+                                                @onclick="() => SelectNewBranchSection(panelType)">
+                                            @HKSectionNames.NameOf(panelType)
+                                        </button>
+                                    }
+                                </div>
+
+                                @if (canEditComposition)
+                                {
+                                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                                        <span style="font-size:12px;color:var(--muted)">Верхняя позиция:</span>
+                                        <select @bind="_topPositionLevel" class="hki-td-input" style="width:110px;font-size:12px">
+                                            <option value="@HKObjectLevel.EquipmentModel">Изделие</option>
+                                            <option value="@HKObjectLevel.Aggregate">Агрегат</option>
+                                            <option value="@HKObjectLevel.Node">Узел</option>
+                                        </select>
+                                        <button type="button" class="btn" style="padding:2px 10px;font-size:12px"
+                                                @onclick="AddTopPosition">+ Добавить позицию</button>
+                                    </div>
+
+                                    @if (NeedsNodeRootChoice)
+                                    {
+                                        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:12px">
+                                            <span style="color:var(--muted)">ХК уровня:</span>
+                                            <select value="@(NodeRootChoiceKey)"
+                                                    @onchange="e => SetNodeRootChoice((string)e.Value!)"
+                                                    class="hki-td-input" style="width:150px;font-size:12px">
+                                                <option value="">— выберите —</option>
+                                                <option value="Aggregate">ХК агрегата</option>
+                                                <option value="EquipmentModel">ХК изделия</option>
+                                            </select>
+                                            <span style="color:var(--muted)">(старшая верхняя позиция — узел)</span>
+                                        </div>
+                                    }
+                                }
+
+                                @if (_structureError is { } structureErrorText)
+                                {
+                                    <div class="note" style="margin-bottom:10px;font-size:12px" role="alert">
+                                        @structureErrorText
+                                    </div>
+                                }
+                            }
+
+                            <div class="hk-items-table-wrapper">
+                            <table class="hk-items-table hk-rows-table @(canEditComposition ? "hk-rows-editable" : null)">
+                                <thead>
+                                    <tr>
+                                        <th rowspan="2" class="col-num" style="width:32px">№</th>
+                                        <th rowspan="2" class="col-wrap">Сборочная единица</th>
+                                        <th rowspan="2" class="col-wrap" style="width:55px" title="Количество сборных единиц">
+                                            <span class="th-wide">Кол-во СЕ</span><span class="th-narrow">СЕ</span>
+                                        </th>
+                                        <th colspan="4" class="col-wrap">Наименование и обозначение марок ГСМ</th>
+                                        <th rowspan="2" class="col-wrap" style="width:70px" title="Масса/Объём">
+                                            <span class="th-wide">Масса/Объём</span><span class="th-narrow">Масса</span>
+                                        </th>
+                                        <th rowspan="2" class="col-wrap" style="width:40px" title="Единицы измерения">
+                                            <span class="th-wide">Ед. изм.</span><span class="th-narrow">Ед.</span>
+                                        </th>
+                                        <th rowspan="2">Периодичность</th>
+                                        <th rowspan="2" class="col-wrap">Примечание</th>
+                                        <th rowspan="2" class="col-actions"></th>
+                                    </tr>
+                                    <tr>
+                                        <th>Основные</th>
+                                        <th>Дублирующие</th>
+                                        <th>Резервные</th>
+                                        <th>Зарубежные</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{
+                                        var idx = 0;
+                                    }
+                                    @foreach (var er in EditorRows())
+                                    {
+                                        idx = er.Index + 1;
+                                        @if (er.Row.Kind == HKStructureRowKind.Section)
+                                        {
+                                            @* Раздел — визуальная группа: без количества
+                                               и собственных норм, только номер и название. *@
+                                            <tr @key="@($"sec{er.Row.SectionId}")" class="hki-section-row">
+                                                <td colspan="11" style="font-weight:700;font-size:13px">
+                                                    @(er.Row.Number) @(er.Row.Name)
+                                                </td>
+                                            </tr>
+                                        }
+                                        else if (er.Row.Kind == HKStructureRowKind.Position)
+                                        {
+                                            var node = er.Node!;
+                                            var nodeExpanded = !IsCollapsed(node.Id);
+                                            var nodeChildCount = CountChildRows(node.Id);
+                                            var nodeAllowedLvls = AllowedChildLevels(node);
+                                            <tr @key="@($"node{node.Id}")" class="hki-position-row">
+                                                <td class="col-num">@er.Row.Number</td>
+                                                <td colspan="10" style="padding-left:@(er.Row.Depth * 14)px">
+                                                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;overflow:hidden">
+                                                        <span style="width:20px;text-align:center">
+                                                            @if (canEditComposition && nodeChildCount > 0)
+                                                            {
+                                                                <button type="button" class="linkBtn" @onclick="() => ToggleCollapse(node.Id)"
+                                                                        title="@(nodeExpanded ? "Свернуть" : "Раскрыть")">@(nodeExpanded ? "▾" : "▸")</button>
+                                                            }
+                                                        </span>
+                                                        <span class="tag" style="font-size:11px">@LevelTitle(node.Level)</span>
+                                                        @if (canEditComposition)
+                                                        {
+                                                            <input @bind="node.Name" style="flex:1;min-width:110px;font-weight:600"
+                                                                   placeholder="Название позиции" />
+                                                            <span style="font-size:11px;color:var(--muted)"> Кол-во:</span>
+                                                            <input type="number"
+                                                                   @bind:get="node.Quantity == 0 ? null : (int?)node.Quantity"
+                                                                   @bind:set="@(v => node.Quantity = v ?? 0)"
+                                                                   class="hki-td-input" style="width:56px" />
+                                                        }
+                                                        else
+                                                        {
+                                                            <b>@node.Name</b>
+                                                            <span style="font-size:12px;color:var(--muted)">× @node.Quantity</span>
+                                                        }
+                                                        @if (IsAutonomousMode && node.ParentId is null)
+                                                        {
+                                                            <span class="tag" style="font-size:11px;color:var(--muted)">
+                                                                @(SectionNameOf(node.SectionId))
+                                                            </span>
+                                                        }
+                                                        @if (canEditComposition)
+                                                        {
+                                                            @if (node.ParentId is null)
+                                                            {
+                                                                <select value="@(SectionKey(node.SectionId))"
+                                                                        @onchange="ev => ChangeTopNodeSection(node, (string)ev.Value!)"
+                                                                        class="hki-td-input" style="width:120px;font-size:12px" title="Раздел ветки">
+                                                                    <option value="">Без раздела</option>
+                                                                    @foreach (var sec in _sections.OrderBy(s => s.SortOrder))
+                                                                    {
+                                                                        <option value="@sec.Id">@HKSectionNames.NameOf(sec.SectionType)</option>
+                                                                    }
+                                                                </select>
+                                                            }
+                                                            @if (nodeAllowedLvls.Count > 0)
+                                                            {
+                                                                <select value="@(ChildLevelKey(node.Id, nodeAllowedLvls))"
+                                                                        @onchange="ev => SetChildLevelChoice(node, (string)ev.Value!)"
+                                                                        class="hki-td-input" style="width:100px;font-size:12px" title="Уровень новой дочерней позиции">
+                                                                    @foreach (var lv in nodeAllowedLvls)
+                                                                    {
+                                                                        <option value="@lv">@LevelTitle(lv)</option>
+                                                                    }
+                                                                </select>
+                                                                <button type="button" class="linkBtn" style="font-size:12px"
+                                                                        @onclick="() => AddChildPosition(node)" title="Добавить дочернюю позицию">+ Позиция</button>
+                                                            }
+                                                            <button type="button" class="linkBtn" style="font-size:12px"
+                                                                    @onclick="() => AddRowUnder(node)" title="Добавить конечную строку под позицией">+ СЕ</button>
+                                                            <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(node, null, -1)"
+                                                                    disabled="@(!CanMove(node, null, -1))" title="Вверх">↑</button>
+                                                            <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(node, null, 1)"
+                                                                    disabled="@(!CanMove(node, null, 1))" title="Вниз">↓</button>
+                                                            @if (node.ParentId is not null)
+                                                            {
+                                                                <button type="button" class="linkBtn" style="font-size:12px"
+                                                                        @onclick="() => MoveUnderRoot(node)" title="Перенести под корень">↥ корень</button>
+                                                            }
+                                                            <button type="button" class="linkBtn" @onclick="() => AskDeletePosition(node)"
+                                                                    style="color:var(--bad)" title="Удалить позицию">🗑</button>
+                                                        }
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                        else
+                                        {
+                                            var item = er.Item;
+                                            <tr @key="item.Id" class="@(_focusItemId == item.Id ? "hki-focus" : "")">
+                                            <td class="col-num">@er.Row.Number</td>
+                                            <td class="gsm-selector-cell">
+                                                @if (canEditComposition)
+                                                {
+                                                    var au = item.AssemblyUnitId != Guid.Empty ? assemblyUnits.FirstOrDefault(a => a.Id == item.AssemblyUnitId) : null;
+                                                    var auDropId = $"au-drop-{item.Id:N}";
+                                                    var auBtnId = $"au-btn-{item.Id:N}";
+                                                    var auKey = item.Id;
+                                                    @if (au != null)
+                                                    {
+                                                        <div id="@auBtnId" class="hki-mat-tag" @onclick="() => ToggleAuDropdown(auKey, auDropId, auBtnId)" style="cursor:pointer">
+                                                            <span>@au.Code — @au.Name</span>
+                                                            <button type="button" class="hki-tag-remove" @onclick="() => ClearAssemblyUnit(item)" @onclick:stopPropagation="true">×</button>
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button type="button" id="@auBtnId" class="btn ghost hki-add-mat" @onclick="() => ToggleAuDropdown(auKey, auDropId, auBtnId)">— не выбрано —</button>
+                                                    }
+                                                    @if (_auOpen.GetValueOrDefault(auKey))
+                                                    {
+                                                        <div id="@auDropId" class="gsm-dropdown">
+                                                            <input class="gsm-dropdown-search" @bind="_auSearch[auKey]" @oninput="() => { }" placeholder="Поиск..." />
+                                                            @if (canQuickCreate)
+                                                            {
+                                                                <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateAssemblyUnit(auKey); }">
+                                                                    <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_auSearch.GetValueOrDefault(auKey)) ? "Создать новый" : $"Создать «{_auSearch[auKey]}»")
+                                                                </button>
+                                                            }
+                                                            <div class="gsm-dropdown-divider" role="separator"></div>
+                                                            @foreach (var a in FilteredAssemblyUnits(auKey))
+                                                            {
+                                                                <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => SelectAu(item, a)">@a.Code — @a.Name</div>
+                                                            }
+                                                            @if (!FilteredAssemblyUnits(auKey).Any())
+                                                            {
+                                                                <div class="hki-search-empty">Нет совпадений</div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    var au = assemblyUnits.FirstOrDefault(a => a.Id == item.AssemblyUnitId);
+                                                    <span>@(au != null ? $"{au.Code} — {au.Name}" : "")</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (canEditComposition)
+                                                {
+                                                    <input type="number" @bind:get="item.Quantity == 0 ? null : (int?)item.Quantity"
+                                                           @bind:set="@(v => item.Quantity = v ?? 0)" class="hki-td-input" />
+                                                }
+                                                else
+                                                {
+                                                    <span>@item.Quantity</span>
+                                                }
+                                            </td>
+                                            @foreach (var cat in new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign })
+                                            {
+                                                <td class="hki-mat-cell gsm-selector-cell">
+                                                    @{
+                                                        var matsInCat = item.Materials.Where(m => m.Category == cat).ToList();
+                                                    }
+                                                    @foreach (var mat in matsInCat)
+                                                    {
+                                                        // Название берётся из объединённого набора (выбор +
+                                                        // уже сохранённые марки карточки): марка, ставшая
+                                                        // недоступной для нового выбора, не должна выглядеть
+                                                        // как «—» в существующей строке ХК.
+                                                        var matName = MaterialNames.TryGetValue(mat.GsmMaterialId, out var nm)
+                                                            ? nm
+                                                            : "—";
+                                                        <div class="hki-mat-tag">
+                                                            <span>@matName</span>
+                                                            @if (canEditComposition)
+                                                            {
+                                                                <button type="button" class="hki-tag-remove" @onclick="() => RemoveMaterial(item, mat)">×</button>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    @if (canEditComposition)
+                                                    {
+                                                        var pickerKey = (item.Id, cat);
+                                                        var dropId = $"gsm-drop-{item.Id:N}-{cat}";
+                                                        var btnId = $"gsm-btn-{item.Id:N}-{cat}";
+                                                        <div>
+                                                            <button type="button" id="@btnId" class="btn ghost hki-add-mat" @onclick="() => ToggleMatDrop(pickerKey, dropId, btnId)">+ Добавить</button>
+                                                            @if (_matOpen.GetValueOrDefault(pickerKey))
+                                                            {
+                                                                <div id="@dropId" class="gsm-dropdown">
+                                                                    <input class="gsm-dropdown-search" @bind="_matSearch[pickerKey]"
+                                                                           @oninput="() => { }"
+                                                                           placeholder="Поиск..." />
+                                                                    @if (canQuickCreate)
+                                                                    {
+                                                                        <button type="button" class="gsm-dropdown-create" @onmousedown:preventDefault="true" @onclick="() => { CloseAllDropdownsSync(); OpenQuickCreateGsmMaterial(item.Id, cat); }">
+                                                                            <span aria-hidden="true">+</span> @(string.IsNullOrWhiteSpace(_matSearch.GetValueOrDefault(pickerKey)) ? "Создать новый" : $"Создать «{_matSearch[pickerKey]}»")
+                                                                        </button>
+                                                                    }
+                                                                    <div class="gsm-dropdown-divider" role="separator"></div>
+                                                                    @* Группировка — по классификации марки (одна группа,
+                                                                       перечень подгрупп), а не по прежнему Type. *@
+                                                                    @foreach (var group in FilteredGsmMaterials(cat, item)
+                                                                               .GroupBy(m => GsmGroupLabel(m)))
+                                                                    {
+                                                                        <div class="gsm-dropdown-group-label">@group.Key</div>
+                                                                        @foreach (var mat in group)
+                                                                        {
+                                                                            @* Связи здесь не подсказываются: предложение
+                                                                                   связанных ГСМ живёт отдельным блоком
+                                                                                   строки и появляется сразу после
+                                                                                   явного выбора основной марки. Прежняя
+                                                                                   подсказка в списке category читала
+                                                                                   связи, загруженные при инициализации,
+                                                                                   и для марки, выбранной позже, её
+                                                                                   не знала. *@
+                                                                            <div class="gsm-dropdown-item" @onmousedown:preventDefault="true" @onmousedown="() => AddMaterial(item, cat, mat.Id)">
+                                                                                <span>@mat.Name</span>
+                                                                            </div>
+                                                                        }
+                                                                    }
+                                                                    @if (!FilteredGsmMaterials(cat, item).Any())
+                                                                    {
+                                                                        <div class="hki-search-empty">Нет совпадений</div>
+                                                                    }
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </td>
+                                            }
+                                            <td>
+                                                @if (canEditComposition)
+                                                {
+                                                    <input type="number" @bind:get="item.Volume == 0m ? null : (decimal?)item.Volume"
+                                                           @bind:set="@(v => item.Volume = v ?? 0m)" step="0.001" class="hki-td-input" />
+                                                }
+                                                else
+                                                {
+                                                    <span>@item.Volume.ToString("F0")</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (canEditComposition)
+                                                {
+                                                    <input @bind="item.UnitOfMeasure" class="hki-td-input" />
+                                                }
+                                                else
+                                                {
+                                                    <span>@item.UnitOfMeasure</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (canEditComposition)
+                                                {
+                                                    <textarea @bind="item.Periodicity" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
+                                                }
+                                                else
+                                                {
+                                                    <span>@item.Periodicity</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (canEditComposition)
+                                                {
+                                                    <textarea @bind="item.Notes" class="hki-td-input" rows="1" style="resize:vertical"></textarea>
+                                                }
+                                                else
+                                                {
+                                                    <span>@item.Notes</span>
+                                                }
+                                            </td>
+                                            <td class="hki-actions col-actions">
+                                                @if (canEditComposition)
+                                                {
+                                                    <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(null, item, -1)" disabled="@(!CanMove(null, item, -1))" title="Вверх">↑</button>
+                                                    <button type="button" class="linkBtn" @onclick="() => MoveTreeRow(null, item, 1)" disabled="@(!CanMove(null, item, 1))" title="Вниз">↓</button>
+                                                    <button type="button" class="linkBtn" @onclick="() => RemoveItem(item)" style="color:var(--bad)" title="Удалить">🗑</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                        @* ── Предложение связанных ГСМ по строке ──────────────
+                                           Показывается сразу после явного выбора основной
+                                           марки, без перезагрузки страницы. Уже сохранённая
+                                           строка получает ту же возможность по видимой
+                                           команде «Проверить связи» — удалять и заново
+                                           выбирать основную марку ради просмотра связей
+                                           не требуется. Ни выбор основной марки, ни
+                                           открытие блока ничего не добавляют в card.Items:
+                                           только «Добавить выбранные» после видимого
+                                           списка. *@
+                                        @if (canEditComposition && (
+                                            _suggestionLoading.Contains(item.Id)
+                                            || (_suggestionErrors.TryGetValue(item.Id, out var sErr) && !string.IsNullOrEmpty(sErr))
+                                            || HasVisibleSuggestion(item)
+                                            || (suggestionAddedCount > 0 && _suggestionAddedFor == item.Id)
+                                            || (suggestionSkippedCount > 0 && _suggestionSkippedFor == item.Id)
+                                            || HasPrimaryMaterial(item)))
+                                        {
+                                            <tr class="hki-suggestion-row">
+                                                <td colspan="11">
+                                                    <div class="hki-suggestion">
+                                                        @if (_suggestionLoading.Contains(item.Id))
+                                                        {
+                                                            <div class="hki-suggestionLine">Проверяем связанные ГСМ…</div>
+                                                        }
+                                                        else if (_suggestionErrors.TryGetValue(item.Id, out var loadError) && !string.IsNullOrEmpty(loadError))
+                                                        {
+                                                            @* Ошибка чтения НЕ выдаётся за «связей нет»:
+                                                               иначе пользователь решил бы, что
+                                                               рекомендаций не существует. *@
+                                                            <div class="hki-suggestionLine hki-suggestionError" role="alert">
+                                                                <span>@loadError</span>
+                                                                <button type="button" class="linkBtn" @onclick="() => ReloadSuggestionsAsync(item)">Повторить</button>
+                                                            </div>
+                                                        }
+                                                        else if (HasVisibleSuggestion(item))
+                                                        {
+                                                            <div class="hki-suggestionLine">
+                                                                <span>
+                                                                    Связанные ГСМ по основным маркам строки:
+                                                                    @foreach (var src in SuggestionsFor(item).Where(s => s.Suggestions.Count > 0))
+                                                                    {
+                                                                        <span class="hki-suggestionSource">
+                                                                            «@src.PrimaryName» — @src.Suggestions.Count(x => x.IsAddable) из @src.Suggestions.Count
+                                                                        </span>
+                                                                    }
+                                                                    <span class="hki-suggestionSource">(@SuggestionSummary(item))</span>
+                                                                </span>
+                                                                <button type="button" class="linkBtn"
+                                                                        @onclick="() => ToggleSuggestionOpen(item)">
+                                                                    @(_suggestionOpen.Contains(item.Id) ? "Скрыть варианты" : "Посмотреть варианты")
+                                                                </button>
+                                                            </div>
+
+                                                            @if (!HasAddableSuggestion(item))
+                                                            {
+                                                                @* Все аналоги недоступны: список показан, чтобы
+                                                                   сами связи были видны, но подтверждать
+                                                                   нечего. *@
+                                                                <div class="hki-suggestionLine hki-suggestionDone">
+                                                                    Все связанные марки недоступны для строки ХК — причина указана у каждой позиции.
+                                                                </div>
+                                                            }
+
+                                                            @if (_suggestionOpen.Contains(item.Id))
+                                                            {
+                                                                <div class="hki-suggestionPanel">
+                                                                    @foreach (var src in SuggestionsFor(item))
+                                                                    {
+                                                                        @* Категории без вариантов не показываются: пустая группа —
+                                                                           шум. Порядок фиксирован, а не «как сложилось». *@
+                                                                        var groups = new[] { GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign }
+                                                                            .Select(c => (
+                                                                                Category: c,
+                                                                                Options: src.Suggestions
+                                                                                    .Where(x => x.Categories.Contains(c))
+                                                                                    .ToList()))
+                                                                            .Where(t => t.Options.Count > 0)
+                                                                            .ToList();
+                                                                        <div class="hki-suggestionGroup">
+                                                                            <div class="hki-suggestionGroupTitle">Связано с «@src.PrimaryName»</div>
+                                                                            @foreach (var (category, options) in groups)
+                                                                            {
+                                                                                <div class="hki-suggestionCategory">
+                                                                                    <div class="hki-suggestionCategoryTitle">
+                                                                                        @GsmRelationSuggestion.CategoryLabel(category)
+                                                                                    </div>
+                                                                                    @foreach (var o in options)
+                                                                                    {
+                                                                                        var already = SuggestionAlreadyInRow(item, o.MaterialId, category);
+                                                                                        <label class="hki-suggestionOption @(already ? "hki-suggestionOptionAlready" : "") @(o.IsAddable ? "" : "hki-suggestionOptionBlocked")">
+                                                                                            <input type="checkbox"
+                                                                                                   checked="@IsPicked(item.Id, o.MaterialId, category)"
+                                                                                                   disabled="@(already || !o.IsAddable)"
+                                                                                                   @onchange="() => ToggleSuggestionPick(item, o.MaterialId, category)" />
+                                                                                            <span class="hki-suggestionName">@o.Name</span>
+                                                                                            @if (!string.IsNullOrWhiteSpace(o.Nd))
+                                                                                            {
+                                                                                                <span class="hki-suggestionNd mono">НД: @o.Nd</span>
+                                                                                            }
+                                                                                            @if (!string.IsNullOrWhiteSpace(o.Note))
+                                                                                            {
+                                                                                                <span class="hki-suggestionNote">Примечание связи: @o.Note</span>
+                                                                                            }
+                                                                                            @if (already)
+                                                                                            {
+                                                                                                <span class="tag">Уже в строке</span>
+                                                                                            }
+                                                                                            else if (!o.IsAddable)
+                                                                                            {
+                                                                                                <span class="tag warn">@o.UnavailableReason</span>
+                                                                                            }
+                                                                                        </label>
+                                                                                    }
+                                                                                </div>
+                                                                            }
+                                                                        </div>
+                                                                    }
+
+                                                                    <div class="hki-suggestionActions">
+                                                                        @* Кнопка активна, только если есть отмеченные варианты,
+                                                                           которые всё ещё предлагаются И доступны. Устаревшая
+                                                                           отметка не должна превращаться в строку ХК. *@
+                                                                        <button type="button" class="btn primary"
+                                                                                disabled="@(PickedAddableCount(item) == 0)"
+                                                                                @onclick="() => ConfirmSuggestions(item)">
+                                                                            Добавить выбранные
+                                                                        </button>
+                                                                        <button type="button" class="btn ghost" @onclick="() => CancelSuggestions(item)">Отмена</button>
+                                                                        <span class="hki-suggestionHint">
+                                                                            По умолчанию ничего не отмечено. Добавленные варианты становятся обычными строками: удалить их можно только отдельным действием.
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            }
+                                                        }
+                                                        else if (HasPrimaryMaterial(item))
+                                                        {
+                                                            @* Предложения ещё не запрашивались. У сохранённой ХК это
+                                                               единственный способ увидеть связи своей основной
+                                                               марки, не удаляя и не выбирая её заново. *@
+                                                            <div class="hki-suggestionLine">
+                                                                <span class="hki-suggestionHint">
+                                                                    Связи основных марок строки не загружены.
+                                                                </span>
+                                                                <button type="button" class="btn ghost" @onclick="() => CheckRelationsCommandAsync(item)">
+                                                                    Проверить связи
+                                                                </button>
+                                                            </div>
+                                                        }
+
+                                                        @* Подтверждение подключено отдельным блоком, а не как
+                                                           «иначе» в цепочке выше: после добавления связи в
+                                                           справочнике никуда не делись, поэтому список
+                                                           вариантов остаётся видимым и показывает их как
+                                                           «Уже в строке». Ветка-«иначе» в этом случае
+                                                           не выполнялась бы, и подтверждение не появлялось
+                                                           бы вовсе. *@
+                                                        @if (_suggestionAddedFor == item.Id && suggestionAddedCount > 0)
+                                                        {
+                                                            <div class="hki-suggestionLine hki-suggestionDone">
+                                                                <span>
+                                                                    Добавлено вариантов: @suggestionAddedCount. Это обычные строки ХК — их можно удалить как любую другую строку.
+                                                                </span>
+                                                                <button type="button" class="linkBtn" @onclick="DismissSuggestionAdded">Скрыть</button>
+                                                            </div>
+                                                        }
+
+                                                        @if (_suggestionSkippedFor == item.Id && suggestionSkippedCount > 0)
+                                                        {
+                                                            <div class="hki-suggestionLine hki-suggestionError" role="alert">
+                                                                <span>
+                                                                    Не добавлено: @suggestionSkippedCount. Связь была изменена или удалена либо марка стала недоступна — нажмите «Проверить связи» и выберите заново.
+                                                                </span>
+                                                                <button type="button" class="linkBtn" @onclick="DismissSuggestionAdded">Скрыть</button>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                        @* Строка под корнем автономной карты может иметь
+                                           собственный раздел: селект только для такой строки. *@
+                                        @if (IsAutonomousMode && canEditComposition && item.HKCardNodeId is null)
+                                        {
+                                            <tr @key="@($"seci{item.Id}")" class="hki-note-row">
+                                                <td></td>
+                                                <td colspan="10" style="font-size:11px;color:var(--muted);padding-left:@(er.Row.Depth * 14)px">
+                                                    Раздел строки:
+                                                    <select value="@(SectionKey(item.SectionId))"
+                                                            @onchange="ev => ChangeRootItemSection(item, (string)ev.Value!)"
+                                                            class="hki-td-input" style="width:120px;font-size:11px">
+                                                        <option value="">Без раздела</option>
+                                                        @foreach (var sec in _sections.OrderBy(s => s.SortOrder))
+                                                        {
+                                                            <option value="@sec.Id">@HKSectionNames.NameOf(sec.SectionType)</option>
+                                                        }
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                        }
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                            </div>
+
+                            @if (canEditComposition)
+                            {
+                                <button type="button" class="btn" @onclick="AddItem" style="margin-top:4px">+ Добавить строку</button>
+                            }
+
+                            @if (IsAutonomousMode && canEditComposition)
+                            {
+                                @* Кнопка сохранения атомарно переносит в базу разделы,
+                                   позиции, строки и материалы одной транзакцией. Конфликт
+                                   версий не повторяется автоматом и не уничтожает
+                                   локальный ввод. *@
+                                <button type="button" class="btn primary" style="margin-top:8px"
+                                        disabled="@IsNew"
+                                        title="@(IsNew ? "Сначала сохраните черновик ХК" : "Сохранить структуру целиком")"
+                                        @onclick="SaveStructureAsync">Сохранить структуру</button>
+
+                                @if (_structureDirty && !_loading)
+                                {
+                                    <span style="font-size:11px;color:var(--muted);margin-left:6px">
+                                        в структуре есть несохранённые изменения
+                                    </span>
+                                }
+                            }
+
+                            @if (IsAutonomousMode)
+                            {
+                                var summary = BuildSummary();
+                                <div class="hk-totals" style="margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px">
+                                    <div style="font-weight:700;margin-bottom:4px">
+                                        Итоги ХК
+                                        <span style="font-weight:400;color:var(--muted)">
+                                            (предварительный расчёт редактора; не является итогом принятой карты)
+                                        </span>
+                                    </div>
+                                    @foreach (var sectionTotal in summary.Totals.Sections)
+                                    {
+                                        var sectionName = SectionNameById(sectionTotal.SectionId, summary.Sections);
+                                        <div>@sectionName: @FormatTotals(sectionTotal.Totals)</div>
+                                    }
+                                    @if (summary.Totals.WithoutSection is { } withoutSection && withoutSection.Totals.Count > 0)
+                                    {
+                                        <div>Без раздела: @FormatTotals(withoutSection.Totals)</div>
+                                    }
+                                    @if (summary.Totals.Overall.Count > 0)
+                                    {
+                                        <div style="margin-top:4px;font-weight:700">Вся ХК: @FormatTotals(summary.Totals.Overall)</div>
+                                    }
+                                </div>
+
+                                @if (_confirmDeletePositionId is { } confirmId)
+                                {
+                                    var confirmNode = card.TreeNodes.FirstOrDefault(n => n.Id == confirmId);
+                                    if (confirmNode != null)
+                                    {
+                                        <div class="hk-delete-confirm" style="margin-top:8px;padding:8px 10px;border:1px solid var(--bad);border-radius:8px;font-size:12px;background:var(--panel2)">
+                                            <b>Удалить «@confirmNode.Name»?</b>
+                                            <span>@DeleteImpactText(confirmNode)</span>
+                                            <div style="margin-top:4px;display:flex;gap:6px">
+                                                <button type="button" class="btn" style="color:var(--bad)" @onclick="ConfirmDeletePosition">Удалить</button>
+                                                <button type="button" class="btn ghost" @onclick="CancelDeletePosition">Отмена</button>
+                                            </div>
+                                        </div>
+                                    }
+                                }
+                            }
+                        }
+                        </div>
+                        }
             }
         </div>
     </section>

@@ -139,6 +139,36 @@ public static class HKStructureTotals
         return results;
     }
 
+    /// <summary>
+    /// Итог произвольной структурной позиции — верхней или вложенной: на один
+    /// экземпляр позиции и вклад всех её экземпляров в карте.
+    /// <para>
+    /// Отдельный контракт для редактора: выбранной может быть любая позиция
+    /// дерева, а не только её корень.
+    /// </para>
+    /// </summary>
+    public static HKPositionTotals CalculateNode(HKStructureInput input, Guid nodeId)
+    {
+        var nodesById = input.Nodes.ToDictionary(n => n.Id);
+        var node = input.Nodes.FirstOrDefault(n => n.Id == nodeId)
+            ?? throw new ArgumentException("Позиция структуры не найдена.", nameof(nodeId));
+
+        return BuildNode(node, input, nodesById);
+    }
+
+    /// <summary>
+    /// Итог произвольной конечной строки — под корнем или внутри ветки: масса
+    /// самой строки и её вклад с учётом количеств позиций на пути к корню.
+    /// </summary>
+    public static HKPositionTotals CalculateItem(HKStructureInput input, Guid itemId)
+    {
+        var nodesById = input.Nodes.ToDictionary(n => n.Id);
+        var item = input.Items.FirstOrDefault(i => i.Id == itemId)
+            ?? throw new ArgumentException("Строка структуры не найдена.", nameof(itemId));
+
+        return BuildItem(item, input, nodesById);
+    }
+
     private static HKPositionTotals BuildItem(
         HKStructureItemInput item, HKStructureInput input,
         Dictionary<Guid, HKStructureNodeInput> nodesById)
