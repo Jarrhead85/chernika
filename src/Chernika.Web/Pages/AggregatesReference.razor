@@ -183,6 +183,8 @@
         loading = true;
         try
         {
+            bool reloadAfterUnlock = false;
+
             await using (await DbLock.WaitAsync(ct))
             {
             var result = await EquipService.GetAggregatesPagedAsync(new AggregateQuery
@@ -203,9 +205,15 @@
             if (currentPage > totalPages && totalPages > 0)
             {
                 currentPage = totalPages;
+                reloadAfterUnlock = true;
+                return;
+            }
+            if (reloadAfterUnlock)
+            {
                 await ReloadAsync();
                 return;
             }
+
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

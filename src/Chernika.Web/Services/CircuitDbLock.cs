@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace Chernika.Web.Services;
 
 /// <summary>
@@ -5,34 +7,75 @@ namespace Chernika.Web.Services;
 /// внутри одного Blazor Server circuit.
 /// Предотвращает исключение EF Core "A second operation was started on this context instance".
 /// </summary>
+/// <remarks>
+/// <para><b>Владение блокировкой.</b> Блокировку получает верхнеуровневая
+/// операция; внутренние методы этого пути повторно её не получают, а
+/// используют переданный lease. Вложенный захват исключён границами
+/// владения, а не диагностикой по счётчику.</para>
+/// <para><b>Конкуренция — это ожидание.</b> Независимая операция ждёт
+/// освобождения блокировки. Раньше ожидание определялось по счётчику глубины,
+/// и конкурентный захват получал ложную ошибку «вложенный захват»;
+/// вложенность при этом не определялась надёжно: значение
+/// <c>AsyncLocal</c>, установленное внутри <c>async</c>-метода, теряется при
+/// возврате к вызывающему коду.</para>
+/// </remarks>
 public sealed class CircuitDbLock : IDisposable
 {
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private bool _disposed;
+    /// <summary>Порог ожидания, после которого записывается предупреждение.</summary>
+    private const long SlowWaitThresholdMs = 5_000;
 
     /// <summary>
-    /// Глубина захвата в этом circuit.
-    /// <para>
-    /// Счётчик живёт в самом объекте, а не в <c>AsyncLocal</c>: значение,
-    /// присвоенное внутри <c>async</c>-метода, теряется при возврате к
-    /// вызывающему коду, и проверка вложенного захвата молча не срабатывала.
-    /// Вложенный захват приводил не к отказу, а к вечному ожиданию семафора,
-    /// который держал сам же внешний захват, — страница висела в состоянии
-    /// «Загрузка…» без единой ошибки в журнале.
-    /// </para>
+    /// Предел ожидания. Превышение означает, что блокировку удерживает другая
+    /// операция, которая не завершилась: ждать дальше бессмысленно, но и
+    /// «зависшую» страницу оставлять нельзя.
     /// </summary>
-    private int _depth;
+    private const int MaxWaitMs = 60_000;
 
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ILogger<CircuitDbLock>? _logger;
+    private bool _disposed;
+
+    /// <summary>Идентификатор текущего держателя — для диагностики ожидания.</summary>
+    private long _currentOwner;
+
+    /// <summary>Порядковый номер выданных lease.</summary>
+    private long _leaseCounter;
+
+    public CircuitDbLock() { }
+
+    public CircuitDbLock(ILogger<CircuitDbLock> logger) => _logger = logger;
+
+    /// <summary>
+    /// Захватывает блокировку. Независимая операция ждёт освобождения:
+    /// ожидание не считается вложенным захватом и не отвергается ошибкой.
+    /// </summary>
     public async Task<IAsyncDisposable> WaitAsync(CancellationToken ct = default)
     {
-        if (_depth > 0)
-            throw new InvalidOperationException(
-                "Вложенный захват CircuitDbLock недопустим: семафор нереентерабельный, " +
-                "это приводит к взаимной блокировке circuit.");
+        var started = Environment.TickCount64;
 
-        await _gate.WaitAsync(ct);
-        _depth++;
-        return new ReleaseScope(this);
+        if (!await _gate.WaitAsync(MaxWaitMs, ct))
+        {
+            _logger?.LogError(
+                "CircuitDbLock: ожидание блокировки превысило {MaxWaitMs} мс — операция circuit не завершилась.",
+                MaxWaitMs);
+            throw new TimeoutException(
+                "Доступ к данным занят другой операцией более "
+                + $"{MaxWaitMs / 1000} с. Повторите действие.");
+        }
+
+        var waited = Environment.TickCount64 - started;
+        var id = Interlocked.Increment(ref _leaseCounter);
+        _currentOwner = id;
+
+        if (waited >= SlowWaitThresholdMs)
+        {
+            _logger?.LogWarning(
+                "CircuitDbLock: ожидание заняло {WaitedMs} мс (lease {LeaseId}). "
+                + "Долгое ожидание указывает на конкуренцию операций circuit, а не на вложенный захват.",
+                waited, id);
+        }
+
+        return new ReleaseScope(this, id);
     }
 
     public void Dispose()
@@ -42,20 +85,29 @@ public sealed class CircuitDbLock : IDisposable
         _gate.Dispose();
     }
 
+    /// <summary>
+    /// Lease блокировки. Повторное освобождение безопасно: освобождение
+    /// выполняется один раз, иначе семафор получал бы лишний permit.
+    /// </summary>
     private sealed class ReleaseScope : IAsyncDisposable
     {
         private readonly CircuitDbLock _owner;
-        private bool _released;
+        private readonly long _leaseId;
+        private int _released;
 
-        public ReleaseScope(CircuitDbLock owner) => _owner = owner;
+        public ReleaseScope(CircuitDbLock owner, long leaseId)
+        {
+            _owner = owner;
+            _leaseId = leaseId;
+        }
 
         public ValueTask DisposeAsync()
         {
-            if (_released) return ValueTask.CompletedTask;
-            _released = true;
+            if (Interlocked.Exchange(ref _released, 1) == 1)
+                return ValueTask.CompletedTask;
 
-            if (_owner._depth > 0)
-                _owner._depth--;
+            if (_owner._currentOwner == _leaseId)
+                _owner._currentOwner = 0;
 
             try
             {
@@ -65,6 +117,11 @@ public sealed class CircuitDbLock : IDisposable
             {
                 // circuit уже завершён, игнорируем
             }
+            catch (SemaphoreFullException)
+            {
+                // повторное освобождение уже обработано выше
+            }
+
             return ValueTask.CompletedTask;
         }
     }

@@ -2007,7 +2007,9 @@
             await InitStructureStateAsync(ct);
             Logger.LogDebug("HKEdit.LoadCardCore: структура прочитана {Id}", cardId);
 
-            await LoadApprovalStateAsync(ct);
+            // Блокировка уже удерживается этим путём: повторный захват внутри
+            // неё ждал бы сам себя.
+            await LoadApprovalStateAsync(ct, lockHeld: true);
             Logger.LogDebug("HKEdit.LoadCardCore: этапы прочитаны {Id}", cardId);
             if (canSubmit)
             {
@@ -3145,38 +3147,63 @@
     /// остаётся доступной.
     /// </para>
     /// </summary>
-    private async Task LoadApprovalStateAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Загружает состояния этапов согласования и вычисляет возможности.
+    /// <para>
+    /// <paramref name="lockHeld"/> означает, что блокировка уже удерживается
+    /// вызывающим путём: повторный захват внутри неё ждал бы сам себя и
+    /// приводил к зависанию страницы.
+    /// </para>
+    /// </summary>
+    private async Task LoadApprovalStateAsync(
+        CancellationToken ct = default, bool lockHeld = false)
     {
         if (IsNew) return;
 
-        await using (await DbLock.WaitAsync())
+        if (lockHeld)
         {
-            // Чтение этапов не создаёт их. Отсутствие этапов у карты нового
-            // процесса — допустимое состояние до первой команды согласования.
-            approvalStages = (await Approvals.GetStagesAsync(card.Id, ct)).ToList();
-            canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
-
-            var hasWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork, ct);
-
-            // Отсутствие этапов разбирается наравне с их наличием: архивной и
-            // удалённой карте возвращать полную редактируемость нельзя.
-            var caps = HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
-
-            canEditDetails = caps.CanEditDetails;
-            canEditComposition = caps.CanEditComposition;
-            canEditPdf = caps.CanEditPdf;
-
-            // Сведения о принятой структуре читаются ЧЕРЕЗ СЕРВИС: он проверяет
-            // HK.View, активность и филиал, и берёт редакцию по указателю карты,
-            // а не по последней созданной записи.
-            var accepted = await Revisions.GetAcceptedAsync(card.Id, ct);
-            acceptedRevisionNumber = accepted?.RevisionNumber;
-            acceptedAtUtc = accepted?.AcceptedAtUtc;
+            await LoadApprovalStateCoreAsync(ct);
+        }
+        else
+        {
+            await using (await DbLock.WaitAsync(ct))
+            {
+                await LoadApprovalStateCoreAsync(ct);
+            }
         }
 
         // Общий флаг оставлен только для полей, не разделённых по частям.
         canEdit = canEditDetails || canEditComposition;
         canQuickCreate = canEditComposition;
+    }
+
+    /// <summary>
+    /// Тело загрузки этапов: вызывается либо под уже взятой блокировкой
+    /// (путь загрузки карты), либо с собственным захватом.
+    /// </summary>
+    private async Task LoadApprovalStateCoreAsync(CancellationToken ct)
+    {
+        // Чтение этапов не создаёт их. Отсутствие этапов у карты нового
+        // процесса — допустимое состояние до первой команды согласования.
+        approvalStages = (await Approvals.GetStagesAsync(card.Id, ct)).ToList();
+        canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
+
+        var hasWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork, ct);
+
+        // Отсутствие этапов разбирается наравне с их наличием: архивной и
+        // удалённой карте возвращать полную редактируемость нельзя.
+        var caps = HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
+
+        canEditDetails = caps.CanEditDetails;
+        canEditComposition = caps.CanEditComposition;
+        canEditPdf = caps.CanEditPdf;
+
+        // Сведения о принятой структуре читаются ЧЕРЕЗ СЕРВИС: он проверяет
+        // HK.View, активность и филиал, и берёт редакцию по указателю карты,
+        // а не по последней созданной записи.
+        var accepted = await Revisions.GetAcceptedAsync(card.Id, ct);
+        acceptedRevisionNumber = accepted?.RevisionNumber;
+        acceptedAtUtc = accepted?.AcceptedAtUtc;
     }
 
     /// <summary>Отправляет этап на согласование.</summary>

@@ -191,6 +191,8 @@
         loading = true;
         try
         {
+            bool reloadAfterUnlock = false;
+
             await using (await DbLock.WaitAsync(ct))
             {
             var result = await EquipService.GetMilitaryBranchesPagedAsync(new MilitaryBranchQuery
@@ -216,9 +218,15 @@
             if (currentPage > totalPages && totalPages > 0)
             {
                 currentPage = totalPages;
+                reloadAfterUnlock = true;
+                return;
+            }
+            if (reloadAfterUnlock)
+            {
                 await ReloadAsync();
                 return;
             }
+
             if (loadedTypes != null)
                 branchTypes = loadedTypes;
             }

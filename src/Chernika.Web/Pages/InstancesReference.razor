@@ -259,6 +259,8 @@
         loading = true;
         try
         {
+            bool reloadAfterUnlock = false;
+
             await using (await DbLock.WaitAsync(ct))
             {
             var result = await EquipService.GetInstancesPagedAsync(new EquipmentInstanceQuery
@@ -273,8 +275,14 @@
             }, ct);
             if (ct.IsCancellationRequested) return;
             instances = result.Items.ToList(); totalCount = result.TotalCount; totalPages = result.TotalPages;
-            if (currentPage > totalPages && totalPages > 0) { currentPage = totalPages; await ReloadAsync(); return; }
+            if (currentPage > totalPages && totalPages > 0) { currentPage = totalPages; reloadAfterUnlock = true; return; }
             }
+            if (reloadAfterUnlock)
+            {
+                await ReloadAsync();
+                return;
+            }
+
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         finally { if (!ct.IsCancellationRequested) loading = false; }
