@@ -46,8 +46,24 @@ public sealed class HKStructureEditorState
     /// </summary>
     public HashSet<Guid> Collapsed { get; private set; } = new();
 
-    /// <summary>Специальный выбор уровня верхнего узла.</summary>
-    public HKObjectLevel? NodeRootChoice { get; set; }
+    /// <summary>
+    /// Специальный выбор уровня верхнего узла. Это правка содержания, а не
+    /// показа: она помечает состояние несохранённым.
+    /// </summary>
+    public HKObjectLevel? NodeRootChoice
+    {
+        get => _nodeRootChoice;
+        set
+        {
+            if (_nodeRootChoice == value)
+                return;
+
+            _nodeRootChoice = value;
+            MarkDirty();
+        }
+    }
+
+    private HKObjectLevel? _nodeRootChoice;
 
     private HKStructureEditorState() { }
 
@@ -115,11 +131,18 @@ public sealed class HKStructureEditorState
         }).ToList();
 
         foreach (var entity in state.AllEntities())
-            entity.PropertyChanged += (_, _) => state.IsDirty = true;
+            state.Subscribe(entity);
 
         state.IsDirty = false;
         return state;
     }
+
+    /// <summary>
+    /// Подписывает запись на изменения: правка поля помечает состояние
+    /// несохранённым. Подписка ставится и на записи, созданные в редакторе.
+    /// </summary>
+    private void Subscribe(EditorEntity entity) =>
+        entity.PropertyChanged += (_, _) => IsDirty = true;
 
     /// <summary>Все записи состояния: разделы, позиции, строки и материалы.</summary>
     private IEnumerable<EditorEntity> AllEntities() =>
@@ -162,6 +185,7 @@ public sealed class HKStructureEditorState
             SortOrder = Sections.Count
         };
         Sections.Add(section);
+        Subscribe(section);
         MarkDirty();
         return section;
     }
@@ -250,6 +274,7 @@ public sealed class HKStructureEditorState
         };
 
         Nodes.Add(node);
+        Subscribe(node);
         MarkDirty();
         return node;
     }
@@ -269,6 +294,7 @@ public sealed class HKStructureEditorState
         };
 
         Nodes.Add(node);
+        Subscribe(node);
         MarkDirty();
         return node;
     }
@@ -396,6 +422,7 @@ public sealed class HKStructureEditorState
         };
 
         Items.Add(item);
+        Subscribe(item);
         MarkDirty();
         return item;
     }
@@ -429,7 +456,7 @@ public sealed class HKStructureEditorState
             Category = category
         };
 
-        material.PropertyChanged += (_, _) => IsDirty = true;
+        Subscribe(material);
         item.Materials.Add(material);
         MarkDirty();
         return material;
@@ -550,10 +577,17 @@ public sealed class HKStructureEditorState
         }
 
         node.ParentId = newParentId;
-        // Став верхней позицией, ветка получает раздел панели; у вложенной
-        // позиции собственного раздела нет.
         if (newParentId is null)
+        {
+            // Стала верхней позицией: ветка получает раздел панели.
             node.SectionId = NewBranchSectionId;
+        }
+        else
+        {
+            // Стала вложенной: собственного раздела у вложенной позиции нет,
+            // раздел наследуется от нового корня.
+            node.SectionId = null;
+        }
 
         MarkDirty();
         return true;
@@ -662,13 +696,16 @@ public sealed class HKStructureEditorState
     {
         var normalized = BuildInput();
 
+        // Порядок берётся из нормализованного входа: в модели он может быть
+        // исходным, а сохранять нужно плотную последовательность по
+        // контейнерам.
         var positions = normalized.Nodes
             .Select(n =>
             {
                 var node = Nodes.First(x => x.Id == n.Id);
                 return new HKCardStructureNodeWrite(
                     node.Id, node.ParentId, node.Level, node.Name.Trim(), node.Quantity,
-                    node.SortOrder, node.ParentId is null ? node.SectionId : null);
+                    n.SortOrder, node.ParentId is null ? node.SectionId : null);
             })
             .ToList();
 
@@ -678,7 +715,7 @@ public sealed class HKStructureEditorState
                 var item = Items.First(x => x.Id == i.Id);
                 return new HKCardStructureItemWrite(
                     item.Id, item.NodeId, item.AssemblyUnitId, item.Quantity, item.Volume,
-                    item.UnitOfMeasure, item.Periodicity, item.Notes, item.SortOrder,
+                    item.UnitOfMeasure, item.Periodicity, item.Notes, i.SortOrder,
                     item.NodeId is null ? item.SectionId : null,
                     item.Materials
                         .Select(m => new HKCardMaterialWrite(m.Id, m.GsmMaterialId, m.Category))

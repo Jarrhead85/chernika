@@ -69,8 +69,7 @@ public class HKCardVersioningIntegrationTests
         Assert.True(success1, error1);
 
         await s.HK.ChangeStatusAsync(id1!.Value, HKCardStatus.OnReview);
-        var (approved, approveError) = await s.HK.ChangeStatusAsync(id1.Value, HKCardStatus.Approved);
-        Assert.True(approved, approveError);
+        await ApproveThroughStagesAsync(s, id1.Value, _fixture.NormAdminA2.Id);
 
         var (success2, id2, error2) = await s.HK.CreateNewVersionAsync(id1.Value);
         Assert.True(success2, error2);
@@ -80,8 +79,17 @@ public class HKCardVersioningIntegrationTests
         Assert.NotEqual(v1.Version, v2.Version);
     }
 
+    /// <summary>
+    /// Утверждение новой версии само по себе не архивирует предшественника:
+    /// замена утверждённой карты выполняется отдельной командой архивирования.
+    /// <para>
+    /// Раньше тест ждал архивирования от общего переключателя статуса — того
+    /// пути, который отменён: утверждает назначенный согласующий, и
+    /// архивирование предшественника в него не входит.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task ChangeStatus_Approved_NewVersion_ArchivesPredecessor()
+    public async Task ApproveNewVersion_KeepsPredecessor_UntilReplacement()
     {
         await using var s = _fixture.CreateScope();
         var sourceId = await CreateApprovedCardAsync(s, _fixture.NormAdminA.Id);
@@ -91,14 +99,23 @@ public class HKCardVersioningIntegrationTests
         Assert.True(created, createError);
 
         await s.HK.ChangeStatusAsync(newCardId.Value, HKCardStatus.OnReview);
-        var (approved, approveError) = await s.HK.ChangeStatusAsync(newCardId.Value, HKCardStatus.Approved);
-        Assert.True(approved, approveError);
-
-        var predecessor = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == sourceId);
-        Assert.Equal(HKCardStatus.Archived, predecessor.Status);
+        await ApproveThroughStagesAsync(s, newCardId.Value, _fixture.NormAdminA2.Id);
 
         var successor = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == newCardId.Value);
         Assert.Equal(HKCardStatus.Approved, successor.Status);
+
+        // Предшественник остаётся действующим: он не заменён.
+        var predecessor = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == sourceId);
+        Assert.Equal(HKCardStatus.Approved, predecessor.Status);
+
+        // Замена выполняется отдельной командой архивирования.
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var (archived, archiveError) = await s.HK.ArchiveAsync(
+            sourceId, newCardId.Value, "Заменена новой версией");
+        Assert.True(archived, archiveError);
+
+        var archivedCard = await s.Db.HKCards.AsNoTracking().SingleAsync(c => c.Id == sourceId);
+        Assert.Equal(HKCardStatus.Archived, archivedCard.Status);
 
         var archiveLog = await s.Db.HKCardStatusLogs.AsNoTracking()
             .AnyAsync(l => l.HKCardId == sourceId && l.ToStatus == HKCardStatus.Archived);
@@ -376,6 +393,47 @@ public class HKCardVersioningIntegrationTests
     /// они работают с уже утверждённой картой.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Утверждает карту назначенным согласующим через этапы согласования.
+    /// <para>
+    /// Общий переключатель статуса утверждение отменён: утверждает назначенный
+    /// согласующий командой ApproveCompositionAsync. Тест проверяет
+    /// версионирование и архивирование предшественника, а не обход этапов.
+    /// </para>
+    /// </summary>
+    private static async Task ApproveThroughStagesAsync(
+        TestScope s, Guid cardId, string approverId)
+    {
+        var approver = Guid.Parse(approverId);
+        var author = Guid.Parse(s.User.CurrentUserId!.Value.ToString());
+
+        var version = await RowVersionAsync(s, cardId);
+        await s.Approvals.SubmitDetailsAsync(cardId, approver.ToString(), version);
+
+        s.User.CurrentUserId = approver;
+        version = await RowVersionAsync(s, cardId);
+        await s.Approvals.ApproveDetailsAsync(cardId, null, version);
+
+        s.User.CurrentUserId = author;
+        version = await RowVersionAsync(s, cardId);
+        await s.Approvals.SubmitCompositionAsync(cardId, version);
+
+        s.User.CurrentUserId = approver;
+        version = await RowVersionAsync(s, cardId);
+        await s.Approvals.ApproveCompositionAsync(cardId, null, version);
+
+        s.User.CurrentUserId = author;
+    }
+
+    private static async Task<uint> RowVersionAsync(TestScope s, Guid cardId)
+    {
+        s.Db.ChangeTracker.Clear();
+        return await s.Db.HKCards.AsNoTracking()
+            .Where(c => c.Id == cardId)
+            .Select(c => c.RowVersion)
+            .FirstAsync();
+    }
+
     private async Task<Guid> CreateApprovedCardAsync(TestScope s, string actorId)
     {
         var id = await HKApprovalScenario.CreateDraftCardAsync(s, actorId);

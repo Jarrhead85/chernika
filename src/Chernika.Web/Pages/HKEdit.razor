@@ -28,7 +28,7 @@
 <div class="stack">
     <section class="panel">
         <div class="panelHeader">
-            <h2>@(IsNew ? "Создание новой ХК" : (canEdit ? "Редактирование ХК" : "Просмотр ХК"))</h2>
+            <h2>@PageTitleText()</h2>
             @if (!string.IsNullOrWhiteSpace(card.Name))
             {
                 <div class="hint">@card.Name</div>
@@ -41,9 +41,41 @@
             }
         </div>
         <div class="panelBody">
-            @if (_loading)
+            @if (_loadState == HkEditLoadState.Loading)
             {
                 <div class="loading-state">Загрузка...</div>
+            }
+            else if (_loadState == HkEditLoadState.NotFound)
+            {
+                <div class="note" role="alert">
+                    <b>ХК не найдена.</b>
+                    Возможно, она удалена или ссылка устарела.
+                    <div style="margin-top:8px;display:flex;gap:6px">
+                        <button type="button" class="btn ghost" @onclick="RetryLoadAsync">Повторить загрузку</button>
+                        <a class="btn ghost" href="/реестр-хк">В реестр ХК</a>
+                    </div>
+                </div>
+            }
+            else if (_loadState == HkEditLoadState.Forbidden)
+            {
+                <div class="note" role="alert">
+                    <b>Нет доступа к этой ХК.</b>
+                    @(_loadErrorText)
+                    <div style="margin-top:8px;display:flex;gap:6px">
+                        <a class="btn ghost" href="/реестр-хк">В реестр ХК</a>
+                    </div>
+                </div>
+            }
+            else if (_loadState == HkEditLoadState.Error)
+            {
+                <div class="error" role="alert">
+                    <b>Не удалось загрузить карту.</b>
+                    @(_loadErrorText)
+                    <div style="margin-top:8px;display:flex;gap:6px">
+                        <button type="button" class="btn ghost" @onclick="RetryLoadAsync">Повторить загрузку</button>
+                        <a class="btn ghost" href="/реестр-хк">В реестр ХК</a>
+                    </div>
+                </div>
             }
             else
             {
@@ -571,7 +603,9 @@
                                             && (stage.Stage == HKApprovalStage.Details || detailsStageApproved))
                                         {
                                             <button type="button" class="btn primary" @onclick="() => SubmitStageAsync(stage.Stage)">
-                                                @(stage.Stage == HKApprovalStage.Details ? "Отправить реквизиты" : "Отправить состав")
+                                                @(stage.Stage == HKApprovalStage.Details
+                                                    ? "Отправить реквизиты на согласование"
+                                                    : "Отправить состав и нормы на согласование")
                                             </button>
                                         }
                                     </div>
@@ -579,9 +613,14 @@
                             }
                             else
                             {
-                                @if (!IsNew && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired && canSendToApprove)
+                                @if (!IsNew
+                                    && _loadState == HkEditLoadState.Ready
+                                    && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired
+                                    && canSendToApprove)
                                 {
-                                    <button type="button" class="btn primary" @onclick="SendToApprove">Отправить на проверку</button>
+                                    <button type="button" class="btn primary" @onclick="SendToApprove">
+                                        Отправить на согласование
+                                    </button>
                                 }
                                 @if (card.Status == HKCardStatus.OnReview && canApprove)
                                 {
@@ -716,7 +755,24 @@
                         @if (!IsAutonomousMode || !IsNew)
                         {
                         <div class="hk-items-table-wrapper">
-                            <table class="hk-items-table hk-rows-table @(canEditComposition ? "hk-rows-editable" : null)">
+                                                    @if (EditorRows().Count == 0)
+                        {
+                            <div class="note" style="margin-bottom:8px">
+                                <b>Строк пока нет.</b>
+                                Добавьте верхнюю позицию или конечную строку — структура сохраняется
+                                отдельной командой «Сохранить структуру».
+                                @if (canEditStructure)
+                                {
+                                    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+                                        <button type="button" class="btn" @onclick="AddTopPosition">+ Добавить позицию</button>
+                                        <button type="button" class="btn ghost" @onclick="() => AddRowUnder(null)">+ Добавить строку</button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                        <table class="hk-items-table hk-rows-table"hk-rows-editable" : null)">
                                 <thead>
                                     <tr>
                                         <th rowspan="2" class="col-num hki-th-num">№</th>
@@ -1234,6 +1290,7 @@
                                     }
                                 </tbody>
                             </table>
+                        }
                             </div>
                         }
 
@@ -1505,7 +1562,55 @@
     };
 
     private HKCard card = CreateEmptyCard();
-    private bool _loading = true;
+
+    /// <summary>
+    /// Состояние загрузки карты — модель представления, а не статус ХК.
+    /// <para>
+    /// Отдельные состояния нужны, чтобы отказ прав, отсутствие записи и
+    /// техническая ошибка не выглядели одинаково и чтобы при ошибке не
+    /// показывалась пустая карточка как загруженный документ.
+    /// </para>
+    /// </summary>
+    private HkEditLoadState _loadState = HkEditLoadState.Loading;
+
+    /// <summary>Понятное пользователю объяснение неудачной загрузки.</summary>
+    private string? _loadErrorText;
+
+    /// <summary>Ошибка некритичного блока (история версий).</summary>
+    private string? _versionsError;
+
+    /// <summary>Карта видна пользователю (есть право HK.View).</summary>
+    private bool canView = true;
+
+    /// <summary>Этап загрузки, на котором она остановилась — для журнала.</summary>
+    private string? _loadStage;
+
+    /// <summary>
+    /// Поколение текущей загрузки. Результат публикуется только если поколение
+    /// совпадает: завершившийся позже старый запрос не должен заменить
+    /// текущую карту, сбросить её права или вывести свою ошибку.
+    /// </summary>
+    private int _loadGeneration;
+
+    /// <summary>Идёт ли обязательная загрузка.</summary>
+    private bool _loading => _loadState == HkEditLoadState.Loading;
+
+    /// <summary>
+    /// Заголовок страницы по фактическим возможностям.
+    /// <para>
+    /// Режим страницы не выводится только из права править реквизиты: состав
+    /// может оставаться доступным, когда реквизиты заблокированы этапом.
+    /// </para>
+    /// </summary>
+    private string PageTitleText()
+    {
+        if (IsNew)
+            return "Создание новой ХК";
+
+        return canEditDetails || canEditComposition
+            ? "Редактирование ХК"
+            : "Просмотр ХК";
+    }
     private CancellationTokenSource? _loadCts;
 
     private string statusStr = "Draft";
@@ -1827,6 +1932,15 @@
             await ReloadForRouteAsync();
     }
 
+    /// <summary>
+    /// Загрузка карты по маршруту.
+    /// <para>
+    /// Каждая загрузка получает номер поколения и собственную отмену:
+    /// предыдущий запрос отменяется, а его результат, даже если он завершится
+    /// позже, не публикуется — он не должен заменить текущую карту, сбросить
+    /// её права или вывести свою ошибку.
+    /// </para>
+    /// </summary>
     private async Task ReloadForRouteAsync()
     {
         _loadCts?.Cancel();
@@ -1834,56 +1948,79 @@
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
         var requestedId = Id!.Value;
+        var generation = ++_loadGeneration;
 
-        _loading = true;
+        _loadState = HkEditLoadState.Loading;
+        _loadErrorText = null;
+        _versionsError = null;
         errorMessage = null;
         // Набор марок карточки сменился — кэш названий сбрасывается.
         _materialNames = null;
 
-        Logger.LogDebug("HKEdit.LoadCardAsync начало: {Id}", requestedId);
+        Logger.LogDebug("HKEdit: загрузка карты {CardId}, поколение {Generation}", requestedId, generation);
 
         try
         {
-            await LoadCardAsync(requestedId, ct);
-            await LoadMaterialNamesAsync(ct);
+            await LoadCardAsync(requestedId, ct, generation);
+            if (ct.IsCancellationRequested || generation != _loadGeneration)
+                return;
+
+            // Названия марок — некритичный блок: их ошибка не должна
+            // уничтожать загруженную карту.
+            try
+            {
+                await LoadMaterialNamesAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.LogWarning(ex, "HKEdit: названия марок не прочитаны {CardId}", requestedId);
+                _versionsError = "Названия марок недоступны.";
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            Logger.LogInformation("HKEdit.LoadCardAsync отменена: {Id}", requestedId);
+            Logger.LogDebug("HKEdit: загрузка отменена {CardId}", requestedId);
             return;
         }
         catch (Exception ex)
         {
-            if (!ct.IsCancellationRequested && requestedId == Id)
-            {
-                Logger.LogWarning(ex, "HKEdit.LoadCardAsync ошибка: {Id}", requestedId);
-                errorMessage = ex.Message;
-                card = CreateEmptyCard();
-                InitItemDicts();
-                ResetEditingFlags();
-                canQuickCreate = false;
-            }
-            else
-            {
-                Logger.LogWarning(ex, "HKEdit.LoadCardAsync ошибка загрузки: {Id}", requestedId);
-            }
+            Logger.LogError(ex,
+                "HKEdit: загрузка карты {CardId} не удалась, этап {Stage}", requestedId, _loadStage);
+            if (generation != _loadGeneration || requestedId != Id)
+                return;
 
-            // Страница не должна оставаться в состоянии загрузки: иначе
-            // ошибка выглядит как бесконечное ожидание.
-            _loading = false;
+            _loadErrorText = "Не удалось загрузить карту. Повторите загрузку или обратитесь в службу поддержки.";
+            _loadState = HkEditLoadState.Error;
+            ResetEditingFlags();
+            canQuickCreate = false;
             return;
         }
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested || generation != _loadGeneration)
+            return;
 
+        _loadStage = null;
         _loadedCardId = requestedId;
-        _loading = false;
-        Logger.LogDebug("HKEdit.LoadCardAsync завершение: {Id}", requestedId);
+        _loadState = HkEditLoadState.Ready;
+        Logger.LogDebug("HKEdit: загрузка завершена {CardId}", requestedId);
+    }
+
+    /// <summary>Повторная загрузка текущей карты после ошибки.</summary>
+    private async Task RetryLoadAsync()
+    {
+        if (Id is { } id && id != Guid.Empty)
+        {
+            _loadedCardId = null;
+            await ReloadForRouteAsync();
+            return;
+        }
+
+        await InitCreateModeAsync();
     }
 
     private async Task InitCreateModeAsync()
     {
-        _loading = true;
+        _loadState = HkEditLoadState.Loading;
         errorMessage = null;
         card = CreateEmptyCard();
         statusStr = "Draft";
@@ -1943,98 +2080,142 @@
         }
 
         InitItemDicts();
-        _loading = false;
+        _loadState = HkEditLoadState.Ready;
     }
 
-    private async Task LoadCardAsync(Guid cardId, CancellationToken ct)
+    private async Task LoadCardAsync(Guid cardId, CancellationToken ct, int generation)
     {
         try
         {
-            await LoadCardCoreAsync(cardId, ct);
+            await LoadCardCoreAsync(cardId, ct, generation);
+            if (ct.IsCancellationRequested || generation != _loadGeneration)
+                return;
+
+            // Наличие файла — часть готовой модели: «файл не прикреплён» не
+            // показывается, пока неизвестно, прикреплён ли он.
             await LoadAttachmentAsync(cardId, ct);
         }
         catch (UnauthorizedAccessException ex)
         {
-            errorMessage = ex.Message;
+            Logger.LogWarning(ex, "HKEdit: нет доступа к карте {CardId}", cardId);
+            if (generation != _loadGeneration || cardId != Id)
+                return;
+
+            _loadErrorText = ex.Message;
+            _loadState = HkEditLoadState.Forbidden;
             ResetEditingFlags();
             canQuickCreate = false;
-            _existingActiveCard = null;
-            _activeCardWarning = null;
-            _attachment = null;
-            _components = new();
-            _aggregatedRows = new();
-            _loading = false;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Отменённая загрузка ничего не публикует: состояние текущей
+            // карты остаётся прежним.
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex,
+                "HKEdit: техническая ошибка загрузки карты {CardId}, этап {Stage}",
+                cardId, _loadStage);
+            if (generation != _loadGeneration || cardId != Id)
+                return;
+
+            _loadErrorText = "Не удалось загрузить карту. Повторите загрузку или обратитесь в службу поддержки.";
+            _loadState = HkEditLoadState.Error;
+            ResetEditingFlags();
+            canQuickCreate = false;
         }
     }
 
-    private async Task LoadCardCoreAsync(Guid cardId, CancellationToken ct)
+    /// <summary>
+    /// Обязательная загрузка карты: реквизиты, граф структуры, состояния
+    /// этапов и возможности пользователя.
+    /// <para>
+    /// Данные собираются во временные переменные и публикуются в поля
+    /// компонента только целиком и только если загрузка ещё актуальна:
+    /// завершившийся позже старый запрос не должен заменить текущую карту,
+    /// сбросить её права или вывести свою ошибку.
+    /// </para>
+    /// </summary>
+    private async Task LoadCardCoreAsync(Guid cardId, CancellationToken ct, int generation)
     {
+        _loadStage = "реквизиты";
+
         await using (await DbLock.WaitAsync(ct))
         {
             var existing = await HKCardService.GetByIdAsync(cardId, ct);
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested || generation != _loadGeneration)
+                return;
 
             if (existing == null)
             {
-                Logger.LogWarning("HKEdit.LoadCardAsync: ХК не найдена или нет доступа: {Id}", cardId);
-                errorMessage = "ХК не найдена или у вас нет доступа.";
-                card = CreateEmptyCard();
-                InitItemDicts();
+                Logger.LogWarning("HKEdit: карта не найдена {CardId}", cardId);
+                _loadErrorText = "ХК не найдена.";
+                _loadState = HkEditLoadState.NotFound;
                 ResetEditingFlags();
                 canQuickCreate = false;
-                _existingActiveCard = null;
-                _activeCardWarning = null;
-                _attachment = null;
-                _components = new();
-                _aggregatedRows = new();
-                _loading = false;
                 return;
             }
 
-            card = existing;
-            loadedRowVersion = existing.RowVersion;
-            Logger.LogDebug("HKEdit.LoadCardCore: карта прочитана, версии {Id}", cardId);
-            _versions = await HKCardService.GetVersionsAsync(cardId, ct);
-            Logger.LogDebug("HKEdit.LoadCardCore: версии прочитаны {Id}", cardId);
-            selectedLevel = card.ObjectLevel;
-            selectedComplexId = card.ComplexId ?? Guid.Empty;
-            selectedModelId = card.EquipmentModelId ?? Guid.Empty;
-            selectedAggregateId = card.AggregateId ?? Guid.Empty;
-            selectedNodeId = card.NodeId ?? Guid.Empty;
-            statusStr = card.Status.ToString();
-            // Разделы и локальное состояние редактора структуры — вместе с картой.
-            Logger.LogDebug("HKEdit.LoadCardCore: состояние структуры {Id}", cardId);
-            await InitStructureStateAsync(ct);
-            Logger.LogDebug("HKEdit.LoadCardCore: структура прочитана {Id}", cardId);
+            _loadStage = "структура";
+            var structure = await HKCardService.GetStructureGraphAsync(cardId, ct);
+            if (ct.IsCancellationRequested || generation != _loadGeneration)
+                return;
 
-            // Блокировка уже удерживается этим путём: повторный захват внутри
-            // неё ждал бы сам себя.
-            await LoadApprovalStateAsync(ct, lockHeld: true);
-            Logger.LogDebug("HKEdit.LoadCardCore: этапы прочитаны {Id}", cardId);
-            if (canSubmit)
+            _loadStage = "этапы согласования";
+            var capabilities = await LoadApprovalStateAsync(ct, lockHeld: true);
+            if (ct.IsCancellationRequested || generation != _loadGeneration)
+                return;
+
+            // История версий — некритичный блок: её ошибка не должна
+            // уничтожать уже загруженную карту.
+            IReadOnlyList<HKCardVersionDto> versions = Array.Empty<HKCardVersionDto>();
+            string? versionsError = null;
+            try
             {
-                // Отдельный захват блокировки здесь был бы ВЛОЖЕННЫМ: внешний
-                // using уже держит семафор, а семафор нереентерабельный. Второй
-                // WaitAsync ждал бы сам себя — страница висела бы в состоянии
-                // «Загрузка…» без единой ошибки в журнале.
-                branchApprovers = await GetBranchApproversAsync();
+                versions = await HKCardService.GetVersionsAsync(cardId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.LogWarning(ex, "HKEdit: история версий не прочитана {CardId}", cardId);
+                versionsError = "История версий недоступна.";
             }
 
-            // Общий флаг выводится из флагов частей, вычисленных этапами в
-            // LoadApprovalStateAsync. Перезаписывать его здесь прежней проверкой
-            // «карта в черновике или на доработке» нельзя: во время рассмотрения
-            // реквизитов такая проверка запрещала бы автору работать с составом,
-            // а во время рассмотрения состава — с реквизитами.
-            if (ct.IsCancellationRequested) return;
+            var level = existing.ObjectLevel;
+
+            // Публикация: с этого момента страница показывает целую карту.
+            card = existing;
+            loadedRowVersion = existing.RowVersion;
+            _versions = versions.ToList();
+            _versionsError = versionsError;
+            selectedLevel = level;
+            selectedComplexId = existing.ComplexId ?? Guid.Empty;
+            selectedModelId = existing.EquipmentModelId ?? Guid.Empty;
+            selectedAggregateId = existing.AggregateId ?? Guid.Empty;
+            selectedNodeId = existing.NodeId ?? Guid.Empty;
+            statusStr = existing.Status.ToString();
+
+            approvalStages = capabilities.Stages.ToList();
+            canSubmit = capabilities.CanSubmit;
+            canEditDetails = capabilities.CanEditDetails;
+            canEditComposition = capabilities.CanEditComposition;
+            canEditPdf = capabilities.CanEditPdf;
+            canView = capabilities.CanView;
+
+            // Общий флаг оставлен только для полей, не разделённых по частям.
             canEdit = canEditDetails || canEditComposition;
             canQuickCreate = canEditComposition;
 
-            if (selectedLevel == HKObjectLevel.Node && !card.Items.Any())
+            // Локальное состояние структуры — из той же проекции графа.
+            _structure = structure is null
+                ? null
+                : HKStructureEditorState.FromGraph(structure);
+
+            if (level == HKObjectLevel.Node && !existing.Items.Any())
             {
-                card.Items.Add(new HKCardItem
+                existing.Items.Add(new HKCardItem
                 {
                     Id = Guid.NewGuid(),
-                    HKCardId = card.Id,
+                    HKCardId = existing.Id,
                     AssemblyUnitId = Guid.Empty,
                     Quantity = 0,
                     Volume = 0m,
@@ -2045,19 +2226,28 @@
 
             InitItemDicts();
 
-            if (selectedLevel != HKObjectLevel.Node)
+            if (level != HKObjectLevel.Node)
             {
                 _components = await HKCardService.GetComponentsAsync(cardId, ct);
                 _aggregatedRows = await HKCardService.GetAggregatedRowsAsync(cardId, ct);
             }
 
-            if (selectedLevel == HKObjectLevel.EquipmentModel)
+            if (level == HKObjectLevel.EquipmentModel)
             {
                 var cardBranches = await EquipmentService.GetHKCardMilitaryBranchesAsync(cardId, ct);
-                if (ct.IsCancellationRequested) return;
+                if (ct.IsCancellationRequested || generation != _loadGeneration)
+                    return;
                 selectedMilitaryBranchIds = cardBranches.Select(b => b.Id).ToList();
             }
         }
+
+        if (ct.IsCancellationRequested || generation != _loadGeneration)
+            return;
+
+        _loadStage = null;
+        _loadedCardId = cardId;
+        _loadState = HkEditLoadState.Ready;
+        Logger.LogDebug("HKEdit: карта загружена {CardId}", cardId);
     }
 
     private async Task LoadAttachmentAsync(Guid cardId, CancellationToken ct)
@@ -2316,53 +2506,57 @@
         public string? AssemblyUnitName =>
             _local?.AssemblyUnitName ?? _assemblyUnitName(AssemblyUnitId);
 
-        public Guid Id => _local?.Id ?? _tracked!.Id;
+        public Guid Id => _local is not null ? _local.Id : _tracked!.Id;
 
+        // Источник значения выбирается по НАЛИЧИЮ локальной записи, а не по
+        // значению поля: у локальной строки поле может быть пустым
+        // (например, не задан узел), и обращение к отслеживаемой строке
+        // при этом обращало бы к null.
         public Guid? NodeId
         {
-            get => _local?.NodeId ?? _tracked!.HKCardNodeId;
+            get => _local is not null ? _local.NodeId : _tracked!.HKCardNodeId;
             set { if (_local is not null) _local.NodeId = value; else _tracked!.HKCardNodeId = value; }
         }
 
         public Guid AssemblyUnitId
         {
-            get => _local?.AssemblyUnitId ?? _tracked!.AssemblyUnitId;
+            get => _local is not null ? _local.AssemblyUnitId : _tracked!.AssemblyUnitId;
             set { if (_local is not null) _local.AssemblyUnitId = value; else _tracked!.AssemblyUnitId = value; }
         }
 
         public int Quantity
         {
-            get => _local?.Quantity ?? _tracked!.Quantity;
+            get => _local is not null ? _local.Quantity : _tracked!.Quantity;
             set { if (_local is not null) _local.Quantity = value; else _tracked!.Quantity = value; }
         }
 
         public decimal Volume
         {
-            get => _local?.Volume ?? _tracked!.Volume;
+            get => _local is not null ? _local.Volume : _tracked!.Volume;
             set { if (_local is not null) _local.Volume = value; else _tracked!.Volume = value; }
         }
 
         public string? UnitOfMeasure
         {
-            get => _local?.UnitOfMeasure ?? _tracked!.UnitOfMeasure;
+            get => _local is not null ? _local.UnitOfMeasure : _tracked!.UnitOfMeasure;
             set { if (_local is not null) _local.UnitOfMeasure = value; else _tracked!.UnitOfMeasure = value; }
         }
 
         public string? Periodicity
         {
-            get => _local?.Periodicity ?? _tracked!.Periodicity;
+            get => _local is not null ? _local.Periodicity : _tracked!.Periodicity;
             set { if (_local is not null) _local.Periodicity = value; else _tracked!.Periodicity = value; }
         }
 
         public string? Notes
         {
-            get => _local?.Notes ?? _tracked!.Notes;
+            get => _local is not null ? _local.Notes : _tracked!.Notes;
             set { if (_local is not null) _local.Notes = value; else _tracked!.Notes = value; }
         }
 
         public Guid? SectionId
         {
-            get => _local?.SectionId ?? _tracked!.SectionId;
+            get => _local is not null ? _local.SectionId : _tracked!.SectionId;
             set { if (_local is not null) _local.SectionId = value; else _tracked!.SectionId = value; }
         }
 
@@ -3155,55 +3349,75 @@
     /// приводил к зависанию страницы.
     /// </para>
     /// </summary>
-    private async Task LoadApprovalStateAsync(
+    private async Task<ApprovalCapabilities> LoadApprovalStateAsync(
         CancellationToken ct = default, bool lockHeld = false)
     {
-        if (IsNew) return;
+        if (IsNew)
+            return new ApprovalCapabilities(
+                Array.Empty<PersistedStageState>(), false, false, false, false, true);
 
+        ApprovalCapabilities capabilities;
         if (lockHeld)
         {
-            await LoadApprovalStateCoreAsync(ct);
+            capabilities = await LoadApprovalStateCoreAsync(ct);
         }
         else
         {
             await using (await DbLock.WaitAsync(ct))
             {
-                await LoadApprovalStateCoreAsync(ct);
+                capabilities = await LoadApprovalStateCoreAsync(ct);
             }
         }
 
         // Общий флаг оставлен только для полей, не разделённых по частям.
         canEdit = canEditDetails || canEditComposition;
         canQuickCreate = canEditComposition;
+
+        return capabilities;
     }
 
     /// <summary>
     /// Тело загрузки этапов: вызывается либо под уже взятой блокировкой
     /// (путь загрузки карты), либо с собственным захватом.
     /// </summary>
-    private async Task LoadApprovalStateCoreAsync(CancellationToken ct)
+    /// <summary>
+    /// Возможности пользователя, вычисленные по этапам согласования.
+    /// <para>
+    /// Значения возвращаются, а не пишутся в поля компонента: состояние
+    /// публикуется целиком, чтобы страница не показывала половину прав.
+    /// </para>
+    /// </summary>
+    private sealed record ApprovalCapabilities(
+        IReadOnlyList<PersistedStageState> Stages,
+        bool CanSubmit,
+        bool CanEditDetails,
+        bool CanEditComposition,
+        bool CanEditPdf,
+        bool CanView);
+
+    private async Task<ApprovalCapabilities> LoadApprovalStateCoreAsync(CancellationToken ct)
     {
         // Чтение этапов не создаёт их. Отсутствие этапов у карты нового
         // процесса — допустимое состояние до первой команды согласования.
-        approvalStages = (await Approvals.GetStagesAsync(card.Id, ct)).ToList();
-        canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
+        var stages = (await Approvals.GetStagesAsync(card.Id, ct)).ToList();
+        var canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
 
         var hasWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork, ct);
 
         // Отсутствие этапов разбирается наравне с их наличием: архивной и
         // удалённой карте возвращать полную редактируемость нельзя.
-        var caps = HKApprovalService.DeriveEditingCapabilities(approvalStages, card.Status, hasWork);
+        var caps = HKApprovalService.DeriveEditingCapabilities(stages, card.Status, hasWork);
 
-        canEditDetails = caps.CanEditDetails;
-        canEditComposition = caps.CanEditComposition;
-        canEditPdf = caps.CanEditPdf;
+        var canView = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKView, ct);
 
         // Сведения о принятой структуре читаются ЧЕРЕЗ СЕРВИС: он проверяет
         // HK.View, активность и филиал, и берёт редакцию по указателю карты,
         // а не по последней созданной записи.
         var accepted = await Revisions.GetAcceptedAsync(card.Id, ct);
-        acceptedRevisionNumber = accepted?.RevisionNumber;
-        acceptedAtUtc = accepted?.AcceptedAtUtc;
+
+        return new ApprovalCapabilities(
+            stages, canSubmit, caps.CanEditDetails, caps.CanEditComposition,
+            caps.CanEditPdf, canView);
     }
 
     /// <summary>Отправляет этап на согласование.</summary>
@@ -3297,7 +3511,7 @@
     private async Task ReloadAfterDecisionAsync()
     {
         var cardId = card.Id;
-        await LoadCardAsync(cardId, default);
+        await LoadCardAsync(cardId, default, _loadGeneration);
         loadedRowVersion = card.RowVersion;
         await LoadApprovalStateAsync();
     }
