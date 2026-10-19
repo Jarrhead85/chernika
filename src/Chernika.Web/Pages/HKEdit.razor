@@ -638,15 +638,22 @@
                             @if (IsAutonomousMode && IsNew)
                             {
                                 <div class="note hk-editor-note">
-                                    Сначала сохраните черновик ХК: реквизиты —
-                                    по кнопке «Сохранить черновик» под формой.
-                                    После этого здесь появится редактор структуры:
-                                    разделы, позиции и конечные строки сохраняются
-                                    одной командой, а не реквизитным путём.
+                                    <b>Структура появится после сохранения черновика.</b>
+                                    <div style="margin-top:4px">
+                                        1. Сохраните черновик кнопкой «Сохранить черновик» под формой —
+                                        номер ХК сформирует сервер, а карта получит свой номер.
+                                    </div>
+                                    <div>
+                                        2. После сохранения здесь появятся разделы, позиции и конечные строки;
+                                        они сохраняются отдельной командой «Сохранить структуру».
+                                    </div>
+                                    <div>
+                                        3. Отправка на согласование — следующий шаг, отдельной командой.
+                                    </div>
                                 </div>
                             }
 
-                            @if (IsAutonomousMode)
+                            @if (IsAutonomousMode && !IsNew)
                             {
                                 <div class="hk-section-panel">
                                     <span class="hki-muted-sm">Раздел новой ветки:</span>
@@ -704,7 +711,11 @@
                                 }
                             }
 
-                            <div class="hk-items-table-wrapper">
+                            @if (!IsAutonomousMode || !IsNew)
+                        {
+                        @if (!IsAutonomousMode || !IsNew)
+                        {
+                        <div class="hk-items-table-wrapper">
                             <table class="hk-items-table hk-rows-table @(canEditComposition ? "hk-rows-editable" : null)">
                                 <thead>
                                     <tr>
@@ -1224,14 +1235,15 @@
                                 </tbody>
                             </table>
                             </div>
+                        }
 
-                            @if (canEditComposition)
-                            {
-                                <button type="button" class="btn hk-editor-gap--sm" @onclick="AddItem">+ Добавить строку</button>
-                            }
+                        @if (canEditComposition && (!IsAutonomousMode || !IsNew))
+                        {
+                            <button type="button" class="btn hk-editor-gap--sm" @onclick="AddItem">+ Добавить строку</button>
+                        }
 
-                            @if (IsAutonomousMode && canEditComposition)
-                            {
+                        @if (canEditStructure)
+                        {
                                 @* Кнопка сохранения атомарно переносит в базу разделы,
                                    позиции, строки и материалы одной транзакцией. Конфликт
                                    версий не повторяется автоматом и не уничтожает
@@ -1249,7 +1261,7 @@
                                 }
                             }
 
-                            @if (IsAutonomousMode)
+                            @if (IsAutonomousMode && !IsNew)
                             {
                                 var summary = BuildSummary();
                                 <div class="hk-totals">
@@ -3327,8 +3339,10 @@
 
         card.Status = IsNew ? HKCardStatus.Draft : card.Status;
 
-        if (string.IsNullOrWhiteSpace(card.Version))
+        if (string.IsNullOrWhiteSpace(card.Version) && !IsNew)
         {
+            // У новой карты версию формирует сервер при создании, вводить её
+            // в форме нечем: требование было ложным и блокировало сохранение.
             errorMessage = "Поле «Версия» обязательно для заполнения.";
             return;
         }
