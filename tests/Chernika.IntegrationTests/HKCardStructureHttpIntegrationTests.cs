@@ -4,8 +4,12 @@ using System.Text.Json;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Infrastructure.Data;
+using Chernika.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Http;
+using System.Security.Claims;
 using Xunit;
 
 namespace Chernika.IntegrationTests;
@@ -51,6 +55,39 @@ public class HKCardStructureHttpIntegrationTests : IClassFixture<ChernikaApiFact
 
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Указатель принятой редакции снимается первым: он тоже ограничение
+        // RESTRICT, и без его снятия ревизии не удаляются.
+        await db.HKCards
+            .Where(c => _created.Contains(c.Id) && c.CurrentAcceptedRevisionId != null)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.CurrentAcceptedRevisionId, (Guid?)null));
+
+        // Редакции и их снимки держат карту ограничением RESTRICT: сначала
+        // снимаются снимки принятых редакций, затем сами карты.
+        var revisionIds = await db.HKCardRevisions
+            .Where(r => _created.Contains(r.HKCardId))
+            .Select(r => r.Id)
+            .ToListAsync();
+
+        if (revisionIds.Count > 0)
+        {
+            await db.HKCardRevisionItemMaterials
+                .Where(m => revisionIds.Contains(m.RevisionItemId))
+                .ExecuteDeleteAsync();
+            await db.HKCardRevisionItems
+                .Where(i => revisionIds.Contains(i.RevisionId))
+                .ExecuteDeleteAsync();
+            await db.HKCardRevisionNodes
+                .Where(n => revisionIds.Contains(n.RevisionId))
+                .ExecuteDeleteAsync();
+            await db.HKCardRevisionSections
+                .Where(s => revisionIds.Contains(s.RevisionId))
+                .ExecuteDeleteAsync();
+            await db.HKCardRevisions
+                .Where(r => revisionIds.Contains(r.Id))
+                .ExecuteDeleteAsync();
+        }
+
         await db.HKCards.Where(c => _created.Contains(c.Id)).ExecuteDeleteAsync();
         await db.GsmMaterialClassifications
             .Where(k => _gsm.Contains(k.GsmMaterialId))
@@ -207,6 +244,103 @@ public class HKCardStructureHttpIntegrationTests : IClassFixture<ChernikaApiFact
         Assert.Equal(HttpStatusCode.BadRequest, save.StatusCode);
     }
 
+[Fact]
+    public async Task SaveStructure_OverHttp_InvalidGraph_IsBadRequest()
+    {
+        var admin = _factory.CreateAs(_factory.SystemAdminUserName);
+        var cardId = await CreateDraftAsync(admin);
+        var version = await ReadRowVersionAsync(cardId);
+
+        // Строка без сборочной единицы — незавершённая запись: отказ с
+        // понятным указанием, а не молчаливое отбрасывание и не запись в базу.
+        var save = await admin.PutAsJsonAsync($"/api/hkcards/{cardId}/structure", new
+        {
+            cardId,
+            sections = Array.Empty<object>(),
+            positions = Array.Empty<object>(),
+            items = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid(),
+                    nodeId = (Guid?)null,
+                    assemblyUnitId = Guid.Empty,
+                    quantity = 1,
+                    volume = 1m,
+                    unitOfMeasure = "кг",
+                    periodicity = (string?)null,
+                    notes = (string?)null,
+                    sortOrder = 0,
+                    sectionId = (Guid?)null,
+                    materials = Array.Empty<object>(),
+                },
+            },
+            nodeRootChoice = (string?)null,
+            expectedRowVersion = version,
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, save.StatusCode);
+        var body = await save.Content.ReadAsStringAsync();
+        Assert.Contains("сборочную единицу", body);
+
+        // Незавершённая строка не записалась.
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(0, await db.HKCardItems.CountAsync(i => i.HKCardId == cardId));
+        }
+    }
+
+    [Fact]
+    public async Task SaveStructure_OverHttp_OtherBranch_IsForbidden()
+    {
+        var admin = _factory.CreateAs(_factory.SystemAdminUserName);
+        var cardId = await CreateDraftAsync(admin);
+        var version = await ReadRowVersionAsync(cardId);
+
+        // Пользователь другого филиала: политика EditHK есть, но структура
+        // чужой карты ему недоступна. Пользователь создаётся здесь: фабрика
+        // тестов содержит один филиал.
+        string otherUserName;
+        await using (var setup = _factory.Services.CreateAsyncScope())
+        {
+            var db = setup.ServiceProvider.GetRequiredService<AppDbContext>();
+            var um = setup.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+            var otherBranch = new Branch
+            {
+                Id = Guid.NewGuid(),
+                Name = "Чужой филиал",
+                Code = "CH-" + Guid.NewGuid().ToString("N")[..4],
+            };
+            db.Branches.Add(otherBranch);
+            await db.SaveChangesAsync();
+
+            var otherUser = new ApplicationUser
+            {
+                UserName = "http_other_branch_" + Guid.NewGuid().ToString("N")[..6],
+                Email = "other@test.local",
+                BranchId = otherBranch.Id,
+                FullName = "Чужой филиал",
+            };
+            await um.CreateAsync(otherUser, "Test#12345");
+            await um.AddToRoleAsync(otherUser, nameof(UserRole.NormAdmin));
+            otherUserName = otherUser.UserName!;
+        }
+
+        var otherClient = _factory.CreateAs(otherUserName);
+        var save = await otherClient.PutAsJsonAsync($"/api/hkcards/{cardId}/structure", new
+        {
+            cardId,
+            sections = Array.Empty<object>(),
+            positions = Array.Empty<object>(),
+            items = Array.Empty<object>(),
+            nodeRootChoice = (string?)null,
+            expectedRowVersion = version,
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, save.StatusCode);
+    }
+
     [Fact]
     public async Task SaveStructure_OverHttp_MissingCard_IsNotFound()
     {
@@ -241,6 +375,132 @@ public class HKCardStructureHttpIntegrationTests : IClassFixture<ChernikaApiFact
 
         var absent = await admin.GetAsync($"/api/hkcards/{Guid.NewGuid()}/accepted-totals");
         Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
+    }
+
+    /// <summary>
+    /// После реального принятия итоги читаются из снимка: непустой ответ 200.
+    /// <para>
+    /// Проверка 204 не доказывает работу расчёта принятой карты, поэтому здесь
+    /// карта проходит настоящую фиксацию редакции.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task AcceptedTotals_OverHttp_AfterRealAcceptance_ReturnsTotals()
+    {
+        var admin = _factory.CreateAs(_factory.SystemAdminUserName);
+        var cardId = await CreateDraftAsync(admin);
+
+        var unitId = Guid.NewGuid();
+        var gsmId = Guid.NewGuid();
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.AssemblyUnits.Add(new AssemblyUnit
+            {
+                Id = unitId,
+                Code = "АУ-" + Guid.NewGuid().ToString("N")[..6],
+                Name = "СЕ принятия",
+            });
+            db.GsmMaterials.Add(new GsmMaterial
+            {
+                Id = gsmId,
+                Name = "М-" + Guid.NewGuid().ToString("N")[..6],
+                Nd = "ТУ " + Guid.NewGuid().ToString("N")[..6],
+            });
+            db.GsmMaterialClassifications.Add(new GsmMaterialClassification
+            {
+                Id = Guid.NewGuid(),
+                GsmMaterialId = gsmId,
+                GroupName = "Группа " + Guid.NewGuid().ToString("N")[..6],
+                SubgroupName = "Подгруппа " + Guid.NewGuid().ToString("N")[..6],
+            });
+            await db.SaveChangesAsync();
+        }
+        _units.Add(unitId);
+        _gsm.Add(gsmId);
+
+        var version = await ReadRowVersionAsync(cardId);
+        var aggregateId = Guid.NewGuid();
+        var save = await admin.PutAsJsonAsync($"/api/hkcards/{cardId}/structure", new
+        {
+            cardId,
+            sections = new[]
+            {
+                new { id = Guid.NewGuid(), sectionType = (int)HKCardSectionType.Oils, sortOrder = 0 },
+            },
+            positions = new[]
+            {
+                new
+                {
+                    id = aggregateId,
+                    parentId = (Guid?)null,
+                    level = (int)HKObjectLevel.Aggregate,
+                    name = "Агрегат принятия",
+                    quantity = 1,
+                    sortOrder = 0,
+                    sectionId = (Guid?)null,
+                },
+            },
+            items = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid(),
+                    nodeId = (Guid?)aggregateId,
+                    assemblyUnitId = unitId,
+                    quantity = 1,
+                    volume = 750m,
+                    unitOfMeasure = "г",
+                    periodicity = (string?)null,
+                    notes = (string?)null,
+                    sortOrder = 0,
+                    sectionId = (Guid?)null,
+                    materials = Array.Empty<object>(),
+                },
+            },
+            nodeRootChoice = (string?)null,
+            expectedRowVersion = version,
+        });
+        Assert.True(save.StatusCode == HttpStatusCode.NoContent,
+            "сохранение структуры вернуло " + (int)save.StatusCode);
+
+        // Настоящая фиксация редакции.
+        Guid revisionId;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var systemAdmin = await scope.ServiceProvider
+                .GetRequiredService<UserManager<ApplicationUser>>()
+                .FindByNameAsync(_factory.SystemAdminUserName);
+
+            // Текущий пользователь сервисных методов читается из HTTP-контекста:
+            // вне запроса его нужно задать явно, иначе фиксация не увидит автора.
+            var accessor = scope.ServiceProvider.GetRequiredService<IHttpContextAccessor>();
+            var identity = new ClaimsIdentity(new[]
+            {
+                new Claim(ClaimTypes.NameIdentifier, systemAdmin!.Id.ToString())
+            });
+            accessor.HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(identity)
+            };
+
+            var rowVersion = await db.HKCards.AsNoTracking()
+                .Where(c => c.Id == cardId).Select(c => c.RowVersion).FirstAsync();
+            revisionId = await scope.ServiceProvider
+                .GetRequiredService<HKCardRevisionService>()
+                .CaptureAsync(cardId, rowVersion);
+
+            var tracked = await db.HKCards.FirstAsync(c => c.Id == cardId);
+            tracked.CurrentAcceptedRevisionId = revisionId;
+            await db.SaveChangesAsync();
+        }
+
+        var totals = await admin.GetAsync($"/api/hkcards/{cardId}/accepted-totals");
+        Assert.Equal(HttpStatusCode.OK, totals.StatusCode);
+
+        var dto = await totals.Content.ReadFromJsonAsync<JsonElement>(Json);
+        Assert.NotEmpty(dto.GetProperty("overall").EnumerateArray());
     }
 
     // ── Помощники ────────────────────────────────────────────────────────────

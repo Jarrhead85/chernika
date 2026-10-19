@@ -16,6 +16,7 @@
 @inject UserManager<ApplicationUser> UserManager
 @using Microsoft.Extensions.Options
 @using Chernika.Web.Services
+@using Chernika.Web.Pages.Structure
 @inject IPermissionService Perms
 @inject IJSRuntime JS
 @inject IOptions<FileStorageOptions> FileOptions
@@ -634,19 +635,32 @@
                                не являются уровнями техники, не умножают потребность и
                                не влияют на определение уровня карты. Панель применяется
                                к НОВОЙ верхней ветке и не меняет раздел уже выбранной. *@
+                            @if (IsAutonomousMode && IsNew)
+                            {
+                                <div class="note" style="margin-bottom:10px;font-size:12px">
+                                    Сначала сохраните черновик ХК: реквизиты —
+                                    по кнопке «Сохранить черновик» под формой.
+                                    После этого здесь появится редактор структуры:
+                                    разделы, позиции и конечные строки сохраняются
+                                    одной командой, а не реквизитным путём.
+                                </div>
+                            }
+
                             @if (IsAutonomousMode)
                             {
                                 <div class="hk-section-panel" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
                                     <span style="font-size:12px;color:var(--muted)">Раздел новой ветки:</span>
                                     <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
-                                            disabled="@(!canEditComposition)"
+                                            aria-pressed="@(NewBranchSectionId is null)"
+                                            disabled="@(!canEditStructure)"
                                             @onclick="() => SelectNewBranchSection(null)">
                                         Без раздела
                                     </button>
                                     @foreach (var panelType in new[] { HKCardSectionType.Oils, HKCardSectionType.Greases, HKCardSectionType.Fuels })
                                     {
                                         <button type="button" class="btn ghost" style="padding:2px 10px;font-size:12px"
-                                                disabled="@(!canEditComposition)"
+                                                aria-pressed="@(NewBranchSectionId is { } chosen && chosen == _structure?.Sections.FirstOrDefault(s => s.SectionType == panelType)?.Id)"
+                                                disabled="@(!canEditStructure)"
                                                 @onclick="() => SelectNewBranchSection(panelType)">
                                             @HKSectionNames.NameOf(panelType)
                                         </button>
@@ -781,7 +795,7 @@
                                                                         @onchange="ev => ChangeTopNodeSection(node, (string)ev.Value!)"
                                                                         class="hki-td-input" style="width:120px;font-size:12px" title="Раздел ветки">
                                                                     <option value="">Без раздела</option>
-                                                                    @foreach (var sec in _sections.OrderBy(s => s.SortOrder))
+                                                                    @foreach (var sec in EditorSections)
                                                                     {
                                                                         <option value="@sec.Id">@HKSectionNames.NameOf(sec.SectionType)</option>
                                                                     }
@@ -899,7 +913,7 @@
                                                             <span>@matName</span>
                                                             @if (canEditComposition)
                                                             {
-                                                                <button type="button" class="hki-tag-remove" @onclick="() => RemoveMaterial(item, mat)">×</button>
+                                                                <button type="button" class="hki-tag-remove" @onclick="() => RemoveMaterialFromRow(item, mat.RowId, mat.GsmMaterialId, mat.Category)">×</button>
                                                             }
                                                         </div>
                                                     }
@@ -1017,10 +1031,10 @@
                                         @if (canEditComposition && (
                                             _suggestionLoading.Contains(item.Id)
                                             || (_suggestionErrors.TryGetValue(item.Id, out var sErr) && !string.IsNullOrEmpty(sErr))
-                                            || HasVisibleSuggestion(item)
+                                            || HasVisibleSuggestion(item.Tracked!)
                                             || (suggestionAddedCount > 0 && _suggestionAddedFor == item.Id)
                                             || (suggestionSkippedCount > 0 && _suggestionSkippedFor == item.Id)
-                                            || HasPrimaryMaterial(item)))
+                                            || HasPrimaryMaterial(item.Tracked!)))
                                         {
                                             <tr class="hki-suggestion-row">
                                                 <td colspan="11">
@@ -1036,29 +1050,29 @@
                                                                рекомендаций не существует. *@
                                                             <div class="hki-suggestionLine hki-suggestionError" role="alert">
                                                                 <span>@loadError</span>
-                                                                <button type="button" class="linkBtn" @onclick="() => ReloadSuggestionsAsync(item)">Повторить</button>
+                                                                <button type="button" class="linkBtn" @onclick="() => ReloadSuggestionsAsync(item.Tracked!)">Повторить</button>
                                                             </div>
                                                         }
-                                                        else if (HasVisibleSuggestion(item))
+                                                        else if (HasVisibleSuggestion(item.Tracked!))
                                                         {
                                                             <div class="hki-suggestionLine">
                                                                 <span>
                                                                     Связанные ГСМ по основным маркам строки:
-                                                                    @foreach (var src in SuggestionsFor(item).Where(s => s.Suggestions.Count > 0))
+                                                                    @foreach (var src in SuggestionsFor(item.Tracked!).Where(s => s.Suggestions.Count > 0))
                                                                     {
                                                                         <span class="hki-suggestionSource">
                                                                             «@src.PrimaryName» — @src.Suggestions.Count(x => x.IsAddable) из @src.Suggestions.Count
                                                                         </span>
                                                                     }
-                                                                    <span class="hki-suggestionSource">(@SuggestionSummary(item))</span>
+                                                                    <span class="hki-suggestionSource">(@SuggestionSummary(item.Tracked!))</span>
                                                                 </span>
                                                                 <button type="button" class="linkBtn"
-                                                                        @onclick="() => ToggleSuggestionOpen(item)">
+                                                                        @onclick="() => ToggleSuggestionOpen(item.Tracked!)">
                                                                     @(_suggestionOpen.Contains(item.Id) ? "Скрыть варианты" : "Посмотреть варианты")
                                                                 </button>
                                                             </div>
 
-                                                            @if (!HasAddableSuggestion(item))
+                                                            @if (!HasAddableSuggestion(item.Tracked!))
                                                             {
                                                                 @* Все аналоги недоступны: список показан, чтобы
                                                                    сами связи были видны, но подтверждать
@@ -1071,7 +1085,7 @@
                                                             @if (_suggestionOpen.Contains(item.Id))
                                                             {
                                                                 <div class="hki-suggestionPanel">
-                                                                    @foreach (var src in SuggestionsFor(item))
+                                                                    @foreach (var src in SuggestionsFor(item.Tracked!))
                                                                     {
                                                                         @* Категории без вариантов не показываются: пустая группа —
                                                                            шум. Порядок фиксирован, а не «как сложилось». *@
@@ -1093,12 +1107,12 @@
                                                                                     </div>
                                                                                     @foreach (var o in options)
                                                                                     {
-                                                                                        var already = SuggestionAlreadyInRow(item, o.MaterialId, category);
+                                                                                        var already = SuggestionAlreadyInRow(item.Tracked!, o.MaterialId, category);
                                                                                         <label class="hki-suggestionOption @(already ? "hki-suggestionOptionAlready" : "") @(o.IsAddable ? "" : "hki-suggestionOptionBlocked")">
                                                                                             <input type="checkbox"
                                                                                                    checked="@IsPicked(item.Id, o.MaterialId, category)"
                                                                                                    disabled="@(already || !o.IsAddable)"
-                                                                                                   @onchange="() => ToggleSuggestionPick(item, o.MaterialId, category)" />
+                                                                                                   @onchange="() => ToggleSuggestionPick(item.Tracked!, o.MaterialId, category)" />
                                                                                             <span class="hki-suggestionName">@o.Name</span>
                                                                                             @if (!string.IsNullOrWhiteSpace(o.Nd))
                                                                                             {
@@ -1128,11 +1142,11 @@
                                                                            которые всё ещё предлагаются И доступны. Устаревшая
                                                                            отметка не должна превращаться в строку ХК. *@
                                                                         <button type="button" class="btn primary"
-                                                                                disabled="@(PickedAddableCount(item) == 0)"
-                                                                                @onclick="() => ConfirmSuggestions(item)">
+                                                                                disabled="@(PickedAddableCount(item.Tracked!) == 0)"
+                                                                                @onclick="() => ConfirmSuggestions(item.Tracked!)">
                                                                             Добавить выбранные
                                                                         </button>
-                                                                        <button type="button" class="btn ghost" @onclick="() => CancelSuggestions(item)">Отмена</button>
+                                                                        <button type="button" class="btn ghost" @onclick="() => CancelSuggestions(item.Tracked!)">Отмена</button>
                                                                         <span class="hki-suggestionHint">
                                                                             По умолчанию ничего не отмечено. Добавленные варианты становятся обычными строками: удалить их можно только отдельным действием.
                                                                         </span>
@@ -1140,7 +1154,7 @@
                                                                 </div>
                                                             }
                                                         }
-                                                        else if (HasPrimaryMaterial(item))
+                                                        else if (HasPrimaryMaterial(item.Tracked!))
                                                         {
                                                             @* Предложения ещё не запрашивались. У сохранённой ХК это
                                                                единственный способ увидеть связи своей основной
@@ -1149,7 +1163,7 @@
                                                                 <span class="hki-suggestionHint">
                                                                     Связи основных марок строки не загружены.
                                                                 </span>
-                                                                <button type="button" class="btn ghost" @onclick="() => CheckRelationsCommandAsync(item)">
+                                                                <button type="button" class="btn ghost" @onclick="() => CheckRelationsCommandAsync(item.Tracked!)">
                                                                     Проверить связи
                                                                 </button>
                                                             </div>
@@ -1187,7 +1201,7 @@
                                         }
                                         @* Строка под корнем автономной карты может иметь
                                            собственный раздел: селект только для такой строки. *@
-                                        @if (IsAutonomousMode && canEditComposition && item.HKCardNodeId is null)
+                                        @if (IsAutonomousMode && canEditStructure && item.IsLocal && item.NodeId is null)
                                         {
                                             <tr @key="@($"seci{item.Id}")" class="hki-note-row">
                                                 <td></td>
@@ -1197,7 +1211,7 @@
                                                             @onchange="ev => ChangeRootItemSection(item, (string)ev.Value!)"
                                                             class="hki-td-input" style="width:120px;font-size:11px">
                                                         <option value="">Без раздела</option>
-                                                        @foreach (var sec in _sections.OrderBy(s => s.SortOrder))
+                                                        @foreach (var sec in EditorSections)
                                                         {
                                                             <option value="@sec.Id">@HKSectionNames.NameOf(sec.SectionType)</option>
                                                         }
@@ -1260,14 +1274,30 @@
                                     }
                                 </div>
 
+                                @if (_confirmItemId is { } confirmLineId)
+                                {
+                                    var confirmRow = EditorRows().FirstOrDefault(r => r.Item?.Id == confirmLineId);
+                                    if (confirmRow?.Item is not null)
+                                    {
+                                        <div class="hk-delete-confirm" style="margin-top:8px;padding:8px 10px;border:1px solid var(--bad);border-radius:8px;font-size:12px;background:var(--panel2)">
+                                            <b>Удалить строку?</b>
+                                            <span>@_confirmImpactText</span>
+                                            <div style="margin-top:4px;display:flex;gap:6px">
+                                                <button type="button" class="btn" style="color:var(--bad)" @onclick="ConfirmDeleteItem">Удалить</button>
+                                                <button type="button" class="btn ghost" @onclick="CancelDeleteItem">Отмена</button>
+                                            </div>
+                                        </div>
+                                    }
+                                }
+
                                 @if (_confirmDeletePositionId is { } confirmId)
                                 {
-                                    var confirmNode = card.TreeNodes.FirstOrDefault(n => n.Id == confirmId);
-                                    if (confirmNode != null)
+                                    var confirmNode = _structure?.NodeById(confirmId);
+                                    if (confirmNode is not null)
                                     {
                                         <div class="hk-delete-confirm" style="margin-top:8px;padding:8px 10px;border:1px solid var(--bad);border-radius:8px;font-size:12px;background:var(--panel2)">
                                             <b>Удалить «@confirmNode.Name»?</b>
-                                            <span>@DeleteImpactText(confirmNode)</span>
+                                            <span>@DeleteImpactText(confirmId)</span>
                                             <div style="margin-top:4px;display:flex;gap:6px">
                                                 <button type="button" class="btn" style="color:var(--bad)" @onclick="ConfirmDeletePosition">Удалить</button>
                                                 <button type="button" class="btn ghost" @onclick="CancelDeletePosition">Отмена</button>
@@ -1843,7 +1873,7 @@
         _components = new();
         _aggregatedRows = new();
         // Новая карта: разделов нет, редактор начинается с пустой структуры.
-        InitStructureState();
+        await InitStructureStateAsync(_loadCts?.Token ?? CancellationToken.None);
         _availableChildCards = new();
         _pendingChild = null;
         _pendingChildCards.Clear();
@@ -1951,7 +1981,7 @@
             selectedNodeId = card.NodeId ?? Guid.Empty;
             statusStr = card.Status.ToString();
             // Разделы и локальное состояние редактора структуры — вместе с картой.
-            InitStructureState();
+            await InitStructureStateAsync(ct);
 
             await LoadApprovalStateAsync(ct);
             if (canSubmit)
@@ -2130,7 +2160,21 @@
     // (SaveHKCardStructureCommand), а не записываются цепочкой команд.
 
     /// <summary>Разделы карты в порядке их отображения.</summary>
-    private List<HKCardSection> _sections = new();
+    /// <summary>
+    /// Независимое состояние редактора: глубокая копия read-only проекции
+    /// графа. Правки до сохранения не затрагивают загруженные сущности.
+    /// </summary>
+    private HKStructureEditorState? _structure;
+
+    /// <summary>
+    /// Собственная структура редактируется у сохранённой карты: у нового
+    /// черновика она ещё не существует в базе, поэтому недоступна до
+    /// первого сохранения реквизитов.
+    /// </summary>
+    private bool canEditStructure => canEditComposition && !IsNew && _structure is not null;
+
+    private List<EditorSection> EditorSections =>
+        _structure?.Sections.OrderBy(s => s.SortOrder).ToList() ?? new List<EditorSection>();
 
     /// <summary>Активный выбор панели: тип раздела для НОВОЙ верхней ветки.</summary>
     private HKCardSectionType? _newBranchSection;
@@ -2147,6 +2191,12 @@
     /// <summary>Ошибка серверной проверки структуры, показанная над таблицей.</summary>
     private string? _structureError;
 
+    /// <summary>Выбранная позиция по устойчивому Id — для подсветки и итогов.</summary>
+    private Guid? _focusNodeId;
+
+    /// <summary>Описание содержимого, удаляемого подтверждаемым действием.</summary>
+    private string? _confirmImpactText;
+
     /// <summary>В структуре есть несохранённые локальные изменения.</summary>
     private bool _structureDirty;
 
@@ -2156,31 +2206,188 @@
     /// <summary>Уровень следующей верхней позиции.</summary>
     private HKObjectLevel _topPositionLevel = HKObjectLevel.Aggregate;
 
-    private void InitStructureState()
+    /// <summary>
+    /// Строит состояние редактора из полного рабочего графа. Чтение идёт
+    /// отдельной read-only проекцией: загруженные сущности не редактируются.
+    /// </summary>
+    private async Task InitStructureStateAsync(CancellationToken ct)
     {
-        _sections = card.Sections.OrderBy(s => s.SortOrder).ToList();
-        _structureDirty = false;
-        _nodeRootChoice = card.NodeRootCardLevel;
-        _collapsed.Clear();
         _childLevelChoice.Clear();
         _confirmDeletePositionId = null;
         _topPositionLevel = HKObjectLevel.Aggregate;
+
+        var graph = await HKCardService.GetStructureGraphAsync(card.Id, ct);
+        if (graph is null)
+        {
+            _structure = null;
+            return;
+        }
+
+        _structure = HKStructureEditorState.FromGraph(graph);
+        _nodeRootChoice = _structure.NodeRootChoice;
     }
+
+    /// <summary>В структуре есть несохранённые изменения.</summary>
+    private bool structureDirty => _structure?.IsDirty ?? false;
 
     /// <summary>Строка редактора: номер из доменного механизма плюс ссылка на данные.</summary>
     private sealed record EditorRow(
-        HKStructureRow Row, HKCardNode? Node, HKCardItem? Item, int Index, bool HasChildren);
+        HKStructureRow Row, EditorNode? Node, RowItem? Item, int Index, bool HasChildren);
+
+    /// <summary>
+    /// Строка таблицы редактора: единый вид для собственной структуры
+    /// автономной карты и для обычных строк ХК.
+    /// <para>
+    /// Автономная карта работает с независимым состоянием редактора, обычная —
+    /// с сохранёнными строками карты. Разметка при этом одна: источник выбирается
+    /// один раз, а свойства читают и пишут в тот источник, из которого строка
+    /// создана.
+    /// </para>
+    /// </summary>
+    private sealed class RowItem
+    {
+        private readonly EditorItem? _local;
+        private readonly HKCardItem? _tracked;
+        private readonly HKStructureEditorState? _state;
+        private readonly Func<Guid, string?> _assemblyUnitName;
+
+        private RowItem(
+            EditorItem local, HKStructureEditorState? state, Func<Guid, string?> assemblyUnitName)
+        {
+            _local = local;
+            _state = state;
+            _assemblyUnitName = assemblyUnitName;
+        }
+
+        private RowItem(HKCardItem tracked, Func<Guid, string?> assemblyUnitName)
+        {
+            _tracked = tracked;
+            _assemblyUnitName = assemblyUnitName;
+        }
+
+        public static RowItem ForLocal(
+            EditorItem item, HKStructureEditorState? state, Func<Guid, string?> assemblyUnitName) =>
+            new(item, state, assemblyUnitName);
+
+        public static RowItem ForTracked(HKCardItem item, Func<Guid, string?> assemblyUnitName) =>
+            new(item, assemblyUnitName);
+
+        /// <summary>Строка принадлежит локальному состоянию редактора.</summary>
+        public bool IsLocal => _local is not null;
+
+        /// <summary>
+        /// Отслеживаемая строка обычной карты. У собственной структуры её нет:
+        /// механизмы, работающие с сохранённой строкой, к такой строке не
+        /// применяются.
+        /// </summary>
+        public HKCardItem? Tracked => _tracked;
+
+        /// <summary>Сборочная единица строки: имя для показа берётся у источника.</summary>
+        public string? AssemblyUnitName =>
+            _local?.AssemblyUnitName ?? _assemblyUnitName(AssemblyUnitId);
+
+        public Guid Id => _local?.Id ?? _tracked!.Id;
+
+        public Guid? NodeId
+        {
+            get => _local?.NodeId ?? _tracked!.HKCardNodeId;
+            set { if (_local is not null) _local.NodeId = value; else _tracked!.HKCardNodeId = value; }
+        }
+
+        public Guid AssemblyUnitId
+        {
+            get => _local?.AssemblyUnitId ?? _tracked!.AssemblyUnitId;
+            set { if (_local is not null) _local.AssemblyUnitId = value; else _tracked!.AssemblyUnitId = value; }
+        }
+
+        public int Quantity
+        {
+            get => _local?.Quantity ?? _tracked!.Quantity;
+            set { if (_local is not null) _local.Quantity = value; else _tracked!.Quantity = value; }
+        }
+
+        public decimal Volume
+        {
+            get => _local?.Volume ?? _tracked!.Volume;
+            set { if (_local is not null) _local.Volume = value; else _tracked!.Volume = value; }
+        }
+
+        public string? UnitOfMeasure
+        {
+            get => _local?.UnitOfMeasure ?? _tracked!.UnitOfMeasure;
+            set { if (_local is not null) _local.UnitOfMeasure = value; else _tracked!.UnitOfMeasure = value; }
+        }
+
+        public string? Periodicity
+        {
+            get => _local?.Periodicity ?? _tracked!.Periodicity;
+            set { if (_local is not null) _local.Periodicity = value; else _tracked!.Periodicity = value; }
+        }
+
+        public string? Notes
+        {
+            get => _local?.Notes ?? _tracked!.Notes;
+            set { if (_local is not null) _local.Notes = value; else _tracked!.Notes = value; }
+        }
+
+        public Guid? SectionId
+        {
+            get => _local?.SectionId ?? _tracked!.SectionId;
+            set { if (_local is not null) _local.SectionId = value; else _tracked!.SectionId = value; }
+        }
+
+        /// <summary>
+        /// Марки строки: стабильный Id строки назначения, марка и категория.
+        /// Идентификатор строки назначения — ключ удаления, а не позиция в
+        /// списке.
+        /// </summary>
+        public List<(Guid RowId, Guid GsmMaterialId, GsmCategory Category)> Materials =>
+            _local is not null
+                ? _local.Materials
+                    .Select(m => (m.Id, m.GsmMaterialId, m.Category))
+                    .ToList()
+                : _tracked!.Materials
+                    .Select(m => (m.Id, m.GsmMaterialId, m.Category))
+                    .ToList();
+
+        public void AddMaterial(Guid gsmMaterialId, GsmCategory category)
+        {
+            if (_local is not null)
+            {
+                _state?.AddMaterial(_local.Id, gsmMaterialId, category);
+                return;
+            }
+
+            _tracked!.Materials.Add(new HKCardItemMaterial
+            {
+                Id = Guid.NewGuid(),
+                HKCardItemId = _tracked.Id,
+                GsmMaterialId = gsmMaterialId,
+                Category = category
+            });
+        }
+
+        /// <summary>Удаляет назначение по стабильному Id строки материала.</summary>
+        public void RemoveMaterial(Guid materialRowId)
+        {
+            if (_local is not null)
+            {
+                _state?.RemoveMaterial(_local.Id, materialRowId);
+                return;
+            }
+
+            var row = _tracked!.Materials.FirstOrDefault(m => m.Id == materialRowId);
+            if (row is not null)
+                _tracked.Materials.Remove(row);
+        }
+    }
 
     /// <summary>Входные данные доменного механизма: разделы, позиции, строки.</summary>
-    private HKStructureInput BuildStructureInput() => new(
-        _sections.Select(s => new HKStructureSectionInput(s.Id, s.SectionType, s.SortOrder)).ToList(),
-        card.TreeNodes.Select(n => new HKStructureNodeInput(
-            n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder,
-            // Раздел фиксируется только у верхней позиции: вложенная наследует.
-            n.ParentId is null ? n.SectionId : null)).ToList(),
-        card.Items.Select(i => new HKStructureItemInput(
-            i.Id, i.HKCardNodeId, i.Quantity, i.Volume, i.UnitOfMeasure, i.SortOrder,
-            i.HKCardNodeId is null ? i.SectionId : null)).ToList());
+    private HKStructureInput BuildStructureInput() =>
+        _structure?.BuildInput() ?? new HKStructureInput(
+            new List<HKStructureSectionInput>(),
+            new List<HKStructureNodeInput>(),
+            new List<HKStructureItemInput>());
 
     /// <summary>
     /// Видимые строки редактора: иерархическое представление с учётом
@@ -2188,9 +2395,27 @@
     /// </summary>
     private IReadOnlyList<EditorRow> EditorRows()
     {
+        // Обычная карта: структура не собственная, строки хранятся у карты и
+        // сохраняются реквизитным путём.
+        if (!IsAutonomousMode)
+        {
+            var flat = card.Items.OrderBy(i => i.SortOrder).ToList();
+            return flat.Select((item, i) => new EditorRow(
+                new HKStructureRow(
+                    (i + 1).ToString(), 0, HKStructureRowKind.TerminalRow,
+                    null, item.Id, null, null, "", item.Quantity),
+                null,
+                RowItem.ForTracked(item, AssemblyUnitNameOf),
+                i,
+                false)).ToList();
+        }
+
+        if (_structure is null)
+            return Array.Empty<EditorRow>();
+
         var rows = HKStructureNumbering.Build(BuildStructureInput());
-        var nodesById = card.TreeNodes.ToDictionary(n => n.Id);
-        var itemsById = card.Items.ToDictionary(i => i.Id);
+        var nodesById = _structure.Nodes.ToDictionary(n => n.Id);
+        var itemsById = _structure.Items.ToDictionary(i => i.Id);
 
         var result = new List<EditorRow>();
         var hiddenBelow = -1;
@@ -2214,7 +2439,9 @@
                         hiddenBelow = row.Depth;
                     break;
                 default:
-                    result.Add(new EditorRow(row, null, itemsById[row.ItemId!.Value], i, false));
+                    result.Add(new EditorRow(
+                        row, null, RowItem.ForLocal(itemsById[row.ItemId!.Value], _structure, AssemblyUnitNameOf),
+                        i, false));
                     break;
             }
         }
@@ -2223,27 +2450,32 @@
     }
 
     /// <summary>Агрегат для панели итогов.</summary>
-    private sealed record StructureSummaryData(IReadOnlyList<HKCardSection> Sections, HKCardTotals Totals);
+    private sealed record StructureSummaryData(
+        IReadOnlyList<EditorSection> Sections, HKCardTotals Totals);
 
     private StructureSummaryData BuildSummary()
     {
-        var input = BuildStructureInput();
-        return new StructureSummaryData(_sections, HKStructureTotals.Calculate(input));
+        var totals = _structure?.Totals()
+            ?? HKStructureTotals.Calculate(BuildStructureInput());
+        return new StructureSummaryData(EditorSections, totals);
     }
 
     private static string FormatTotals(IEnumerable<HKMeasuredTotal> totals) =>
         string.Join("; ", totals.Select(HKTotalFormatter.Format));
 
-    private string SectionNameById(Guid sectionId, IReadOnlyList<HKCardSection> sections)
+    private string SectionNameById(Guid sectionId, IReadOnlyList<EditorSection> sections)
     {
         var section = sections.FirstOrDefault(s => s.Id == sectionId);
         return section is null ? "Раздел" : HKSectionNames.NameOf(section.SectionType);
     }
 
+    /// <summary>Наименование сборочной единицы для показа в строке таблицы.</summary>
+    private string? AssemblyUnitNameOf(Guid id) =>
+        assemblyUnits.FirstOrDefault(a => a.Id == id)?.Name;
+
     private string SectionNameOf(Guid? sectionId)
     {
-        if (sectionId is null) return "";
-        var section = _sections.FirstOrDefault(s => s.Id == sectionId.Value);
+        var section = _structure?.SectionById(sectionId);
         return section is null ? "" : HKSectionNames.NameOf(section.SectionType);
     }
 
@@ -2276,42 +2508,47 @@
             _ => null
         };
 
-    private void SelectNewBranchSection(HKCardSectionType? type) =>
+    private void SelectNewBranchSection(HKCardSectionType? type)
+    {
         _newBranchSection = type;
+        _newBranchSectionType = type;
+        if (_structure is not null)
+            _structure.NewBranchSectionId = type is null ? null : _structure.AddSection(type.Value).Id;
 
-    /// <summary>Разделы создаёт первый выбор ветки: запись появится только при сохранении.</summary>
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Раздел для новой самостоятельной ветки. Раздел создаётся первым
+    /// выбором панели и появляется в базе только при сохранении структуры.
+    /// </summary>
     private Guid? SectionIdForNewBranch()
     {
-        if (_newBranchSection is not { } type)
+        if (_structure is null)
             return null;
-        return EnsureLocalSection(type).Id;
+
+        var chosen = _newBranchSectionType;
+        if (chosen is null)
+            return null;
+
+        return _structure.AddSection(chosen.Value).Id;
     }
 
-    private HKCardSection EnsureLocalSection(HKCardSectionType type)
-    {
-        var existing = _sections.FirstOrDefault(s => s.SectionType == type);
-        if (existing is not null)
-            return existing;
+    /// <summary>Тип раздела, выбранный на панели для НОВОЙ самостоятельной ветки.</summary>
+    private HKCardSectionType? _newBranchSectionType;
 
-        var section = new HKCardSection
-        {
-            Id = Guid.NewGuid(),
-            HKCardId = card.Id,
-            SectionType = type,
-            SortOrder = _sections.Count + 1
-        };
-        _sections.Add(section);
-        return section;
-    }
+    /// <summary>Устойчивый Id выбранного на панели раздела новой ветки.</summary>
+    private Guid? NewBranchSectionId =>
+        _newBranchSectionType is { } type
+            ? _structure?.Sections.FirstOrDefault(s => s.SectionType == type)?.Id
+            : null;
 
-    /// <summary>Разрешённые уровни дочерней позиции. Пропуск узла допускается согласованными правилами.</summary>
-    private IReadOnlyList<HKObjectLevel> AllowedChildLevels(HKCardNode parent) =>
-        parent.Level switch
-        {
-            HKObjectLevel.EquipmentModel => new[] { HKObjectLevel.Aggregate, HKObjectLevel.Node },
-            HKObjectLevel.Aggregate => new[] { HKObjectLevel.Node },
-            _ => Array.Empty<HKObjectLevel>()
-        };
+    /// <summary>
+    /// Разрешённые уровни дочерней позиции — единое правило проекта, а не
+    /// отдельная таблица в разметке.
+    /// </summary>
+    private static IReadOnlyList<HKObjectLevel> AllowedChildLevels(EditorNode parent) =>
+        HKStructureEditorState.AllowedChildLevels(parent.Level);
 
     private string ChildLevelKey(Guid nodeId, IReadOnlyList<HKObjectLevel> allowed)
     {
@@ -2321,7 +2558,7 @@
         return chosen.ToString();
     }
 
-    private void SetChildLevelChoice(HKCardNode parent, string value)
+    private void SetChildLevelChoice(EditorNode parent, string value)
     {
         if (!Enum.TryParse<HKObjectLevel>(value, out var level))
             return;
@@ -2332,25 +2569,31 @@
 
     /// <summary>Количество потомков позиции: вложенные позиции и конечные строки.</summary>
     private int CountChildRows(Guid nodeId) =>
-        card.TreeNodes.Count(n => n.ParentId == nodeId)
-        + card.Items.Count(i => i.HKCardNodeId == nodeId);
+        (_structure?.Nodes.Count(n => n.ParentId == nodeId) ?? 0)
+        + (_structure?.Items.Count(i => i.NodeId == nodeId) ?? 0);
 
-    private bool IsCollapsed(Guid nodeId) =>
-        _collapsed.TryGetValue(nodeId, out var flag) && flag;
+    private bool IsCollapsed(Guid nodeId) => _structure?.IsCollapsed(nodeId) ?? false;
 
+    /// <summary>
+    /// Свёрнутое или развёрнутое — это просмотр: доступно и в read-only режиме
+    /// и не меняет порядок, номера и итоги.
+    /// </summary>
     private void ToggleCollapse(Guid nodeId)
     {
-        _collapsed[nodeId] = !IsCollapsed(nodeId);
+        _structure?.ToggleCollapse(nodeId);
         StateHasChanged();
     }
 
-    /// <summary>Перенос под корень: раздел прежнего корня сохраняется, чтобы принадлежность ветки не потерялась молча.</summary>
-    private void MoveUnderRoot(HKCardNode node)
+    /// <summary>
+    /// Перенос под корень: раздел прежнего корня сохраняется, чтобы
+    /// принадлежность ветки не потерялась молча.
+    /// </summary>
+    private void MoveUnderRoot(EditorNode node)
     {
-        if (!canEditComposition || node.ParentId is null)
+        if (!canEditStructure || _structure is null || node.ParentId is null)
             return;
 
-        var nodesById = card.TreeNodes.ToDictionary(n => n.Id);
+        var nodesById = _structure.Nodes.ToDictionary(x => x.Id);
         var upper = node.ParentId.Value;
         Guid? inheritedSection = null;
         while (nodesById.TryGetValue(upper, out var current))
@@ -2363,63 +2606,65 @@
             upper = current.ParentId.Value;
         }
 
-        node.ParentId = null;
+        if (!_structure.TryMovePosition(node.Id, null, out var error))
+        {
+            _structureError = error;
+            return;
+        }
+
         node.SectionId = inheritedSection;
-        MarkStructureDirty();
         ResetChoiceIfNotApplicable();
         StateHasChanged();
     }
 
-    private void ChangeTopNodeSection(HKCardNode node, string value)
+    private void ChangeTopNodeSection(EditorNode node, string value)
     {
-        // Наследование принадлежности вложенной позицией не редактируется:
-        // раздел меняется только у верхней позиции всей ветки.
-        if (!canEditComposition || node.ParentId is not null)
+        // Раздел меняется только у верхней позиции всей ветки: вложенная
+        // наследует раздел корня и собственного не имеет.
+        if (!canEditStructure || _structure is null || node.ParentId is not null)
             return;
-        node.SectionId = Guid.TryParse(value, out var id) ? id : null;
-        MarkStructureDirty();
+
+        var sectionId = Guid.TryParse(value, out var id) ? id : (Guid?)null;
+        if (!_structure.TrySetTopSection(node.Id, sectionId, out var error))
+        {
+            _structureError = error;
+            return;
+        }
+
         StateHasChanged();
     }
 
-    private void ChangeRootItemSection(HKCardItem item, string value)
+    private void ChangeRootItemSection(RowItem item, string value)
     {
-        if (!canEditComposition || item.HKCardNodeId is not null)
+        if (!canEditStructure || _structure is null || !item.IsLocal || item.NodeId is not null)
             return;
-        item.SectionId = Guid.TryParse(value, out var id) ? id : null;
-        MarkStructureDirty();
+
+        var sectionId = Guid.TryParse(value, out var id) ? id : (Guid?)null;
+        if (!_structure.TrySetRootItemSection(item.Id, sectionId, out var error))
+        {
+            _structureError = error;
+            return;
+        }
+
         StateHasChanged();
     }
 
     private void AddTopPosition()
     {
-        if (!canEditComposition)
+        if (!canEditStructure || _structure is null)
             return;
 
-        var node = new HKCardNode
-        {
-            Id = Guid.NewGuid(),
-            HKCardId = card.Id,
-            ParentId = null,
-            Level = _topPositionLevel,
-            Name = "Новая позиция",
-            Quantity = 1,
-            // Разделы и самостоятельные ветки делят общий верхний порядок.
-            SortOrder = TopSiblingCount() + 1,
-            SectionId = SectionIdForNewBranch()
-        };
-        card.TreeNodes.Add(node);
-        MarkStructureDirty();
+        _structure.NewBranchSectionId = SectionIdForNewBranch();
+        var node = _structure.AddTopPosition(_topPositionLevel);
+        node.Name = "Новая позиция";
+        _focusNodeId = node.Id;
         ResetChoiceIfNotApplicable();
         StateHasChanged();
     }
 
-    private int TopSiblingCount() =>
-        card.TreeNodes.Count(n => n.ParentId is null)
-        + card.Items.Count(i => i.HKCardNodeId is null);
-
-    private void AddChildPosition(HKCardNode parent)
+    private void AddChildPosition(EditorNode parent)
     {
-        if (!canEditComposition)
+        if (!canEditStructure || _structure is null)
             return;
 
         var allowed = AllowedChildLevels(parent);
@@ -2430,42 +2675,28 @@
             ? chosen
             : allowed[0];
 
-        var node = new HKCardNode
-        {
-            Id = Guid.NewGuid(),
-            HKCardId = card.Id,
-            ParentId = parent.Id,
-            Level = level,
-            Name = "Новая позиция",
-            Quantity = 1,
-            // Вложенная позиция раздел не получает: наследует корень ветки.
-            SectionId = null,
-            SortOrder = CountChildRows(parent.Id) + 1
-        };
-        card.TreeNodes.Add(node);
-        MarkStructureDirty();
+        var node = _structure.AddChildPosition(parent.Id, level);
+        node.Name = "Новая позиция";
+        _focusNodeId = node.Id;
         StateHasChanged();
     }
 
-    /// <summary>Новая конечная строка: под позицией наследует раздел, под корнем несёт раздел самостоятельно.</summary>
-    private void AddRowUnder(HKCardNode? parent)
+    /// <summary>
+    /// Новая конечная строка: под позицией наследует раздел ветки, под корнем
+    /// несёт раздел самостоятельно.
+    /// </summary>
+    private void AddRowUnder(EditorNode? parent)
     {
-        if (!canEditComposition)
+        if (!canEditStructure || _structure is null)
             return;
 
-        var item = new HKCardItem
-        {
-            Id = Guid.NewGuid(),
-            HKCardId = card.Id,
-            HKCardNodeId = parent?.Id,
-            AssemblyUnitId = Guid.Empty,
-            Quantity = 0,
-            Volume = 0m,
-            UnitOfMeasure = "г",
-            SectionId = parent is null ? SectionIdForNewBranch() : null,
-            SortOrder = (parent is null ? TopSiblingCount() : CountChildRows(parent.Id)) + 1
-        };
-        card.Items.Add(item);
+        var item = _structure.AddItem(parent?.Id, Guid.Empty);
+        item.UnitOfMeasure = "г";
+        item.Quantity = 1;
+
+        if (parent is null)
+            item.SectionId = SectionIdForNewBranch();
+
         _auSearch[item.Id] = "";
         _auOpen[item.Id] = false;
         foreach (var cat in new[] { GsmCategory.Primary, GsmCategory.Duplicate, GsmCategory.Reserve, GsmCategory.Foreign })
@@ -2473,16 +2704,29 @@
             _matOpen[(item.Id, cat)] = false;
             _matSearch[(item.Id, cat)] = "";
         }
+
         _focusItemId = item.Id;
-        MarkStructureDirty();
         StateHasChanged();
     }
 
-    private void MoveTreeRow(HKCardNode? node, HKCardItem? item, int direction)
+    /// <summary>
+    /// Перемещение среди соседей своего контейнера: корень ХК, конкретный
+    /// раздел или конкретная позиция. Соседи берутся доменной механикой,
+    /// плоский видимый порядок не используется.
+    /// </summary>
+    private void MoveTreeRow(EditorNode? node, RowItem? item, int direction)
     {
-        if (!canEditComposition)
+        if (!canEditStructure || _structure is null)
             return;
-        MoveSiblingUnder(node?.ParentId, item?.HKCardNodeId, node, item, direction);
+
+        var moved = node is not null
+            ? _structure.MovePosition(node.Id, direction)
+            : item is not null && item.IsLocal && _structure.MoveItem(item.Id, direction);
+
+        if (!moved)
+            return;
+
+        StateHasChanged();
     }
 
     /// <summary>
@@ -2490,92 +2734,34 @@
     /// делят одну последовательность. Доменный порядок: SortOrder, потом
     /// позиции, затем идентификаторы.
     /// </summary>
-    private void MoveSiblingUnder(Guid? nodeParent, Guid? itemParent, HKCardNode? node, HKCardItem? item, int direction)
-    {
-        var siblings = new List<(HKCardNode? N, HKCardItem? I)>();
-        siblings.AddRange(card.TreeNodes
-            .Where(n => n.ParentId == nodeParent)
-            .Select(n => ((HKCardNode?)n, (HKCardItem?)null)));
-        siblings.AddRange(card.Items
-            .Where(i => i.HKCardNodeId == itemParent)
-            .Select(i => ((HKCardNode?)null, (HKCardItem?)i)));
-
-        siblings = siblings
-            .OrderBy(s => SortOrderOf(s.N, s.I))
-            .ThenBy(s => s.N is not null ? 0 : 1)
-            .ThenBy(s => s.N?.Id ?? s.I!.Id)
-            .ToList();
-
-        var index = siblings.FindIndex(s =>
-            s.N?.Id == node?.Id && s.I?.Id == item?.Id);
-        var target = index + direction;
-        if (index < 0 || target < 0 || target >= siblings.Count)
-            return;
-
-        var moving = siblings[index];
-        siblings.RemoveAt(index);
-        siblings.Insert(target, moving);
-        ReindexSiblings(siblings);
-        MarkStructureDirty();
-        StateHasChanged();
-    }
-
-    private static int SortOrderOf(HKCardNode? node, HKCardItem? item) =>
-        node?.SortOrder ?? item?.SortOrder ?? 0;
-
-    private void ReindexSiblings(List<(HKCardNode? N, HKCardItem? I)> siblings)
-    {
-        for (var i = 0; i < siblings.Count; i++)
-        {
-            if (siblings[i].N is { } node)
-                node.SortOrder = i + 1;
-            if (siblings[i].I is { } item)
-                item.SortOrder = i + 1;
-        }
-    }
-
     /// <summary>
-    /// Доступность кнопок перемещения: в автономном режиме — сосед в
-    /// отображаемом порядке той же группы; перепрыгнуть раздел нельзя;
-    /// в старом плоском режиме — прежние правила.
+    /// Доступность перемещения: сосед берётся из контейнера записи, поэтому
+    /// сворачивание соседней ветки на возможность перемещения не влияет.
     /// </summary>
-    private bool CanMove(HKCardNode? node, HKCardItem? item, int direction)
+    private bool CanMove(EditorNode? node, RowItem? item, int direction)
     {
+        if (_structure is null)
+            return false;
+
         if (!IsAutonomousMode)
         {
             var flat = card.Items.OrderBy(i => i.SortOrder).ToList();
-            var current = flat.IndexOf(item!);
+            var current = flat.FindIndex(i => item is not null && i.Id == item.Id);
             var at = current + direction;
             return current >= 0 && at >= 0 && at < flat.Count;
         }
 
-        var parentId = node?.ParentId ?? item?.HKCardNodeId;
-        var rows = EditorRows();
-        var current2 = -1;
-        for (var i = 0; i < rows.Count && current2 < 0; i++)
-        {
-            if (rows[i].Node?.Id == node?.Id && rows[i].Item?.Id == item?.Id)
-                current2 = i;
-        }
-        var target2 = current2 + direction;
-        if (target2 < 0 || target2 >= rows.Count)
-            return false;
-
-        var neighbor = rows[target2];
-        // Сосед — заголовок раздела? Иначе порядок подразделов сложно сделать
-        // однозначным: перенос не перескакивает заголовок.
-        if (neighbor.Row.Kind == HKStructureRowKind.Section)
-            return false;
-
-        var neighborParent = neighbor.Node?.ParentId ?? neighbor.Item?.HKCardNodeId;
-        return neighborParent == parentId;
+        return node is not null
+            ? _structure.CanMovePosition(node.Id, direction)
+            : item is not null && item.IsLocal && _structure.CanMoveItem(item.Id, direction);
     }
 
-    private void AskDeletePosition(HKCardNode node)
+    private void AskDeletePosition(EditorNode node)
     {
         if (!canEditComposition)
             return;
         _confirmDeletePositionId = node.Id;
+        _confirmImpactText = _structure?.PositionImpactText(node.Id);
         StateHasChanged();
     }
 
@@ -2585,61 +2771,37 @@
         StateHasChanged();
     }
 
-    private IEnumerable<HKCardNode> Subtree(HKCardNode root)
-    {
-        var result = new List<HKCardNode> { root };
-        var nodeStack = new Stack<HKCardNode>();
-        nodeStack.Push(root);
-        while (nodeStack.Count > 0)
-        {
-            var current = nodeStack.Pop();
-            foreach (var child in card.TreeNodes.Where(n => n.ParentId == current.Id))
-            {
-                result.Add(child);
-                nodeStack.Push(child);
-            }
-        }
-        return result;
-    }
+    /// <summary>Описание затрагиваемого содержимого перед удалением ветки.</summary>
+    private string DeleteImpactText(Guid nodeId) =>
+        _structure?.PositionImpactText(nodeId) ?? "";
 
-    /// <summary>Полное описание затрагиваемого содержимого перед удалением ветки.</summary>
-    private string DeleteImpactText(HKCardNode node)
-    {
-        var removed = Subtree(node).ToList();
-        var removedIds = removed.Select(n => n.Id).ToHashSet();
-        var affectedItems = card.Items
-            .Where(i => i.HKCardNodeId is { } pid && removedIds.Contains(pid))
-            .ToList();
-        var materials = affectedItems.SelectMany(i => i.Materials).Count();
-        return $"Затронуто: позиций — {removed.Count}, конечных строк — {affectedItems.Count}, назначений марок — {materials}.";
-    }
-
+    /// <summary>
+    /// Удаление подтверждённой ветки. Доступность действия перепроверяется в
+    /// обработчике подтверждения: показ диалога и его нажатие — разные моменты.
+    /// </summary>
     private void ConfirmDeletePosition()
     {
-        var node = card.TreeNodes.FirstOrDefault(n => n.Id == _confirmDeletePositionId);
-        if (node is null)
+        if (!canEditStructure || _structure is null || _confirmDeletePositionId is not { } nodeId)
+        {
+            _confirmDeletePositionId = null;
             return;
-
-        var removedNodes = Subtree(node).ToList();
-        var removedIds = removedNodes.Select(n => n.Id).ToHashSet();
-
-        foreach (var removed in removedNodes)
-        {
-            card.TreeNodes.Remove(removed);
         }
 
-        var doomedItems = card.Items
-            .Where(i => i.HKCardNodeId is { } pid && removedIds.Contains(pid))
+        var doomedItems = _structure.Items
+            .Where(i => i.NodeId is { } pid
+                && _structure.Nodes.Any(n => n.Id == pid
+                    && (n.Id == nodeId || n.ParentId == nodeId)))
+            .Select(i => i.Id)
             .ToList();
-        foreach (var doomed in doomedItems)
-        {
-            card.Items.Remove(doomed);
-            CleanupItemDicts(doomed.Id);
-        }
 
-        MarkStructureDirty();
-        ResetChoiceIfNotApplicable();
+        _structure.RemovePosition(nodeId);
+
+        foreach (var itemId in doomedItems)
+            CleanupItemDicts(itemId);
+
         _confirmDeletePositionId = null;
+        _confirmImpactText = null;
+        ResetChoiceIfNotApplicable();
         StateHasChanged();
     }
 
@@ -2653,8 +2815,6 @@
             _matSearch.Remove((itemId, cat));
         }
     }
-
-    private void MarkStructureDirty() => _structureDirty = true;
 
     /// <summary>Выбор верхнего узла сохраняется только пока он применим.</summary>
     private void ResetChoiceIfNotApplicable()
@@ -2681,13 +2841,14 @@
             await using (await DbLock.WaitAsync())
             {
                 await HKCardService.SaveStructureAsync(command);
+                // Обновляем только версию и уровень карты: полная перезагрузка
+                // уничтожила бы несохранённые реквизиты.
+                await HKCardService.RefreshStructureVersionAsync(card.Id);
             }
-            // Перезагрузка: сохранение обновило версию строки и уровень карты.
-            _loadCts?.Cancel();
-            _loadCts?.Dispose();
-            _loadCts = new CancellationTokenSource();
-            await LoadCardAsync(card.Id, _loadCts.Token);
-            await LoadMaterialNamesAsync(_loadCts.Token);
+            // Состояние редактора перестраивается из свежей проекции графа:
+            // версия загрузки меняется, локальные правки заменены сохранёнными.
+            await InitStructureStateAsync(_loadCts?.Token ?? CancellationToken.None);
+            await LoadMaterialNamesAsync(_loadCts?.Token ?? CancellationToken.None);
         }
         catch (HkCardVersionConflictException ex)
         {
@@ -2762,7 +2923,7 @@
             }
         }
 
-        foreach (var section in _sections)
+        foreach (var section in EditorSections)
         {
             if (sectionsOrder.TryGetValue(section.Id, out var order))
                 section.SortOrder = order;
@@ -2793,7 +2954,7 @@
 
         return new SaveHKCardStructureCommand(
             card.Id,
-            _sections.OrderBy(s => s.SortOrder)
+            EditorSections.OrderBy(s => s.SortOrder)
                 .Select(s => new HKCardSectionWrite(s.Id, s.SectionType, s.SortOrder))
                 .ToList(),
             positions,
@@ -3110,7 +3271,9 @@
             // Структура сохраняется отдельной атомарной командой. Пока есть
             // несохранённые правки дерева,tracked граф нельзя записывать через
             // реквизитный путь: это обошло бы проверки структуры и разделов.
-            if (_structureDirty)
+            // У новой карты структурных правок быть не может: редактор
+            // структуры открывается только после сохранения черновика.
+            if (_structureDirty && !IsNew)
             {
                 errorMessage = StructureDirtyWarning;
                 return;
@@ -3363,7 +3526,7 @@
         }
     }
 
-    private async Task SelectAu(HKCardItem item, AssemblyUnit au)
+    private async Task SelectAu(RowItem item, AssemblyUnit au)
     {
         item.AssemblyUnitId = au.Id;
         _auSearch[item.Id] = $"{au.Code} — {au.Name}";
@@ -3371,7 +3534,7 @@
         StateHasChanged();
     }
 
-    private async Task ClearAssemblyUnit(HKCardItem item)
+    private async Task ClearAssemblyUnit(RowItem item)
     {
         item.AssemblyUnitId = Guid.Empty;
         _auSearch[item.Id] = "";
@@ -3402,25 +3565,21 @@
         }
     }
 
-    private async Task AddMaterial(HKCardItem item, GsmCategory cat, Guid materialId)
+    private async Task AddMaterial(RowItem item, GsmCategory cat, Guid materialId)
     {
         // Выбор основной марки — единственное место, где предложение связанных
         // марок запрашивается само. Ни выбор, ни открытие блока ничего не пишут
-        // в card.Items: только явное подтверждение пользователя.
+        // в структуру: только явное подтверждение пользователя.
         var isPrimary = cat == GsmCategory.Primary;
 
-        if (item.Materials.Any(m => m.GsmMaterialId == materialId && m.Category == cat)) return;
-        item.Materials.Add(new HKCardItemMaterial
-        {
-            Id = Guid.NewGuid(),
-            HKCardItemId = item.Id,
-            GsmMaterialId = materialId,
-            Category = cat
-        });
+        if (item.Materials.Any(m => m.GsmMaterialId == materialId && m.Category == cat))
+            return;
+
+        item.AddMaterial(materialId, cat);
         await CloseActiveDropdownAsync();
 
-        if (isPrimary)
-            await LoadSuggestionsForItemAsync(item, materialId);
+        if (isPrimary && item.Tracked is { } tracked)
+            await LoadSuggestionsForItemAsync(tracked, materialId);
 
         StateHasChanged();
     }
@@ -3675,6 +3834,24 @@
         suggestionSkippedCount = 0;
         _suggestionSkippedFor = Guid.Empty;
         await LoadSuggestionsForItemAsync(item, Guid.Empty);
+    }
+
+    /// <summary>
+    /// Удаление назначения марки строке. Для собственной структуры изменение
+    /// идёт в локальное состояние, для обычной строки — в сохранённую.
+    /// </summary>
+    private async Task RemoveMaterialFromRow(RowItem item, Guid materialRowId, Guid gsmMaterialId, GsmCategory category)
+    {
+        var wasPrimary = category == GsmCategory.Primary;
+        item.RemoveMaterial(materialRowId);
+
+        _suggestionPicked.RemoveWhere(p =>
+            p.ItemId == item.Id && p.MaterialId == gsmMaterialId);
+
+        if (wasPrimary && item.Tracked is { } tracked)
+            await LoadSuggestionsForItemAsync(tracked, Guid.Empty);
+
+        StateHasChanged();
     }
 
     private async Task RemoveMaterial(HKCardItem item, HKCardItemMaterial mat)
@@ -4013,10 +4190,11 @@
     /// НАТО, группе и любой подгруппе — прежний <c>Type</c> больше не читается
     /// (PR-5). Уже добавленные в эту же категорию марки скрыты, как и раньше.
     /// </summary>
-    private IEnumerable<GsmMaterial> FilteredGsmMaterials(GsmCategory cat, HKCardItem item)
+    private IEnumerable<GsmMaterial> FilteredGsmMaterials(GsmCategory cat, RowItem item)
     {
         var search = _matSearch.GetValueOrDefault((item.Id, cat), "")?.Trim().ToLower() ?? "";
-        var existingIds = item.Materials.Where(m => m.Category == cat).Select(m => m.GsmMaterialId).ToHashSet();
+        var existingIds = item.Materials.Where(m => m.Category == cat)
+            .Select(m => m.GsmMaterialId).ToHashSet();
         var available = gsmMaterials.Where(m => !existingIds.Contains(m.Id));
         if (string.IsNullOrEmpty(search)) return available;
         return available.Where(m =>
@@ -4058,17 +4236,89 @@
     private string PrimaryLabel(Guid primaryId) =>
         MaterialNames.TryGetValue(primaryId, out var name) ? name : "основной марке";
 
-    private void RemoveItem(HKCardItem item)
+    /// <summary>
+    /// Удаление строки. В автономной карте это изменение собственной
+    /// структуры: оно проходит атомарную проверку при сохранении структуры, а
+    /// не выполняется молча реквизитным путём. До подтверждения удаления
+    /// ничего не меняется.
+    /// </summary>
+    private void RemoveItem(RowItem item)
     {
-        card.Items.Remove(item);
-        if (IsAutonomousMode)
+        if (!canEditStructure)
+            return;
+
+        if (item.IsLocal)
         {
-            // В автономной карте удаление строки — изменение структуры:
-            // оно должно пройти атомарную проверку в SaveStructureAsync,
-            // а не выполняться молча через реквизитный путь.
-            MarkStructureDirty();
+            _confirmItemId = item.Id;
+            _confirmImpactText = _structure?.ItemById(item.Id) is { } local
+                ? $"«{local.AssemblyUnitName ?? "без сборочной единицы"}»: "
+                    + $"норма {local.Quantity} × {local.Volume} {local.UnitOfMeasure}, "
+                    + $"марок ГСМ — {local.Materials.Count}."
+                : null;
+            StateHasChanged();
+            return;
         }
+
+        var tracked = card.Items.FirstOrDefault(i => i.Id == item.Id);
+        if (tracked is null)
+            return;
+
+        _confirmItemId = item.Id;
+        _confirmImpactText = $"«{AssemblyUnitNameOf(tracked.AssemblyUnitId)}»: "
+            + $"норма {tracked.Quantity} × {tracked.Volume} {tracked.UnitOfMeasure}, "
+            + $"марок ГСМ — {tracked.Materials.Count}.";
+        StateHasChanged();
     }
+
+    /// <summary>
+    /// Подтверждение удаления строки: доступность действия перепроверяется в
+    /// момент нажатия, а не только при показе диалога.
+    /// </summary>
+    private void ConfirmDeleteItem()
+    {
+        if (_confirmItemId is not { } itemId)
+        {
+            _confirmItemId = null;
+            _confirmImpactText = null;
+            return;
+        }
+
+        var row = EditorRows().FirstOrDefault(r => r.Item?.Id == itemId);
+        if (row?.Item is null)
+        {
+            _confirmItemId = null;
+            _confirmImpactText = null;
+            return;
+        }
+
+        if (row.Item.IsLocal)
+        {
+            _structure?.RemoveItem(itemId);
+            CleanupItemDicts(itemId);
+        }
+        else if (card.Items.FirstOrDefault(i => i.Id == itemId) is { } tracked)
+        {
+            card.Items.Remove(tracked);
+            CleanupItemDicts(tracked.Id);
+        }
+
+        _confirmItemId = null;
+        _confirmImpactText = null;
+        StateHasChanged();
+    }
+
+    private void CancelDeleteItem()
+    {
+        _confirmItemId = null;
+        _confirmImpactText = null;
+        StateHasChanged();
+    }
+
+    /// <summary>Описание содержимого, удаляемого последним действием.</summary>
+    private string? _lastImpactText;
+
+    /// <summary>Строка, ожидающая подтверждения удаления.</summary>
+    private Guid? _confirmItemId;
 
     private static string TranslateStatus(HKCardStatus status) => status switch
     {
@@ -4430,8 +4680,9 @@
                     }
                     if (_quickCreateItemUiKey.HasValue)
                     {
-                        var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);
-                        if (item != null) await SelectAu(item, created);
+                        var row = EditorRows().FirstOrDefault(r => r.Item?.Id == _quickCreateItemUiKey.Value);
+                        if (row?.Item is not null)
+                            await SelectAu(row.Item, created);
                     }
                     break;
                 }
@@ -4457,8 +4708,9 @@
                     }
                     if (_quickCreateItemUiKey.HasValue && _quickCreateCategory.HasValue)
                     {
-                        var item = card.Items.FirstOrDefault(i => i.Id == _quickCreateItemUiKey.Value);
-                        if (item != null) await AddMaterial(item, _quickCreateCategory.Value, createdId);
+                        var row = EditorRows().FirstOrDefault(r => r.Item?.Id == _quickCreateItemUiKey.Value);
+                        if (row?.Item is not null)
+                            await AddMaterial(row.Item, _quickCreateCategory.Value, createdId);
                     }
                     break;
                 }

@@ -672,6 +672,33 @@ public class HKCardService
     }
 
     /// <summary>
+    /// Обновляет отслеживаемую карту после атомарного сохранения структуры:
+    /// применяет новую версию строки и пересчитанный уровень, не трогая
+    /// реквизиты, которые пользователь мог изменить, но не сохранить.
+    /// <para>
+    /// Полная перезагрузка карты здесь недопустима: она уничтожила бы
+    /// несохранённый ввод реквизитов.
+    /// </para>
+    /// </summary>
+    public async Task RefreshStructureVersionAsync(Guid cardId, CancellationToken ct = default)
+    {
+        var fresh = await _db.HKCards.AsNoTracking()
+            .Where(c => c.Id == cardId)
+            .Select(c => new { c.RowVersion, c.ObjectLevel })
+            .FirstOrDefaultAsync(ct);
+
+        if (fresh is null)
+            return;
+
+        var tracked = await _db.HKCards.FirstOrDefaultAsync(c => c.Id == cardId, ct);
+        if (tracked is null)
+            return;
+
+        tracked.RowVersion = fresh.RowVersion;
+        tracked.ObjectLevel = fresh.ObjectLevel;
+    }
+
+    /// <summary>
     /// Подстановка марок строк ХК БЕЗ глобального фильтра мягкого удаления.
     /// <para>
     /// Зачем: у <see cref="GsmMaterial"/> включён <c>HasQueryFilter(!IsDeleted)</c>.
