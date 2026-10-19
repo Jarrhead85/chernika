@@ -2242,3 +2242,55 @@ input:-webkit-autofill:focus {
     font-weight: 650;
     color: var(--text);
 }
+
+.hki-mat-tag--clickable {
+    cursor: pointer;
+}
+
+.hki-mat-tag--clickable:hover,
+.hki-mat-tag--clickable:focus-visible {
+    border-color: var(--accent, #4f8cff);
+}
+
+.hki-td-input {
+    resize: vertical;
+}
+
+.hki-th-num {
+    width: 32px;
+}
+
+.hki-th-qty {
+    width: 55px;
+}
+
+.hki-th-mass {
+    width: 70px;
+}
+
+.hki-th-unit {
+    width: 40px;
+}
+
+.hk-totals-title {
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.hk-totals-note {
+    font-weight: 400;
+    color: var(--muted);
+}
+
+.hk-totals-total {
+    margin-top: 4px;
+    font-weight: 700;
+}
+
+.hki-danger-text {
+    color: var(--bad);
+}
+
+.hki-muted {
+    color: var(--muted);
+}
