@@ -489,6 +489,12 @@ public sealed class HKCardRevisionService
             // случайно зафиксировал бы частичную редакцию.
             if (plan.Owned)
                 await tx!.RollbackAsync(ct);
+
+            // Откат транзакции не очищает ChangeTracker: снимковые записи,
+            // оставшиеся в состоянии Added, дописались бы при любом
+            // последующем SaveChanges того же scope. Снимок целиком снимается
+            // с отслеживания, как будто он не собирался.
+            DetachRevisionSnapshot();
             throw;
         }
 
@@ -496,6 +502,45 @@ public sealed class HKCardRevisionService
             await tx!.CommitAsync(ct);
 
         return revision.Id;
+    }
+
+    /// <summary>
+    /// Снимает добавленный снимок с отслеживания: редакция с вложенными
+    /// разделами, позициями, строками и материалами не должна остаться в
+    /// ChangeTracker после отката регистрации.
+    /// <para>
+    /// Записи берутся списком и отсоединяются через уже полученные
+    /// <c>EntityEntry</c>: вызов <c>DbContext.Entry(entity)</c> на каждом шаге
+    /// запускает DetectChanges, и на середине отсоединения отслеженная
+    /// редакция со ссылкой на уже отсоединённые записи считалась бы связью с
+    /// разорванной обязательной связью — и отказ маскировался бы чужой ошибкой.
+    /// </para>
+    /// </summary>
+    private void DetachRevisionSnapshot()
+    {
+        // Порядок отсоединения — от листьев к корню. Пока родитель отслежен,
+        // снимать с отслеживания его детей допустимо; наоборот (родитель
+        // раньше детей) отслеженные дети остались бы с обязательной ссылкой на
+        // уже отсоединённого родителя, и EF отклонил бы операцию ошибкой о
+        // разорванной связи.
+        var snapshotEntries = _db.ChangeTracker.Entries()
+            .Where(e => e.Entity is HKCardRevision or HKCardRevisionSection
+                or HKCardRevisionNode or HKCardRevisionItem
+                or HKCardRevisionItemMaterial)
+            .OrderBy(e => e.Entity switch
+            {
+                HKCardRevisionItemMaterial => 0,
+                HKCardRevisionItem => 1,
+                HKCardRevisionNode => 2,
+                HKCardRevisionSection => 3,
+                _ => 4,
+            })
+            .ToList();
+
+        foreach (var entry in snapshotEntries)
+        {
+            entry.State = EntityState.Detached;
+        }
     }
 
     /// <summary>

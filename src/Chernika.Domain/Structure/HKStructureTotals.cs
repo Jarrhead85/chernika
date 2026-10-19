@@ -69,20 +69,7 @@ public static class HKStructureTotals
     {
         var nodesById = input.Nodes.ToDictionary(n => n.Id);
         var sectionById = input.Sections.ToDictionary(s => s.Id);
-
-        var results = new List<HKPositionTotals>();
-
-        // Конечные строки под корнем — самостоятельные ветки.
-        foreach (var item in input.Items.Where(i => i.NodeId is null))
-        {
-            results.Add(BuildItem(item, input, nodesById));
-        }
-
-        // Каждая структурная позиция верхнего уровня — самостоятельная ветка.
-        foreach (var node in input.Nodes.Where(n => n.ParentId is null))
-        {
-            results.Add(BuildNode(node, input, nodesById));
-        }
+        var results = CalculatePositionTotals(input);
 
         var sectionTotals = new List<HKSectionTotals>();
         var withoutSection = new List<HKPositionTotals>();
@@ -110,10 +97,46 @@ public static class HKStructureTotals
 
         var noSectionTotals = Aggregate(withoutSection.Select(r => r.TotalInCard));
 
-        var all = Merge(
-            sectionList.SelectMany(s => s.Totals).ToList(), noSectionTotals);
+        // Союзный агрегат, а не Merge: в левом списке по одному итогу каждой
+        // величины на раздел между собой не совпадают по величине — Mass при
+        // этом встречается в нескольких разделах и обязан свернуться.
+        var all = Aggregate(new[]
+        {
+            sectionList.SelectMany(s => s.Totals).ToList(), noSectionTotals
+        });
 
         return new HKCardTotals(sectionList, new HKSectionTotals(Guid.Empty, noSectionTotals), all);
+    }
+
+    /// <summary>
+    /// Итоги каждой верхней ветки: одна строка на самостоятельную позицию
+    /// и одну на конечную строку под корнем.
+    /// <para>
+    /// Отдельный контрактовый расчёт: редактор и HTTP-слой используют его
+    /// без агрегации по разделам, а <see cref="Calculate"/> строится поверх
+    /// него — формулы заведомо одинаковые.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<HKPositionTotals> CalculatePositionTotals(
+        HKStructureInput input)
+    {
+        var nodesById = input.Nodes.ToDictionary(n => n.Id);
+
+        var results = new List<HKPositionTotals>();
+
+        // Конечные строки под корнем — самостоятельные ветки.
+        foreach (var item in input.Items.Where(i => i.NodeId is null))
+        {
+            results.Add(BuildItem(item, input, nodesById));
+        }
+
+        // Каждая структурная позиция верхнего уровня — самостоятельная ветка.
+        foreach (var node in input.Nodes.Where(n => n.ParentId is null))
+        {
+            results.Add(BuildNode(node, input, nodesById));
+        }
+
+        return results;
     }
 
     private static HKPositionTotals BuildItem(
@@ -314,16 +337,25 @@ public static class HKStructureTotals
     private static IReadOnlyList<HKMeasuredTotal> Merge(
         IReadOnlyList<HKMeasuredTotal> left, IReadOnlyList<HKMeasuredTotal> right)
     {
-        var result = left.ToDictionary(t => t.Quantity);
+        // По Quantity может прийти не одна единица одной физической величины
+        // (кг и г — обе Mass), поэтому словарь по этому ключу невозможен:
+        // дубликат ключа дал бы исключение при объединении разделов.
+        var merged = new List<HKMeasuredTotal>(left);
 
         foreach (var total in right)
         {
-            result[total.Quantity] = result.TryGetValue(total.Quantity, out var existing)
-                ? MergeOne(existing, total)
-                : total;
+            var index = merged.FindIndex(t => t.Quantity == total.Quantity);
+            if (index >= 0)
+            {
+                merged[index] = MergeOne(merged[index], total);
+            }
+            else
+            {
+                merged.Add(total);
+            }
         }
 
-        return result.Values.OrderBy(t => t.Quantity).ToList();
+        return merged.OrderBy(t => t.Quantity).ToList();
     }
 
     private static HKMeasuredTotal MergeOne(HKMeasuredTotal left, HKMeasuredTotal right)

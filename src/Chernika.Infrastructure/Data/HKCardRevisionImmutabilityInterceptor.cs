@@ -66,6 +66,9 @@ public sealed class HKCardRevisionImmutabilityInterceptor : SaveChangesIntercept
         HKCardRevisionNode => true,
         HKCardRevisionItem => true,
         HKCardRevisionItemMaterial => true,
+        // Снимки разделов — та же редакция: изменять их отдельно от нового
+        // снимка или удалять внутри существующей редакции запрещено.
+        HKCardRevisionSection => true,
         _ => false,
     };
 }

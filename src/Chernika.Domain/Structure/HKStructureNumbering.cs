@@ -105,9 +105,19 @@ public static class HKStructureNumbering
             {
                 var section = sectionById[sectionKey];
 
-                // Потомки раздела берутся из его верхних позиций и строк под корнем.
-                var childNodes = topNodes.Where(n => n.SectionId == section.Id).ToList();
-                var childItems = topItems.Where(i => i.SectionId == section.Id).ToList();
+                // Потомки раздела — верхние позиции и строки под корнем с его
+                // разделом — составляют ОДНУ совместную последовательность: так же,
+                // как потомки позиции. Два раздельных списка выводили бы сначала
+                // все позиции раздела, а потом все его строки, и порядок строк
+                // и позиций не пересекался бы никогда.
+                var children = topNodes.Where(n => n.SectionId == section.Id)
+                    .Select(n => new ChildEntry(n.SortOrder, n, null))
+                    .Concat(topItems.Where(i => i.SectionId == section.Id)
+                        .Select(i => new ChildEntry(i.SortOrder, null, i)))
+                    .OrderBy(t => t.Order)
+                    .ThenBy(t => t.Node is not null ? 0 : 1)
+                    .ThenBy(t => t.Node?.Id ?? t.Item!.Id)
+                    .ToList();
 
                 rows.Add(new HKStructureRow(
                     index.ToString(), 0, HKStructureRowKind.Section, null, null,
@@ -115,17 +125,20 @@ public static class HKStructureNumbering
                     HKSectionNames.NameOf(section.SectionType), 1));
 
                 var childIndex = 0;
-                foreach (var node in OrderNodes(childNodes))
+                foreach (var child in children)
                 {
                     childIndex++;
-                    Walk(node, $"{index}.{childIndex}", 1, section.Id, section.SectionType,
-                        rows, nodeById, itemsByNode);
-                }
 
-                foreach (var item in OrderItems(childItems))
-                {
-                    childIndex++;
-                    rows.Add(TerminalRow(item, $"{index}.{childIndex}", 1, section.Id, section.SectionType));
+                    if (child.Node is { } node)
+                    {
+                        Walk(node, $"{index}.{childIndex}", 1, section.Id, section.SectionType,
+                            rows, nodeById, itemsByNode);
+                    }
+                    else
+                    {
+                        rows.Add(TerminalRow(child.Item!, $"{index}.{childIndex}", 1,
+                            section.Id, section.SectionType));
+                    }
                 }
 
                 continue;
@@ -204,12 +217,6 @@ public static class HKStructureNumbering
             }
         }
     }
-
-    private static List<HKStructureNodeInput> OrderNodes(IEnumerable<HKStructureNodeInput> nodes) =>
-        nodes.OrderBy(n => n.SortOrder).ThenBy(n => n.Id).ToList();
-
-    private static List<HKStructureItemInput> OrderItems(IEnumerable<HKStructureItemInput> items) =>
-        items.OrderBy(i => i.SortOrder).ThenBy(i => i.Id).ToList();
 
     private static HKStructureRow TerminalRow(
         HKStructureItemInput item, string number, int depth,

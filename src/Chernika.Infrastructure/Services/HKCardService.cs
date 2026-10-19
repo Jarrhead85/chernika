@@ -3,6 +3,7 @@ using Chernika.Domain.Leveling;
 using Chernika.Domain.Entities;
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
+using Chernika.Domain.Structure;
 using Chernika.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -558,6 +559,116 @@ public class HKCardService
             await AttachGsmMaterialsIgnoringSoftDeleteAsync(card, ct);
 
         return card;
+    }
+
+    /// <summary>
+    /// Read-only проекция полного рабочего графа собственной структуры.
+    /// <para>
+    /// Отдельное чтение для редактора: вместо EF-графа, готового к правке,
+    /// возвращается неизменяемая проекция — разделы, позиции, конечные строки
+    /// с материалами, служебные реквизиты и версия. Всё читается
+    /// AsNoTracking, поэтому даже первое открытие не кладёт сущности
+    /// в ChangeTracker, а состояние редактора строится глубоким копированием
+    /// отдельно.
+    /// </para>
+    /// </summary>
+    public async Task<HKStructureGraph?> GetStructureGraphAsync(
+        Guid id, CancellationToken ct = default)
+    {
+        // Право HK.View, активность и филиал проверяются так же, как при
+        // чтении карточки: проекция раскрывает то же содержимое.
+        var access = await LoadCardAccessAsync(id, ct);
+        if (access == null)
+            return null;
+        await GetAccessibleBranchIdAsync(access.BranchId, ct);
+
+        var card = await _db.HKCards
+            .AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new
+            {
+                x.Id, x.RowVersion, x.Status, x.IsAutonomous,
+                x.NodeRootCardLevel, x.BranchId
+            })
+            .FirstOrDefaultAsync(ct);
+        if (card is null)
+            return null;
+
+        var sections = await _db.HKCardSections
+            .AsNoTracking()
+            .Where(s => s.HKCardId == id)
+            .OrderBy(s => s.SortOrder)
+            .Select(s => new HKStructureSectionInput(
+                s.Id, s.SectionType, s.SortOrder))
+            .ToListAsync(ct);
+
+        var nodes = await _db.HKCardNodes
+            .AsNoTracking()
+            .Where(n => n.HKCardId == id)
+            .OrderBy(n => n.SortOrder).ThenBy(n => n.Id)
+            .Select(n => new HKStructureNodeInput(
+                n.Id, n.ParentId, n.Level, n.Name, n.Quantity,
+                n.SortOrder, n.SectionId))
+            .ToListAsync(ct);
+
+        // Строки и марки: Join с AssemblyUnit для имён, марки — отдельным
+        // списком с IgnoreQueryFilters, чтобы мягко удалённая марка не
+        // прятала всю строку материала (см. AttachGsmMaterialsIgnoringSoftDeleteAsync).
+        var items = await _db.HKCardItems
+            .AsNoTracking()
+            .Where(i => i.HKCardId == id)
+            .OrderBy(i => i.SortOrder)
+            .Select(i => new
+            {
+                i.Id, i.HKCardNodeId, i.AssemblyUnitId, i.Quantity,
+                i.Volume, i.UnitOfMeasure, i.Periodicity, i.Notes,
+                i.SortOrder, i.SectionId,
+                AssemblyUnitName = i.AssemblyUnit.Name,
+                AssemblyUnitCode = i.AssemblyUnit.Code,
+                Materials = i.Materials
+                    .Select(m => new HKStructureGraphMaterial(
+                        m.Id, m.GsmMaterialId, null, null, m.Category.ToString(), false))
+                    .ToList()
+            })
+            .ToListAsync(ct);
+
+        var materialRows = items
+            .SelectMany(i => i.Materials)
+            .Where(m => m.GsmMaterialId != Guid.Empty)
+            .Select(m => m.GsmMaterialId)
+            .Distinct()
+            .ToList();
+
+        var materialSources = await _db.GsmMaterials
+            .IgnoreQueryFilters()
+            .Where(m => materialRows.Contains(m.Id))
+            .Select(m => new { m.Id, m.Name, m.Nd, m.IsDeleted })
+            .ToListAsync(ct);
+
+        var materialsById = materialSources.ToDictionary(
+            m => m.Id, m => (m.Name, m.Nd, m.IsDeleted));
+
+        var graphItems = items.Select(i => new HKStructureGraphItem(
+            i.Id, i.HKCardNodeId, i.AssemblyUnitId,
+            i.AssemblyUnitName, i.AssemblyUnitCode,
+            i.Quantity, i.Volume, i.UnitOfMeasure, i.Periodicity,
+            i.Notes, i.SortOrder, i.SectionId,
+            i.Materials.Select(m =>
+            {
+                var found = materialsById.TryGetValue(
+                    m.GsmMaterialId, out var src);
+                return m with
+                {
+                    Name = found ? src.Name : null,
+                    Nd = found ? src.Nd : null,
+                    SourceIsDeleted = found && src.IsDeleted
+                };
+            }).ToList())).ToList();
+
+        return new HKStructureGraph(
+            card.Id, card.RowVersion, card.Status, card.IsAutonomous,
+            card.NodeRootCardLevel, card.BranchId,
+            sections, nodes, graphItems);
     }
 
     /// <summary>
@@ -1688,6 +1799,7 @@ public class HKCardService
 
         var resolved = HKCardLevelRule.Resolve(shape, command.NodeRootChoice);
         EnsureStructureWritable(command, resolved);
+        await EnsureStructureReferencesAsync(command, ct);
 
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
@@ -1749,6 +1861,9 @@ public class HKCardService
             throw new InvalidOperationException(
                 "Структура недопустима: " + string.Join("; ", resolved.StructureErrors));
 
+        if (command.Sections.Any(s => !Enum.IsDefined(s.SectionType)))
+            throw new InvalidOperationException("Раздел карты задан недопустимым видом.");
+
         var sectionIds = command.Sections.Select(s => s.Id).ToHashSet();
 
         if (sectionIds.Count != command.Sections.Count)
@@ -1766,6 +1881,67 @@ public class HKCardService
         if (duplicateTypes.Count > 0)
             throw new InvalidOperationException(
                 "Раздел каждого типа на карте может быть только один.");
+
+        // Позиции: идентификаторы конкретны и уникальны.
+        var positionIds = command.Positions.Select(p => p.Id).ToHashSet();
+        if (positionIds.Count != command.Positions.Count)
+            throw new InvalidOperationException("Позиция повторяется в наборе.");
+        if (command.Positions.Any(p => p.Id == Guid.Empty))
+            throw new InvalidOperationException("Идентификатор позиции не должен быть пустым.");
+
+        // Строки: идентификаторы конкретны и уникальны.
+        var itemIds = command.Items.Select(i => i.Id).ToHashSet();
+        if (itemIds.Count != command.Items.Count)
+            throw new InvalidOperationException("Строка повторяется в наборе.");
+        if (command.Items.Any(i => i.Id == Guid.Empty))
+            throw new InvalidOperationException("Идентификатор строки не должен быть пустым.");
+
+        // Дубликат марки внутри одной категории строки — задвоение строки даже
+        // без записи: правила назначения проверяются на итоговый набор.
+        const string duplicateMaterials = "В одной категории строки повторяется одна и та же марка ГСМ.";
+        if (command.Items.Any(i => i.Materials
+                .GroupBy(m => (m.GsmMaterialId, m.Category))
+                .Any(g => g.Count() > 1)))
+        {
+            throw new InvalidOperationException(duplicateMaterials);
+        }
+
+        // Наименование обязательно и ограничено тем же пределом, что и колонка.
+        foreach (var (position, index) in command.Positions.Select((p, i) => (p, i)))
+        {
+            var name = position.Name.Trim();
+            if (name.Length == 0)
+                throw new InvalidOperationException(
+                    $"Укажите наименование позиции №{index + 1}.");
+            if (name.Length > 200)
+                throw new InvalidOperationException(
+                    $"Наименование позиции №{index + 1} превышает 200 символов.");
+            if (position.Quantity <= 0)
+                throw new InvalidOperationException(
+                    $"Количество позиции №{index + 1} обязано быть больше нуля.");
+        }
+
+        foreach (var (item, index) in command.Items.Select((i, n) => (i, n)))
+        {
+            if (item.AssemblyUnitId == Guid.Empty)
+                throw new InvalidOperationException(
+                    $"Укажите сборочную единицу строки №{index + 1}: незаполненная строка не сохраняется.");
+            if (item.Quantity <= 0)
+                throw new InvalidOperationException(
+                    $"Количество строки №{index + 1} обязано быть больше нуля.");
+            if (item.Volume < 0)
+                throw new InvalidOperationException(
+                    $"Масса/объём строки №{index + 1} не может быть отрицательным.");
+            if ((item.UnitOfMeasure?.Length ?? 0) > 20)
+                throw new InvalidOperationException(
+                    $"Единица строки №{index + 1} превышает 20 символов.");
+            if ((item.Periodicity?.Length ?? 0) > 256)
+                throw new InvalidOperationException(
+                    $"Периодичность строки №{index + 1} превышает 256 символов.");
+            if ((item.Notes?.Length ?? 0) > 2000)
+                throw new InvalidOperationException(
+                    $"Примечание строки №{index + 1} превышает 2000 символов.");
+        }
 
         // Раздел ветки обязан принадлежать этой же карте: ссылка на раздел
         // другой карты отвергается.
@@ -1785,8 +1961,6 @@ public class HKCardService
 
         // Родитель позиции и узел строки обязаны находиться в этом же наборе:
         // ссылка на позицию другой карты отвергается здесь и базой.
-        var positionIds = command.Positions.Select(p => p.Id).ToHashSet();
-
         var orphanPositions = command.Positions
             .Where(p => p.ParentId is not null && !positionIds.Contains(p.ParentId!.Value))
             .ToList();
@@ -1802,13 +1976,55 @@ public class HKCardService
         if (orphanItems.Count > 0)
             throw new InvalidOperationException(
                 "Конечная строка ссылается на позицию, которая не входит в набор этой карты.");
+    }
 
-        // Незавершённая строка без сборочной единицы не является записью:
-        // Guid.Empty в обязательной ссылке в базу не пишется.
-        var incomplete = command.Items.Where(i => i.AssemblyUnitId == Guid.Empty).ToList();
-        if (incomplete.Count > 0)
-            throw new InvalidOperationException(
-                "Укажите сборочную единицу для каждой строки: незаполненные строки не сохраняются.");
+    /// <summary>
+    /// Ссылки на записи другой карты и на отсутствующие сборочные единицы:
+    /// проверяются отдельным запросом до транзакции — ошибку получает понятный
+    /// отказ, а не нарушение FK при сохранении.
+    /// </summary>
+    private async Task EnsureStructureReferencesAsync(
+        SaveHKCardStructureCommand command, CancellationToken ct)
+    {
+        var assemblyIds = command.Items
+            .Where(i => i.AssemblyUnitId != Guid.Empty)
+            .Select(i => i.AssemblyUnitId)
+            .Distinct()
+            .ToList();
+
+        if (assemblyIds.Count > 0)
+        {
+            var found = await _db.AssemblyUnits.AsNoTracking()
+                .Where(a => assemblyIds.Contains(a.Id))
+                .Select(a => a.Id)
+                .ToListAsync(ct);
+
+            if (found.Count != assemblyIds.Count)
+                throw new InvalidOperationException(
+                    "Выбрана сборочная единица, отсутствующая в справочнике. " +
+                    "Обновите список и повторите.");
+        }
+
+        var sectionIds = command.Sections.Select(s => s.Id).ToList();
+        if (sectionIds.Count > 0 && await _db.HKCardSections.AsNoTracking()
+                .AnyAsync(s => sectionIds.Contains(s.Id) && s.HKCardId != command.CardId, ct))
+        {
+            throw new InvalidOperationException("Раздел принадлежит другой карте.");
+        }
+
+        var positionIds = command.Positions.Select(p => p.Id).ToList();
+        if (positionIds.Count > 0 && await _db.HKCardNodes.AsNoTracking()
+                .AnyAsync(p => positionIds.Contains(p.Id) && p.HKCardId != command.CardId, ct))
+        {
+            throw new InvalidOperationException("Позиция принадлежит другой карте.");
+        }
+
+        var itemIds = command.Items.Select(i => i.Id).ToList();
+        if (itemIds.Count > 0 && await _db.HKCardItems.AsNoTracking()
+                .AnyAsync(i => itemIds.Contains(i.Id) && i.HKCardId != command.CardId, ct))
+        {
+            throw new InvalidOperationException("Строка принадлежит другой карте.");
+        }
     }
 
     private async Task SyncSectionsAsync(
@@ -1821,29 +2037,54 @@ public class HKCardService
         var existingById = existing.ToDictionary(s => s.Id);
         var incomingIds = command.Sections.Select(s => s.Id).ToHashSet();
 
-        // Непустой раздел молча не удаляется: удаление содержимого требует
-        // явного действия и в этом сценарии не выполняется.
+        // Непустой раздел молча не удаляется: содержимое обязано остаться в
+        // команде. Занятость проверяется по ИТОГОВОЙ команде против старого
+        // состояния: одно сохранение разрешено потратить на перенесение ветки
+        // в другое место И удаление опустевшего раздела, но НЕ на тихое
+        // вычёркивание содержимого вместе с разделом.
         var removed = existing.Where(s => !incomingIds.Contains(s.Id)).ToList();
         if (removed.Count > 0)
         {
-            var removedIds = removed.Select(r => r.Id).ToList();
+            var removedIds = removed.Select(r => r.Id).ToHashSet();
+            var positionIdsInCommand = command.Positions.Select(p => p.Id).ToHashSet();
+            var itemIdsInCommand = command.Items.Select(i => i.Id).ToHashSet();
 
-            var busy = await _db.HKCardNodes.AsNoTracking()
+            var nodeRefs = await _db.HKCardNodes.AsNoTracking()
                 .Where(n => n.HKCardId == cardId && n.SectionId != null
                             && removedIds.Contains(n.SectionId!.Value))
-                .AnyAsync(ct);
+                .Select(n => new { n.Id, n.SectionId })
+                .ToListAsync(ct);
 
-            var busyItems = await _db.HKCardItems.AsNoTracking()
-                .Where(i => i.HKCardId == cardId && i.HKCardNodeId == null
-                            && i.SectionId != null
+            var itemRefs = await _db.HKCardItems.AsNoTracking()
+                .Where(i => i.HKCardId == cardId && i.SectionId != null
                             && removedIds.Contains(i.SectionId!.Value))
-                .AnyAsync(ct);
+                .Select(i => new { i.Id, i.SectionId, i.HKCardNodeId })
+                .ToListAsync(ct);
 
-            if (busy || busyItems)
+            foreach (var nodeRef in nodeRefs)
             {
-                throw new InvalidOperationException(
-                    "Нельзя удалить раздел с ветками: сначала перенесите содержимое " +
-                    "в другой раздел или очистите его.");
+                if (!positionIdsInCommand.Contains(nodeRef.Id))
+                    throw new InvalidOperationException(
+                        "Нельзя удалить раздел вместе с содержимым: перенесите ветку " +
+                        "в другое место или удалите её явно.");
+
+                if (command.Positions.First(p => p.Id == nodeRef.Id).SectionId == nodeRef.SectionId)
+                    throw new InvalidOperationException(
+                        "Нельзя удалить раздел с ветками: сначала перенесите содержимое " +
+                        "в другой раздел или очистите его.");
+            }
+
+            foreach (var itemRef in itemRefs)
+            {
+                if (!itemIdsInCommand.Contains(itemRef.Id))
+                    throw new InvalidOperationException(
+                        "Нельзя удалить раздел вместе с содержимым: перенесите строку " +
+                        "в другое место или удалите её явно.");
+
+                if (command.Items.First(i => i.Id == itemRef.Id).SectionId == itemRef.SectionId)
+                    throw new InvalidOperationException(
+                        "Нельзя удалить раздел с ветками: сначала перенесите содержимое " +
+                        "в другой раздел или очистите его.");
             }
 
             _db.HKCardSections.RemoveRange(removed);
@@ -1922,26 +2163,27 @@ public class HKCardService
         var existingById = existing.ToDictionary(i => i.Id);
         var incomingIds = command.Items.Select(i => i.Id).ToHashSet();
 
-        // Незавершённые строки отбрасываются молча, чтобы они не дописывались
-        // последующим SaveChanges.
-        var writable = command.Items.Where(i => i.AssemblyUnitId != Guid.Empty).ToList();
+        // После EnsureStructureWritable незавершённых строк в команде быть не
+        // может: ни одна строка не отбрасывается молча.
 
         foreach (var item in existing.Where(i => !incomingIds.Contains(i.Id)).ToList())
         {
             _db.HKCardItems.Remove(item);
         }
 
-        foreach (var incoming in writable)
+        foreach (var incoming in command.Items)
         {
-            // Назначения марок проверяются по действующим правилам ГСМ: общей
-            // проверки с защищённой записью материалов.
-            await HKCardMaterialAssignment.EnsureAssignableAsync(
-                _db,
-                incoming.Materials.Select(m => (m.GsmMaterialId, m.Category)).ToList(),
-                ct);
-
             if (existingById.TryGetValue(incoming.Id, out var current))
             {
+                // Правила действующего назначения применяются только к НОВЫМ и
+                // изменённым ссылкам: неизменённая историческая ссылка не
+                // запрещается задним числом — перенос строки не должен терять
+                // или блокировать прежнюю марку из-за её мягкого удаления.
+                await HKCardMaterialAssignment.EnsureAssignableAsync(
+                    _db,
+                    NewAssignmentsOnly(current.Materials, incoming.Materials)
+                        .ToList(),
+                    ct);
                 current.HKCardNodeId = incoming.NodeId;
                 current.AssemblyUnitId = incoming.AssemblyUnitId;
                 current.Quantity = incoming.Quantity;
@@ -1961,6 +2203,14 @@ public class HKCardService
             }
             else
             {
+                // Новая строка: все её назначения — новые и проверяются целиком.
+                await HKCardMaterialAssignment.EnsureAssignableAsync(
+                    _db,
+                    incoming.Materials
+                        .Select(m => (m.GsmMaterialId, m.Category))
+                        .ToList(),
+                    ct);
+
                 var item = new HKCardItem
                 {
                     Id = incoming.Id,
@@ -1991,6 +2241,30 @@ public class HKCardService
 
                 _db.HKCardItems.Add(item);
             }
+        }
+    }
+
+    /// <summary>
+    /// Отбирает ТОЛЬКО новые и изменённые назначения: строка материала с тем же
+    /// стабильным Id, маркой и категорией — неизменённая историческая ссылка,
+    /// правила нового назначения к ней не применяются.
+    /// </summary>
+    private static IEnumerable<(Guid GsmMaterialId, GsmCategory Category)> NewAssignmentsOnly(
+        ICollection<HKCardItemMaterial> persisted, IReadOnlyList<HKCardMaterialWrite> requested)
+    {
+        var persistedById = persisted.ToDictionary(m => m.Id);
+
+        foreach (var material in requested)
+        {
+            if (material.Id != Guid.Empty
+                && persistedById.TryGetValue(material.Id, out var row)
+                && row.GsmMaterialId == material.GsmMaterialId
+                && row.Category == material.Category)
+            {
+                continue;
+            }
+
+            yield return (material.GsmMaterialId, material.Category);
         }
     }
 

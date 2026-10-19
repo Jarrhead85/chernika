@@ -411,11 +411,22 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // влияет.
         modelBuilder.Entity<HKCardSection>(e =>
         {
-            e.ToTable("HKCardSections");
+            e.ToTable("HKCardSections", t =>
+            {
+                // Раздел каждого вида — допустимые значения вида ограничены
+                // на уровне базы: посторонние числа в enum не запишутся.
+                t.HasCheckConstraint(
+                    "CK_HKCardSections_SectionType",
+                    "\"SectionType\" IN (1, 2, 3)");
+            });
             e.HasKey(x => x.Id);
             e.Property(x => x.SectionType).HasConversion<int>();
             e.HasOne(x => x.HKCard).WithMany(x => x.Sections).HasForeignKey(x => x.HKCardId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // Составной ключ для внешних ключей позиций и строк: принадлежность
+            // раздела той же карте проверяется базой, а не только сервисом.
+            e.HasAlternateKey(x => new { x.HKCardId, x.Id });
 
             // Раздел принадлежит конкретной карте: чужая ветка в раздел другой
             // карты попасть не может.
@@ -428,6 +439,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<HKCardNode>(e =>
         {
+            e.ToTable(t =>
+            {
+                // Собственный раздел есть только у верхней позиции: вложенная
+                // наследует раздел своего корня, и собственное значение была бы
+                // противоречивой записью.
+                t.HasCheckConstraint(
+                    "CK_HKCardNodes_SectionOnlyTop",
+                    "\"SectionId\" IS NULL OR \"ParentId\" IS NULL");
+            });
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
             e.Property(x => x.Quantity).HasDefaultValue(1);
@@ -445,9 +465,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.HKCardId, x.SortOrder });
 
+            // Раздел верхней позиции обязан принадлежать той же карте: составной
+            // внешний ключ вместо простого, заходившего в раздел любой карты.
             // Принадлежность разделу задаётся только у верхней позиции
             // (ParentId = null); вложенные позиции наследуют раздел корня.
-            e.HasOne(x => x.Section).WithMany(x => x.Nodes).HasForeignKey(x => x.SectionId)
+            e.HasOne(x => x.Section).WithMany(x => x.Nodes)
+                .HasForeignKey(x => new { x.HKCardId, x.SectionId })
+                .HasPrincipalKey(x => new { x.HKCardId, x.Id })
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -603,6 +627,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             .HasPrincipalKey(x => new { x.RevisionId, x.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Раздел строки — снимок ТОЙ ЖЕ редакции, как и позиция: простой
+        // внешний ключ разрешил бы ссылаться на раздел другой редакции.
+        e.HasOne(x => x.Section).WithMany()
+            .HasForeignKey(x => new { x.RevisionId, x.SectionId })
+            .HasPrincipalKey(x => new { x.RevisionId, x.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+
         e.HasOne(x => x.Revision).WithMany(x => x.Items)
             .HasForeignKey(x => x.RevisionId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -637,6 +668,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     modelBuilder.Entity<HKCardItem>(e =>
         {
+            e.ToTable(t =>
+            {
+                // Собственный раздел есть только у строки под корнем: строка под
+                // позицией наследует раздел ветки этой позиции.
+                t.HasCheckConstraint(
+                    "CK_HKCardItems_SectionOnlyRoot",
+                    "\"SectionId\" IS NULL OR \"HKCardNodeId\" IS NULL");
+            });
             e.HasKey(x => x.Id);
             e.Property(x => x.UnitOfMeasure).HasMaxLength(20);
             e.Property(x => x.Periodicity).HasMaxLength(256);
@@ -651,8 +690,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.AssemblyUnit).WithMany(x => x.HKCardItems).HasForeignKey(x => x.AssemblyUnitId);
 
-            // Принадлежность разделу задаётся только у строки под корнем карты.
-            e.HasOne(x => x.Section).WithMany(x => x.Items).HasForeignKey(x => x.SectionId)
+            // Раздел строки под корнем обязан принадлежать той же карте:
+            // составной внешний ключ, как у позиций.
+            e.HasOne(x => x.Section).WithMany(x => x.Items)
+                .HasForeignKey(x => new { x.HKCardId, x.SectionId })
+                .HasPrincipalKey(x => new { x.HKCardId, x.Id })
                 .OnDelete(DeleteBehavior.Restrict);
         });
 

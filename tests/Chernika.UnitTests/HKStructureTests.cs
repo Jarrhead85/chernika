@@ -339,6 +339,102 @@ public class HKStructureTests
         Assert.Empty(totals.Sections);
     }
 
+    /// <summary>
+    /// Обязательный пример из требований: несколько массовых разделов не
+    /// должны приводить ни к исключению, ни к потере слагаемого.
+    /// </summary>
+    [Fact]
+    public void Totals_SectionsWithSeveralMassEntries_AggregateWithoutException()
+    {
+        var sectionGreases = Guid.NewGuid();
+        var sections = new[]
+        {
+            new HKStructureSectionInput(SectionOils, HKCardSectionType.Oils, 0),
+            new HKStructureSectionInput(sectionGreases, HKCardSectionType.Greases, 1),
+            new HKStructureSectionInput(SectionFuels, HKCardSectionType.Fuels, 2)
+        };
+
+        var totals = HKStructureTotals.Calculate(Input(
+            sections: sections,
+            items: new[]
+            {
+                Item(section: SectionOils, volume: 1m, unit: "кг"),
+                Item(section: sectionGreases, volume: 250m, unit: "г"),
+                Item(section: SectionFuels, volume: 10m, unit: "л")
+            }));
+
+        var mass = Assert.Single(totals.Overall.Where(t => t.Quantity == HKPhysicalQuantity.Mass));
+        var liquid = Assert.Single(totals.Overall.Where(t => t.Quantity == HKPhysicalQuantity.Liquid));
+
+        Assert.True(mass.IsComplete);
+        Assert.True(liquid.IsComplete);
+        Assert.Equal(1250m, mass.BaseValue);
+        Assert.Equal(10m, liquid.BaseValue);
+    }
+
+    /// <summary>Контракт позиционных итогов: одна запись на верхнюю ветку.</summary>
+    [Fact]
+    public void Totals_CalculatePositionTotals_ReturnsOneEntryPerTopBranch()
+    {
+        var aggregate = Node(HKObjectLevel.Aggregate, quantity: 2);
+        var assembly = Node(HKObjectLevel.Node, parent: aggregate.Id, quantity: 3);
+        var item = Item(node: assembly.Id, quantity: 4, volume: 500m, unit: "г");
+        var rootItem = Item(section: null, volume: 1m, unit: "кг");
+
+        var input = Input(nodes: new[] { aggregate, assembly }, items: new[] { item, rootItem });
+        var positionTotals = HKStructureTotals.CalculatePositionTotals(input);
+
+        // Две верхние ветки: позиция-агрегат и строка под корнем.
+        Assert.Equal(2, positionTotals.Count);
+
+        var branch = positionTotals.Single(t => t.NodeId == aggregate.Id);
+        Assert.Null(branch.ItemId);
+        // Вся ветка: 500 г × 4 × 3 × 2 = 12000 г.
+        Assert.Equal(12000m, Assert.Single(branch.TotalInCard).BaseValue);
+        // Один узел: 500 г × 4 × 3 = 6000 г.
+        Assert.Equal(6000m, Assert.Single(branch.PerOne).BaseValue);
+
+        var standalone = positionTotals.Single(t => t.ItemId == rootItem.Id);
+        Assert.Null(standalone.NodeId);
+        Assert.Equal(1000m, Assert.Single(standalone.TotalInCard).BaseValue);
+        Assert.Equal(1000m, Assert.Single(standalone.PerOne).BaseValue);
+
+        // Расчёт всей карты строится поверх позиционных итогов.
+        var aggregateTotals = HKStructureTotals.Calculate(input);
+        Assert.Equal(13000m, aggregateTotals.Overall.Single(t => t.Quantity == HKPhysicalQuantity.Mass).BaseValue);
+    }
+
+    /// <summary>
+    /// Потомки раздела — позиции и строки под корнем — образуют ОДНУ совместную
+    /// последовательность: строка может стоять между позициями.
+    /// </summary>
+    [Fact]
+    public void Numbering_SectionChildren_PositionsAndItemsShareOneOrder()
+    {
+        var sections = new[]
+        {
+            new HKStructureSectionInput(SectionOils, HKCardSectionType.Oils, 0)
+        };
+
+        var first = Node(HKObjectLevel.Aggregate, section: SectionOils, sort: 0);
+        var second = Node(HKObjectLevel.Aggregate, section: SectionOils, sort: 2);
+
+        var rows = HKStructureNumbering.Build(Input(
+            sections: sections,
+            nodes: new[] { first, second },
+            items: new[]
+            {
+                // Строка с SortOrder 1 стоит между двумя позициями раздела.
+                Item(section: SectionOils, volume: 1m, unit: "кг", sort: 1)
+            }));
+
+        Assert.Equal(HKStructureRowKind.Section, rows[0].Kind);
+        Assert.Equal(HKStructureRowKind.Position, rows[1].Kind);
+        Assert.Equal(HKStructureRowKind.TerminalRow, rows[2].Kind);
+        Assert.Equal(HKStructureRowKind.Position, rows[3].Kind);
+        Assert.Equal(new[] { "1", "1.1", "1.2", "1.3" }, rows.Select(r => r.Number).ToArray());
+    }
+
     // ── Единицы ──
 
     [Theory]

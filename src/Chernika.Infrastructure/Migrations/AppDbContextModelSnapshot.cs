@@ -1208,11 +1208,14 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasIndex("AssemblyUnitId");
 
-                    b.HasIndex("SectionId");
-
                     b.HasIndex("HKCardId", "HKCardNodeId");
 
-                    b.ToTable("HKCardItems");
+                    b.HasIndex("HKCardId", "SectionId");
+
+                    b.ToTable("HKCardItems", t =>
+                        {
+                            t.HasCheckConstraint("CK_HKCardItems_SectionOnlyRoot", "\"SectionId\" IS NULL OR \"HKCardNodeId\" IS NULL");
+                        });
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardItemMaterial", b =>
@@ -1291,13 +1294,16 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SectionId");
-
                     b.HasIndex("HKCardId", "ParentId");
+
+                    b.HasIndex("HKCardId", "SectionId");
 
                     b.HasIndex("HKCardId", "SortOrder");
 
-                    b.ToTable("HKCardNodes");
+                    b.ToTable("HKCardNodes", t =>
+                        {
+                            t.HasCheckConstraint("CK_HKCardNodes_SectionOnlyTop", "\"SectionId\" IS NULL OR \"ParentId\" IS NULL");
+                        });
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardRevision", b =>
@@ -1476,13 +1482,13 @@ namespace Chernika.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SectionId");
-
                     b.HasIndex("RevisionId", "Id")
                         .IsUnique()
                         .HasDatabaseName("UX_HKCardRevisionItems_Revision_Id");
 
                     b.HasIndex("RevisionId", "NodeId");
+
+                    b.HasIndex("RevisionId", "SectionId");
 
                     b.ToTable("HKCardRevisionItems");
                 });
@@ -1611,7 +1617,10 @@ namespace Chernika.Infrastructure.Migrations
                     b.HasIndex("HKCardId", "SortOrder")
                         .HasDatabaseName("IX_HKCardSections_HKCardId_SortOrder");
 
-                    b.ToTable("HKCardSections", (string)null);
+                    b.ToTable("HKCardSections", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_HKCardSections_SectionType", "\"SectionType\" IN (1, 2, 3)");
+                        });
                 });
 
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardStatusLog", b =>
@@ -3287,14 +3296,15 @@ namespace Chernika.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Chernika.Domain.Entities.HKCardSection", "Section")
-                        .WithMany("Items")
-                        .HasForeignKey("SectionId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Chernika.Domain.Entities.HKCardNode", "HKCardNode")
                         .WithMany()
                         .HasForeignKey("HKCardId", "HKCardNodeId")
+                        .HasPrincipalKey("HKCardId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Chernika.Domain.Entities.HKCardSection", "Section")
+                        .WithMany("Items")
+                        .HasForeignKey("HKCardId", "SectionId")
                         .HasPrincipalKey("HKCardId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
 
@@ -3353,14 +3363,15 @@ namespace Chernika.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Chernika.Domain.Entities.HKCardSection", "Section")
-                        .WithMany("Nodes")
-                        .HasForeignKey("SectionId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Chernika.Domain.Entities.HKCardNode", "Parent")
                         .WithMany()
                         .HasForeignKey("HKCardId", "ParentId")
+                        .HasPrincipalKey("HKCardId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Chernika.Domain.Entities.HKCardSection", "Section")
+                        .WithMany("Nodes")
+                        .HasForeignKey("HKCardId", "SectionId")
                         .HasPrincipalKey("HKCardId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
 
@@ -3390,13 +3401,15 @@ namespace Chernika.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("Chernika.Domain.Entities.HKCardRevisionSection", "Section")
-                        .WithMany()
-                        .HasForeignKey("SectionId");
-
                     b.HasOne("Chernika.Domain.Entities.HKCardRevisionNode", "Node")
                         .WithMany()
                         .HasForeignKey("RevisionId", "NodeId")
+                        .HasPrincipalKey("RevisionId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Chernika.Domain.Entities.HKCardRevisionSection", "Section")
+                        .WithMany()
+                        .HasForeignKey("RevisionId", "SectionId")
                         .HasPrincipalKey("RevisionId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
 
@@ -3459,7 +3472,7 @@ namespace Chernika.Infrastructure.Migrations
             modelBuilder.Entity("Chernika.Domain.Entities.HKCardSection", b =>
                 {
                     b.HasOne("Chernika.Domain.Entities.HKCard", "HKCard")
-                        .WithMany()
+                        .WithMany("Sections")
                         .HasForeignKey("HKCardId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -3936,6 +3949,8 @@ namespace Chernika.Infrastructure.Migrations
                     b.Navigation("ParentComponents");
 
                     b.Navigation("Proposals");
+
+                    b.Navigation("Sections");
 
                     b.Navigation("StatusLog");
 
