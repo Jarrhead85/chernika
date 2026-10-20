@@ -702,7 +702,7 @@
                                         <span class="hki-muted-sm">Раздел новой ветки:</span>
                                         <button type="button"
                                                 class="@(SelectedSectionType is null ? "btn primary" : "btn ghost") hk-editor-chip"
-                                                aria-pressed="@(SelectedSectionType is null)"
+                                                aria-pressed="@(SelectedSectionType is null ? "true" : "false")"
                                                 disabled="@(!canEditStructure)"
                                                 @onclick="() => SelectNewBranchSection(null)">
                                             Без раздела
@@ -714,7 +714,7 @@
                                             var panelSelected = SelectedSectionType == panelType;
                                             <button type="button"
                                                     class="@(panelSelected ? "btn primary" : "btn ghost") hk-editor-chip"
-                                                    aria-pressed="@panelSelected"
+                                                    aria-pressed="@(panelSelected ? "true" : "false")"
                                                     disabled="@(!canEditStructure)"
                                                     @onclick="() => SelectNewBranchSection(panelType)">
                                                 @HKSectionNames.NameOf(panelType)
@@ -761,11 +761,10 @@
                                         @structureErrorText
                                     </div>
                                 }
-                            }
 
                         @if (!IsAutonomousMode || !IsNew)
                         {
-                        @if (EditorRows().Count == 0)
+                        @if (!EditorRows().Any(r => r.Node is not null || r.Item is not null))
                         {
                             <div class="note" style="margin-bottom:8px">Строк пока нет.</div>
                         }
@@ -809,7 +808,7 @@
                                         {
                                             @* Раздел — визуальная группа: без количества
                                                и собственных норм, только номер и название. *@
-                                            <tr @key="@($"sec{er.Row.SectionId}")"
+                                            <tr @key="@(er.Row.SectionId is null ? "nosec" + er.Index : "sec" + er.Row.SectionId)"
                                                 class="@(er.Row.SectionId is null ? "hki-nosection-row" : "hki-section-row")">
                                                 <td colspan="11" class="hk-editor-strong">
                                                     @if (er.Row.SectionId is not null)
@@ -847,7 +846,7 @@
                                                         <span class="tag hki-muted-xs">@LevelTitle(node.Level)</span>
                                                         @if (canEditComposition)
                                                         {
-                                                            <input id="@PositionNameId(node.Id)" @bind="node.Name" class="hk-editor-name"
+                                                            <input id="@PositionNameId(node.Id)" @bind="node.Name" class="hki-td-input hk-editor-name"
                                                                    placeholder="Название позиции" />
                                                             <span class="hki-muted-xs"> Кол-во:</span>
                                                             <input type="number"
@@ -2868,19 +2867,63 @@
                     break;
                 case HKStructureRowKind.Position:
                     var nodeId = row.NodeId!.Value;
-                    result.Add(new EditorRow(row, nodesById[nodeId], null, i, CountChildRows(nodeId) > 0));
+                    var position = nodesById[nodeId];
+
+                    // Самостоятельная ветка без раздела: перед ней видна группа
+                    // «Без раздела». Это только группировка показа — она не
+                    // создаёт записи в БД, своего номера и не влияет на
+                    // расчёты.
+                    if (position.ParentId is null && position.SectionId is null)
+                        AddWithoutSectionHeader(result);
+
+                    result.Add(new EditorRow(row, position, null, i, CountChildRows(nodeId) > 0));
                     if (IsCollapsed(nodeId))
                         hiddenBelow = row.Depth;
                     break;
                 default:
+                    var item = itemsById[row.ItemId!.Value];
+
+                    // Корневая строка без раздела — тоже часть группы
+                    // «Без раздела».
+                    if (item.NodeId is null && item.SectionId is null)
+                        AddWithoutSectionHeader(result);
+
                     result.Add(new EditorRow(
-                        row, null, RowItem.ForLocal(itemsById[row.ItemId!.Value], _structure, AssemblyUnitNameOf),
+                        row, null, RowItem.ForLocal(item, _structure, AssemblyUnitNameOf),
                         i, false));
                     break;
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Добавляет заголовок группы «Без раздела», если предыдущая строка не
+    /// была частью этой группы: несмежные блоки получают свой заголовок.
+    /// <para>
+    /// Группа — только показ: в содержимом карты такой раздел не появляется.
+    /// </para>
+    /// </summary>
+    private static void AddWithoutSectionHeader(List<EditorRow> result)
+    {
+        if (result.Count > 0
+            && result[^1].Row.Kind == HKStructureRowKind.Section
+            && result[^1].Row.SectionId is null)
+        {
+            return;
+        }
+
+        // Номер группы — по порядковому номеру заголовка в выборке: он
+        // устойчив между отрисовками и различает несмежные блоки.
+        var groupNumber = result.Count(
+            x => x.Row.Kind == HKStructureRowKind.Section && x.Row.SectionId is null) + 1;
+
+        result.Add(new EditorRow(
+            new HKStructureRow(
+                string.Empty, 0, HKStructureRowKind.Section,
+                null, null, null, null, "Без раздела", 0),
+            null, null, -groupNumber, false));
     }
 
     /// <summary>Агрегат для панели итогов.</summary>
@@ -3352,6 +3395,13 @@
         catch (DbUpdateException)
         {
             _structureError = "Не удалось сохранить структуру. Проверьте заполнение позиций и строк и повторите попытку.";
+        }
+        finally
+        {
+            // Состояние сохранения снимается при любом исходе: иначе после
+            // первого сохранения кнопка осталась бы в состоянии «Сохраняю…»
+            // и повторное сохранение стало бы невозможным.
+            _savingStructure = false;
         }
     }
 

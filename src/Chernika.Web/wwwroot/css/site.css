@@ -365,7 +365,10 @@ th.num{text-align:center;vertical-align:middle;white-space:nowrap;font-variant-n
 [data-theme="light"] .pillOn{color:#0b2a56;border-color:rgba(47,116,238,.6);background:rgba(47,116,238,.14)}
 .chips .pill{cursor:pointer;transition:.18s ease}
 .chips .pill:hover{border-color:rgba(79,140,255,.5)}
-.main{grid-area:main;padding:16px;overflow:auto}
+/* min-width:0 — колонка сетки сжимается до свободного места: иначе широкая
+   таблица распирает сетку, колонка «№» уходит за пределы окна и добраться
+   до неё нельзя. Прокрутка остаётся внутри основной области. */
+.main{grid-area:main;padding:16px;overflow:auto;min-width:0}
 .stack{display:flex;flex-direction:column;gap:14px}
 .panel{border:1px solid var(--line);background:rgba(15,27,51,.55);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
 [data-theme="light"] .panel{
