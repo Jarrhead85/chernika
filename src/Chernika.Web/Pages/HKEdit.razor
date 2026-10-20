@@ -624,8 +624,8 @@
                             }
                             @if (canEdit || IsNew)
                             {
-                                <button type="button" class="btn ghost" @onclick="GoBack">Отмена</button>
-                                <button type="submit" class="btn primary" disabled="@(!canEdit && !IsNew)">@(IsNew ? "Сохранить черновик" : "Сохранить")</button>
+                                <button type="button" class="btn ghost" @onclick="GoBack">Назад</button>
+                                <button type="submit" class="btn primary" disabled="@(!canEdit && !IsNew)">@(IsNew ? "Сохранить черновик" : "Сохранить реквизиты")</button>
                             }
                         </div>
                     </div>
@@ -1452,6 +1452,25 @@
                         disabled="@(_quickCreateSaving || !_qcFormValid)">
                     @(_quickCreateSaving ? "Сохранение..." : "Создать")
                 </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showLeaveModal)
+{
+    <div class="modalOverlay" @onclick="() => showLeaveModal = false">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="leave-title" @onclick:stopPropagation>
+            <div class="modalHeader">
+                <h3 id="leave-title">Несохранённые реквизиты</h3>
+                <button type="button" class="linkBtn" @onclick="() => showLeaveModal = false">✕</button>
+            </div>
+            <div class="modalBody">
+                <p>Реквизиты изменены, но не сохранены. При уходе изменения будут потеряны.</p>
+            </div>
+            <div class="modalFooter">
+                <button type="button" class="btn ghost" @onclick="() => showLeaveModal = false">Остаться</button>
+                <button type="button" class="btn primary" @onclick="LeaveWithoutSaving">Уйти без сохранения</button>
             </div>
         </div>
     </div>
@@ -2378,6 +2397,7 @@
 
             // Публикация: с этого момента страница показывает целую карту.
             card = existing;
+            CaptureLoadedRequisites();
             loadedRowVersion = existing.RowVersion;
             _versions = versions.ToList();
             _versionsError = versionsError;
@@ -3427,7 +3447,84 @@
             ? "В структуре есть несохранённые изменения — сначала нажмите «Сохранить структуру» либо сбросьте правки обновлением страницы."
             : null;
 
-    private void GoBack() => Nav.NavigateTo("/реестр-хк");
+    /// <summary>
+    /// Реквизиты изменены, но не сохранены: уход с предупреждением.
+    /// <para>
+    /// Кнопка «Назад» ничего не отменяет — карта и этапы остаются, поэтому
+    /// молча терять правки нельзя.
+    /// </para>
+    /// </summary>
+    private void GoBack()
+    {
+        if (HasUnsavedRequisites())
+        {
+            showLeaveModal = true;
+            return;
+        }
+
+        Nav.NavigateTo("/реестр-хк");
+    }
+
+    /// <summary>Уход с формы без сохранения реквизитов.</summary>
+    private void LeaveWithoutSaving()
+    {
+        showLeaveModal = false;
+        Nav.NavigateTo("/реестр-хк");
+    }
+
+    /// <summary>Изменены реквизиты: изменения ещё не записаны в базу.</summary>
+    private bool _requisitesDirty;
+
+    // Снимок реквизитов при загрузке: по нему определяется, остались ли
+    // несохранённые правки. Событие изменения поля не годится: оно
+    // приходит только от полей формы, а правится карта и через другие
+    // пути (например, выбором срока действия).
+    private string _loadedOrganization = string.Empty;
+    private string _loadedSender = string.Empty;
+    private string _loadedIncoming = string.Empty;
+    private string _loadedOutgoing = string.Empty;
+    private string _loadedDetails = string.Empty;
+    private string _loadedName = string.Empty;
+    private string _loadedPurpose = string.Empty;
+    private string _loadedNotes = string.Empty;
+    private DateTime? _loadedReceived;
+    private DateTime? _loadedEffective;
+    private DateTime? _loadedExpiration;
+
+    /// <summary>Запоминает текущие реквизиты как сохранённые.</summary>
+    private void CaptureLoadedRequisites()
+    {
+        _loadedOrganization = card.RequestOrganization ?? string.Empty;
+        _loadedSender = card.RequestSenderFullName ?? string.Empty;
+        _loadedIncoming = card.IncomingLetterNumber ?? string.Empty;
+        _loadedOutgoing = card.OutgoingLetterNumber ?? string.Empty;
+        _loadedDetails = card.RequestDetails ?? string.Empty;
+        _loadedName = card.Name ?? string.Empty;
+        _loadedPurpose = card.Purpose ?? string.Empty;
+        _loadedNotes = card.Notes ?? string.Empty;
+        _loadedReceived = card.RequestReceivedDate;
+        _loadedEffective = card.EffectiveDate;
+        _loadedExpiration = card.ExpirationDate;
+        _requisitesDirty = false;
+    }
+
+    /// <summary>Реквизиты отличаются от загруженных — правки не сохранены.</summary>
+    private bool HasUnsavedRequisites() =>
+        !string.Equals(card.RequestOrganization ?? string.Empty, _loadedOrganization, StringComparison.Ordinal)
+        || !string.Equals(card.RequestSenderFullName ?? string.Empty, _loadedSender, StringComparison.Ordinal)
+        || !string.Equals(card.IncomingLetterNumber ?? string.Empty, _loadedIncoming, StringComparison.Ordinal)
+        || !string.Equals(card.OutgoingLetterNumber ?? string.Empty, _loadedOutgoing, StringComparison.Ordinal)
+        || !string.Equals(card.RequestDetails ?? string.Empty, _loadedDetails, StringComparison.Ordinal)
+        || !string.Equals(card.Name ?? string.Empty, _loadedName, StringComparison.Ordinal)
+        || !string.Equals(card.Purpose ?? string.Empty, _loadedPurpose, StringComparison.Ordinal)
+        || !string.Equals(card.Notes ?? string.Empty, _loadedNotes, StringComparison.Ordinal)
+        || card.RequestReceivedDate != _loadedReceived
+        || card.EffectiveDate != _loadedEffective
+        || card.ExpirationDate != _loadedExpiration;
+
+    /// <summary>Диалог ухода при несохранённых реквизитах.</summary>
+    private bool showLeaveModal;
+
 
     private async Task SendToApprove()
     {
@@ -3970,6 +4067,9 @@
                 "всех обязательных полей и повторите попытку.";
             return;
         }
+
+        // Реквизиты записаны: предупреждение при уходе больше не нужно.
+        CaptureLoadedRequisites();
 
         if (_createdCardId.HasValue && _pendingChildCards.Count > 0)
         {
