@@ -1,6 +1,7 @@
 using Chernika.Domain.Enums;
 using Chernika.Domain.Models;
 using Chernika.Infrastructure.Services;
+using Chernika.Web.Pages.Structure;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -573,5 +574,72 @@ public class HKCardStructureSaveIntegrationTests
         Assert.Equal(codeBefore, card.Code);
         Assert.Equal(HKCardStatus.Draft, card.Status);
         Assert.Null(card.CurrentAcceptedRevisionId);
+    }
+
+    // ── Название позиции и раздел новой ветки ──
+
+    /// <summary>
+    /// Пустое название позиции не подменяется шаблонным текстом: команда
+    /// отклоняется с понятным указанием номера позиции, и в базе ничего нет.
+    /// </summary>
+    [Fact]
+    public async Task SaveStructure_EmptyPositionName_IsRefusedWithPositionNumber()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var version = await VersionAsync(s, cardId);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => s.HK.SaveStructureAsync(new SaveHKCardStructureCommand(
+                cardId, Array.Empty<HKCardSectionWrite>(),
+                new[]
+                {
+                    new HKCardStructureNodeWrite(
+                        Guid.NewGuid(), null, HKObjectLevel.Aggregate, "   ", 1, 0, null)
+                },
+                Array.Empty<HKCardStructureItemWrite>(), null, version)));
+
+        Assert.Contains("наименование позиции", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("№1", error.Message);
+
+        await using var read = _fixture.CreateScope();
+        Assert.Equal(0, await read.Db.HKCardNodes.CountAsync(x => x.HKCardId == cardId));
+    }
+
+    /// <summary>
+    /// Выбранный вид раздела применяется к ветке: раздел создаётся вместе с
+    /// позицией, и после сохранения позиция остаётся в нём.
+    /// </summary>
+    [Fact]
+    public async Task NewBranchSectionType_PositionIsSavedInChosenSection()
+    {
+        await using var s = As(_fixture.NormAdminA.Id);
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            s, _fixture.NormAdminA.Id, withRow: false);
+
+        var version = await VersionAsync(s, cardId);
+        var graph = await s.HK.GetStructureGraphAsync(cardId);
+        Assert.NotNull(graph);
+
+        var state = HKStructureEditorState.FromGraph(graph!);
+        state.UpdateVersion(version);
+        state.NewBranchSectionType = HKCardSectionType.Oils;
+        var position = state.AddTopPosition(HKObjectLevel.Aggregate);
+        position.Name = "Ветка масла";
+
+        await s.HK.SaveStructureAsync(state.BuildCommand(cardId));
+
+        s.Db.ChangeTracker.Clear();
+        var reloaded = await s.HK.GetStructureGraphAsync(cardId);
+        Assert.NotNull(reloaded);
+
+        var section = Assert.Single(reloaded!.Sections);
+        Assert.Equal(HKCardSectionType.Oils, section.SectionType);
+
+        var saved = Assert.Single(reloaded.Nodes);
+        Assert.Equal(section.Id, saved.SectionId);
+        Assert.Equal("Ветка масла", saved.Name);
     }
 }

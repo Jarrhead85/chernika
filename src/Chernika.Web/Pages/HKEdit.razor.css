@@ -963,3 +963,119 @@
     resize: vertical;
     overflow-y: auto;
 }
+
+/* ── Таблица структуры ─────────────────────────────────────────────────── */
+
+/* Номер позиции: ширина под «1.1.1», моноширинный шрифт, без переносов. */
+.hk-rows-table th.col-num,
+.hk-rows-table td.col-num {
+    width: 80px;
+    min-width: 80px;
+    white-space: nowrap;
+    word-break: keep-all;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Последняя колонка действий: компактная, кнопки одного вида. */
+.hk-rows-table th.col-actions,
+.hk-rows-table td.col-actions {
+    width: 64px;
+    min-width: 64px;
+}
+
+/* Группа действий в строке позиции: переносится целиком, без наложений. */
+.hki-actions-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.hki-actions-row .linkBtn {
+    padding: 0 4px;
+    min-width: 0;
+    line-height: 1.4;
+}
+
+/* Кнопка сворачивания: компактная иконка в фиксированном месте, без
+   наезда на соседние элементы. */
+.hk-editor-collapse {
+    flex: 0 0 20px;
+    width: 20px;
+    min-width: 20px;
+    text-align: center;
+}
+
+.hki-collapse-btn {
+    width: 20px;
+    height: 20px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    line-height: 1;
+    border-radius: 4px;
+}
+
+.hki-collapse-btn:hover {
+    color: var(--text);
+    background: var(--panel2);
+}
+
+.hki-collapse-btn:focus-visible {
+    outline: 2px solid var(--accent, #4f8cff);
+    outline-offset: 1px;
+}
+
+/* Поля позиции и действия — двумя группами: при узкой ширине группы
+   переносятся целиком, поля не накладываются на кнопки. */
+.hk-editor-fields {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+/* Группа «Без раздела»: та же рамка, что и у раздела, но приглушённая. */
+.hki-nosection-row td {
+    color: var(--muted);
+}
+
+/* Заголовок части формы с названием этапа и его статусом. */
+.hk-editor-part-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.hk-stage-label {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+/* Колонка действий — компактная и одинаковая в шапке и в строках. */
+.hk-items-table th.col-actions,
+.hk-items-table td.col-actions {
+    width: 64px;
+    min-width: 64px;
+}
+
+.hk-items-table tbody td.hki-actions {
+    padding: 6px 4px;
+}
+
+/* Действия этапа согласования — у своей части карты. */
+.hk-editor-part-head .hk-stage-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}

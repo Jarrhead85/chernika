@@ -527,4 +527,93 @@ public class HKStructureEditorStateTests
         var order = state.Sections.OrderBy(s => s.SortOrder).Select(s => s.Id).ToArray();
         Assert.Equal(new[] { oils.Id, greases.Id, fuels.Id }, order);
     }
+
+    // ── Выбор вида раздела ──
+
+    /// <summary>
+    /// Выбор вида раздела сам по себе структуру не меняет: раздел создаётся
+    /// вместе с первой веткой выбранного вида.
+    /// </summary>
+    [Fact]
+    public void SectionChoice_CreatesSectionOnlyWithFirstBranch()
+    {
+        var state = HKStructureEditorState.FromGraph(Graph());
+
+        state.NewBranchSectionType = HKCardSectionType.Oils;
+
+        Assert.Empty(state.Sections);
+        Assert.Null(state.NewBranchSectionId);
+
+        var node = state.AddTopPosition(HKObjectLevel.Aggregate);
+        var section = Assert.Single(state.Sections);
+        Assert.Equal(HKCardSectionType.Oils, section.SectionType);
+        Assert.Equal(section.Id, node.SectionId);
+        Assert.Equal(section.Id, state.NewBranchSectionId);
+    }
+
+    /// <summary>
+    /// Смена вида раздела не переносит уже созданную ветку: следующая ветка
+    /// получает раздел своего вида.
+    /// </summary>
+    [Fact]
+    public void SectionChoice_ChangeKeepsExistingBranchesInTheirSections()
+    {
+        var state = HKStructureEditorState.FromGraph(Graph());
+
+        state.NewBranchSectionType = HKCardSectionType.Oils;
+        var oils = state.AddTopPosition(HKObjectLevel.Aggregate);
+
+        state.NewBranchSectionType = HKCardSectionType.Greases;
+        var greases = state.AddTopPosition(HKObjectLevel.Aggregate);
+
+        Assert.Equal(2, state.Sections.Count);
+        Assert.Equal(oils.SectionId, state.Nodes.Single(n => n.Id == oils.Id).SectionId);
+        Assert.Equal(
+            HKCardSectionType.Greases,
+            state.Sections.Single(s => s.Id == greases.SectionId).SectionType);
+    }
+
+    // ── Название новой позиции ──
+
+    /// <summary>
+    /// Новая позиция создаётся с пустым названием: шаблонный текст не
+    /// подставляется, имя вводит пользователь.
+    /// </summary>
+    [Fact]
+    public void NewPosition_HasEmptyName()
+    {
+        var state = HKStructureEditorState.FromGraph(Graph());
+
+        var top = state.AddTopPosition(HKObjectLevel.Aggregate);
+        var childLevel = HKStructureEditorState.AllowedChildLevels(top.Level).First();
+        var child = state.AddChildPosition(top.Id, childLevel);
+
+        Assert.Equal(string.Empty, top.Name);
+        Assert.Equal(string.Empty, child.Name);
+
+        var command = state.BuildCommand();
+        Assert.Equal(2, command.Positions.Count);
+        Assert.All(command.Positions, p => Assert.Equal(string.Empty, p.Name));
+    }
+
+    // ── Группа «Без раздела» ──
+
+    /// <summary>
+    /// Группа «Без раздела» — только группировка показа: в содержимом карты
+    /// раздела-фикции нет, нумерация и порядок не меняются.
+    /// </summary>
+    [Fact]
+    public void WithoutSectionGroup_IsDisplayOnly()
+    {
+        var node = Node(HKObjectLevel.Aggregate, name: "Ветка");
+        var graph = Graph(nodes: new[] { node });
+
+        var state = HKStructureEditorState.FromGraph(graph);
+        var rows = state.Rows();
+
+        Assert.DoesNotContain(rows, r => r.Name == "Без раздела");
+        Assert.Single(rows);
+        Assert.Empty(state.Sections);
+        Assert.Equal("1", rows[0].Number);
+    }
 }

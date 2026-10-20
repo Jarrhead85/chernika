@@ -82,6 +82,15 @@
             <EditForm Model="@card" OnValidSubmit="SaveCard">
                 <DataAnnotationsValidator />
                 <div class="form">
+
+                <div class="hk-editor-part-head">
+                    @if (!IsNew)
+                    {
+                        <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Details)</span>
+                        <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Details))">@StageStateBadge(StageState(HKApprovalStage.Details))</span>
+                        @StageButtons(HKApprovalStage.Details)
+                    }
+                </div>
                     <div class="hk-form-row hk-form-row--request">
                         <div class="field">
                             <label for="hk-request-organization">Организация</label>
@@ -504,7 +513,7 @@
                                         <th>Версия</th>
                                         <th>Объект</th>
                                         <th>Утверждена</th>
-                                        <th class="col-actions" style="width:60px"></th>
+                                        <th class="col-actions"></th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -597,37 +606,7 @@
                                     acceptedCaption += ", дата решения " + AppTime.Fmt(acceptedAt, "dd.MM.yyyy");
                                 <div class="hint">@acceptedCaption</div>
                             }
-                            @if (!IsNew && hasApprovalStages)
-                            {
-                                @foreach (var stage in approvalStages)
-                                {
-                                    <div class="hk-stage-actions">
-                                        <span class="hint">@StageTitle(stage.Stage)</span>
-                                        <span class="hint">@StageStateTitle(stage.State)</span>
-                                        @if (stage.State == HKApprovalStageState.OnReview && stage.AssignedApproverUserId == currentUserId)
-                                        {
-                                            @if (canApprove)
-                                            {
-                                                <button type="button" class="btn primary" @onclick="() => DecideStageAsync(stage.Stage, true)">@(stage.Stage == HKApprovalStage.Composition ? "Принять состав и нормы" : "Принять этап")</button>
-                                            }
-                                            @if (canReturn)
-                                            {
-                                                <button type="button" class="btn ghost" @onclick="() => DecideStageAsync(stage.Stage, false)">Вернуть на доработку</button>
-                                            }
-                                        }
-                                        @if (canSubmit && stage.State is HKApprovalStageState.Draft or HKApprovalStageState.RevisionRequired
-                                            && (stage.Stage == HKApprovalStage.Details || detailsStageApproved))
-                                        {
-                                            <button type="button" class="btn primary hk-editor-chip" @onclick="() => SubmitStageAsync(stage.Stage)">
-                                                @(stage.Stage == HKApprovalStage.Details
-                                                    ? "Отправить реквизиты на согласование"
-                                                    : "Отправить состав и нормы на согласование")
-                                            </button>
-                                        }
-                                    </div>
-                                }
-                            }
-                            else
+                            @if (!hasApprovalStages)
                             {
                                 @if (!IsNew
                                     && _loadState == HkEditLoadState.Ready
@@ -683,7 +662,15 @@
                         @if (IsAutonomousMode || selectedLevel == HKObjectLevel.Node)
                         {
                         <div class="full-width" style="margin-top:8px">
-                            <h3 class="hk-editor-strong">Строки ХК</h3>
+                            <div class="hk-editor-part-head">
+                                <h3 class="hk-editor-strong">Строки ХК</h3>
+                                @if (IsAutonomousMode && !IsNew)
+                                {
+                                    <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Composition)</span>
+                                    <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Composition))">@StageStateBadge(StageState(HKApprovalStage.Composition))</span>
+                                    @StageButtons(HKApprovalStage.Composition)
+                                }
+                            </div>
 
                             @* Автономная карта хранит собственную структуру, а не дочерние
                                ХК. Разделы — необязательная группировка над деревом: они
@@ -714,16 +701,17 @@
                                     <div class="hk-editor-panel-row">
                                         <span class="hki-muted-sm">Раздел новой ветки:</span>
                                         <button type="button"
-                                                class="@(NewBranchSectionId is null ? "btn primary" : "btn ghost") hk-editor-chip"
-                                                aria-pressed="@(NewBranchSectionId is null)"
+                                                class="@(SelectedSectionType is null ? "btn primary" : "btn ghost") hk-editor-chip"
+                                                aria-pressed="@(SelectedSectionType is null)"
                                                 disabled="@(!canEditStructure)"
                                                 @onclick="() => SelectNewBranchSection(null)">
                                             Без раздела
                                         </button>
                                         @foreach (var panelType in new[] { HKCardSectionType.Oils, HKCardSectionType.Greases, HKCardSectionType.Fuels })
                                         {
-                                            var panelId = _structure?.Sections.FirstOrDefault(s => s.SectionType == panelType)?.Id;
-                                            var panelSelected = NewBranchSectionId is { } chosen && chosen == panelId;
+                                            // Подсветка — по ВИДУ раздела: сам раздел
+                                            // создаётся при добавлении первой ветки.
+                                            var panelSelected = SelectedSectionType == panelType;
                                             <button type="button"
                                                     class="@(panelSelected ? "btn primary" : "btn ghost") hk-editor-chip"
                                                     aria-pressed="@panelSelected"
@@ -821,9 +809,17 @@
                                         {
                                             @* Раздел — визуальная группа: без количества
                                                и собственных норм, только номер и название. *@
-                                            <tr @key="@($"sec{er.Row.SectionId}")" class="hki-section-row">
+                                            <tr @key="@($"sec{er.Row.SectionId}")"
+                                                class="@(er.Row.SectionId is null ? "hki-nosection-row" : "hki-section-row")">
                                                 <td colspan="11" class="hk-editor-strong">
-                                                    @(er.Row.Number) @(er.Row.Name)
+                                                    @if (er.Row.SectionId is not null)
+                                                    {
+                                                        @er.Row.Number @er.Row.Name
+                                                    }
+                                                    else
+                                                    {
+                                                        @er.Row.Name
+                                                    }
                                                 </td>
                                             </tr>
                                         }
@@ -837,17 +833,21 @@
                                                 <td class="col-num">@er.Row.Number</td>
                                                 <td colspan="10" class="hk-editor-cell" style="--indent:@(er.Row.Depth * 14)px">
                                                     <div class="hk-editor-row">
+                                                        <div class="hk-editor-fields">
                                                         <span class="hk-editor-collapse">
                                                             @if (canEditComposition && nodeChildCount > 0)
                                                             {
-                                                                <button type="button" class="linkBtn" @onclick="() => ToggleCollapse(node.Id)"
+                                                                <button type="button" class="hki-collapse-btn"
+                                                                        @onclick="() => ToggleCollapse(node.Id)"
+                                                                        aria-expanded="@(nodeExpanded ? "true" : "false")"
+                                                                        aria-label="@(nodeExpanded ? "Свернуть ветку" : "Раскрыть ветку")"
                                                                         title="@(nodeExpanded ? "Свернуть" : "Раскрыть")">@(nodeExpanded ? "▾" : "▸")</button>
                                                             }
                                                         </span>
                                                         <span class="tag hki-muted-xs">@LevelTitle(node.Level)</span>
                                                         @if (canEditComposition)
                                                         {
-                                                            <input @bind="node.Name" class="hk-editor-name"
+                                                            <input id="@PositionNameId(node.Id)" @bind="node.Name" class="hk-editor-name"
                                                                    placeholder="Название позиции" />
                                                             <span class="hki-muted-xs"> Кол-во:</span>
                                                             <input type="number"
@@ -860,12 +860,9 @@
                                                             <b>@node.Name</b>
                                                             <span class="hki-muted-sm">× @node.Quantity</span>
                                                         }
-                                                        @if (IsAutonomousMode && node.ParentId is null)
-                                                        {
-                                                            <span class="tag hki-muted-xs">
-                                                                @(SectionNameOf(node.SectionId))
-                                                            </span>
-                                                        }
+                                                        </div>
+
+                                                        <div class="hki-actions-row">
                                                         @if (canEditComposition)
                                                         {
                                                             @if (node.ParentId is null)
@@ -882,6 +879,7 @@
                                                             }
                                                             @if (nodeAllowedLvls.Count > 0)
                                                             {
+                                                                                                                <span class="hki-muted-xs">Дочерняя позиция:</span>
                                                                 <select value="@(ChildLevelKey(node.Id, nodeAllowedLvls))"
                                                                         @onchange="ev => SetChildLevelChoice(node, (string)ev.Value!)"
                                                                         class="hki-td-input hk-editor-select hk-editor-select--narrow" title="Уровень новой дочерней позиции">
@@ -907,6 +905,7 @@
                                                             <button type="button" class="linkBtn hki-danger" @onclick="() => AskDeletePosition(node)"
                                                                     title="Удалить позицию">🗑</button>
                                                         }
+                                                        </div>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1312,11 +1311,13 @@
                                    версий не повторяется автоматом и не уничтожает
                                    локальный ввод. *@
                                 <button type="button" class="btn primary hk-editor-gap"
-                                        disabled="@IsNew"
+                                        disabled="@(IsNew || _savingStructure)"
                                         title="@(IsNew ? "Сначала сохраните черновик ХК" : "Сохранить структуру целиком")"
-                                        @onclick="SaveStructureAsync">Сохранить структуру</button>
+                                        @onclick="SaveStructureAsync">
+                                    @(_savingStructure ? "Сохраняю…" : "Сохранить структуру")
+                                </button>
 
-                                @if (_structureDirty && !_loading)
+                                @if (structureDirty && !_loading)
                                 {
                                     <span class="hki-muted-xs hk-editor-gap--sm">
                                         в структуре есть несохранённые изменения
@@ -1684,6 +1685,81 @@
             ? HKApprovalService.DetailsStageTitle
             : HKApprovalService.CompositionStageTitle;
 
+    /// <summary>
+    /// Состояние этапа согласования: метка по состоянию ЭТАПА, а не по
+    /// общему статусу карты.
+    /// </summary>
+    private static string StageStateBadge(HKApprovalStageState state) => state switch
+    {
+        HKApprovalStageState.Draft => "Черновик",
+        HKApprovalStageState.OnReview => "На согласовании",
+        HKApprovalStageState.RevisionRequired => "На доработке",
+        HKApprovalStageState.Approved => "Принято",
+        _ => "Черновик"
+    };
+
+    /// <summary>
+    /// Действия этапа согласования: отправка, принятие и возврат.
+    /// <para>
+    /// Кнопки стоят у своей части карты, условия прежние: полномочия
+    /// согласующего и состояние этапа.
+    /// </para>
+    /// </summary>
+    private RenderFragment StageButtons(HKApprovalStage stage) =>
+        @<div class="hk-stage-actions">
+            @{
+                var current = approvalStages.FirstOrDefault(s => s.Stage == stage);
+            }
+            @if (current is not null
+                && current.State == HKApprovalStageState.OnReview
+                && current.AssignedApproverUserId == currentUserId)
+            {
+                @if (canApprove)
+                {
+                    <button type="button" class="btn primary" @onclick="() => DecideStageAsync(stage, true)">
+                        @(stage == HKApprovalStage.Composition ? "Принять состав и нормы" : "Принять этап")
+                    </button>
+                }
+                @if (canReturn)
+                {
+                    <button type="button" class="btn ghost" @onclick="() => DecideStageAsync(stage, false)">Вернуть на доработку</button>
+                }
+            }
+            @if (canSubmit
+                && current is not null
+                && current.State is HKApprovalStageState.Draft or HKApprovalStageState.RevisionRequired
+                && (stage == HKApprovalStage.Details || detailsStageApproved))
+            {
+                <button type="button" class="btn primary hk-editor-chip" @onclick="() => SubmitStageAsync(stage)">
+                    @(stage == HKApprovalStage.Details
+                        ? "Отправить реквизиты на согласование"
+                        : "Отправить состав и нормы на согласование")
+                </button>
+            }
+        </div>;
+
+    /// <summary>Класс статусной метки этапа: паттерн UI-кита .tag/.ok/.warn/.bad.</summary>
+    private static string StageStateBadgeClass(HKApprovalStageState state) => state switch
+    {
+        HKApprovalStageState.OnReview => "warn",
+        HKApprovalStageState.RevisionRequired => "bad",
+        HKApprovalStageState.Approved => "ok",
+        _ => string.Empty
+    };
+
+    /// <summary>Название этапа согласования для заголовка своей части.</summary>
+    private static string StagePartTitle(HKApprovalStage stage) => stage switch
+    {
+        HKApprovalStage.Details => "Согласование реквизитов и основания ХК",
+        HKApprovalStage.Composition => "Согласование состава и норм ХК",
+        _ => "Согласование"
+    };
+
+    /// <summary>Состояние этапа по виду этапа; без этапа — черновик.</summary>
+    private HKApprovalStageState StageState(HKApprovalStage stage) =>
+        approvalStages.FirstOrDefault(s => s.Stage == stage)?.State
+        ?? HKApprovalStageState.Draft;
+
     private static string StageStateTitle(HKApprovalStageState state) => state switch
     {
         HKApprovalStageState.Draft => "Черновик",
@@ -1892,7 +1968,7 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
-        isSystemAdmin = await Permissions.IsSystemAdminAsync();
+        _loadStage = "инициализация";
 
         // Проверки прав и чтение организаций выполняются через общий scoped DbContext,
         // поэтому сериализуем их тем же CircuitDbLock, что и загрузку данных.
@@ -1915,6 +1991,10 @@
             // проверка, утверждение и архивирование остались на своих правах.
             canCreateNewVersion = canWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
             canCreateNode = canCreateAggregate = canCreateEquipmentModel = canCreateComplex = canWork;
+
+            // Проверка системного администратора идёт под той же блокировкой:
+            // вне её она конкурирует с индикаторами layout за общий контекст.
+            isSystemAdmin = await Permissions.IsSystemAdminAsync();
         }
 
         // Названия марок читаются отдельной операцией: внутри блока справочников
@@ -2507,7 +2587,6 @@
         _structure?.Sections.OrderBy(s => s.SortOrder).ToList() ?? new List<EditorSection>();
 
     /// <summary>Активный выбор панели: тип раздела для НОВОЙ верхней ветки.</summary>
-    private HKCardSectionType? _newBranchSection;
 
     /// <summary>Свернутые позиции: вложенность скрыта, номера остаются по полной структуре.</summary>
     private Dictionary<Guid, bool> _collapsed = new();
@@ -2522,13 +2601,21 @@
     private string? _structureError;
 
     /// <summary>Выбранная позиция по устойчивому Id — для подсветки и итогов.</summary>
+    /// <summary>
+    /// Позиция, в название которой после отрисовки ставится фокус.
+    /// <para>
+    /// До отрисовки элемента в DOM нет, поэтому фокус ставится в
+    /// <see cref="OnAfterRenderAsync"/>: это безопасный механизм без
+    /// обращения к JS и без таймеров.
+    /// </para>
+    /// </summary>
     private Guid? _focusNodeId;
+
 
     /// <summary>Описание содержимого, удаляемого подтверждаемым действием.</summary>
     private string? _confirmImpactText;
 
     /// <summary>В структуре есть несохранённые локальные изменения.</summary>
-    private bool _structureDirty;
 
     /// <summary>Выбор уровня верхнего узла. Роковой выбор сбрасывается, когда он перестаёт быть применимым.</summary>
     private HKObjectLevel? _nodeRootChoice;
@@ -2855,11 +2942,16 @@
             _ => null
         };
 
+    /// <summary>
+    /// Выбор вида раздела для новой самостоятельной ветки.
+    /// <para>
+    /// Источник выбора один — <see cref="HKStructureEditorState.NewBranchSectionType"/>:
+    /// отдельная копия выбора в компоненте расходилась с моделью, из-за чего
+    /// подсветка зависела от идентификатора ещё не созданного раздела.
+    /// </para>
+    /// </summary>
     private void SelectNewBranchSection(HKCardSectionType? type)
     {
-        _newBranchSection = type;
-        _newBranchSectionType = type;
-
         // Выбор только запоминает вид раздела: сам раздел создаётся при
         // добавлении первой ветки, а не при переключении кнопки.
         if (_structure is not null)
@@ -2867,6 +2959,9 @@
 
         StateHasChanged();
     }
+
+    /// <summary>Выбранный вид раздела новой ветки.</summary>
+    private HKCardSectionType? SelectedSectionType => _structure?.NewBranchSectionType;
 
     /// <summary>
     /// Раздел для новой самостоятельной ветки. Раздел создаётся первым
@@ -2877,7 +2972,7 @@
         if (_structure is null)
             return null;
 
-        var chosen = _newBranchSectionType;
+        var chosen = _structure?.NewBranchSectionType;
         if (chosen is null)
             return null;
 
@@ -2885,13 +2980,8 @@
     }
 
     /// <summary>Тип раздела, выбранный на панели для НОВОЙ самостоятельной ветки.</summary>
-    private HKCardSectionType? _newBranchSectionType;
 
     /// <summary>Устойчивый Id выбранного на панели раздела новой ветки.</summary>
-    private Guid? NewBranchSectionId =>
-        _newBranchSectionType is { } type
-            ? _structure?.Sections.FirstOrDefault(s => s.SectionType == type)?.Id
-            : null;
 
     /// <summary>
     /// Разрешённые уровни дочерней позиции — единое правило проекта, а не
@@ -2999,6 +3089,35 @@
         StateHasChanged();
     }
 
+    /// <summary>
+    /// Фокус в название новой позиции ставится после отрисовки: пока
+    /// элемента нет в DOM, сфокусироваться на нём нельзя.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusNodeId is not { } nodeId)
+            return;
+
+        _focusNodeId = null;
+
+        try
+        {
+            // Фокус ставится после отрисовки: до этого элемента нет в DOM.
+            await JS.InvokeVoidAsync("popoverPositioning.focusById", PositionNameId(nodeId));
+        }
+        catch (JSException)
+        {
+            // Фокус не критичен: работа редактора от него не зависит.
+        }
+        catch (InvalidOperationException)
+        {
+            // Предварительный рендер или отключённый JS.
+        }
+    }
+
+    /// <summary>Устойчивый идентификатор поля названия позиции.</summary>
+    private static string PositionNameId(Guid nodeId) => $"hk-position-name-{nodeId:N}";
+
     private void AddTopPosition()
     {
         if (!canEditStructure || _structure is null)
@@ -3006,7 +3125,6 @@
 
         // Раздел выбранного вида создаётся вместе с веткой — в модели.
         var node = _structure.AddTopPosition(_topPositionLevel);
-        node.Name = "Новая позиция";
         _focusNodeId = node.Id;
         ResetChoiceIfNotApplicable();
         StateHasChanged();
@@ -3026,7 +3144,6 @@
             : allowed[0];
 
         var node = _structure.AddChildPosition(parent.Id, level);
-        node.Name = "Новая позиция";
         _focusNodeId = node.Id;
         StateHasChanged();
     }
@@ -3179,16 +3296,26 @@
     /// <summary>Атомарное сохранение разделов, позиций, строк и материалов.</summary>
     private async Task SaveStructureAsync()
     {
-        if (!canEditComposition || IsNew)
+        if (!canEditStructure || _structure is null || IsNew)
             return;
 
+        // Повторное нажатие не создаёт второй запрос: команда уже выполняется.
+        if (_savingStructure)
+            return;
+
+        _savingStructure = true;
         errorMessage = null;
         _structureError = null;
 
         try
         {
-            var command = BuildStructureCommand(loadedRowVersion);
-            await using (await DbLock.WaitAsync())
+            // Команда строится ИЗ ЛОКАЛЬНОЙ МОДЕЛИ редактора: прежний
+            // построитель читал card.TreeNodes и card.Items, то есть прежний
+            // EF-граф, в котором правок редактора не было.
+            _structure.UpdateVersion(loadedRowVersion);
+            var command = _structure.BuildCommand();
+
+            await using (await DbLock.WaitAsync("HKEdit: сохранение структуры"))
             {
                 await HKCardService.SaveStructureAsync(command);
                 // Карта возвращается в редактирование: служебные поля — из
@@ -3196,10 +3323,13 @@
                 // записаны структурной командой.
                 await HKCardService.AttachCardForEditingAsync(card, card.Id);
             }
-            // Состояние редактора перестраивается из свежей проекции графа:
-            // версия загрузки меняется, локальные правки заменены сохранёнными.
-            await InitStructureStateAsync(_loadCts?.Token ?? CancellationToken.None);
-            await LoadMaterialNamesAsync(_loadCts?.Token ?? CancellationToken.None);
+
+            // Подтверждённая версия принимается, изменения снимаются. Граф НЕ
+            // перечитывается: правки, сделанные во время запроса, остаются в
+            // модели и не теряются.
+            loadedRowVersion = card.RowVersion;
+            _structure.UpdateVersion(loadedRowVersion);
+            _structure.MarkClean();
         }
         catch (HkCardVersionConflictException ex)
         {
@@ -3225,98 +3355,15 @@
         }
     }
 
-    /// <summary>Команда из текущего состояния редактора: итоговые разделы, позиции, строки и материалы.</summary>
-    private SaveHKCardStructureCommand BuildStructureCommand(uint expectedRowVersion)
-    {
-        var rows = HKStructureNumbering.Build(BuildStructureInput());
 
-        // Порядок нормализуется при сохранении по отображаемому представлению:
-        // разделы и самостоятельные ветки делят общий верхний порядок,
-        // потомки одного родителя — один совместный список.
-        var counters = new Dictionary<Guid, int>();
-        var sectionsOrder = new Dictionary<Guid, int>();
-        var topCounter = 0;
+    /// <summary>Идёт сохранение структуры: повторное нажатие не создаёт второй запрос.</summary>
+    private bool _savingStructure;
 
-        foreach (var row in rows)
-        {
-            switch (row.Kind)
-            {
-                case HKStructureRowKind.Section:
-                    topCounter++;
-                    sectionsOrder[row.SectionId!.Value] = topCounter;
-                    break;
-                case HKStructureRowKind.Position:
-                    var node = card.TreeNodes.First(n => n.Id == row.NodeId!.Value);
-                    if (node.ParentId is null)
-                    {
-                        topCounter++;
-                        node.SortOrder = topCounter;
-                    }
-                    else
-                    {
-                        counters[node.ParentId.Value] = counters.TryGetValue(node.ParentId.Value, out var v) ? v + 1 : 1;
-                        node.SortOrder = counters[node.ParentId.Value];
-                    }
-                    break;
-                default:
-                    var item = card.Items.First(i => i.Id == row.ItemId!.Value);
-                    if (item.HKCardNodeId is null)
-                    {
-                        topCounter++;
-                        item.SortOrder = topCounter;
-                    }
-                    else
-                    {
-                        counters[item.HKCardNodeId.Value] = counters.TryGetValue(item.HKCardNodeId.Value, out var v2) ? v2 + 1 : 1;
-                        item.SortOrder = counters[item.HKCardNodeId.Value];
-                    }
-                    break;
-            }
-        }
-
-        foreach (var section in EditorSections)
-        {
-            if (sectionsOrder.TryGetValue(section.Id, out var order))
-                section.SortOrder = order;
-        }
-
-        var positions = card.TreeNodes
-            .Select(n => new HKCardStructureNodeWrite(
-                n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder,
-                n.ParentId is null ? n.SectionId : null))
-            .ToList();
-
-        var items = card.Items
-            .Select(i => new HKCardStructureItemWrite(
-                i.Id, i.HKCardNodeId, i.AssemblyUnitId,
-                i.Quantity, i.Volume, i.UnitOfMeasure, i.Periodicity, i.Notes, i.SortOrder,
-                i.HKCardNodeId is null ? i.SectionId : null,
-                i.Materials
-                    .Select(m => new HKCardMaterialWrite(m.Id, m.GsmMaterialId, m.Category))
-                    .ToList()))
-            .ToList();
-
-        var input = BuildStructureInput();
-        var shape = new HKTreeShape(
-            input.Nodes.Select(n => new HKTreePosition(n.Id, n.ParentId, n.Level)).ToList(),
-            input.Items.Count(i => i.NodeId is null));
-        var senior = HKCardLevelRule.SeniorTopLevel(shape);
-        var nodeRootChoice = senior == HKObjectLevel.Node ? _nodeRootChoice : null;
-
-        return new SaveHKCardStructureCommand(
-            card.Id,
-            EditorSections.OrderBy(s => s.SortOrder)
-                .Select(s => new HKCardSectionWrite(s.Id, s.SectionType, s.SortOrder))
-                .ToList(),
-            positions,
-            items,
-            nodeRootChoice,
-            expectedRowVersion);
-    }
+    /// <summary>В структуре есть несохранённые изменения (по локальной модели).</summary>
 
     /// <summary>Черновик ещё не создан: структурные изменения блокируют обычное сохранение requisites.</summary>
     private string? StructureDirtyWarning =>
-        _structureDirty && IsAutonomousMode && !IsNew
+        structureDirty && IsAutonomousMode && !IsNew
             ? "В структуре есть несохранённые изменения — сначала нажмите «Сохранить структуру» либо сбросьте правки обновлением страницы."
             : null;
 
@@ -3712,7 +3759,7 @@
             // реквизитный путь: это обошло бы проверки структуры и разделов.
             // У новой карты структурных правок быть не может: редактор
             // структуры открывается только после сохранения черновика.
-            if (_structureDirty && !IsNew)
+            if (structureDirty && !IsNew)
             {
                 errorMessage = StructureDirtyWarning;
                 return;

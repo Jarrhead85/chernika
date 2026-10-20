@@ -25,8 +25,20 @@ public sealed class HKStructureEditorState
     public List<EditorNode> Nodes { get; private set; } = new();
     public List<EditorItem> Items { get; private set; } = new();
 
-    /// <summary>Версия карты, полученная при загрузке этого состояния.</summary>
+    /// <summary>
+    /// Версия карты, полученная при загрузке этого состояния.
+    /// <para>
+    /// Команда сохранения структуры опирается на неё: версия должна совпадать
+    /// с той, что у карты сейчас, иначе сервер отклонит команду как конфликт.
+    /// </para>
+    /// </summary>
     public uint LoadedRowVersion { get; private set; }
+
+    /// <summary>
+    /// Обновляет базовую версию карты: после сохранения реквизитов версия
+    /// меняется, и следующая команда структуры должна опираться на новую.
+    /// </summary>
+    public void UpdateVersion(uint rowVersion) => LoadedRowVersion = rowVersion;
 
     /// <summary>В структуре есть несохранённые изменения.</summary>
     public bool IsDirty { get; private set; }

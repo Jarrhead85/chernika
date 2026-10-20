@@ -97,6 +97,11 @@ window.popoverPositioning = {
     delete map.escapeHandler;
   },
 
+  focusById(id) {
+    const element = id ? document.getElementById(id) : null;
+    if (element && element.focus) element.focus();
+  },
+
   focusElement(element) {
     if (element && element.focus) element.focus();
   }
