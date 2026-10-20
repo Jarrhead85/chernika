@@ -82,15 +82,6 @@
             <EditForm Model="@card" OnValidSubmit="SaveCard">
                 <DataAnnotationsValidator />
                 <div class="form">
-
-                <div class="hk-editor-part-head">
-                    @if (!IsNew)
-                    {
-                        <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Details)</span>
-                        <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Details))">@StageStateBadge(StageState(HKApprovalStage.Details))</span>
-                        @StageButtons(HKApprovalStage.Details)
-                    }
-                </div>
                     <div class="hk-form-row hk-form-row--request">
                         <div class="field">
                             <label for="hk-request-organization">Организация</label>
@@ -368,36 +359,6 @@
                             }
                         </div>
                         }
-                        @if (!IsNew && !detailsStageApproved && canSubmit)
-                        {
-                        <div class="field">
-                            <label for="hk-approver">Согласующий</label>
-                            @if (_approversError is not null)
-                            {
-                                <div class="error" style="font-size:12px">@_approversError</div>
-                                <button type="button" class="btn ghost" style="margin-top:4px"
-                                        @onclick="RetryApproversAsync">Повторить</button>
-                            }
-                            else if (!_approversLoaded)
-                            {
-                                <div class="readonlyValue">Загрузка согласующих…</div>
-                            }
-                            else if (branchApprovers.Count == 0)
-                            {
-                                <div class="note" style="font-size:12px">Нет доступных согласующих.</div>
-                            }
-                            else
-                            {
-                                <select id="hk-approver" class="field-select" @bind="_approverUserId">
-                                    <option value="">Выберите согласующего...</option>
-                                    @foreach (var u in branchApprovers)
-                                    {
-                                        <option value="@u.Id">@u.FullName</option>
-                                    }
-                                </select>
-                            }
-                        </div>
-                        }
                         <div class="field">
                             <label>Номер ХК</label>
                             @if (IsNew)
@@ -460,6 +421,17 @@
                             }
                         </div>
                     </div>
+
+                    @* Этап реквизитов — над разделительной чертой двух частей,
+                       под полями дат действия. *@
+                    @if (!IsNew)
+                    {
+                        <div class="hk-editor-part-head hk-editor-part-head--requisites">
+                            <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Details)</span>
+                            <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Details))">@StageStateBadge(StageState(HKApprovalStage.Details))</span>
+                            @StageButtons(HKApprovalStage.Details)
+                        </div>
+                    }
 
                     @if (!IsAutonomousMode && selectedLevel != HKObjectLevel.Node)
                     {
@@ -598,7 +570,6 @@
 
                     <div class="formActions hk-form-actions-with-status">
                         <div class="hk-status-inline">
-                            <StatusBadge Status="@card.Status" />
                             @if (!IsNew && acceptedRevisionNumber is { } acceptedNumber)
                             {
                                 var acceptedCaption = "ХК принята. Принятая структура: редакция №" + acceptedNumber;
@@ -662,15 +633,17 @@
                         @if (IsAutonomousMode || selectedLevel == HKObjectLevel.Node)
                         {
                         <div class="full-width" style="margin-top:8px">
-                            <div class="hk-editor-part-head">
-                                <h3 class="hk-editor-strong">Строки ХК</h3>
-                                @if (IsAutonomousMode && !IsNew)
-                                {
+                            @* Этап состава — сразу под разделительной чертой двух
+                               частей; заголовок таблицы идёт следом. *@
+                            @if (IsAutonomousMode && !IsNew)
+                            {
+                                <div class="hk-editor-part-head">
                                     <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Composition)</span>
                                     <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Composition))">@StageStateBadge(StageState(HKApprovalStage.Composition))</span>
                                     @StageButtons(HKApprovalStage.Composition)
-                                }
-                            </div>
+                                </div>
+                            }
+                            <h3 class="hk-editor-strong">Строки ХК</h3>
 
                             @* Автономная карта хранит собственную структуру, а не дочерние
                                ХК. Разделы — необязательная группировка над деревом: они
@@ -1709,6 +1682,10 @@
             @{
                 var current = approvalStages.FirstOrDefault(s => s.Stage == stage);
             }
+            @if (stage == HKApprovalStage.Details && !IsNew && !detailsStageApproved && canSubmit)
+            {
+                @ApproverSelect()
+            }
             @if (current is not null
                 && current.State == HKApprovalStageState.OnReview
                 && current.AssignedApproverUserId == currentUserId)
@@ -1737,6 +1714,41 @@
             }
         </div>;
 
+    /// <summary>
+    /// Выбор согласующего — рядом с кнопкой отправки этапа.
+    /// <para>
+    /// Без выбора согласующего отправка не выполняется, поэтому поле стоит
+    /// рядом с кнопкой, а не в отдельной строке реквизитов.
+    /// </para>
+    /// </summary>
+    private RenderFragment ApproverSelect() =>
+        @<div class="hk-approver-field">
+            @if (_approversError is not null)
+            {
+                <span class="hk-approver-error">@_approversError</span>
+                <button type="button" class="btn ghost hki-link-xs" @onclick="RetryApproversAsync">Повторить</button>
+            }
+            else if (!_approversLoaded)
+            {
+                <span class="hki-muted-xs">Загрузка согласующих…</span>
+            }
+            else if (branchApprovers.Count == 0)
+            {
+                <span class="hki-muted-xs">Нет доступных согласующих.</span>
+            }
+            else
+            {
+                <label for="hk-approver" class="hk-approver-label">Согласующий</label>
+                <select id="hk-approver" class="field-select hk-approver-select" @bind="_approverUserId">
+                    <option value="">Выберите согласующего…</option>
+                    @foreach (var u in branchApprovers)
+                    {
+                        <option value="@u.Id">@u.FullName</option>
+                    }
+                </select>
+            }
+        </div>;
+
     /// <summary>Класс статусной метки этапа: паттерн UI-кита .tag/.ok/.warn/.bad.</summary>
     private static string StageStateBadgeClass(HKApprovalStageState state) => state switch
     {
@@ -1749,8 +1761,8 @@
     /// <summary>Название этапа согласования для заголовка своей части.</summary>
     private static string StagePartTitle(HKApprovalStage stage) => stage switch
     {
-        HKApprovalStage.Details => "Согласование реквизитов и основания ХК",
-        HKApprovalStage.Composition => "Согласование состава и норм ХК",
+        HKApprovalStage.Details => "Согласование реквизитов ХК",
+        HKApprovalStage.Composition => "Согласование состава ХК",
         _ => "Согласование"
     };
 

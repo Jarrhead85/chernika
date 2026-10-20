@@ -1079,3 +1079,37 @@
     gap: 8px;
     flex-wrap: wrap;
 }
+
+/* ── Этап реквизитов под полями дат ─────────────────────────────────────── */
+
+.hk-editor-part-head--requisites {
+    margin-top: 12px;
+}
+
+/* ── Выбор согласующего рядом с кнопкой отправки ────────────────────────── */
+
+.hk-approver-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.hk-approver-label {
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+/* Шрифт поля меньше: полные имена согласующих обрезались по ширине. */
+.hk-approver-select {
+    font-size: 11px;
+    min-width: 140px;
+    max-width: 230px;
+    padding: 3px 6px;
+}
+
+.hk-approver-error {
+    font-size: 11px;
+    color: var(--bad);
+}
