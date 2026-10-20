@@ -618,7 +618,7 @@
                                         @if (canSubmit && stage.State is HKApprovalStageState.Draft or HKApprovalStageState.RevisionRequired
                                             && (stage.Stage == HKApprovalStage.Details || detailsStageApproved))
                                         {
-                                            <button type="button" class="btn primary" @onclick="() => SubmitStageAsync(stage.Stage)">
+                                            <button type="button" class="btn primary hk-editor-chip" @onclick="() => SubmitStageAsync(stage.Stage)">
                                                 @(stage.Stage == HKApprovalStage.Details
                                                     ? "Отправить реквизиты на согласование"
                                                     : "Отправить состав и нормы на согласование")
@@ -1965,22 +1965,24 @@
 
         Logger.LogDebug("HKEdit: загрузка карты {CardId}, поколение {Generation}", requestedId, generation);
 
+        LoadOutcome outcome;
         try
         {
-            await LoadCardAsync(requestedId, ct, generation);
-            if (ct.IsCancellationRequested || generation != _loadGeneration)
-                return;
+            outcome = await LoadCardAsync(requestedId, ct, generation);
 
             // Названия марок — некритичный блок: их ошибка не должна
             // уничтожать загруженную карту.
-            try
+            if (outcome == LoadOutcome.Ready)
             {
-                await LoadMaterialNamesAsync(ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Logger.LogWarning(ex, "HKEdit: названия марок не прочитаны {CardId}", requestedId);
-                _versionsError = "Названия марок недоступны.";
+                try
+                {
+                    await LoadMaterialNamesAsync(ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Logger.LogWarning(ex, "HKEdit: названия марок не прочитаны {CardId}", requestedId);
+                    _versionsError = "Названия марок недоступны.";
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -2004,6 +2006,14 @@
 
         if (ct.IsCancellationRequested || generation != _loadGeneration)
             return;
+
+        // Ready выставляется только после успешной обязательной загрузки:
+        // отказ, отсутствие карты и запрет доступа остаются тем, чем были.
+        if (outcome != LoadOutcome.Ready)
+        {
+            Logger.LogDebug("HKEdit: загрузка не дала документа {CardId}: {Outcome}", requestedId, outcome);
+            return;
+        }
 
         _loadStage = null;
         _loadedCardId = requestedId;
@@ -2089,13 +2099,46 @@
         _loadState = HkEditLoadState.Ready;
     }
 
-    private async Task LoadCardAsync(Guid cardId, CancellationToken ct, int generation)
+    /// <summary>
+    /// Итог обязательной загрузки карты.
+    /// <para>
+    /// Вызывающий метод решает по результату, можно ли показывать документ:
+    /// состояние Ready выставляется только при успехе, а отказ, отсутствие и
+    /// отмена остаются тем, чем были.
+    /// </para>
+    /// </summary>
+    private enum LoadOutcome
+    {
+        /// <summary>Карта загружена и опубликована.</summary>
+        Ready,
+
+        /// <summary>Карты нет.</summary>
+        NotFound,
+
+        /// <summary>Доступа к карте нет.</summary>
+        Forbidden,
+
+        /// <summary>Техническая ошибка загрузки.</summary>
+        Error,
+
+        /// <summary>Загрузка отменена.</summary>
+        Cancelled,
+
+        /// <summary>Загрузка устарела: маршрут уже сменился.</summary>
+        Stale
+    }
+
+
+
+    private async Task<LoadOutcome> LoadCardAsync(Guid cardId, CancellationToken ct, int generation)
     {
         try
         {
             await LoadCardCoreAsync(cardId, ct, generation);
-            if (ct.IsCancellationRequested || generation != _loadGeneration)
-                return;
+            if (ct.IsCancellationRequested)
+                return LoadOutcome.Cancelled;
+            if (generation != _loadGeneration)
+                return LoadOutcome.Stale;
 
             // Наличие файла — часть готовой модели: «файл не прикреплён» не
             // показывается, пока неизвестно, прикреплён ли он.
@@ -2105,17 +2148,19 @@
         {
             Logger.LogWarning(ex, "HKEdit: нет доступа к карте {CardId}", cardId);
             if (generation != _loadGeneration || cardId != Id)
-                return;
+                return LoadOutcome.Stale;
 
             _loadErrorText = ex.Message;
             _loadState = HkEditLoadState.Forbidden;
             ResetEditingFlags();
             canQuickCreate = false;
+            return LoadOutcome.Forbidden;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Отменённая загрузка ничего не публикует: состояние текущей
             // карты остаётся прежним.
+            return LoadOutcome.Cancelled;
         }
         catch (Exception ex)
         {
@@ -2123,13 +2168,16 @@
                 "HKEdit: техническая ошибка загрузки карты {CardId}, этап {Stage}",
                 cardId, _loadStage);
             if (generation != _loadGeneration || cardId != Id)
-                return;
+                return LoadOutcome.Stale;
 
             _loadErrorText = "Не удалось загрузить карту. Повторите загрузку или обратитесь в службу поддержки.";
             _loadState = HkEditLoadState.Error;
             ResetEditingFlags();
             canQuickCreate = false;
+            return LoadOutcome.Error;
         }
+
+        return LoadOutcome.Ready;
     }
 
     /// <summary>
@@ -2142,15 +2190,17 @@
     /// сбросить её права или вывести свою ошибку.
     /// </para>
     /// </summary>
-    private async Task LoadCardCoreAsync(Guid cardId, CancellationToken ct, int generation)
+    private async Task<LoadOutcome> LoadCardCoreAsync(Guid cardId, CancellationToken ct, int generation)
     {
         _loadStage = "реквизиты";
 
         await using (await DbLock.WaitAsync(ct))
         {
             var existing = await HKCardService.GetByIdAsync(cardId, ct);
-            if (ct.IsCancellationRequested || generation != _loadGeneration)
-                return;
+            if (ct.IsCancellationRequested)
+                return LoadOutcome.Cancelled;
+            if (generation != _loadGeneration)
+                return LoadOutcome.Stale;
 
             if (existing == null)
             {
@@ -2159,19 +2209,23 @@
                 _loadState = HkEditLoadState.NotFound;
                 ResetEditingFlags();
                 canQuickCreate = false;
-                return;
+                return LoadOutcome.NotFound;
             }
 
             _loadStage = "структура";
             var structure = await HKCardService.GetStructureGraphAsync(cardId, ct);
-            if (ct.IsCancellationRequested || generation != _loadGeneration)
-                return;
+            if (ct.IsCancellationRequested)
+                return LoadOutcome.Cancelled;
+            if (generation != _loadGeneration)
+                return LoadOutcome.Stale;
 
             _loadStage = "этапы согласования";
             var capabilities = await LoadApprovalStateAsync(
                 cardId, existing.Status, ct, lockHeld: true);
-            if (ct.IsCancellationRequested || generation != _loadGeneration)
-                return;
+            if (ct.IsCancellationRequested)
+                return LoadOutcome.Cancelled;
+            if (generation != _loadGeneration)
+                return LoadOutcome.Stale;
 
             // Кандидаты в согласующие — для филиала ЗАГРУЖАЕМОЙ карты.
             _loadStage = "согласующие";
@@ -2189,8 +2243,10 @@
                 _approversError = "Не удалось получить список согласующих.";
             }
 
-            if (ct.IsCancellationRequested || generation != _loadGeneration)
-                return;
+            if (ct.IsCancellationRequested)
+                return LoadOutcome.Cancelled;
+            if (generation != _loadGeneration)
+                return LoadOutcome.Stale;
 
             // История версий — некритичный блок: её ошибка не должна
             // уничтожать уже загруженную карту.
@@ -2261,19 +2317,24 @@
             if (level == HKObjectLevel.EquipmentModel)
             {
                 var cardBranches = await EquipmentService.GetHKCardMilitaryBranchesAsync(cardId, ct);
-                if (ct.IsCancellationRequested || generation != _loadGeneration)
-                    return;
+                if (ct.IsCancellationRequested)
+                    return LoadOutcome.Cancelled;
+                if (generation != _loadGeneration)
+                    return LoadOutcome.Stale;
                 selectedMilitaryBranchIds = cardBranches.Select(b => b.Id).ToList();
             }
         }
 
-        if (ct.IsCancellationRequested || generation != _loadGeneration)
-            return;
+        if (ct.IsCancellationRequested)
+            return LoadOutcome.Cancelled;
+        if (generation != _loadGeneration)
+            return LoadOutcome.Stale;
 
         _loadStage = null;
         _loadedCardId = cardId;
         _loadState = HkEditLoadState.Ready;
         Logger.LogDebug("HKEdit: карта загружена {CardId}", cardId);
+        return LoadOutcome.Ready;
     }
 
     private async Task LoadAttachmentAsync(Guid cardId, CancellationToken ct)
@@ -2528,9 +2589,22 @@
         /// </summary>
         public HKCardItem? Tracked => _tracked;
 
-        /// <summary>Сборочная единица строки: имя для показа берётся у источника.</summary>
-        public string? AssemblyUnitName =>
-            _local?.AssemblyUnitName ?? _assemblyUnitName(AssemblyUnitId);
+        /// <summary>
+        /// Сборочная единица строки: имя для показа берётся у источника.
+        /// <para>
+        /// У локальной строки название обновляется при выборе и снятии
+        /// сборочной единицы — строка не показывает прежнее название.
+        /// </para>
+        /// </summary>
+        public string? AssemblyUnitName
+        {
+            get => _local?.AssemblyUnitName ?? _assemblyUnitName(AssemblyUnitId);
+            set
+            {
+                if (_local is not null)
+                    _local.AssemblyUnitName = value;
+            }
+        }
 
         public Guid Id => _local is not null ? _local.Id : _tracked!.Id;
 
@@ -2762,8 +2836,11 @@
     {
         _newBranchSection = type;
         _newBranchSectionType = type;
+
+        // Выбор только запоминает вид раздела: сам раздел создаётся при
+        // добавлении первой ветки, а не при переключении кнопки.
         if (_structure is not null)
-            _structure.NewBranchSectionId = type is null ? null : _structure.AddSection(type.Value).Id;
+            _structure.NewBranchSectionType = type;
 
         StateHasChanged();
     }
@@ -2904,7 +2981,7 @@
         if (!canEditStructure || _structure is null)
             return;
 
-        _structure.NewBranchSectionId = SectionIdForNewBranch();
+        // Раздел выбранного вида создаётся вместе с веткой — в модели.
         var node = _structure.AddTopPosition(_topPositionLevel);
         node.Name = "Новая позиция";
         _focusNodeId = node.Id;
@@ -3870,6 +3947,9 @@
     private async Task SelectAu(RowItem item, AssemblyUnit au)
     {
         item.AssemblyUnitId = au.Id;
+        // Название сборочной единицы обновляется вместе с выбором: строка не
+        // должна показывать прежнее название после смены.
+        item.AssemblyUnitName = $"{au.Code} — {au.Name}";
         _auSearch[item.Id] = $"{au.Code} — {au.Name}";
         await CloseActiveDropdownAsync();
         StateHasChanged();
@@ -3878,6 +3958,7 @@
     private async Task ClearAssemblyUnit(RowItem item)
     {
         item.AssemblyUnitId = Guid.Empty;
+        item.AssemblyUnitName = null;
         _auSearch[item.Id] = "";
         await CloseActiveDropdownAsync();
         StateHasChanged();

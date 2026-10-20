@@ -31,8 +31,24 @@ public sealed class HKStructureEditorState
     /// <summary>В структуре есть несохранённые изменения.</summary>
     public bool IsDirty { get; private set; }
 
-    /// <summary>Раздел, который получит новая самостоятельная ветка.</summary>
-    public Guid? NewBranchSectionId { get; set; }
+    /// <summary>
+    /// Вид раздела, выбранный на панели для НОВОЙ самостоятельной ветки.
+    /// <para>
+    /// Выбор только запоминает вид: сам раздел создаётся при добавлении первой
+    /// ветки, а не при переключении кнопки. Пустой раздел, созданный заранее,
+    /// не содержал бы ни одной ветки и оставался бы в структуре без смысла.
+    /// </para>
+    /// </summary>
+    public HKCardSectionType? NewBranchSectionType { get; set; }
+
+    /// <summary>
+    /// Раздел выбранного вида, если он уже есть в структуре. Пока ветки нет,
+    /// раздела может не быть — это нормально.
+    /// </summary>
+    public Guid? NewBranchSectionId =>
+        NewBranchSectionType is { } type
+            ? Sections.FirstOrDefault(s => s.SectionType == type)?.Id
+            : null;
 
     /// <summary>Уровень следующей верхней позиции.</summary>
     public HKObjectLevel TopPositionLevel { get; set; } = HKObjectLevel.Aggregate;
@@ -218,8 +234,13 @@ public sealed class HKStructureEditorState
         }
 
         Sections.Remove(section);
-        if (NewBranchSectionId == sectionId)
-            NewBranchSectionId = null;
+
+        // Выбранный вид, раздела которого больше нет, выбором не остаётся.
+        if (NewBranchSectionType is { } type
+            && !Sections.Any(s => s.SectionType == type))
+        {
+            NewBranchSectionType = null;
+        }
         MarkDirty();
         return true;
     }
@@ -262,6 +283,12 @@ public sealed class HKStructureEditorState
 
     public EditorNode AddTopPosition(HKObjectLevel level)
     {
+        // Раздел выбранного вида создаётся вместе с первой веткой: выбор на
+        // панели сам по себе структуру не меняет.
+        Guid? sectionId = null;
+        if (NewBranchSectionType is { } type)
+            sectionId = AddSection(type).Id;
+
         var node = new EditorNode
         {
             Id = Guid.NewGuid(),
@@ -270,7 +297,7 @@ public sealed class HKStructureEditorState
             Name = string.Empty,
             Quantity = 1,
             SortOrder = Nodes.Count(n => n.ParentId is null),
-            SectionId = NewBranchSectionId
+            SectionId = sectionId
         };
 
         Nodes.Add(node);
@@ -579,8 +606,10 @@ public sealed class HKStructureEditorState
         node.ParentId = newParentId;
         if (newParentId is null)
         {
-            // Стала верхней позицией: ветка получает раздел панели.
-            node.SectionId = NewBranchSectionId;
+            // Стала верхней позицией: ветка получает раздел выбранного вида.
+            node.SectionId = NewBranchSectionType is { } type
+                ? AddSection(type).Id
+                : null;
         }
         else
         {

@@ -53,7 +53,18 @@ public sealed class CircuitDbLock : IDisposable
     {
         var started = Environment.TickCount64;
 
-        if (!await _gate.WaitAsync(MaxWaitMs, ct))
+        // Ожидание с таймаутом через ОТДЕЛЬНЫЙ токен: перегрузка
+        // WaitAsync(timeout, ct) при отмене способна ПОТЕРЯТЬ permit, и
+        // блокировка тогда «съедает» разрешения — следующие операции ждут
+        // до таймаута, а страница выглядит зависшей.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(MaxWaitMs);
+
+        try
+        {
+            await _gate.WaitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _logger?.LogError(
                 "CircuitDbLock: ожидание блокировки превысило {MaxWaitMs} мс — операция circuit не завершилась.",

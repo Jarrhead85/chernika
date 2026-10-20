@@ -716,9 +716,39 @@ public class HKCardService
         card.AggregateId = fresh.AggregateId;
         card.NodeId = fresh.NodeId;
 
+        // Карта возвращается в трекер БЕЗ пометки «всё изменено»: иначе
+        // посторонний SaveChanges записал бы и несогласованные реквизиты.
+        // Изменёнными помечаются только те поля, что действительно отличаются
+        // от сохранённых.
         var entry = _db.Entry(card);
-        entry.State = EntityState.Modified;
+        entry.State = EntityState.Unchanged;
+
+        foreach (var property in EditableRequisitionProperties)
+        {
+            entry.Property(property).IsModified =
+                !Equals(entry.Property(property).CurrentValue, entry.Property(property).OriginalValue);
+        }
     }
+
+    /// <summary>
+    /// Редактируемые реквизиты карты: их правка помечается как изменение, а
+    /// служебные поля (номер, версия, уровень, статус) принадлежат созданию и
+    /// командам согласования.
+    /// </summary>
+    private static readonly string[] EditableRequisitionProperties =
+    {
+        nameof(HKCard.Name),
+        nameof(HKCard.Purpose),
+        nameof(HKCard.NormativeBasis),
+        nameof(HKCard.Notes),
+        nameof(HKCard.RequestOrganization),
+        nameof(HKCard.RequestSenderFullName),
+        nameof(HKCard.RequestDetails),
+        nameof(HKCard.IncomingLetterNumber),
+        nameof(HKCard.OutgoingLetterNumber),
+        nameof(HKCard.EffectiveDate),
+        nameof(HKCard.ExpirationDate)
+    };
 
     /// <summary>
     /// Подстановка марок строк ХК БЕЗ глобального фильтра мягкого удаления.
@@ -1908,8 +1938,11 @@ public class HKCardService
         // отсоединена от трекера.
         await _db.SaveChangesAsync(ct);
 
-        await _db.HKCards
-            .Where(c => c.Id == card.Id)
+        // Служебные поля карты обновляются с проверкой версии: если карту
+        // изменили после чтения, обновление не затрагивает ни одной строки, и
+        // команда отказывает, а не перезаписывает чужое изменение.
+        var affected = await _db.HKCards
+            .Where(c => c.Id == card.Id && c.RowVersion == command.ExpectedRowVersion)
             .ExecuteUpdateAsync(
                 s => s
                     .SetProperty(c => c.ObjectLevel, cardLevel)
@@ -1917,6 +1950,14 @@ public class HKCardService
                     .SetProperty(c => c.UpdatedAt, cardUpdatedAt)
                     .SetProperty(c => c.Version, cardVersion),
                 ct);
+
+        if (affected == 0)
+        {
+            // Полный откат: структура и аудит не сохраняются.
+            await tx.RollbackAsync(ct);
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
 
         await tx.CommitAsync(ct);
     }

@@ -644,11 +644,24 @@
         if (string.IsNullOrEmpty(userId) || _disposed)
             return;
 
-        await using (await DbLock.WaitAsync())
+        try
         {
-            canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
-            canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
-            canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
+            await using (await DbLock.WaitAsync())
+            {
+                canViewAudit = await PermSvc.HasPermissionAsync(userId, PermissionCodes.AuditView);
+                canManageUsers = await PermSvc.HasPermissionAsync(userId, PermissionCodes.UsersManage);
+                canSystemConfig = await PermSvc.HasPermissionAsync(userId, PermissionCodes.SystemConfig);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // circuit завершается — игнорируем
+        }
+        catch (Exception ex)
+        {
+            // Недоступность прав не должна рвать circuit: страница остаётся
+            // рабочей, меню покажет прежние значения.
+            Logger.LogError(ex, "Не удалось обновить права в layout");
         }
     }
 

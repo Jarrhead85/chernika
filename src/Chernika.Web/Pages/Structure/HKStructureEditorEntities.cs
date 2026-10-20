@@ -136,8 +136,11 @@ public sealed class EditorItem : EditorEntity
     public int SortOrder { get => _sortOrder; set => Set(ref _sortOrder, value); }
     public Guid? SectionId { get => _sectionId; set => Set(ref _sectionId, value); }
 
-    /// <summary>Наименование сборочной единицы на момент загрузки — только для показа.</summary>
-    public string? AssemblyUnitName { get; init; }
+    /// <summary>
+    /// Наименование сборочной единицы для показа. Обновляется при выборе и
+    /// снятии сборочной единицы, чтобы строка не показывала прежнее название.
+    /// </summary>
+    public string? AssemblyUnitName { get; set; }
 
     /// <summary>
     /// Назначенные марки. Список доступен на изменение: добавление и удаление

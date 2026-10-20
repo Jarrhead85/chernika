@@ -115,4 +115,110 @@ public class HKCardStructureSaveIsolationTests
         Assert.All(foreign, c =>
             Assert.Equal(card.BranchId, s.Db.Users.Where(u => u.Id == c.Id).Select(u => u.BranchId).First()));
     }
+
+    /// <summary>
+    /// Возврат карты в редактирование не превращает несохранённые реквизиты
+    /// в записанные: посторонний SaveChanges их не уносит.
+    /// </summary>
+    [Fact]
+    public async Task StructureSave_ThenForeignSaveChanges_DoesNotWriteRequisitions()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(s, _fixture.NormAdminA.Id, withRow: false);
+
+        var tracked = await s.Db.HKCards.FirstAsync(c => c.Id == cardId);
+        var originalName = tracked.Name;
+        tracked.Name = "Несохранённое название";
+
+        var version = await s.Db.HKCards.AsNoTracking()
+            .Where(c => c.Id == cardId).Select(c => c.RowVersion).FirstAsync();
+
+        await s.HK.SaveStructureAsync(new SaveHKCardStructureCommand(
+            cardId,
+            Array.Empty<HKCardSectionWrite>(),
+            Array.Empty<HKCardStructureNodeWrite>(),
+            Array.Empty<HKCardStructureItemWrite>(),
+            null,
+            version));
+
+        // Возврат в редактирование: несохранённый ввод остаётся в памяти.
+        await s.HK.AttachCardForEditingAsync(tracked, cardId);
+        Assert.Equal("Несохранённое название", tracked.Name);
+
+        // Посторонний SaveChanges того же контекста.
+        await s.Db.SaveChangesAsync();
+
+        await using (var read = _fixture.CreateScope())
+        {
+            var saved = await read.Db.HKCards.AsNoTracking().FirstAsync(c => c.Id == cardId);
+            Assert.Equal(originalName, saved.Name);
+        }
+    }
+
+    /// <summary>
+    /// Конфликт версий: вторая команда с устаревшей версией отказывает, и её
+    /// структура не сохраняется.
+    /// </summary>
+    [Fact]
+    public async Task SaveStructure_WithStaleVersion_IsRefused()
+    {
+        await using var first = _fixture.CreateScope();
+        first.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var cardId = await HKApprovalScenario.CreateDraftCardAsync(
+            first, _fixture.NormAdminA.Id, withRow: false);
+
+        var version = await first.Db.HKCards.AsNoTracking()
+            .Where(c => c.Id == cardId).Select(c => c.RowVersion).FirstAsync();
+
+        // Первый контекст сохраняет структуру.
+        await first.HK.SaveStructureAsync(new SaveHKCardStructureCommand(
+            cardId,
+            new[] { new HKCardSectionWrite(Guid.NewGuid(), HKCardSectionType.Oils, 0) },
+            Array.Empty<HKCardStructureNodeWrite>(),
+            Array.Empty<HKCardStructureItemWrite>(),
+            null,
+            version));
+
+        // Второй контекст работает с той же картой и со stale-версией.
+        await using var second = _fixture.CreateScope();
+        second.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+        var tracked = await second.Db.HKCards.FirstAsync(c => c.Id == cardId);
+
+        await Assert.ThrowsAsync<HkCardVersionConflictException>(() =>
+            second.HK.SaveStructureAsync(new SaveHKCardStructureCommand(
+                cardId,
+                new[] { new HKCardSectionWrite(Guid.NewGuid(), HKCardSectionType.Greases, 0) },
+                Array.Empty<HKCardStructureNodeWrite>(),
+                Array.Empty<HKCardStructureItemWrite>(),
+                null,
+                version)));
+
+        await using (var read = _fixture.CreateScope())
+        {
+            // Структура второй команды не сохранилась.
+            Assert.Equal(1, await read.Db.HKCardSections.CountAsync(x => x.HKCardId == cardId));
+            Assert.Equal(HKCardSectionType.Oils,
+                await read.Db.HKCardSections.AsNoTracking()
+                    .Where(x => x.HKCardId == cardId).Select(x => x.SectionType).FirstAsync());
+        }
+    }
+
+    /// <summary>
+    /// Отсутствующая карта не превращается в исключение чтения: сервис
+    /// возвращает пустую проекцию, и страница показывает «не найдена», а не
+    /// ошибку загрузки.
+    /// </summary>
+    [Fact]
+    public async Task GetStructureGraphAsync_ForMissingCard_ReturnsEmpty()
+    {
+        await using var s = _fixture.CreateScope();
+        s.User.CurrentUserId = Guid.Parse(_fixture.NormAdminA.Id);
+
+        var graph = await s.HK.GetStructureGraphAsync(Guid.NewGuid());
+
+        Assert.Null(graph);
+    }
 }

@@ -280,7 +280,7 @@ public class HKStructureEditorStateTests
                 new HKStructureSectionInput(sectionId, HKCardSectionType.Oils, 0)
             }));
 
-        state.NewBranchSectionId = sectionId;
+        state.NewBranchSectionType = HKCardSectionType.Oils;
         var top = state.AddTopPosition(HKObjectLevel.Aggregate);
         var child = state.AddChildPosition(top.Id, HKObjectLevel.Node);
 
@@ -354,10 +354,16 @@ public class HKStructureEditorStateTests
         var existing = Node(HKObjectLevel.Aggregate, sort: 0, section: null);
         var state = HKStructureEditorState.FromGraph(Graph(nodes: new[] { existing }));
 
-        state.NewBranchSectionId = Guid.NewGuid();
+        // Выбор только запоминает вид раздела: сам раздел создаётся вместе
+        // с первой веткой.
+        state.NewBranchSectionType = HKCardSectionType.Oils;
+        Assert.Empty(state.Sections);
+
         var created = state.AddTopPosition(HKObjectLevel.Aggregate);
 
-        Assert.Equal(state.NewBranchSectionId, created.SectionId);
+        Assert.Equal(HKCardSectionType.Oils,
+            state.Sections.Single().SectionType);
+        Assert.Equal(state.Sections.Single().Id, created.SectionId);
         Assert.Null(state.Nodes.Single(n => n.Id == existing.Id).SectionId);
     }
 
