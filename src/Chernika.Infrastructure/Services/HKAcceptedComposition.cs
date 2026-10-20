@@ -43,7 +43,11 @@ public sealed record HKAcceptedCompositionSectionDto(
     string Name,
     HKCardSectionType? SectionType,
     IReadOnlyList<HKMeasuredTotal> Totals,
-    bool IsComplete);
+    bool IsComplete,
+    /// <summary>Структурных позиций в разделе.</summary>
+    int PositionCount,
+    /// <summary>Конечных строк СЕ в разделе.</summary>
+    int ItemCount);
 
 /// <summary>
 /// Принятая редакция карты целиком: реквизиты снимка, дерево и итоги.
@@ -218,6 +222,53 @@ public static class HKAcceptedCompositionProjection
             }
         }
 
+        // Эффективный раздел: вложенная позиция наследует раздел своего
+        // корня, поэтому счётчики раздела включают и вложенные позиции.
+        var effectiveSectionByNode = new Dictionary<Guid, Guid?>();
+        foreach (var node in revision.Nodes.OrderBy(n => n.SortOrder))
+        {
+            if (node.SectionId is { } own)
+            {
+                effectiveSectionByNode[node.Id] = own;
+                continue;
+            }
+
+            Guid? parentSection = null;
+            var parentId = node.ParentId;
+            var guard = 0;
+            while (parentId is { } id && guard++ <= revision.Nodes.Count)
+            {
+                if (effectiveSectionByNode.TryGetValue(id, out var known))
+                {
+                    parentSection = known;
+                    break;
+                }
+
+                var step = revision.Nodes.FirstOrDefault(n => n.Id == id);
+                if (step is null)
+                    break;
+
+                parentId = step.ParentId;
+            }
+
+            effectiveSectionByNode[node.Id] = parentSection;
+        }
+
+        var positionCountBySection = revision.Nodes
+            .Where(n => effectiveSectionByNode.TryGetValue(n.Id, out var section) && section is not null)
+            .GroupBy(n => effectiveSectionByNode[n.Id]!.Value)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var itemCountBySection = revision.Items
+            .Where(i => i.NodeId is { } nodeId && effectiveSectionByNode.TryGetValue(nodeId, out var section) && section is not null)
+            .GroupBy(i => effectiveSectionByNode[i.NodeId!.Value]!.Value)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var withoutSectionPositions = revision.Nodes
+            .Count(n => effectiveSectionByNode.TryGetValue(n.Id, out var section) && section is null);
+        var withoutSectionItems = revision.Items
+            .Count(i => i.NodeId is null && i.SectionId is null);
+
         var sections = new List<HKAcceptedCompositionSectionDto>();
         foreach (var section in revision.Sections.OrderBy(s => s.SortOrder).ThenBy(s => s.SectionId))
         {
@@ -230,7 +281,9 @@ public static class HKAcceptedCompositionProjection
                 section.Name,
                 section.SectionType,
                 sectionTotal,
-                sectionTotal.All(t => t.IsComplete)));
+                sectionTotal.All(t => t.IsComplete),
+                positionCountBySection.TryGetValue(section.SectionId, out var positions) ? positions : 0,
+                itemCountBySection.TryGetValue(section.SectionId, out var items) ? items : 0));
         }
 
         // «Без раздела» показывается, только если есть соответствующие ветки.
@@ -241,7 +294,9 @@ public static class HKAcceptedCompositionProjection
         {
             sections.Add(new HKAcceptedCompositionSectionDto(
                 Guid.Empty, "Без раздела", null, withoutSectionTotals,
-                withoutSectionTotals.All(t => t.IsComplete)));
+                withoutSectionTotals.All(t => t.IsComplete),
+                withoutSectionPositions,
+                withoutSectionItems));
         }
 
         var diagnostics = totals.Overall
