@@ -1868,6 +1868,27 @@
 
     protected override async Task OnInitializedAsync()
     {
+        try
+        {
+            await InitializeAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // Отмена устаревшей операции не меняет текущую форму.
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "HKEdit: первоначальная инициализация не удалась, этап {Stage}", _loadStage);
+            _loadErrorText = "Не удалось подготовить страницу. Повторите загрузку или обратитесь в службу поддержки.";
+            _loadState = HkEditLoadState.Error;
+            ResetEditingFlags();
+            canQuickCreate = false;
+        }
+    }
+
+    private async Task InitializeAsync()
+    {
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
         currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
@@ -1875,7 +1896,7 @@
 
         // Проверки прав и чтение организаций выполняются через общий scoped DbContext,
         // поэтому сериализуем их тем же CircuitDbLock, что и загрузку данных.
-        await using (await DbLock.WaitAsync())
+        await using (await DbLock.WaitAsync("HKEdit.OnInitialized: права"))
         {
             if (isSystemAdmin)
             {
@@ -1896,7 +1917,12 @@
             canCreateNode = canCreateAggregate = canCreateEquipmentModel = canCreateComplex = canWork;
         }
 
-        await using (await DbLock.WaitAsync())
+        // Названия марок читаются отдельной операцией: внутри блока справочников
+        // они брали бы ту же блокировку повторно, а семафор нереентерабельный —
+        // ожидание тогда ждало бы само себя.
+        await LoadMaterialNamesAsync(CancellationToken.None);
+
+        await using (await DbLock.WaitAsync("HKEdit.OnInitialized: справочники"))
         {
             complexes = await EquipmentService.GetComplexesAsync();
             models = await EquipmentService.GetModelsAsync();
@@ -1905,7 +1931,6 @@
             assemblyUnits = await EquipmentService.GetAssemblyUnitsAsync();
             gsmMaterials = await GsmMaterialService.GetActiveForSelectionAsync();
             _materialNames = null;
-            await LoadMaterialNamesAsync(CancellationToken.None);
             // Предложения связанных ГСМ НЕ загружаются здесь: они появляются
             // сразу после явного выбора основной марки в строке. Предзагрузка по
             // сохранённым строкам была причиной дефекта — марка, выбранная позже,
@@ -2134,11 +2159,9 @@
     {
         try
         {
-            await LoadCardCoreAsync(cardId, ct, generation);
-            if (ct.IsCancellationRequested)
-                return LoadOutcome.Cancelled;
-            if (generation != _loadGeneration)
-                return LoadOutcome.Stale;
+            var core = await LoadCardCoreAsync(cardId, ct, generation);
+            if (core != LoadOutcome.Ready)
+                return core;
 
             // Наличие файла — часть готовой модели: «файл не прикреплён» не
             // показывается, пока неизвестно, прикреплён ли он.

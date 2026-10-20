@@ -10,14 +10,11 @@ namespace Chernika.Web.Services;
 /// <remarks>
 /// <para><b>Владение блокировкой.</b> Блокировку получает верхнеуровневая
 /// операция; внутренние методы этого пути повторно её не получают, а
-/// используют переданный lease. Вложенный захват исключён границами
-/// владения, а не диагностикой по счётчику.</para>
+/// используют переданный lease. Вложенный захват исключён границами владения
+/// в коде, а не распознаванием по счётчику: занятая блокировка не доказывает
+/// рекурсию.</para>
 /// <para><b>Конкуренция — это ожидание.</b> Независимая операция ждёт
-/// освобождения блокировки. Раньше ожидание определялось по счётчику глубины,
-/// и конкурентный захват получал ложную ошибку «вложенный захват»;
-/// вложенность при этом не определялась надёжно: значение
-/// <c>AsyncLocal</c>, установленное внутри <c>async</c>-метода, теряется при
-/// возврате к вызывающему коду.</para>
+/// освобождения; превышение ожидания — диагностика с указанием владельца.</para>
 /// </remarks>
 public sealed class CircuitDbLock : IDisposable
 {
@@ -45,18 +42,29 @@ public sealed class CircuitDbLock : IDisposable
 
     public CircuitDbLock(ILogger<CircuitDbLock> logger) => _logger = logger;
 
+    /// <summary>Захват блокировки без указания операции.</summary>
+    public Task<IAsyncDisposable> WaitAsync(CancellationToken ct = default)
+        => WaitAsync("не указан", ct);
+
     /// <summary>
-    /// Захватывает блокировку. Независимая операция ждёт освобождения:
-    /// ожидание не считается вложенным захватом и не отвергается ошибкой.
+    /// Захватывает блокировку.
+    /// <para>
+    /// <paramref name="operation"/> — имя операции-владельца для диагностики:
+    /// по журналу видно, кто ждёт блокировку и кто её держит.
+    /// </para>
     /// </summary>
-    public async Task<IAsyncDisposable> WaitAsync(CancellationToken ct = default)
+    public async Task<IAsyncDisposable> WaitAsync(
+        string operation, CancellationToken ct = default)
     {
         var started = Environment.TickCount64;
 
+        _logger?.LogDebug(
+            "CircuitDbLock: ожидание блокировки, операция {Operation}, текущий владелец {Owner}",
+            operation, _currentOwner);
+
         // Ожидание с таймаутом через ОТДЕЛЬНЫЙ токен: перегрузка
-        // WaitAsync(timeout, ct) при отмене способна ПОТЕРЯТЬ permit, и
-        // блокировка тогда «съедает» разрешения — следующие операции ждут
-        // до таймаута, а страница выглядит зависшей.
+        // WaitAsync(timeout, ct) способна потерять permit при отмене, и
+        // блокировка тогда «съедает» разрешения.
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(MaxWaitMs);
 
@@ -67,8 +75,9 @@ public sealed class CircuitDbLock : IDisposable
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _logger?.LogError(
-                "CircuitDbLock: ожидание блокировки превысило {MaxWaitMs} мс — операция circuit не завершилась.",
-                MaxWaitMs);
+                "CircuitDbLock: ожидание блокировки превысило {MaxWaitMs} мс, операция {Operation}, "
+                + "владелец {Owner}. Операция circuit не завершилась.",
+                MaxWaitMs, operation, _currentOwner);
             throw new TimeoutException(
                 "Доступ к данным занят другой операцией более "
                 + $"{MaxWaitMs / 1000} с. Повторите действие.");
@@ -78,15 +87,18 @@ public sealed class CircuitDbLock : IDisposable
         var id = Interlocked.Increment(ref _leaseCounter);
         _currentOwner = id;
 
+        _logger?.LogDebug(
+            "CircuitDbLock: блокировка получена, операция {Operation}, lease {LeaseId}, ожидание {WaitedMs} мс",
+            operation, id, waited);
+
         if (waited >= SlowWaitThresholdMs)
         {
             _logger?.LogWarning(
-                "CircuitDbLock: ожидание заняло {WaitedMs} мс (lease {LeaseId}). "
-                + "Долгое ожидание указывает на конкуренцию операций circuit, а не на вложенный захват.",
-                waited, id);
+                "CircuitDbLock: ожидание заняло {WaitedMs} мс (операция {Operation}, lease {LeaseId}).",
+                waited, operation, id);
         }
 
-        return new ReleaseScope(this, id);
+        return new ReleaseScope(this, id, operation, waited);
     }
 
     public void Dispose()
@@ -104,12 +116,17 @@ public sealed class CircuitDbLock : IDisposable
     {
         private readonly CircuitDbLock _owner;
         private readonly long _leaseId;
+        private readonly string _operation;
+        private readonly long _heldMs;
         private int _released;
 
-        public ReleaseScope(CircuitDbLock owner, long leaseId)
+        public ReleaseScope(
+            CircuitDbLock owner, long leaseId, string operation, long heldMs)
         {
             _owner = owner;
             _leaseId = leaseId;
+            _operation = operation;
+            _heldMs = heldMs;
         }
 
         public ValueTask DisposeAsync()
@@ -119,6 +136,11 @@ public sealed class CircuitDbLock : IDisposable
 
             if (_owner._currentOwner == _leaseId)
                 _owner._currentOwner = 0;
+
+            _owner._logger?.LogDebug(
+                "CircuitDbLock: блокировка освобождена, операция {Operation}, lease {LeaseId}, "
+                + "удержание {HeldMs} мс",
+                _operation, _leaseId, _heldMs);
 
             try
             {
