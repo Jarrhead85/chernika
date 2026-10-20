@@ -1092,7 +1092,10 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;
+    /* Без переноса: иначе поле уходило на вторую строку и строка этапа
+       разъезжалась по высоте — подпись, поле и кнопка стояли на разных
+       уровнях. */
+    flex-wrap: nowrap;
 }
 
 .hk-approver-label {
@@ -1101,12 +1104,15 @@
     white-space: nowrap;
 }
 
-/* Шрифт поля меньше: полные имена согласующих обрезались по ширине. */
+/* Шрифт поля меньше: полные имена согласующих обрезались по ширине.
+   Высота поля совпадает с высотой кнопки — строка этапа выравнивается. */
 .hk-approver-select {
     font-size: 11px;
-    min-width: 140px;
-    max-width: 230px;
-    padding: 3px 6px;
+    height: 25px;
+    flex: 0 0 auto;
+    min-width: 130px;
+    max-width: 200px;
+    padding: 0 6px;
 }
 
 .hk-approver-error {

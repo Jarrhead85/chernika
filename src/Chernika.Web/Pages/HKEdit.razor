@@ -570,6 +570,14 @@
 
                     <div class="formActions hk-form-actions-with-status">
                         <div class="hk-status-inline">
+                            @* Этап состава — сразу под разделительной чертой двух
+                               частей формы: в строке с кнопками формы. *@
+                            @if (IsAutonomousMode && !IsNew)
+                            {
+                                <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Composition)</span>
+                                <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Composition))">@StageStateBadge(StageState(HKApprovalStage.Composition))</span>
+                                @StageButtons(HKApprovalStage.Composition)
+                            }
                             @if (!IsNew && acceptedRevisionNumber is { } acceptedNumber)
                             {
                                 var acceptedCaption = "ХК принята. Принятая структура: редакция №" + acceptedNumber;
@@ -633,16 +641,6 @@
                         @if (IsAutonomousMode || selectedLevel == HKObjectLevel.Node)
                         {
                         <div class="full-width" style="margin-top:8px">
-                            @* Этап состава — сразу под разделительной чертой двух
-                               частей; заголовок таблицы идёт следом. *@
-                            @if (IsAutonomousMode && !IsNew)
-                            {
-                                <div class="hk-editor-part-head">
-                                    <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Composition)</span>
-                                    <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Composition))">@StageStateBadge(StageState(HKApprovalStage.Composition))</span>
-                                    @StageButtons(HKApprovalStage.Composition)
-                                </div>
-                            }
                             <h3 class="hk-editor-strong">Строки ХК</h3>
 
                             @* Автономная карта хранит собственную структуру, а не дочерние
