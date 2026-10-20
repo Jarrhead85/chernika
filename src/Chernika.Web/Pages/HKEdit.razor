@@ -363,14 +363,30 @@
                         {
                         <div class="field">
                             <label for="hk-approver">Согласующий</label>
-                            <select id="hk-approver" class="field-select" @bind="_approverUserId">
-                                <option value="">Выберите согласующего...</option>
-                                @foreach (var u in branchApprovers)
-                                {
-                                    <option value="@u.Id">@u.FullName</option>
-                                }
-                            </select>
-                            <div class="hint">Решение по карте принимает выбранный пользователь, а не роль.</div>
+                            @if (_approversError is not null)
+                            {
+                                <div class="error" style="font-size:12px">@_approversError</div>
+                                <button type="button" class="btn ghost" style="margin-top:4px"
+                                        @onclick="RetryApproversAsync">Повторить</button>
+                            }
+                            else if (!_approversLoaded)
+                            {
+                                <div class="readonlyValue">Загрузка согласующих…</div>
+                            }
+                            else if (branchApprovers.Count == 0)
+                            {
+                                <div class="note" style="font-size:12px">Нет доступных согласующих.</div>
+                            }
+                            else
+                            {
+                                <select id="hk-approver" class="field-select" @bind="_approverUserId">
+                                    <option value="">Выберите согласующего...</option>
+                                    @foreach (var u in branchApprovers)
+                                    {
+                                        <option value="@u.Id">@u.FullName</option>
+                                    }
+                                </select>
+                            }
                         </div>
                         }
                         <div class="field">
@@ -694,37 +710,45 @@
 
                             @if (IsAutonomousMode && !IsNew)
                             {
-                                <div class="hk-section-panel">
-                                    <span class="hki-muted-sm">Раздел новой ветки:</span>
-                                    <button type="button" class="btn ghost hk-editor-chip"
-                                            aria-pressed="@(NewBranchSectionId is null)"
-                                            disabled="@(!canEditStructure)"
-                                            @onclick="() => SelectNewBranchSection(null)">
-                                        Без раздела
-                                    </button>
-                                    @foreach (var panelType in new[] { HKCardSectionType.Oils, HKCardSectionType.Greases, HKCardSectionType.Fuels })
-                                    {
-                                        <button type="button" class="btn ghost hk-editor-chip"
-                                                aria-pressed="@(NewBranchSectionId is { } chosen && chosen == _structure?.Sections.FirstOrDefault(s => s.SectionType == panelType)?.Id)"
+                                <div class="hk-editor-panel">
+                                    <div class="hk-editor-panel-row">
+                                        <span class="hki-muted-sm">Раздел новой ветки:</span>
+                                        <button type="button"
+                                                class="@(NewBranchSectionId is null ? "btn primary" : "btn ghost") hk-editor-chip"
+                                                aria-pressed="@(NewBranchSectionId is null)"
                                                 disabled="@(!canEditStructure)"
-                                                @onclick="() => SelectNewBranchSection(panelType)">
-                                            @HKSectionNames.NameOf(panelType)
+                                                @onclick="() => SelectNewBranchSection(null)">
+                                            Без раздела
                                         </button>
-                                    }
-                                </div>
-
-                                @if (canEditComposition)
-                                {
-                                    <div class="hk-editor-toolbar">
-                                        <span class="hki-muted-sm">Верхняя позиция:</span>
-                                        <select @bind="_topPositionLevel" class="hki-td-input hk-editor-select hk-editor-select--narrow">
-                                            <option value="@HKObjectLevel.EquipmentModel">Изделие</option>
-                                            <option value="@HKObjectLevel.Aggregate">Агрегат</option>
-                                            <option value="@HKObjectLevel.Node">Узел</option>
-                                        </select>
-                                        <button type="button" class="btn hk-editor-chip"
-                                                @onclick="AddTopPosition">+ Добавить позицию</button>
+                                        @foreach (var panelType in new[] { HKCardSectionType.Oils, HKCardSectionType.Greases, HKCardSectionType.Fuels })
+                                        {
+                                            var panelId = _structure?.Sections.FirstOrDefault(s => s.SectionType == panelType)?.Id;
+                                            var panelSelected = NewBranchSectionId is { } chosen && chosen == panelId;
+                                            <button type="button"
+                                                    class="@(panelSelected ? "btn primary" : "btn ghost") hk-editor-chip"
+                                                    aria-pressed="@panelSelected"
+                                                    disabled="@(!canEditStructure)"
+                                                    @onclick="() => SelectNewBranchSection(panelType)">
+                                                @HKSectionNames.NameOf(panelType)
+                                            </button>
+                                        }
                                     </div>
+
+                                    @if (canEditComposition)
+                                    {
+                                        <div class="hk-editor-panel-row">
+                                            <span class="hki-muted-sm">Верхняя позиция:</span>
+                                            <select @bind="_topPositionLevel" class="hki-td-input hk-editor-select hk-editor-select--narrow">
+                                                <option value="@HKObjectLevel.EquipmentModel">Изделие</option>
+                                                <option value="@HKObjectLevel.Aggregate">Агрегат</option>
+                                                <option value="@HKObjectLevel.Node">Узел</option>
+                                            </select>
+                                            <button type="button" class="btn ghost hk-editor-chip"
+                                                    @onclick="AddTopPosition">+ Добавить позицию</button>
+                                            <button type="button" class="btn ghost hk-editor-chip"
+                                                    @onclick="() => AddRowUnder(null)">+ Добавить строку</button>
+                                        </div>
+                                    }
 
                                     @if (NeedsNodeRootChoice)
                                     {
@@ -740,6 +764,7 @@
                                             <span class="hki-muted">(старшая верхняя позиция — узел)</span>
                                         </div>
                                     }
+                                </div>
                                 }
 
                                 @if (_structureError is { } structureErrorText)
@@ -750,29 +775,16 @@
                                 }
                             }
 
-                            @if (!IsAutonomousMode || !IsNew)
-                        {
                         @if (!IsAutonomousMode || !IsNew)
                         {
-                        <div class="hk-items-table-wrapper">
-                                                    @if (EditorRows().Count == 0)
+                        @if (EditorRows().Count == 0)
                         {
-                            <div class="note" style="margin-bottom:8px">
-                                <b>Строк пока нет.</b>
-                                Добавьте верхнюю позицию или конечную строку — структура сохраняется
-                                отдельной командой «Сохранить структуру».
-                                @if (canEditStructure)
-                                {
-                                    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-                                        <button type="button" class="btn" @onclick="AddTopPosition">+ Добавить позицию</button>
-                                        <button type="button" class="btn ghost" @onclick="() => AddRowUnder(null)">+ Добавить строку</button>
-                                    </div>
-                                }
-                            </div>
+                            <div class="note" style="margin-bottom:8px">Строк пока нет.</div>
                         }
                         else
                         {
-                        <table class="hk-items-table hk-rows-table"hk-rows-editable" : null)">
+                        <div class="hk-items-table-wrapper">
+                        <table class="hk-items-table hk-rows-table @(canEditComposition ? "hk-rows-editable" : null)">
                                 <thead>
                                     <tr>
                                         <th rowspan="2" class="col-num hki-th-num">№</th>
@@ -1095,7 +1107,7 @@
                                            открытие блока ничего не добавляют в card.Items:
                                            только «Добавить выбранные» после видимого
                                            списка. *@
-                                        @if (canEditComposition && (
+                                        @if (canEditComposition && item.Tracked is not null && (
                                             _suggestionLoading.Contains(item.Id)
                                             || (_suggestionErrors.TryGetValue(item.Id, out var sErr) && !string.IsNullOrEmpty(sErr))
                                             || HasVisibleSuggestion(item.Tracked!)
@@ -1290,13 +1302,7 @@
                                     }
                                 </tbody>
                             </table>
-                        }
-                            </div>
-                        }
-
-                        @if (canEditComposition && (!IsAutonomousMode || !IsNew))
-                        {
-                            <button type="button" class="btn hk-editor-gap--sm" @onclick="AddItem">+ Добавить строку</button>
+                        </div>
                         }
 
                         @if (canEditStructure)
@@ -2162,7 +2168,27 @@
                 return;
 
             _loadStage = "этапы согласования";
-            var capabilities = await LoadApprovalStateAsync(ct, lockHeld: true);
+            var capabilities = await LoadApprovalStateAsync(
+                cardId, existing.Status, ct, lockHeld: true);
+            if (ct.IsCancellationRequested || generation != _loadGeneration)
+                return;
+
+            // Кандидаты в согласующие — для филиала ЗАГРУЖАЕМОЙ карты.
+            _loadStage = "согласующие";
+            branchApprovers = new List<HKApproverCandidate>();
+            _approversError = null;
+            try
+            {
+                branchApprovers = await GetBranchApproversAsync(existing.BranchId, ct);
+                _approversLoaded = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.LogWarning(ex, "HKEdit: кандидаты в согласующие не получены {CardId}", cardId);
+                _approversLoaded = false;
+                _approversError = "Не удалось получить список согласующих.";
+            }
+
             if (ct.IsCancellationRequested || generation != _loadGeneration)
                 return;
 
@@ -3065,9 +3091,10 @@
             await using (await DbLock.WaitAsync())
             {
                 await HKCardService.SaveStructureAsync(command);
-                // Обновляем только версию и уровень карты: полная перезагрузка
-                // уничтожила бы несохранённые реквизиты.
-                await HKCardService.RefreshStructureVersionAsync(card.Id);
+                // Карта возвращается в редактирование: служебные поля — из
+                // базы, несохранённые реквизиты остаются введёнными и не были
+                // записаны структурной командой.
+                await HKCardService.AttachCardForEditingAsync(card, card.Id);
             }
             // Состояние редактора перестраивается из свежей проекции графа:
             // версия загрузки меняется, локальные правки заменены сохранёнными.
@@ -3350,22 +3377,25 @@
     /// </para>
     /// </summary>
     private async Task<ApprovalCapabilities> LoadApprovalStateAsync(
-        CancellationToken ct = default, bool lockHeld = false)
+        Guid cardId,
+        HKCardStatus status,
+        CancellationToken ct = default,
+        bool lockHeld = false)
     {
-        if (IsNew)
+        if (cardId == Guid.Empty)
             return new ApprovalCapabilities(
                 Array.Empty<PersistedStageState>(), false, false, false, false, true);
 
         ApprovalCapabilities capabilities;
         if (lockHeld)
         {
-            capabilities = await LoadApprovalStateCoreAsync(ct);
+            capabilities = await LoadApprovalStateCoreAsync(cardId, status, ct);
         }
         else
         {
             await using (await DbLock.WaitAsync(ct))
             {
-                capabilities = await LoadApprovalStateCoreAsync(ct);
+                capabilities = await LoadApprovalStateCoreAsync(cardId, status, ct);
             }
         }
 
@@ -3395,25 +3425,28 @@
         bool CanEditPdf,
         bool CanView);
 
-    private async Task<ApprovalCapabilities> LoadApprovalStateCoreAsync(CancellationToken ct)
+    private async Task<ApprovalCapabilities> LoadApprovalStateCoreAsync(
+        Guid cardId, HKCardStatus status, CancellationToken ct)
     {
         // Чтение этапов не создаёт их. Отсутствие этапов у карты нового
         // процесса — допустимое состояние до первой команды согласования.
-        var stages = (await Approvals.GetStagesAsync(card.Id, ct)).ToList();
+        // Идентификатор и статус берутся ЗАГРУЖАЕМОЙ карты: прежнее
+        // состояние компонента относится к другой карте.
+        var stages = (await Approvals.GetStagesAsync(cardId, ct)).ToList();
         var canSubmit = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKSubmit, ct);
 
         var hasWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork, ct);
 
         // Отсутствие этапов разбирается наравне с их наличием: архивной и
         // удалённой карте возвращать полную редактируемость нельзя.
-        var caps = HKApprovalService.DeriveEditingCapabilities(stages, card.Status, hasWork);
+        var caps = HKApprovalService.DeriveEditingCapabilities(stages, status, hasWork);
 
         var canView = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKView, ct);
 
         // Сведения о принятой структуре читаются ЧЕРЕЗ СЕРВИС: он проверяет
         // HK.View, активность и филиал, и берёт редакцию по указателю карты,
         // а не по последней созданной записи.
-        var accepted = await Revisions.GetAcceptedAsync(card.Id, ct);
+        var accepted = await Revisions.GetAcceptedAsync(cardId, ct);
 
         return new ApprovalCapabilities(
             stages, canSubmit, caps.CanEditDetails, caps.CanEditComposition,
@@ -3511,23 +3544,60 @@
     private async Task ReloadAfterDecisionAsync()
     {
         var cardId = card.Id;
+        // Карта перезагружается целиком: реквизиты, этапы и возможности
+        // приходят одним результатом загрузки, а не отдельными вызовами.
         await LoadCardAsync(cardId, default, _loadGeneration);
         loadedRowVersion = card.RowVersion;
-        await LoadApprovalStateAsync();
     }
 
     private string _approverUserId = "";
-    private List<ApplicationUser> branchApprovers = new();
 
-    private async Task<List<ApplicationUser>> GetBranchApproversAsync()
+    /// <summary>
+    /// Кандидаты в согласующие: список приходит с сервера по действующим
+    /// правилам назначения (активность, филиал, право на согласование).
+    /// </summary>
+    private List<HKApproverCandidate> branchApprovers = new();
+
+    /// <summary>Кандидаты получены, но допустимых нет.</summary>
+    private bool _approversLoaded;
+
+    /// <summary>Кандидаты получить не удалось.</summary>
+    private string? _approversError;
+
+    /// <summary>
+    /// Кандидаты в согласующие для указанного филиала.
+    /// <para>
+    /// Список формирует сервер по тем же правилам, что проверяются при
+    /// назначении: активный пользователь филиала карты с действующим правом
+    /// на согласование. Список пользователей роли без такой проверки предлагал
+    /// бы недоступных согласующих.
+    /// </para>
+    /// </summary>
+    /// <summary>Повторная попытка получить список согласующих.</summary>
+    private async Task RetryApproversAsync()
     {
-        var users = await UserManager.Users
-            .Where(u => u.IsActive && u.BranchId == card.BranchId)
-            .OrderBy(u => u.FullName)
-            .ToListAsync();
+        if (card.Id == Guid.Empty)
+            return;
 
-        return users;
+        try
+        {
+            branchApprovers = await GetBranchApproversAsync(card.BranchId);
+            _approversLoaded = true;
+            _approversError = null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "HKEdit: кандидаты в согласующие не получены {CardId}", card.Id);
+            _approversLoaded = false;
+            _approversError = "Не удалось получить список согласующих.";
+        }
+
+        StateHasChanged();
     }
+
+    private async Task<List<HKApproverCandidate>> GetBranchApproversAsync(
+        Guid branchId, CancellationToken ct = default) =>
+        await HKCardService.GetApproverCandidatesAsync(branchId, ct);
 
     private async Task SaveCard()
     {
@@ -4438,6 +4508,10 @@
     /// </summary>
     private async Task LoadMaterialNamesAsync(CancellationToken ct)
     {
+        // Сервис читает общий AppDbContext: без блокировки чтение конкурирует
+        // с индикаторами layout и даёт «second operation was started».
+        await using var lockLease = await DbLock.WaitAsync(ct);
+
         var names = gsmMaterials.ToDictionary(m => m.Id, m => m.Name);
 
         var missing = card.Items

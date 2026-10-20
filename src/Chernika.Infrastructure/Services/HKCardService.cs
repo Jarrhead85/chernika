@@ -672,30 +672,52 @@ public class HKCardService
     }
 
     /// <summary>
-    /// Обновляет отслеживаемую карту после атомарного сохранения структуры:
-    /// применяет новую версию строки и пересчитанный уровень, не трогая
-    /// реквизиты, которые пользователь мог изменить, но не сохранить.
+    /// Возвращает карту в редактирование после атомарного сохранения структуры.
     /// <para>
-    /// Полная перезагрузка карты здесь недопустима: она уничтожила бы
-    /// несохранённый ввод реквизитов.
+    /// Структурная команда отсоединяет карту от трекера, чтобы её общий
+    /// SaveChanges не записал несохранённые реквизиты. После команды карта
+    /// присоединяется обратно: служебные поля берутся из базы, а изменённые
+    /// реквизиты помечаются как изменённые — иначе ввод пользователя был бы
+    /// потерян или молча записан.
     /// </para>
     /// </summary>
-    public async Task RefreshStructureVersionAsync(Guid cardId, CancellationToken ct = default)
+    public async Task AttachCardForEditingAsync(
+        HKCard card, Guid cardId, CancellationToken ct = default)
     {
+        if (card is null || cardId == Guid.Empty)
+            return;
+
         var fresh = await _db.HKCards.AsNoTracking()
             .Where(c => c.Id == cardId)
-            .Select(c => new { c.RowVersion, c.ObjectLevel })
+            .Select(c => new
+            {
+                c.RowVersion, c.ObjectLevel, c.Version, c.Status, c.Code,
+                c.IsAutonomous, c.NodeRootCardLevel, c.BranchId, c.AuthorId,
+                c.CreatedAt, c.ComplexId, c.EquipmentModelId, c.AggregateId, c.NodeId
+            })
             .FirstOrDefaultAsync(ct);
 
         if (fresh is null)
             return;
 
-        var tracked = await _db.HKCards.FirstOrDefaultAsync(c => c.Id == cardId, ct);
-        if (tracked is null)
-            return;
+        // Служебные поля принадлежат команде: берём их из базы.
+        card.RowVersion = fresh.RowVersion;
+        card.ObjectLevel = fresh.ObjectLevel;
+        card.Version = fresh.Version;
+        card.Status = fresh.Status;
+        card.Code = fresh.Code;
+        card.IsAutonomous = fresh.IsAutonomous;
+        card.NodeRootCardLevel = fresh.NodeRootCardLevel;
+        card.BranchId = fresh.BranchId;
+        card.AuthorId = fresh.AuthorId;
+        card.CreatedAt = fresh.CreatedAt;
+        card.ComplexId = fresh.ComplexId;
+        card.EquipmentModelId = fresh.EquipmentModelId;
+        card.AggregateId = fresh.AggregateId;
+        card.NodeId = fresh.NodeId;
 
-        tracked.RowVersion = fresh.RowVersion;
-        tracked.ObjectLevel = fresh.ObjectLevel;
+        var entry = _db.Entry(card);
+        entry.State = EntityState.Modified;
     }
 
     /// <summary>
@@ -1851,10 +1873,6 @@ public class HKCardService
             ? command.NodeRootChoice
             : null;
 
-        await SyncSectionsAsync(card.Id, command, ct);
-        SyncPositions(card.Id, command);
-        await SyncItemsAsync(card.Id, command, ct);
-
         // Уровень считается по ИТОГОВОЙ структуре команды: строки ещё не
         // сохранены, читать их из базы было бы чтением прежних данных.
         card.NodeRootCardLevel = nodeRoot;
@@ -1863,6 +1881,21 @@ public class HKCardService
         var now = _time.GetUtcNow().UtcDateTime;
         card.UpdatedAt = now > card.UpdatedAt ? now : card.UpdatedAt.AddTicks(1);
 
+        // Реквизиты формы не сохраняются структурной командой. Отслеживаемый
+        // экземпляр карты отсоединяется ДО добавления структуры: отсоединение
+        // каскадит на зависимые сущности, и добавленные позже разделы, позиции и
+        // строки остались бы в трекере. Значения карты при этом сохраняются в
+        // памяти вызывающего кода — несохранённый ввод не пропадает.
+        var cardLevel = card.ObjectLevel;
+        var cardNodeRoot = card.NodeRootCardLevel;
+        var cardUpdatedAt = card.UpdatedAt;
+        var cardVersion = card.Version;
+        _db.Entry(card).State = EntityState.Detached;
+
+        await SyncSectionsAsync(card.Id, command, ct);
+        SyncPositions(card.Id, command);
+        await SyncItemsAsync(card.Id, command, ct);
+
         await _audit.CreateLogAsync(new AuditWriteRequest(
             "HKCard", card.Id.ToString(), "StructureSaved", actorId,
             EntityDisplayName: $"{card.Code} v{card.Version}",
@@ -1870,7 +1903,21 @@ public class HKCardService
                      $"позиций {command.Positions.Count}, строк {command.Items.Count}, " +
                      $"уровень {card.ObjectLevel}."), ct);
 
+        // Служебные поля карты (уровень и выбор верхнего узла) принадлежат
+        // команде: они пишутся точечным обновлением, потому что карта уже
+        // отсоединена от трекера.
         await _db.SaveChangesAsync(ct);
+
+        await _db.HKCards
+            .Where(c => c.Id == card.Id)
+            .ExecuteUpdateAsync(
+                s => s
+                    .SetProperty(c => c.ObjectLevel, cardLevel)
+                    .SetProperty(c => c.NodeRootCardLevel, cardNodeRoot)
+                    .SetProperty(c => c.UpdatedAt, cardUpdatedAt)
+                    .SetProperty(c => c.Version, cardVersion),
+                ct);
+
         await tx.CommitAsync(ct);
     }
 
@@ -4405,6 +4452,39 @@ public class HKCardService
             IsDraft ? "ещё не опубликована (черновик)" :
             !HasClassification ? "не классифицирована" :
             "недоступна";
+    }
+
+    /// <summary>
+    /// Кандидаты в согласующие по действующим правилам назначения.
+    /// <para>
+    /// Правила те же, что проверяет назначение согласующего: человек
+    /// существует, активен, состоит в филиале карты и имеет действующее право
+    /// на согласование. Список пользователей роли без такой проверки был бы
+    /// подменой правил и предлагал бы недоступных согласующих.
+    /// </para>
+    /// </summary>
+    public async Task<List<HKApproverCandidate>> GetApproverCandidatesAsync(
+        Guid branchId, CancellationToken ct = default)
+    {
+        var users = await _userManager.Users
+            .Where(u => u.IsActive && u.BranchId == branchId)
+            .OrderBy(u => u.FullName)
+            .ToListAsync(ct);
+
+        var candidates = new List<HKApproverCandidate>();
+        foreach (var user in users)
+        {
+            if (!await _permissions.HasPermissionAsync(
+                    user.Id.ToString(), PermissionCodes.HKApprove, ct))
+                continue;
+
+            candidates.Add(new HKApproverCandidate(
+                user.Id,
+                string.IsNullOrWhiteSpace(user.FullName) ? user.UserName ?? user.Id.ToString() : user.FullName!,
+                user.Position));
+        }
+
+        return candidates;
     }
 
     public async Task<List<string>> GetBranchUsersInRoleAsync(Guid branchId, string role)

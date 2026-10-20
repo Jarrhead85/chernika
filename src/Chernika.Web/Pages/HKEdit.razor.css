@@ -46,10 +46,46 @@
     font: inherit;
 }
 
+/* Нативный select — не flex-контейнер.
+   display:flex у select обрезает текст по вертикали (Firefox и Chromium):
+   выравнивание содержимого задаёт flex, а у select такого механизма нет.
+   Flex-выравнивание остаётся у div-триггеров всплывающих списков. */
 .hk-form-row .field-select {
-    display: flex;
-    align-items: center;
+    display: block;
+    line-height: 1.35;
+    padding-top: 8px;
+    padding-bottom: 8px;
     min-width: 0;
+    text-overflow: ellipsis;
+}
+
+/* Панель добавления структуры: одна панель над таблицей, разделы и действия
+   в ней же. На узком экране строки переносятся целиком. */
+.hk-editor-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel2);
+}
+
+.hk-editor-panel-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+/* Компактные кнопки панели: тот же вид, что у кнопок разделов составов
+   техники, но меньшего размера. */
+.hk-editor-chip {
+    padding: 2px 10px;
+    font-size: 12px;
+    line-height: 1.6;
 }
 
 /* ::deep: textarea рендерится компонентом InputTextArea и не получает
