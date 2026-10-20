@@ -18,4 +18,9 @@ public class HKCardListItemDto
     public string? ObjectName { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? ApprovedDate { get; init; }
+   /// <summary>
+   /// У карты есть принятая редакция: только тогда показывается переход
+   /// «Открыть состав ХК».
+   /// </summary>
+   public bool HasAcceptedRevision { get; init; }
 }

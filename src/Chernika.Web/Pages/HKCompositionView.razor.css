@@ -1,0 +1,281 @@
+/* Read-only просмотр принятой редакции ХК. */
+
+.hkCompositionHead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.hkCompositionIncomplete {
+    margin-bottom: 10px;
+}
+
+.hkCompositionKpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.hkCompositionToolbar {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.hkCompositionSearch {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
+.hkCompositionSearchInfo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding-bottom: 6px;
+}
+
+.hkCompositionToolbarButtons {
+    display: flex;
+    gap: 8px;
+    padding-bottom: 2px;
+}
+
+/* Дерево и панель деталей: широкая часть и боковая. */
+.hkCompositionLayout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 12px;
+    align-items: start;
+}
+
+.hkCompositionTree {
+    overflow-x: auto;
+}
+
+.hkCompositionTable {
+    width: 100%;
+}
+
+.hkCompositionTable th,
+.hkCompositionTable td {
+    padding: 6px 8px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.hkCompositionTable thead th {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.hkCompositionNum {
+    width: 84px;
+    min-width: 84px;
+    font-family: var(--mono);
+    white-space: nowrap;
+}
+
+.hkCompositionQty {
+    width: 74px;
+    min-width: 74px;
+    text-align: right;
+    font-family: var(--mono);
+}
+
+.hkCompositionMass,
+.hkCompositionVolume {
+    width: 108px;
+    min-width: 108px;
+    text-align: right;
+    font-family: var(--mono);
+    white-space: nowrap;
+}
+
+.hkCompositionIndent {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding-left: var(--indent, 0px);
+}
+
+.hkCompositionName {
+    font-weight: 600;
+}
+
+/* Кнопка раскрытия: компактная, не наезжает на текст. */
+.hkCompositionToggle {
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.hkCompositionToggle:hover {
+    color: var(--text);
+    background: var(--panel2);
+}
+
+.hkCompositionToggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* Раздел — визуальная группа, позиция — техника. */
+.hkCompositionSectionRow td {
+    background: var(--panel2);
+    font-weight: 700;
+}
+
+.hkCompositionSectionTitle {
+    letter-spacing: .2px;
+}
+
+.hkCompositionItemRow td {
+    color: var(--muted);
+}
+
+.hkCompositionSelected td {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Панель деталей. */
+.hkCompositionDetails {
+    border: 1px solid var(--line);
+    border-radius: var(--radius2);
+    padding: 12px;
+    background: var(--panel);
+}
+
+.hkCompositionDetailsTitle {
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.hkCompositionDetailsMeta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    margin-bottom: 12px;
+}
+
+.hkCompositionDetailsMeta > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.hkCompositionDetailsMeta .hint {
+    flex: 0 0 auto;
+}
+
+.hkCompositionDetailsMeta span:last-child {
+    text-align: right;
+    word-break: break-word;
+}
+
+.hkCompositionDetailsBlock {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+}
+
+.hkCompositionDetailsHeading {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+
+.hkCompositionContributions th,
+.hkCompositionContributions td,
+.hkCompositionMaterials th,
+.hkCompositionMaterials td {
+    padding: 4px 6px;
+    font-size: 11px;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+}
+
+.hkCompositionSections {
+    margin-top: 14px;
+}
+
+.hkCompositionSectionTable th,
+.hkCompositionSectionTable td {
+    padding: 6px 8px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+}
+
+.hkCompositionOverallRow td {
+    font-weight: 700;
+}
+
+/* Вклад разделов: две отдельные полосы — масса и объём. */
+.hkCompositionBars {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.hkCompositionBarRow {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+}
+
+.hkCompositionBarLabel {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hkCompositionBarValue {
+    white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+    .hkCompositionLayout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hkCompositionKpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
+    .hkCompositionKpis,
+    .hkCompositionBars {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hkCompositionToolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

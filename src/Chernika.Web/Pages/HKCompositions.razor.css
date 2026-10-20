@@ -1,0 +1,61 @@
+/* Реестр составов ХК: только принятые редакции. */
+
+.hkCompositionsFilters {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.hkCompositionsSearch {
+    flex: 1 1 280px;
+    min-width: 0;
+}
+
+.hkCompositionsTable th,
+.hkCompositionsTable td {
+    padding: 7px 9px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.hkCompositionsTable thead th {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.hkCompositionsTable td.mono {
+    font-family: var(--mono);
+    white-space: nowrap;
+}
+
+.hkCompositionsTable .tag {
+    margin-left: 6px;
+}
+
+.hkCompositionsPager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+
+.hkCompositionsPagerButtons {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+@media (max-width: 560px) {
+    .hkCompositionsFilters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

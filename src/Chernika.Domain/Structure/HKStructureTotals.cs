@@ -46,6 +46,23 @@ public sealed record HKCardTotals(
     IReadOnlyList<HKMeasuredTotal> Overall);
 
 /// <summary>
+/// Вклад одной конечной строки в итог позиции.
+/// <para>
+/// Расшифровка расчёта: исходная норма, единица, количество и множитель.
+/// Значение приводится к базовой единице тем же каталогом, что и итоги.
+/// </para>
+/// </summary>
+public sealed record HKContribution(
+    Guid ItemId,
+    decimal Volume,
+    string? UnitOfMeasure,
+    int Quantity,
+    decimal Multiplier,
+    decimal BaseValue,
+    bool IsComplete,
+    IReadOnlyList<string> Diagnostics);
+
+/// <summary>
 /// Расчёт массы и объёма по структуре.
 /// <para>
 /// <c>HKCardItem.Volume</c> — масса или объём ОДНОЙ сборочной единицы. Итог
@@ -167,6 +184,108 @@ public static class HKStructureTotals
             ?? throw new ArgumentException("Строка структуры не найдена.", nameof(itemId));
 
         return BuildItem(item, input, nodesById);
+    }
+
+    /// <summary>
+    /// Число экземпляров структурной позиции в карте: своё количество и
+    /// количества строгих предков.
+    /// <para>
+    /// Количество самой позиции не входит в множитель итога позиции: иначе
+    /// оно умножалось бы дважды.
+    /// </para>
+    /// </summary>
+    public static int InstancesOfNode(HKStructureInput input, Guid nodeId)
+    {
+        var nodesById = input.Nodes.ToDictionary(n => n.Id);
+        var node = input.Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node is null)
+            return 0;
+
+        var multiplier = node.Quantity * MultiplierAbove(node.Id, nodesById);
+        return (int)Math.Round(multiplier, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>
+    /// Число экземпляров конечной строки в карте: количество строки и
+    /// количества её структурных родителей.
+    /// </summary>
+    public static int InstancesOfItem(HKStructureInput input, Guid itemId)
+    {
+        var nodesById = input.Nodes.ToDictionary(n => n.Id);
+        var item = input.Items.FirstOrDefault(i => i.Id == itemId);
+        if (item is null)
+            return 0;
+
+        var multiplier = item.Quantity * MultiplierIncluding(item.NodeId, nodesById);
+        return (int)Math.Round(multiplier, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>
+    /// Расшифровка итога структурной позиции: вклады её конечных строк.
+    /// <para>
+    /// Множитель вклада — количество строки и количества позиций строго под
+    /// рассматриваемой: итог позиции не включает собственное количество
+    /// позиции, поэтому вклад не масштабируется им.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<HKContribution> ContributionsOfNode(
+        HKStructureInput input, Guid nodeId)
+    {
+        var nodesById = input.Nodes.ToDictionary(n => n.Id);
+        var node = input.Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node is null)
+            return Array.Empty<HKContribution>();
+
+        var contributions = new List<HKContribution>();
+
+        foreach (var item in DescendantItems(node, input))
+        {
+            var multiplier = item.Quantity * MultiplierBelow(item, node, nodesById);
+            var measured = Measure(item);
+            var measuredTotal = measured.Count > 0 ? measured[0] : null;
+
+            contributions.Add(new HKContribution(
+                item.Id,
+                item.Volume,
+                item.UnitOfMeasure,
+                item.Quantity,
+                multiplier,
+                measuredTotal is null ? 0m : measuredTotal.BaseValue * multiplier,
+                measuredTotal?.IsComplete ?? false,
+                measuredTotal?.Diagnostics ?? Array.Empty<string>()));
+        }
+
+        return contributions;
+    }
+
+    /// <summary>
+    /// Расшифровка итога конечной строки: её собственная норма и множитель
+    /// количеств родителей.
+    /// </summary>
+    public static IReadOnlyList<HKContribution> ContributionsOfItem(
+        HKStructureInput input, Guid itemId)
+    {
+        var nodesById = input.Nodes.ToDictionary(n => n.Id);
+        var item = input.Items.FirstOrDefault(i => i.Id == itemId);
+        if (item is null)
+            return Array.Empty<HKContribution>();
+
+        var measured = Measure(item);
+        var measuredTotal = measured.Count > 0 ? measured[0] : null;
+        var multiplier = item.Quantity * MultiplierIncluding(item.NodeId, nodesById);
+
+        return new[]
+        {
+            new HKContribution(
+                item.Id,
+                item.Volume,
+                item.UnitOfMeasure,
+                item.Quantity,
+                multiplier,
+                measuredTotal is null ? 0m : measuredTotal.BaseValue * multiplier,
+                measuredTotal?.IsComplete ?? false,
+                measuredTotal?.Diagnostics ?? Array.Empty<string>())
+        };
     }
 
     private static HKPositionTotals BuildItem(

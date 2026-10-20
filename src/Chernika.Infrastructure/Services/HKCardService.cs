@@ -150,7 +150,10 @@ public class HKCardService
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
                 CreatedAt = x.CreatedAt,
-                ApprovedDate = x.ApprovedDate
+                ApprovedDate = x.ApprovedDate,
+                // Принятая редакция определяется указателем карты: переход
+                // «Открыть состав» показывается только там, где есть что открывать.
+                HasAcceptedRevision = x.CurrentAcceptedRevisionId != null
             })
             .ToListAsync(ct);
 
@@ -229,7 +232,10 @@ public class HKCardService
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
                 CreatedAt = x.CreatedAt,
-                ApprovedDate = x.ApprovedDate
+                ApprovedDate = x.ApprovedDate,
+                // Принятая редакция определяется указателем карты: переход
+                // «Открыть состав» показывается только там, где есть что открывать.
+                HasAcceptedRevision = x.CurrentAcceptedRevisionId != null
             })
             .ToListAsync(ct);
 
@@ -281,7 +287,10 @@ public class HKCardService
                     : x.ObjectLevel == Domain.Enums.HKObjectLevel.EquipmentModel ? x.EquipmentModel!.Name
                     : x.Complex!.Name,
                 CreatedAt = x.CreatedAt,
-                ApprovedDate = x.ApprovedDate
+                ApprovedDate = x.ApprovedDate,
+                // Принятая редакция определяется указателем карты: переход
+                // «Открыть состав» показывается только там, где есть что открывать.
+                HasAcceptedRevision = x.CurrentAcceptedRevisionId != null
             })
             .ToListAsync(ct);
     }
@@ -416,6 +425,9 @@ public class HKCardService
                     : (Guid?)null,
                 CreatedAt = x.CreatedAt,
                 ApprovedDate = x.ApprovedDate,
+                // Принятая редакция определяется указателем карты: переход
+                // «Открыть состав» показывается только там, где есть что открывать.
+                HasAcceptedRevision = x.CurrentAcceptedRevisionId != null,
                 EffectiveDate = x.EffectiveDate,
                 ExpirationDate = x.ExpirationDate,
                 AuthorId = x.AuthorId.ToString(),

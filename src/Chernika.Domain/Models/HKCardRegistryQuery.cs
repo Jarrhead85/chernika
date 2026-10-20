@@ -48,6 +48,11 @@ public sealed class HKCardRegistryListItemDto
     public Guid? ObjectId { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? ApprovedDate { get; init; }
+   /// <summary>
+   /// У карты есть принятая редакция: только тогда показывается переход
+   /// «Открыть состав».
+   /// </summary>
+   public bool HasAcceptedRevision { get; init; }
     public DateTime? EffectiveDate { get; init; }
     public DateTime? ExpirationDate { get; init; }
     public string? AuthorId { get; init; }

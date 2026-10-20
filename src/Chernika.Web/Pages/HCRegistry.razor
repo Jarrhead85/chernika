@@ -277,6 +277,12 @@
                                         <td>
                                             <div class="rowActions">
                                                 <button type="button" class="btn ghost btn-sm" @onclick:stopPropagation="true" @onclick="() => GoToEdit(card.Id)">Открыть</button>
+                        @if (card.HasAcceptedRevision)
+                        {
+                            @* Переход к принятой редакции: без принятой структуры
+                               ссылки нет — предпросмотр черновика не подменяет её. *@
+                            <a class="btn ghost btn-sm" href="@($"/составы-хк/{card.Id}")" @onclick:stopPropagation="true">Открыть состав</a>
+                        }
                                                 @if (hasActions)
                                                 {
                                                     <button type="button"

@@ -340,6 +340,65 @@ public class HKCardsController : ControllerBase
     }
 
     /// <summary>
+    /// Принятая редакция карты целиком: дерево, итоги и реквизиты снимка.
+    /// <para>
+    /// Отсутствие принятой редакции — 404: рабочее дерево не подставляется,
+    /// иначе черновик был бы выдан за принятую структуру.
+    /// </para>
+    /// </summary>
+    [HttpGet("{id}/accepted-composition")]
+    [ProducesResponseType(typeof(HKAcceptedCompositionDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<HKAcceptedCompositionDto>> GetAcceptedComposition(
+        Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var composition = await _revisions.GetAcceptedCompositionAsync(id, ct);
+            return composition is null ? NotFound() : Ok(composition);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex) when (IsCardMissing(ex))
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// Реестр карт с принятыми редакциями — read-only.
+    /// <para>
+    /// Итоги считаются по снимкам принятых редакций: карты без принятой
+    /// редакции в перечень не попадают.
+    /// </para>
+    /// </summary>
+    [HttpGet("accepted-compositions")]
+    [ProducesResponseType(typeof(PagedResult<HKAcceptedCompositionListItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PagedResult<HKAcceptedCompositionListItemDto>>> GetAcceptedCompositions(
+        [FromQuery] string? search = null,
+        [FromQuery] Guid? branchId = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _revisions.GetAcceptedCompositionsAsync(
+                search, branchId, page, pageSize, ct);
+
+            return Ok(result);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Конкретная сохранённая редакция карты — read-only.
     /// <para>
     /// Редакция чужой карты не раскрывается: пользователь без доступа к карте

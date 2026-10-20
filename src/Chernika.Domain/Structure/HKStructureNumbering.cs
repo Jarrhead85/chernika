@@ -225,6 +225,20 @@ public static class HKStructureNumbering
             sectionId, sectionType, item.UnitOfMeasure ?? string.Empty, item.Quantity);
 }
 
+/// <summary>Отображаемые названия уровней техники.</summary>
+public static class HKLevelTitles
+{
+    /// <summary>Название уровня для показа.</summary>
+    public static string NameOf(HKObjectLevel level) => level switch
+    {
+        HKObjectLevel.Complex => "Комплекс",
+        HKObjectLevel.EquipmentModel => "Изделие",
+        HKObjectLevel.Aggregate => "Агрегат",
+        HKObjectLevel.Node => "Узел",
+        _ => level.ToString()
+    };
+}
+
 /// <summary>Отображаемые названия разделов.</summary>
 public static class HKSectionNames
 {
