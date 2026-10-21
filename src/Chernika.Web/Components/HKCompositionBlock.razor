@@ -170,42 +170,14 @@ else
 
                     @if (MassSections.Any() || VolumeSections.Any())
                     {
-                        <div class="hkCompositionBars">
+                        <div class="hkCompositionCharts">
                             @if (MassSections.Any())
                             {
-                                <div class="hkCompositionBarBlock">
-                                    <div class="hkCompositionDetailsHeading">Вклад разделов: масса</div>
-                                    <div class="hkCompositionBar">
-                                        @foreach (var part in MassSections)
-                                        {
-                                            <div class="hkCompositionBarRow">
-                                                <span class="hkCompositionBarLabel">@part.Name</span>
-                                                <span class="hkCompositionBarTrack">
-                                                    <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
-                                                </span>
-                                                <span class="hkCompositionBarValue mono">@part.Text</span>
-                                            </div>
-                                        }
-                                    </div>
-                                </div>
+                                @Chart("Вклад разделов: масса", MassSections, HKPhysicalQuantity.Mass)
                             }
                             @if (VolumeSections.Any())
                             {
-                                <div class="hkCompositionBarBlock">
-                                    <div class="hkCompositionDetailsHeading">Вклад разделов: объём</div>
-                                    <div class="hkCompositionBar">
-                                        @foreach (var part in VolumeSections)
-                                        {
-                                            <div class="hkCompositionBarRow">
-                                                <span class="hkCompositionBarLabel">@part.Name</span>
-                                                <span class="hkCompositionBarTrack">
-                                                    <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
-                                                </span>
-                                                <span class="hkCompositionBarValue mono">@part.Text</span>
-                                            </div>
-                                        }
-                                    </div>
-                                </div>
+                                @Chart("Вклад разделов: объём", VolumeSections, HKPhysicalQuantity.Liquid)
                             }
                         </div>
                     }
@@ -706,7 +678,74 @@ else
 
     // ── Полосовые диаграммы вкладов ──
 
-    private sealed record BarPart(string Name, string Text, decimal Share);
+    private sealed record BarPart(string Name, string Text, decimal Value);
+
+    /// <summary>Доля раздела в круговой диаграмме.</summary>
+    private sealed record ChartSegment(string Name, string Text, string Color, double Length, double Offset);
+
+    /// <summary>
+    /// Круговая диаграмма вклада разделов: SVG без сторонних библиотек.
+    /// <para>
+    /// Диаграмма занимает место равномерно, тогда как линейные полосы
+    /// оставляли под собой пустоту.
+    /// </para>
+    /// </summary>
+    private RenderFragment Chart(
+        string title, IReadOnlyList<BarPart> parts, HKPhysicalQuantity quantity)
+    {
+        const double circumference = 2 * Math.PI * 38;
+        var total = parts.Sum(p => p.Value);
+        var totalText = HKTotalFormatter.Format(
+            new HKMeasuredTotal(quantity, total, true, Array.Empty<string>()));
+        var shortTotal = totalText.Split(" (")[0];
+
+        var segments = new List<ChartSegment>();
+        var offset = 0d;
+        for (var i = 0; i < parts.Count; i++)
+        {
+            var share = total > 0m ? parts[i].Value / total : 0m;
+            var length = (double)share * circumference;
+            segments.Add(new ChartSegment(parts[i].Name, parts[i].Text, SegmentColor(i), length, -offset));
+            offset += length;
+        }
+
+        return @<div class="hkCompositionChart">
+            <div class="hkCompositionDetailsHeading">@title</div>
+            <div class="hkCompositionChartBody">
+                <svg class="hkCompositionDonut" viewBox="0 0 100 100" role="img" aria-label="@title: @totalText">
+                    <circle class="hkCompositionDonutTrack" cx="50" cy="50" r="38" />
+                    @foreach (var segment in segments)
+                    {
+                        <circle class="hkCompositionDonutSegment" cx="50" cy="50" r="38"
+                                stroke="@segment.Color"
+                                stroke-dasharray="@segment.Length.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) @((circumference - segment.Length).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture))"
+                                stroke-dashoffset="@segment.Offset.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
+                                transform="rotate(-90 50 50)" />
+                    }
+                    <text class="hkCompositionDonutTotal" x="50" y="50" text-anchor="middle" dominant-baseline="central">@shortTotal</text>
+                </svg>
+                <ul class="hkCompositionChartLegend">
+                    @foreach (var segment in segments)
+                    {
+                        <li>
+                            <span class="hkCompositionChartChip" style="background:@segment.Color"></span>
+                            <span class="hkCompositionChartName">@segment.Name</span>
+                            <span class="hkCompositionChartValue mono">@segment.Text</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+        </div>;
+    }
+
+    /// <summary>Цвет доли раздела: оттенки акцента, различимые в обеих темах.</summary>
+    private static string SegmentColor(int index) => index switch
+    {
+        0 => "var(--accent)",
+        1 => "color-mix(in srgb, var(--accent) 72%, var(--text))",
+        2 => "color-mix(in srgb, var(--accent) 50%, var(--text))",
+        _ => "color-mix(in srgb, var(--accent) 32%, var(--text))"
+    };
 
     /// <summary>
     /// Доли разделов по массе. Показываются только достоверные результаты:
@@ -725,8 +764,7 @@ else
             .Select(s => s.Totals.FirstOrDefault(t => t.Quantity == quantity)?.BaseValue ?? 0m)
             .ToList();
 
-        var max = values.Count == 0 ? 0m : values.Max();
-        if (max <= 0m)
+        if (values.Count == 0 || values.Sum() <= 0m)
             return Array.Empty<BarPart>();
 
         var result = new List<BarPart>();
@@ -740,7 +778,7 @@ else
             result.Add(new BarPart(
                 section.Name,
                 HKTotalFormatter.Format(total),
-                total.BaseValue / max * 100m));
+                total.BaseValue));
         }
 
         return result;

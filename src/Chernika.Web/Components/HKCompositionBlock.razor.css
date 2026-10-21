@@ -327,7 +327,7 @@
    вытесняла полосы вкладов на следующую. */
 .hkCompositionTotalsLayout {
     display: flex;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 16px;
     flex-wrap: wrap;
 }
@@ -343,50 +343,85 @@
 }
 
 /* Вклад разделов: две отдельные полосы — масса и объём. */
-.hkCompositionBars {
+/* Круговые диаграммы вклада разделов: занимают место равномерно, тогда как
+   линейные полосы оставляли под собой пустоту. */
+.hkCompositionCharts {
     display: flex;
-    flex-direction: column;
-    gap: 12px;
-    flex: 1 1 320px;
-    min-width: 280px;
-    margin-top: 0;
+    gap: 18px;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-.hkCompositionBarRow {
-    display: grid;
-    grid-template-columns: minmax(90px, 1fr) minmax(80px, 2fr) auto;
+.hkCompositionChart {
+    flex: 0 1 auto;
+}
+
+.hkCompositionChartBody {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.hkCompositionDonut {
+    width: 128px;
+    height: 128px;
+    flex: 0 0 auto;
+}
+
+.hkCompositionDonutTrack {
+    fill: none;
+    stroke: var(--panel2);
+    stroke-width: 14;
+}
+
+.hkCompositionDonutSegment {
+    fill: none;
+    stroke-width: 14;
+}
+
+.hkCompositionDonutTotal {
+    fill: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font);
+}
+
+.hkCompositionChartLegend {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.hkCompositionChartLegend li {
+    display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 0;
-    border-bottom: 1px solid var(--line);
     font-size: 12px;
 }
 
-.hkCompositionBarLabel {
+.hkCompositionChartChip {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex: 0 0 auto;
+}
+
+.hkCompositionChartName {
     color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.hkCompositionBarTrack {
-    display: block;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--panel2);
-    overflow: hidden;
-}
-
-.hkCompositionBarFill {
-    display: block;
-    height: 100%;
-    border-radius: 999px;
-    background: var(--accent);
-}
-
-.hkCompositionBarValue {
+.hkCompositionChartValue {
+    margin-left: auto;
     white-space: nowrap;
-    text-align: right;
+    font-family: var(--mono);
 }
 
 @media (max-width: 1120px) {
@@ -394,9 +429,6 @@
         grid-template-columns: minmax(0, 1fr);
     }
 
-    .hkCompositionBars {
-        grid-template-columns: minmax(0, 1fr);
-    }
 }
 
 @media (max-width: 900px) {
