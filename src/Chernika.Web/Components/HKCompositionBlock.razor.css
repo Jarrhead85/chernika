@@ -1,27 +1,41 @@
-/* Read-only просмотр принятой редакции ХК. */
+/* Read-only просмотр принятой редакции ХК (блок состава). */
 
 .hkCompositionHead {
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    margin-bottom: 10px;
 }
 
 .hkCompositionIncomplete {
     margin-bottom: 10px;
 }
 
-/* Панель инструментов: элементы одной высоты и на одной линии. */
+/* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
+.hkCompositionLayout {
+    display: grid;
+    grid-template-columns: auto minmax(420px, 460px);
+    gap: 12px;
+    align-items: start;
+    justify-content: start;
+}
+
+.hkCompositionTreeColumn {
+    min-width: 0;
+}
+
+/* Поиск, кнопки и счётчик совпадений — одна строка шириной с таблицей. */
 .hkCompositionToolbar {
     display: flex;
     align-items: flex-end;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    margin-bottom: 8px;
 }
 
 .hkCompositionSearch {
-    flex: 1 1 260px;
+    flex: 1 1 auto;
     min-width: 0;
 }
 
@@ -29,33 +43,22 @@
     height: 32px;
 }
 
-.hkCompositionSearchInfo {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    min-height: 32px;
-    padding-bottom: 6px;
+.hkCompositionSearchNote {
+    margin-bottom: 6px;
 }
 
 .hkCompositionToolbarButtons {
     display: flex;
     gap: 8px;
-    padding-bottom: 2px;
+    flex: 0 0 auto;
+    padding-bottom: 1px;
 }
 
 .hkCompositionToolbarButtons .btn {
     height: 32px;
     display: inline-flex;
     align-items: center;
-}
-
-/* Дерево и панель деталей: широкая часть и боковая. */
-.hkCompositionLayout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 420px;
-    gap: 12px;
-    align-items: start;
+    white-space: nowrap;
 }
 
 .hkCompositionTree {
@@ -63,7 +66,7 @@
 }
 
 .hkCompositionTable {
-    width: 100%;
+    width: auto;
 }
 
 .hkCompositionTable th,
@@ -110,6 +113,13 @@
     text-align: right;
     font-family: var(--mono);
     white-space: nowrap;
+}
+
+/* Наименование — основная ширина дерева, но не бесконечная. */
+.hkCompositionTable th:nth-child(2),
+.hkCompositionTable td:nth-child(2) {
+    width: 340px;
+    max-width: 340px;
 }
 
 .hkCompositionIndent {
@@ -179,6 +189,7 @@
 
 /* Панель деталей. */
 .hkCompositionDetails {
+    min-width: 0;
     border: 1px solid var(--line);
     border-radius: var(--radius2);
     padding: 12px;
@@ -203,6 +214,7 @@
     justify-content: space-between;
     align-items: baseline;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 .hkCompositionDetailsMeta .hint {
@@ -243,10 +255,14 @@
     margin-top: 14px;
 }
 
-/* Итоги принятой редакции: одна таблица вместо плиток и отдельной таблицы. */
+/* Итоги принятой редакции: компактная таблица по содержимому. */
+.hkCompositionTotalsTable {
+    width: auto;
+}
+
 .hkCompositionTotalsTable th,
 .hkCompositionTotalsTable td {
-    padding: 6px 8px;
+    padding: 6px 10px;
     font-size: 12px;
     border-bottom: 1px solid var(--line);
     text-align: left;
@@ -276,6 +292,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
     margin-top: 12px;
+    max-width: 760px;
 }
 
 .hkCompositionBarRow {
@@ -327,8 +344,11 @@
 
 @media (max-width: 560px) {
     .hkCompositionToolbar {
-        flex-direction: column;
-        align-items: stretch;
+        flex-wrap: wrap;
+    }
+
+    .hkCompositionSearch {
+        flex: 1 1 100%;
     }
 
     .hkCompositionBarRow {

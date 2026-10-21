@@ -29,6 +29,36 @@
     white-space: nowrap;
 }
 
+/* Уровень карты: отдельная узкая колонка. */
+.hkCompositionsTable th:first-child,
+.hkCompositionsTable td:first-child {
+    width: 96px;
+    min-width: 96px;
+    color: var(--muted);
+}
+
+/* Строка реестра, у которой раскрыт состав. */
+.hkCompositionsRowExpanded td {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    cursor: pointer;
+}
+
+.hkCompositionsRowExpanded td:last-child {
+    cursor: default;
+}
+
+/* Раскрытый состав — под строкой, во всю ширину таблицы. */
+.hkCompositionsExpandedRow td {
+    padding: 0;
+    background: var(--panel2);
+    border-bottom: 1px solid var(--line);
+}
+
+.hkCompositionsExpandedRow > td > * {
+    display: block;
+    padding: 10px 12px;
+}
+
 .hkCompositionsTable td.mono {
     font-family: var(--mono);
     white-space: nowrap;

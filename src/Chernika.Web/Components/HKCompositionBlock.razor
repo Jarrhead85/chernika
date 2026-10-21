@@ -1,0 +1,728 @@
+@using Chernika.Domain
+@using Chernika.Domain.Enums
+@using Chernika.Domain.Structure
+@using Chernika.Infrastructure.Services
+@using Chernika.Web.Services
+@inject HKCardRevisionService Revisions
+@inject CircuitDbLock DbLock
+@implements IDisposable
+
+@if (_loading)
+{
+    <div class="loading-state">Загрузка принятой редакции…</div>
+}
+else if (_error is not null)
+{
+    <div class="error">@_error</div>
+}
+else if (_composition is null)
+{
+    <div class="note">Принятая структура отсутствует</div>
+}
+else
+{
+    @if (!_composition.IsComplete)
+    {
+        <div class="note hkCompositionIncomplete" role="alert">
+            Итог неполный: @string.Join("; ", _composition.Diagnostics)
+        </div>
+    }
+
+    <div class="hkCompositionHead">
+        <span class="mono">@_composition.Code</span>
+        <span class="mono">@_composition.Version</span>
+        <span class="tag ok">Принятая редакция №@_composition.RevisionNumber</span>
+        <span class="hint">
+            Дата принятия:
+            @( _composition.AcceptedAtUtc is { } accepted
+                ? AppTime.Fmt(accepted, "dd.MM.yyyy")
+                : "не зафиксирована" )
+        </span>
+        <a class="btn ghost" href="@($"/хк/{CardId}")">Открыть карточку ХК</a>
+    </div>
+
+    <div class="hkCompositionLayout">
+        <div class="hkCompositionTreeColumn">
+            <div class="hkCompositionToolbar">
+                <div class="field hkCompositionSearch">
+                    <label for="hkCompositionSearch-@CardId">Поиск по номеру, названию и коду СЕ</label>
+                    <input id="hkCompositionSearch-@CardId" value="@_search" @oninput="OnSearchInput"
+                           placeholder="Например: 1.1 или АС-005" class="field-input" />
+                </div>
+                <div class="hkCompositionToolbarButtons">
+                    <button type="button" class="btn ghost" @onclick="ExpandAll">Развернуть всё</button>
+                    <button type="button" class="btn ghost" @onclick="CollapseAll">Свернуть всё</button>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_search))
+                {
+                    <span class="tag warn">Совпадений: @_matchCount</span>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_search))
+            {
+                <div class="hint hkCompositionSearchNote">
+                    Итоги показаны по всей принятой редакции, не по фильтру
+                </div>
+            }
+
+            <div class="hkCompositionTree tableWrap">
+                <table class="table hkCompositionTable">
+                    <thead>
+                        <tr>
+                            <th class="hkCompositionNum">№</th>
+                            <th>Наименование</th>
+                            <th class="hkCompositionQty">Кол-во</th>
+                            <th class="hkCompositionQty">Экз. в ХК</th>
+                            <th class="hkCompositionMass">Масса</th>
+                            <th class="hkCompositionVolume">Объём</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in VisibleRows)
+                        {
+                            <tr class="@RowClass(row)"
+                                @key="RowKey(row)"
+                                @onclick="() => Select(row)">
+                                <td class="hkCompositionNum mono">@row.Number</td>
+                                <td>
+                                    @if (row.Kind == HKStructureRowKind.Section)
+                                    {
+                                        <span class="hkCompositionSectionTitle">@row.Name</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="hkCompositionIndent" style="--indent:@(row.Depth * 14)px">
+                                            @if (row.Kind == HKStructureRowKind.Position && HasChildren(row))
+                                            {
+                                                <button type="button" class="hkCompositionToggle"
+                                                        @onclick:stopPropagation="true"
+                                                        @onclick="() => Toggle(row)"
+                                                        aria-expanded="@(IsExpanded(row) ? "true" : "false")"
+                                                        aria-label="@(IsExpanded(row) ? "Свернуть ветку" : "Раскрыть ветку")"
+                                                        title="@(IsExpanded(row) ? "Свернуть" : "Раскрыть")">
+                                                    @(IsExpanded(row) ? "▾" : "▸")
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <span class="hkCompositionToggleSpacer"></span>
+                                            }
+                                            @if (row.LevelTitle is not null)
+                                            {
+                                                <span class="tag hki-muted-xs">@row.LevelTitle</span>
+                                            }
+                                            <span class="hkCompositionName">@row.Name</span>
+                                        </span>
+                                    }
+                                </td>
+                                <td class="hkCompositionQty">@(row.QuantityInParent?.ToString() ?? "—")</td>
+                                <td class="hkCompositionQty">@(row.InstancesInCard > 0 ? row.InstancesInCard.ToString() : "—")</td>
+                                <td class="hkCompositionMass">@FormatQuantity(row.TotalInCard, HKPhysicalQuantity.Mass)</td>
+                                <td class="hkCompositionVolume">@FormatQuantity(row.TotalInCard, HKPhysicalQuantity.Liquid)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <aside class="hkCompositionDetails">
+            @if (_selected is null)
+            {
+                <div class="hint">Выберите позицию или конечную строку в дереве.</div>
+            }
+            else
+            {
+                <div class="hkCompositionDetailsTitle">@(_selected.Name ?? "—")</div>
+                <div class="hkCompositionDetailsMeta">
+                    <div><span class="hint">Номер</span><span class="mono">@_selected.Number</span></div>
+                    @if (_selected.LevelTitle is not null)
+                    {
+                        <div><span class="hint">Уровень</span><span>@_selected.LevelTitle</span></div>
+                    }
+                    <div><span class="hint">Путь</span><span>@PathOf(_selected)</span></div>
+                    <div><span class="hint">Кол-во в родителе</span><span>@(_selected.QuantityInParent?.ToString() ?? "—")</span></div>
+                    <div><span class="hint">Экземпляров в ХК</span><span>@_selected.InstancesInCard</span></div>
+                    <div><span class="hint">На один экземпляр</span><span>@FormatAll(_selected.PerOne)</span></div>
+                    <div><span class="hint">Всего в ХК</span><span>@FormatAll(_selected.TotalInCard)</span></div>
+                </div>
+
+                <div class="hkCompositionDetailsBlock">
+                    <div class="hkCompositionDetailsHeading">Расшифровка расчёта</div>
+                    @if (_selected.Contributions.Count == 0)
+                    {
+                        <div class="hint">Вкладов нет: позиция пуста или ветка не содержит конечных строк.</div>
+                    }
+                    else
+                    {
+                        <div class="tableWrap">
+                        <table class="table hkCompositionContributions">
+                            <thead>
+                                <tr>
+                                    <th>№</th>
+                                    <th>Строка</th>
+                                    <th>Норма</th>
+                                    <th>Кол-во</th>
+                                    <th>Множитель</th>
+                                    <th>Вклад</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in _selected.Contributions)
+                                {
+                                    <tr>
+                                        <td class="mono">@c.Number</td>
+                                        <td>@c.Name</td>
+                                        <td>@FormatNumber(c.Volume) @c.UnitOfMeasure</td>
+                                        <td>@c.Quantity</td>
+                                        <td>@FormatNumber(c.Multiplier)</td>
+                                        <td>@FormatBase(c)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                        </div>
+                    }
+                </div>
+
+                @if (_selectedItem is not null)
+                {
+                    <div class="hkCompositionDetailsBlock">
+                        <div class="hkCompositionDetailsHeading">Строка сборочной единицы</div>
+                        <div class="hkCompositionDetailsMeta">
+                            <div><span class="hint">Код и наименование</span><span>@_selectedItem.AssemblyUnitCode @_selectedItem.AssemblyUnitName</span></div>
+                            <div><span class="hint">Норма</span><span>@FormatNumber(_selectedItem.Volume) @_selectedItem.UnitOfMeasure</span></div>
+                            <div><span class="hint">Периодичность</span><span>@(_selectedItem.Periodicity ?? "—")</span></div>
+                            <div><span class="hint">Примечание</span><span>@(_selectedItem.Notes ?? "—")</span></div>
+                        </div>
+                        <div class="hkCompositionDetailsHeading">Марки ГСМ по категориям</div>
+                        @if (_selectedItem.Materials.Count == 0)
+                        {
+                            <div class="hint">Марки не заданы.</div>
+                        }
+                        else
+                        {
+                            <div class="tableWrap">
+                            <table class="table hkCompositionMaterials">
+                                <thead>
+                                    <tr>
+                                        <th>Категория</th>
+                                        <th>Марка</th>
+                                        <th>НД</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var m in _selectedItem.Materials)
+                                    {
+                                        <tr>
+                                            <td>@CategoryTitle(m.Category)</td>
+                                            <td>@m.Name</td>
+                                            <td>@(m.Nd ?? "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </aside>
+    </div>
+
+    <div class="hkCompositionSections">
+        <div class="hkCompositionDetailsHeading">Итоги принятой редакции</div>
+        <div class="tableWrap">
+        <table class="table hkCompositionTotalsTable">
+            <thead>
+                <tr>
+                    <th>Раздел</th>
+                    <th title="Общая масса ГСМ">Масса</th>
+                    <th title="Общий объём ГСМ">Объём</th>
+                    <th title="Структурных позиций">Позиций</th>
+                    <th title="Конечных строк СЕ">Строк СЕ</th>
+                    <th title="Полнота расчёта">Полнота</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr class="hkCompositionOverallRow">
+                    <td>Вся карта</td>
+                    <td>@FormatQuantity(_composition.Overall, HKPhysicalQuantity.Mass)</td>
+                    <td>@FormatQuantity(_composition.Overall, HKPhysicalQuantity.Liquid)</td>
+                    <td>@_composition.PositionCount</td>
+                    <td>@_composition.ItemCount</td>
+                    <td>@(_composition.IsComplete ? "полный" : "неполный")</td>
+                </tr>
+                @foreach (var sec in _composition.Sections)
+                {
+                    <tr>
+                        <td>@sec.Name</td>
+                        <td>@FormatQuantity(sec.Totals, HKPhysicalQuantity.Mass)</td>
+                        <td>@FormatQuantity(sec.Totals, HKPhysicalQuantity.Liquid)</td>
+                        <td>@sec.PositionCount</td>
+                        <td>@sec.ItemCount</td>
+                        <td>@(sec.IsComplete ? "полный" : "неполный")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+
+        @if (MassSections.Any() || VolumeSections.Any())
+        {
+            <div class="hkCompositionBars">
+                @if (MassSections.Any())
+                {
+                    <div class="hkCompositionBarBlock">
+                        <div class="hkCompositionDetailsHeading">Вклад разделов: масса</div>
+                        <div class="hkCompositionBar">
+                            @foreach (var part in MassSections)
+                            {
+                                <div class="hkCompositionBarRow">
+                                    <span class="hkCompositionBarLabel">@part.Name</span>
+                                    <span class="hkCompositionBarTrack">
+                                        <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
+                                    </span>
+                                    <span class="hkCompositionBarValue mono">@part.Text</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (VolumeSections.Any())
+                {
+                    <div class="hkCompositionBarBlock">
+                        <div class="hkCompositionDetailsHeading">Вклад разделов: объём</div>
+                        <div class="hkCompositionBar">
+                            @foreach (var part in VolumeSections)
+                            {
+                                <div class="hkCompositionBarRow">
+                                    <span class="hkCompositionBarLabel">@part.Name</span>
+                                    <span class="hkCompositionBarTrack">
+                                        <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
+                                    </span>
+                                    <span class="hkCompositionBarValue mono">@part.Text</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>Карта, принятая редакция которой показывается.</summary>
+    [Parameter] public Guid CardId { get; set; }
+
+    private HKAcceptedCompositionDto? _composition;
+    private HKAcceptedCompositionRowDto? _selected;
+    private string? _error;
+    private bool _loading = true;
+    private string _search = string.Empty;
+    private int _matchCount;
+    private readonly HashSet<Guid> _collapsed = new();
+    private CancellationTokenSource? _loadCts;
+
+    private HKAcceptedItemDto? _selectedItem =>
+        _selected?.ItemId is { } itemId && _composition is not null
+            ? _composition.Items.FirstOrDefault(i => i.Id == itemId)
+            : null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Смена карты отменяет прежнюю загрузку: старый результат не должен
+        // перезаписать новую карту.
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+
+        _loading = true;
+        _error = null;
+        _composition = null;
+        _selected = null;
+        _collapsed.Clear();
+        _search = string.Empty;
+
+        try
+        {
+            await using (await DbLock.WaitAsync("HKCompositionBlock: чтение принятой редакции"))
+            {
+                _composition = await Revisions.GetAcceptedCompositionAsync(CardId, ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (ArgumentException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
+
+    // ── Дерево ──
+
+    private IReadOnlyList<HKAcceptedCompositionRowDto> VisibleRows
+    {
+        get
+        {
+            if (_composition is null)
+                return Array.Empty<HKAcceptedCompositionRowDto>();
+
+            var rows = _composition.Rows;
+
+            HashSet<string>? keep = null;
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                // Поиск сохраняет контекст родителей: совпадение показывается
+                // вместе с веткой, в которой оно найдено.
+                keep = new HashSet<string>();
+                foreach (var row in rows)
+                {
+                    if (!Matches(row))
+                        continue;
+
+                    keep.Add(RowKey(row));
+                    var parent = ParentPositionOf(row);
+                    while (parent is not null)
+                    {
+                        keep.Add(RowKey(parent));
+                        parent = ParentOf(parent);
+                    }
+                }
+            }
+
+            return rows.Where(r => Visible(r, keep)).ToList();
+        }
+    }
+
+    private bool Matches(HKAcceptedCompositionRowDto row)
+    {
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var term = _search.Trim();
+        return (row.Number?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (row.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    /// <summary>Индекс строки в дереве по её устойчивому ключу.</summary>
+    private static int IndexOfRow(
+        IReadOnlyList<HKAcceptedCompositionRowDto> rows, HKAcceptedCompositionRowDto row)
+    {
+        var key = RowKey(row);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (RowKey(rows[i]) == key)
+                return i;
+        }
+
+        return -1;
+    }
+
+    private HKAcceptedCompositionRowDto? ParentOf(HKAcceptedCompositionRowDto row)
+    {
+        if (_composition is null || row.Kind != HKStructureRowKind.Position)
+            return null;
+
+        var rows = _composition.Rows;
+        var index = IndexOfRow(rows, row);
+        for (var i = index - 1; i >= 0; i--)
+        {
+            if (rows[i].Depth < row.Depth)
+                return rows[i];
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Позиция-родитель: для структурной позиции — её родитель, для конечной
+    /// строки — позиция, под которой она сохранена.
+    /// </summary>
+    private HKAcceptedCompositionRowDto? ParentPositionOf(HKAcceptedCompositionRowDto row)
+    {
+        if (_composition is null)
+            return null;
+
+        if (row.Kind == HKStructureRowKind.Position)
+            return ParentOf(row);
+
+        if (row.ItemId is { } itemId)
+        {
+            var item = _composition.Items.FirstOrDefault(i => i.Id == itemId);
+            if (item?.NodeId is { } nodeId)
+                return _composition.Rows.FirstOrDefault(r => r.NodeId == nodeId);
+        }
+
+        return null;
+    }
+
+    private bool Visible(HKAcceptedCompositionRowDto row, HashSet<string>? keep)
+    {
+        if (_composition is null)
+            return true;
+
+        // Свёрнутая ветка скрывает всю свою ветку — независимо от поиска.
+        if (HasCollapsedAncestor(row))
+            return false;
+
+        if (keep is null)
+            return true;
+
+        return keep.Contains(RowKey(row));
+    }
+
+    /// <summary>
+    /// Свёрнут ли какой-либо предок строки.
+    /// <para>
+    /// Проверяется вся цепочка предков, а не только непосредственный родитель:
+    /// иначе после сворачивания верхней ветки оставались бы видимыми её
+    /// внутренние уровни.
+    /// </para>
+    /// </summary>
+    private bool HasCollapsedAncestor(HKAcceptedCompositionRowDto row)
+    {
+        if (_composition is null)
+            return false;
+
+        var rows = _composition.Rows;
+        var index = IndexOfRow(rows, row);
+
+        for (var i = index - 1; i >= 0; i--)
+        {
+            if (rows[i].Depth >= row.Depth)
+                continue;
+
+            if (IsCollapsed(rows[i]))
+                return true;
+
+            if (rows[i].Kind != HKStructureRowKind.Position)
+                break;
+        }
+
+        return false;
+    }
+
+    private bool HasChildren(HKAcceptedCompositionRowDto row)
+    {
+        if (_composition is null)
+            return false;
+
+        var rows = _composition.Rows;
+        var index = IndexOfRow(rows, row);
+
+        for (var i = index + 1; i < rows.Count; i++)
+        {
+            if (rows[i].Depth <= row.Depth)
+                return false;
+
+            if (rows[i].Depth == row.Depth + 1)
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool IsCollapsed(HKAcceptedCompositionRowDto row) =>
+        row.NodeId is { } nodeId && _collapsed.Contains(nodeId);
+
+    private bool IsExpanded(HKAcceptedCompositionRowDto row) => !IsCollapsed(row);
+
+    private void Toggle(HKAcceptedCompositionRowDto row)
+    {
+        if (row.NodeId is not { } nodeId)
+            return;
+
+        if (!_collapsed.Add(nodeId))
+            _collapsed.Remove(nodeId);
+    }
+
+    private void ExpandAll() => _collapsed.Clear();
+
+    private void CollapseAll()
+    {
+        if (_composition is null)
+            return;
+
+        // Сворачиваются только ветки с потомками: листья прятать нечего.
+        foreach (var row in _composition.Rows.Where(r => r.Kind == HKStructureRowKind.Position))
+        {
+            if (row.NodeId is { } nodeId && HasChildren(row))
+                _collapsed.Add(nodeId);
+        }
+    }
+
+    private void Select(HKAcceptedCompositionRowDto row)
+    {
+        // Выбор хранится по виду элемента и устойчивому идентификатору,
+        // а не по отображаемому номеру.
+        if (row.Kind == HKStructureRowKind.Section)
+        {
+            _selected = null;
+            return;
+        }
+
+        _selected = row;
+    }
+
+    private void OnSearchInput(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+        _matchCount = _composition?.Rows.Count(Matches) ?? 0;
+    }
+
+    private static string RowKey(HKAcceptedCompositionRowDto row) =>
+        $"{row.Kind}:{row.NodeId?.ToString() ?? row.ItemId?.ToString() ?? "section" + row.SectionId}";
+
+    private string RowClass(HKAcceptedCompositionRowDto row)
+    {
+        var classes = new List<string>();
+
+        if (row.Kind == HKStructureRowKind.Section)
+            classes.Add("hkCompositionSectionRow");
+        else if (row.Kind == HKStructureRowKind.TerminalRow)
+            classes.Add("hkCompositionItemRow");
+
+        if (_selected is not null
+            && _selected.Kind == row.Kind
+            && _selected.NodeId == row.NodeId
+            && _selected.ItemId == row.ItemId)
+        {
+            classes.Add("hkCompositionSelected");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private string PathOf(HKAcceptedCompositionRowDto row)
+    {
+        if (_composition is null)
+            return "—";
+
+        var parts = new List<string>();
+
+        // Путь читается сверху вниз: раздел, затем позиции-родители.
+        var section = _composition.Rows.FirstOrDefault(r =>
+            r.Kind == HKStructureRowKind.Section && r.SectionId == row.SectionId);
+        if (section is not null)
+            parts.Add(section.Name);
+
+        var parents = new List<string>();
+        var parent = ParentPositionOf(row);
+        while (parent is not null)
+        {
+            // Раздел уже назван в начале пути: повторять его нельзя.
+            if (parent.Kind == HKStructureRowKind.Section)
+                break;
+
+            parents.Insert(0, parent.Name ?? "—");
+            parent = ParentOf(parent);
+        }
+
+        parts.AddRange(parents);
+
+        return parts.Count == 0 ? "корень карты" : string.Join(" → ", parts);
+    }
+
+    // ── Форматирование ──
+
+    /// <summary>
+    /// Число без лишних нулей: 5,500000 показывается как 5,5.
+    /// <para>
+    /// Округление выполняется только на границе отображения: в расчёте
+    /// значения не округляются.
+    /// </para>
+    /// </summary>
+    private static string FormatNumber(decimal value) =>
+        value == decimal.Truncate(value)
+            ? decimal.Truncate(value).ToString("0")
+            : value.ToString("0.###");
+
+    private static string FormatQuantity(IReadOnlyList<HKMeasuredTotal> totals, HKPhysicalQuantity quantity)
+    {
+        var total = totals.FirstOrDefault(t => t.Quantity == quantity);
+        return total is null ? "—" : HKTotalFormatter.Format(total);
+    }
+
+    private static string FormatAll(IReadOnlyList<HKMeasuredTotal> totals)
+    {
+        if (totals.Count == 0)
+            return "—";
+
+        return string.Join("; ", totals.Select(t => HKTotalFormatter.Format(t)));
+    }
+
+    private static string FormatBase(HKAcceptedCompositionContributionDto contribution) =>
+        contribution.IsComplete
+            ? $"{FormatNumber(contribution.BaseValue)} (базовая ед.)"
+            : "неполный";
+
+    private static string CategoryTitle(GsmCategory category) => category switch
+    {
+        GsmCategory.Primary => "Основные",
+        GsmCategory.Duplicate => "Дублирующие",
+        GsmCategory.Reserve => "Резервные",
+        GsmCategory.Foreign => "Зарубежные",
+        _ => category.ToString()
+    };
+
+    // ── Полосовые диаграммы вкладов ──
+
+    private sealed record BarPart(string Name, string Text, decimal Share);
+
+    /// <summary>
+    /// Доли разделов по массе. Показываются только достоверные результаты:
+    /// неполный итог диаграммой не изображается.
+    /// </summary>
+    private IReadOnlyList<BarPart> MassSections => BuildBars(HKPhysicalQuantity.Mass);
+
+    private IReadOnlyList<BarPart> VolumeSections => BuildBars(HKPhysicalQuantity.Liquid);
+
+    private IReadOnlyList<BarPart> BuildBars(HKPhysicalQuantity quantity)
+    {
+        if (_composition is null || !_composition.IsComplete)
+            return Array.Empty<BarPart>();
+
+        var values = _composition.Sections
+            .Select(s => s.Totals.FirstOrDefault(t => t.Quantity == quantity)?.BaseValue ?? 0m)
+            .ToList();
+
+        var max = values.Count == 0 ? 0m : values.Max();
+        if (max <= 0m)
+            return Array.Empty<BarPart>();
+
+        var result = new List<BarPart>();
+        for (var i = 0; i < _composition.Sections.Count; i++)
+        {
+            var section = _composition.Sections[i];
+            var total = section.Totals.FirstOrDefault(t => t.Quantity == quantity);
+            if (total is null || total.BaseValue <= 0m)
+                continue;
+
+            result.Add(new BarPart(
+                section.Name,
+                HKTotalFormatter.Format(total),
+                total.BaseValue / max * 100m));
+        }
+
+        return result;
+    }
+}

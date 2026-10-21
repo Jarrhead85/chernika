@@ -161,4 +161,64 @@ public class HKAcceptedCompositionProjectionTests
         Assert.Equal(12m, contribution.Multiplier);
         Assert.Equal(6000m, contribution.BaseValue);
     }
+
+    // ── Уровень карты по принятой структуре ──
+
+    /// <summary>
+    /// Уровень карты выводится по старшей верхней позиции: верхний агрегат даёт
+    /// ХК изделия, верхний узел требует явного выбора уровня корня.
+    /// </summary>
+    [Fact]
+    public void CardLevel_TopAggregate_GivesEquipmentModelLevel()
+    {
+        var snapshot = Snapshot();
+
+        var level = HKAcceptedCompositionProjection.CardLevel(snapshot.Nodes, snapshot.Items);
+
+        // Верхняя позиция карты — агрегат, значит карта уровня изделия.
+        Assert.Equal(HKObjectLevel.EquipmentModel, level);
+    }
+
+    [Fact]
+    public void CardLevel_TopNode_WithoutChoice_IsNotDetermined()
+    {
+        var node = Guid.NewGuid();
+        var snapshot = new HKAcceptedStructureDto(
+            Guid.NewGuid(), 1, DateTime.UtcNow, "Карточка", "ХК-1", "v1", HKObjectLevel.Undefined,
+            null, null, null, null, null, false,
+            new List<HKAcceptedNodeDto>
+            {
+                new(node, null, HKObjectLevel.Node, "Узел", 1, 0, null)
+            },
+            new List<HKAcceptedItemDto>
+            {
+                new(Guid.NewGuid(), node, Guid.NewGuid(), "АС-1", "Деталь",
+                    1, 1m, "кг", null, null, 0, null, new List<HKAcceptedMaterialDto>())
+            },
+            new List<HKAcceptedSectionDto>(),
+            DateTime.UtcNow, "user-1");
+
+        // Без явного выбора уровень корня не определяется.
+        Assert.Null(HKAcceptedCompositionProjection.CardLevel(snapshot.Nodes, snapshot.Items));
+
+        // С явным выбором уровень карты известен.
+        Assert.Equal(
+            HKObjectLevel.Aggregate,
+            HKAcceptedCompositionProjection.CardLevel(
+                snapshot.Nodes, snapshot.Items, HKObjectLevel.Aggregate));
+    }
+
+    [Fact]
+    public void CardLevel_EmptyStructure_IsNotDetermined()
+    {
+        var snapshot = new HKAcceptedStructureDto(
+            Guid.NewGuid(), 1, DateTime.UtcNow, "Карточка", "ХК-1", "v1", HKObjectLevel.Undefined,
+            null, null, null, null, null, false,
+            new List<HKAcceptedNodeDto>(),
+            new List<HKAcceptedItemDto>(),
+            new List<HKAcceptedSectionDto>(),
+            DateTime.UtcNow, "user-1");
+
+        Assert.Null(HKAcceptedCompositionProjection.CardLevel(snapshot.Nodes, snapshot.Items));
+    }
 }

@@ -586,7 +586,7 @@
                                 <div class="hint">@acceptedCaption</div>
                                 @* Переход открывает ПРИНЯТУЮ редакцию, а не текущий
                                    несохранённый или сохранённый черновик. *@
-                                <a class="btn ghost btn-sm" href="@($"/составы-хк/{card.Id}")">Открыть состав ХК</a>
+                                <a class="btn ghost btn-sm" href="@($"/составы-хк?карта={card.Id}")">Открыть состав ХК</a>
                             }
                             @if (!hasApprovalStages)
                             {

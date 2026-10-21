@@ -4,6 +4,7 @@
 @using Chernika.Domain.Enums
 @using Chernika.Domain.Structure
 @using Chernika.Infrastructure.Services
+@using Chernika.Web.Components
 @using Chernika.Web.Services
 @inject HKCardRevisionService Revisions
 @inject CircuitDbLock DbLock
@@ -67,6 +68,7 @@
                     <table class="table hkCompositionsTable">
                         <thead>
                             <tr>
+                                <th>Уровень</th>
                                 <th>№ ХК</th>
                                 <th>Название</th>
                                 <th>Версия / редакция</th>
@@ -79,7 +81,10 @@
                         <tbody>
                             @foreach (var item in _items)
                             {
-                                <tr @key="item.CardId">
+                                <tr class="@(item.CardId == _expandedCardId ? "hkCompositionsRowExpanded" : null)"
+                                    @key="item.CardId"
+                                    @onclick="() => ToggleCard(item.CardId)">
+                                    <td>@LevelTitle(item.Level)</td>
                                     <td class="mono">@item.Code</td>
                                     <td>@item.Name</td>
                                     <td>
@@ -90,9 +95,24 @@
                                     <td>@FormatQuantity(item.Totals, HKPhysicalQuantity.Mass)</td>
                                     <td>@FormatQuantity(item.Totals, HKPhysicalQuantity.Liquid)</td>
                                     <td>
-                                        <a class="btn ghost" href="@($"/составы-хк/{item.CardId}")">Открыть состав</a>
+                                        <button type="button" class="btn ghost btn-sm"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => ToggleCard(item.CardId)">
+                                            @(item.CardId == _expandedCardId ? "Свернуть" : "Открыть состав")
+                                        </button>
                                     </td>
                                 </tr>
+                                @if (item.CardId == _expandedCardId)
+                                {
+                                    <tr class="hkCompositionsExpandedRow">
+                                        <td colspan="8">
+                                            @* Состав выбранной карты раскрывается прямо
+                                               в реестре: отдельная страница остаётся
+                                               для работы с большой картой. *@
+                                            <HKCompositionBlock CardId="item.CardId" />
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </table>
@@ -116,6 +136,13 @@
 @code {
     private const int PageSize = 25;
 
+    /// <summary>
+    /// Раскрытая карта. Задаётся deep-ссылкой ?карта={id}: по ней реестр
+    /// открывается с уже раскрытым составом.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "карта")]
+    public Guid? CardId { get; set; }
+
     private IReadOnlyList<HKAcceptedCompositionListItemDto> _items = Array.Empty<HKAcceptedCompositionListItemDto>();
     private List<(Guid Id, string Name)> _branches = new();
     private string _search = string.Empty;
@@ -125,11 +152,13 @@
     private bool _loading = true;
     private bool _canSeeBranches;
     private string? _error;
+    private Guid? _expandedCardId;
     private CancellationTokenSource? _loadCts;
 
     protected override async Task OnInitializedAsync()
     {
         _canSeeBranches = await Perms.HasPermissionAsync(PermissionCodes.SystemConfig);
+        _expandedCardId = CardId;
         await LoadAsync();
     }
 
@@ -172,6 +201,23 @@
         }
     }
 
+    /// <summary>
+    /// Раскрытие состава карты прямо в реестре. Раскрыта одна карта: иначе
+    /// страница превращалась бы в несколько деревьев сразу.
+    /// </summary>
+    private void ToggleCard(Guid cardId)
+    {
+        _expandedCardId = _expandedCardId == cardId ? null : cardId;
+
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        query.Remove("карта");
+        if (_expandedCardId is { } expanded)
+            query["карта"] = expanded.ToString();
+
+        Nav.NavigateTo($"{uri.AbsolutePath}?{query}", replace: true, forceLoad: false);
+    }
+
     private async Task OnSearchInput(ChangeEventArgs args)
     {
         _search = args.Value?.ToString() ?? string.Empty;
@@ -200,6 +246,15 @@
         _loadCts?.Cancel();
         _loadCts?.Dispose();
     }
+
+    private static string LevelTitle(HKObjectLevel? level) => level switch
+    {
+        HKObjectLevel.Complex => "Комплекс",
+        HKObjectLevel.EquipmentModel => "Изделие",
+        HKObjectLevel.Aggregate => "Агрегат",
+        HKObjectLevel.Node => "Узел",
+        _ => "—"
+    };
 
     private static string FormatQuantity(IReadOnlyList<HKMeasuredTotal> totals, HKPhysicalQuantity quantity)
     {

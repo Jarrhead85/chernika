@@ -281,7 +281,7 @@
                         {
                             @* Переход к принятой редакции: без принятой структуры
                                ссылки нет — предпросмотр черновика не подменяет её. *@
-                            <a class="btn ghost btn-sm" href="@($"/составы-хк/{card.Id}")" @onclick:stopPropagation="true">Открыть состав</a>
+                            <a class="btn ghost btn-sm" href="@($"/составы-хк?карта={card.Id}")" @onclick:stopPropagation="true">Открыть состав</a>
                         }
                                                 @if (hasActions)
                                                 {

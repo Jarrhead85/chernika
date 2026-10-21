@@ -1,4 +1,5 @@
 using Chernika.Domain.Enums;
+using Chernika.Domain.Leveling;
 using Chernika.Domain.Structure;
 
 namespace Chernika.Infrastructure.Services;
@@ -92,7 +93,17 @@ public sealed record HKAcceptedCompositionListItemDto(
     DateTime? AcceptedAtUtc,
     IReadOnlyList<HKMeasuredTotal> Totals,
     int PositionCount,
-    int ItemCount);
+    int ItemCount,
+    /// <summary>
+    /// Уровень карты.
+    /// <para>
+    /// У автономной карты он выводится из ПРИНЯТОЙ структуры: уровень карты
+    /// на ступень выше уровня её старшей верхней позиции. У карты со
+    /// справочным объектом — уровень этого объекта.
+    /// </para>
+    /// </summary>
+    HKObjectLevel? Level,
+    bool IsAutonomous);
 
 /// <summary>
 /// Построение read-only представления принятой редакции.
@@ -322,6 +333,33 @@ public static class HKAcceptedCompositionProjection
             diagnostics,
             result,
             revision.Items);
+    }
+
+    /// <summary>
+    /// Уровень карты по её принятой структуре.
+    /// <para>
+    /// Используется то же доменное правило, что и при сохранении структуры:
+    /// уровень карты на ступень выше уровня её старшей верхней позиции
+    /// (верхнее изделие даёт ХК комплекса, верхний агрегат — ХК изделия).
+    /// Старший верхний узел требует явного выбора уровня корня.
+    /// </para>
+    /// <para>
+    /// null — уровень однозначно не определяется: пустая структура,
+    /// недопустимая структура или не сделанный выбор уровня корня.
+    /// </para>
+    /// </summary>
+    public static HKObjectLevel? CardLevel(
+        IReadOnlyList<HKAcceptedNodeDto> nodes,
+        IReadOnlyList<HKAcceptedItemDto> items,
+        HKObjectLevel? nodeRootChoice = null)
+    {
+        var shape = new HKTreeShape(
+            nodes.Select(n => new HKTreePosition(n.Id, n.ParentId, n.Level)).ToList(),
+            items.Count(i => i.NodeId is null));
+
+        var resolved = HKCardLevelRule.Resolve(shape, nodeRootChoice);
+
+        return resolved.Status == HKCardLevelStatus.Determined ? resolved.CardLevel : null;
     }
 
     /// <summary>Название конечной строки: код и наименование СЕ из снимка.</summary>

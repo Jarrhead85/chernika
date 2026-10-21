@@ -870,7 +870,10 @@ public sealed class HKCardRevisionService
                 c.Name,
                 c.Version,
                 c.CurrentAcceptedRevisionId,
-                c.ApprovedDate
+                c.ApprovedDate,
+                c.ObjectLevel,
+                c.IsAutonomous,
+                c.NodeRootCardLevel
             })
             .ToListAsync(ct);
 
@@ -929,6 +932,19 @@ public sealed class HKCardRevisionService
 
             var totals = Domain.Structure.HKStructureTotals.Calculate(input);
 
+            // Уровень карты: у карты со справочным объектом — уровень объекта,
+            // у автономной — вывод по принятой структуре.
+            var cardLevel = card.IsAutonomous
+                ? HKAcceptedCompositionProjection.CardLevel(
+                    cardNodes.Select(n => new HKAcceptedNodeDto(
+                        n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder, n.SectionId)).ToList(),
+                    cardItems.Select(i => new HKAcceptedItemDto(
+                        i.Id, i.NodeId, Guid.Empty, null, null,
+                        i.Quantity, i.Volume, i.UnitOfMeasure, null, null, i.SortOrder, i.SectionId,
+                        Array.Empty<HKAcceptedMaterialDto>())).ToList(),
+                    card.NodeRootCardLevel)
+                : card.ObjectLevel;
+
             result.Add(new HKAcceptedCompositionListItemDto(
                 card.Id,
                 card.Code,
@@ -938,7 +954,9 @@ public sealed class HKCardRevisionService
                 revision?.AcceptedAtUtc ?? card.ApprovedDate,
                 totals.Overall,
                 input.Nodes.Count,
-                input.Items.Count));
+                input.Items.Count,
+                cardLevel,
+                card.IsAutonomous));
         }
 
         return new PagedResult<HKAcceptedCompositionListItemDto>
