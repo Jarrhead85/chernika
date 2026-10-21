@@ -28,27 +28,32 @@ else
         </div>
     }
 
-    <div class="hkCompositionHead">
-        <span class="mono">@_composition.Code</span>
-        <span class="mono">@_composition.Version</span>
-        <span class="tag ok">Принятая редакция №@_composition.RevisionNumber</span>
-        <span class="hint">
-            Дата принятия:
-            @( _composition.AcceptedAtUtc is { } accepted
-                ? AppTime.Fmt(accepted, "dd.MM.yyyy")
-                : "не зафиксирована" )
-        </span>
-        <a class="btn ghost" href="@($"/хк/{CardId}")">Открыть карточку ХК</a>
-    </div>
+    @if (ShowHeader)
+    {
+        @* На отдельной странице шапка нужна: она несёт номер, версию, номер
+           принятой редакции и дату принятия. В реестре эти данные уже есть в
+           строке таблицы, поэтому шапка там скрыта. *@
+        <div class="hkCompositionHead">
+            <span class="mono">@_composition.Code</span>
+            <span class="mono">@_composition.Version</span>
+            <span class="tag ok">Принятая редакция №@_composition.RevisionNumber</span>
+            <span class="hint">
+                Дата принятия:
+                @( _composition.AcceptedAtUtc is { } accepted
+                    ? AppTime.Fmt(accepted, "dd.MM.yyyy")
+                    : "не зафиксирована" )
+            </span>
+            <a class="btn ghost" href="@($"/хк/{CardId}")">Открыть карточку ХК</a>
+        </div>
+    }
 
     <div class="hkCompositionLayout">
         <div class="hkCompositionTreeColumn">
             <div class="hkCompositionToolbar">
-                <div class="field hkCompositionSearch">
-                    <label for="hkCompositionSearch-@CardId">Поиск по номеру, названию и коду СЕ</label>
-                    <input id="hkCompositionSearch-@CardId" value="@_search" @oninput="OnSearchInput"
-                           placeholder="Например: 1.1 или АС-005" class="field-input" />
-                </div>
+                <label class="hkCompositionSearchLabel" for="hkCompositionSearch-@CardId"
+                       title="Поиск по номеру, названию и коду СЕ">Поиск</label>
+                <input id="hkCompositionSearch-@CardId" value="@_search" @oninput="OnSearchInput"
+                       placeholder="Номер, название или код СЕ" class="field-input hkCompositionSearchInput" />
                 <div class="hkCompositionToolbarButtons">
                     <button type="button" class="btn ghost" @onclick="ExpandAll">Развернуть всё</button>
                     <button type="button" class="btn ghost" @onclick="CollapseAll">Свернуть всё</button>
@@ -124,6 +129,87 @@ else
                     </tbody>
                 </table>
             </div>
+                <div class="hkCompositionSections hkCompositionSectionsInColumn">
+                    <div class="hkCompositionDetailsHeading">Итоги принятой редакции</div>
+                    <div class="tableWrap">
+                    <table class="table hkCompositionTotalsTable">
+                        <thead>
+                            <tr>
+                                <th>Раздел</th>
+                                <th title="Общая масса ГСМ">Масса</th>
+                                <th title="Общий объём ГСМ">Объём</th>
+                                <th title="Структурных позиций">Позиций</th>
+                                <th title="Конечных строк СЕ">Строк СЕ</th>
+                                <th title="Полнота расчёта">Полнота</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="hkCompositionOverallRow">
+                                <td>Вся карта</td>
+                                <td>@FormatQuantity(_composition.Overall, HKPhysicalQuantity.Mass)</td>
+                                <td>@FormatQuantity(_composition.Overall, HKPhysicalQuantity.Liquid)</td>
+                                <td>@_composition.PositionCount</td>
+                                <td>@_composition.ItemCount</td>
+                                <td>@(_composition.IsComplete ? "полный" : "неполный")</td>
+                            </tr>
+                            @foreach (var sec in _composition.Sections)
+                            {
+                                <tr>
+                                    <td>@sec.Name</td>
+                                    <td>@FormatQuantity(sec.Totals, HKPhysicalQuantity.Mass)</td>
+                                    <td>@FormatQuantity(sec.Totals, HKPhysicalQuantity.Liquid)</td>
+                                    <td>@sec.PositionCount</td>
+                                    <td>@sec.ItemCount</td>
+                                    <td>@(sec.IsComplete ? "полный" : "неполный")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    </div>
+
+                    @if (MassSections.Any() || VolumeSections.Any())
+                    {
+                        <div class="hkCompositionBars">
+                            @if (MassSections.Any())
+                            {
+                                <div class="hkCompositionBarBlock">
+                                    <div class="hkCompositionDetailsHeading">Вклад разделов: масса</div>
+                                    <div class="hkCompositionBar">
+                                        @foreach (var part in MassSections)
+                                        {
+                                            <div class="hkCompositionBarRow">
+                                                <span class="hkCompositionBarLabel">@part.Name</span>
+                                                <span class="hkCompositionBarTrack">
+                                                    <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
+                                                </span>
+                                                <span class="hkCompositionBarValue mono">@part.Text</span>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            @if (VolumeSections.Any())
+                            {
+                                <div class="hkCompositionBarBlock">
+                                    <div class="hkCompositionDetailsHeading">Вклад разделов: объём</div>
+                                    <div class="hkCompositionBar">
+                                        @foreach (var part in VolumeSections)
+                                        {
+                                            <div class="hkCompositionBarRow">
+                                                <span class="hkCompositionBarLabel">@part.Name</span>
+                                                <span class="hkCompositionBarTrack">
+                                                    <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
+                                                </span>
+                                                <span class="hkCompositionBarValue mono">@part.Text</span>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+        </div>
         </div>
 
         <aside class="hkCompositionDetails">
@@ -230,91 +316,20 @@ else
         </aside>
     </div>
 
-    <div class="hkCompositionSections">
-        <div class="hkCompositionDetailsHeading">Итоги принятой редакции</div>
-        <div class="tableWrap">
-        <table class="table hkCompositionTotalsTable">
-            <thead>
-                <tr>
-                    <th>Раздел</th>
-                    <th title="Общая масса ГСМ">Масса</th>
-                    <th title="Общий объём ГСМ">Объём</th>
-                    <th title="Структурных позиций">Позиций</th>
-                    <th title="Конечных строк СЕ">Строк СЕ</th>
-                    <th title="Полнота расчёта">Полнота</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr class="hkCompositionOverallRow">
-                    <td>Вся карта</td>
-                    <td>@FormatQuantity(_composition.Overall, HKPhysicalQuantity.Mass)</td>
-                    <td>@FormatQuantity(_composition.Overall, HKPhysicalQuantity.Liquid)</td>
-                    <td>@_composition.PositionCount</td>
-                    <td>@_composition.ItemCount</td>
-                    <td>@(_composition.IsComplete ? "полный" : "неполный")</td>
-                </tr>
-                @foreach (var sec in _composition.Sections)
-                {
-                    <tr>
-                        <td>@sec.Name</td>
-                        <td>@FormatQuantity(sec.Totals, HKPhysicalQuantity.Mass)</td>
-                        <td>@FormatQuantity(sec.Totals, HKPhysicalQuantity.Liquid)</td>
-                        <td>@sec.PositionCount</td>
-                        <td>@sec.ItemCount</td>
-                        <td>@(sec.IsComplete ? "полный" : "неполный")</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-        </div>
-
-        @if (MassSections.Any() || VolumeSections.Any())
-        {
-            <div class="hkCompositionBars">
-                @if (MassSections.Any())
-                {
-                    <div class="hkCompositionBarBlock">
-                        <div class="hkCompositionDetailsHeading">Вклад разделов: масса</div>
-                        <div class="hkCompositionBar">
-                            @foreach (var part in MassSections)
-                            {
-                                <div class="hkCompositionBarRow">
-                                    <span class="hkCompositionBarLabel">@part.Name</span>
-                                    <span class="hkCompositionBarTrack">
-                                        <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
-                                    </span>
-                                    <span class="hkCompositionBarValue mono">@part.Text</span>
-                                </div>
-                            }
-                        </div>
-                    </div>
-                }
-                @if (VolumeSections.Any())
-                {
-                    <div class="hkCompositionBarBlock">
-                        <div class="hkCompositionDetailsHeading">Вклад разделов: объём</div>
-                        <div class="hkCompositionBar">
-                            @foreach (var part in VolumeSections)
-                            {
-                                <div class="hkCompositionBarRow">
-                                    <span class="hkCompositionBarLabel">@part.Name</span>
-                                    <span class="hkCompositionBarTrack">
-                                        <span class="hkCompositionBarFill" style="width:@part.Share.ToString("0.#")%"></span>
-                                    </span>
-                                    <span class="hkCompositionBarValue mono">@part.Text</span>
-                                </div>
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
-        }
-    </div>
 }
 
 @code {
     /// <summary>Карта, принятая редакция которой показывается.</summary>
     [Parameter] public Guid CardId { get; set; }
+
+    /// <summary>
+    /// Показывать шапку состава (номер, версия, редакция, дата принятия).
+    /// <para>
+    /// В реестре шапка скрыта: эти данные уже есть в строке таблицы, и
+    /// повторять их — лишний шум.
+    /// </para>
+    /// </summary>
+    [Parameter] public bool ShowHeader { get; set; } = true;
 
     private HKAcceptedCompositionDto? _composition;
     private HKAcceptedCompositionRowDto? _selected;

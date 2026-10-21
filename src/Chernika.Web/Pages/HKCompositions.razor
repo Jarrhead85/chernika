@@ -95,11 +95,21 @@
                                     <td>@FormatQuantity(item.Totals, HKPhysicalQuantity.Mass)</td>
                                     <td>@FormatQuantity(item.Totals, HKPhysicalQuantity.Liquid)</td>
                                     <td>
-                                        <button type="button" class="btn ghost btn-sm"
-                                                @onclick:stopPropagation="true"
-                                                @onclick="() => ToggleCard(item.CardId)">
-                                            @(item.CardId == _expandedCardId ? "Свернуть" : "Открыть состав")
-                                        </button>
+                                        <div class="hkCompositionsRowActions">
+                                            <button type="button" class="btn ghost btn-sm"
+                                                    @onclick:stopPropagation="true"
+                                                    @onclick="() => ToggleCard(item.CardId)">
+                                                @(item.CardId == _expandedCardId ? "Свернуть" : "Открыть состав")
+                                            </button>
+                                            @if (item.CardId == _expandedCardId)
+                                            {
+                                                @* Переход к карточке ХК перенесён сюда:
+                                                   в раскрытом составе он дублировал
+                                                   ссылку рядом с кнопкой «Свернуть». *@
+                                                <a class="btn ghost btn-sm" href="@($"/хк/{item.CardId}")"
+                                                   @onclick:stopPropagation="true">Открыть карточку ХК</a>
+                                            }
+                                        </div>
                                     </td>
                                 </tr>
                                 @if (item.CardId == _expandedCardId)
@@ -109,7 +119,7 @@
                                             @* Состав выбранной карты раскрывается прямо
                                                в реестре: отдельная страница остаётся
                                                для работы с большой картой. *@
-                                            <HKCompositionBlock CardId="item.CardId" />
+                                            <HKCompositionBlock CardId="item.CardId" ShowHeader="false" />
                                         </td>
                                     </tr>
                                 }

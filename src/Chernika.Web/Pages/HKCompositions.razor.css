@@ -20,6 +20,21 @@
     border-bottom: 1px solid var(--line);
     text-align: left;
     vertical-align: middle;
+    white-space: nowrap;
+}
+
+/* Числовые колонки — по правому краю, действия — по центру. */
+.hkCompositionsTable th:nth-child(6),
+.hkCompositionsTable td:nth-child(6),
+.hkCompositionsTable th:nth-child(7),
+.hkCompositionsTable td:nth-child(7) {
+    text-align: right;
+    font-family: var(--mono);
+}
+
+.hkCompositionsTable th:last-child,
+.hkCompositionsTable td:last-child {
+    text-align: center;
 }
 
 .hkCompositionsTable thead th {
@@ -47,7 +62,8 @@
     cursor: default;
 }
 
-/* Раскрытый состав — под строкой, во всю ширину таблицы. */
+/* Раскрытый состав — под строкой, во всю ширину таблицы. Отступ от рамки
+   таблицы: раскрытая форма не должна примыкать к границе вплотную. */
 .hkCompositionsExpandedRow td {
     padding: 0;
     background: var(--panel2);
@@ -56,7 +72,7 @@
 
 .hkCompositionsExpandedRow > td > * {
     display: block;
-    padding: 10px 12px;
+    padding: 12px 20px 16px 20px;
 }
 
 .hkCompositionsTable td.mono {

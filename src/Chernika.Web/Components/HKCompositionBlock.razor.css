@@ -23,23 +23,39 @@
 
 .hkCompositionTreeColumn {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
 }
 
-/* Поиск, кнопки и счётчик совпадений — одна строка шириной с таблицей. */
+.hkCompositionTreeColumn > .hkCompositionToolbar,
+.hkCompositionTreeColumn > .hkCompositionTree,
+.hkCompositionTreeColumn > .hkCompositionSections {
+    width: 100%;
+}
+
+/* Поиск, кнопки и счётчик совпадений — одна строка шириной с таблицей.
+   Подпись поиска стоит в строке, а не над полем: иначе верх правой панели
+   не совпадал бы с началом поиска. */
 .hkCompositionToolbar {
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     gap: 8px;
     flex-wrap: nowrap;
     margin-bottom: 8px;
 }
 
-.hkCompositionSearch {
-    flex: 1 1 auto;
-    min-width: 0;
+.hkCompositionSearchLabel {
+    flex: 0 0 auto;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
 }
 
-.hkCompositionSearch .field-input {
+.hkCompositionSearchInput {
+    flex: 1 1 auto;
+    min-width: 0;
     height: 32px;
 }
 
@@ -51,7 +67,6 @@
     display: flex;
     gap: 8px;
     flex: 0 0 auto;
-    padding-bottom: 1px;
 }
 
 .hkCompositionToolbarButtons .btn {
@@ -252,7 +267,7 @@
 }
 
 .hkCompositionSections {
-    margin-top: 14px;
+    margin-top: 0;
 }
 
 /* Итоги принятой редакции: компактная таблица по содержимому. */
@@ -347,7 +362,7 @@
         flex-wrap: wrap;
     }
 
-    .hkCompositionSearch {
+    .hkCompositionSearchInput {
         flex: 1 1 100%;
     }
 
