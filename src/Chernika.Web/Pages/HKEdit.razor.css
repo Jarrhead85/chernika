@@ -739,9 +739,12 @@
 
 .hk-admin-branch-select {
     width: 240px;
-    height: 38px;
-    min-height: 38px;
+    height: 34px;
+    min-height: 34px;
     flex-shrink: 0;
+    /* Общий класс поля задаёт вертикальный отступ 10px: при заданной высоте
+       содержимое поля обрезалось снизу. */
+    padding: 0 8px;
 }
 
 .hk-mb-field .hk-mb-select {

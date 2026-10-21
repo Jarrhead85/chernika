@@ -143,10 +143,18 @@
                                 </div>
                             </div>
                         </div>
-                        @if (selectedLevel == HKObjectLevel.EquipmentModel)
+                        @* Род войск виден и у автономной карты: её уровень
+                           определяется структурой и может оказаться уровнем
+                           изделия. Заполнение не обязательно: согласование
+                           его не требует. *@
+                        @if (selectedLevel == HKObjectLevel.EquipmentModel || IsAutonomousMode)
                         {
                         <div class="field hk-mb-field">
                             <label>Род войск</label>
+                            @if (IsAutonomousMode && selectedLevel != HKObjectLevel.EquipmentModel)
+                            {
+                                <div class="hint hki-muted-xs">Применим к ХК уровня изделия. Заполнение не обязательно.</div>
+                            }
                             @if (selectedMilitaryBranchIds.Any())
                             {
                                 <div class="hki-tags-row">
@@ -617,8 +625,8 @@
                         <div class="hk-form-actions-buttons">
                             @if (isSystemAdmin && IsNew)
                             {
-                                <select class="fieldInput hk-admin-branch-select" @bind="_adminBranchId" aria-label="Организация">
-                                    <option value="">Организация: выберите…</option>
+                                <select class="fieldInput hk-admin-branch-select" @bind="_adminBranchId" aria-label="Отдел">
+                                    <option value="">Отдел: выберите…</option>
                                     @foreach (var b in allBranches)
                                     {
                                         <option value="@b.Id">@b.Name</option>
@@ -2005,6 +2013,11 @@
         // поэтому сериализуем их тем же CircuitDbLock, что и загрузку данных.
         await using (await DbLock.WaitAsync("HKEdit.OnInitialized: права"))
         {
+            // Признак системного администратора определяется до чтения списка
+            // отделов: без него администратор не видел бы поле выбора отдела
+            // и не смог бы создать карту.
+            isSystemAdmin = await Permissions.IsSystemAdminAsync();
+
             if (isSystemAdmin)
             {
                 allBranches = await HKCardService.GetAllBranchesAsync();
@@ -2023,9 +2036,6 @@
             canCreateNewVersion = canWork = await Perms.HasPermissionAsync(currentUserId, PermissionCodes.HKWork);
             canCreateNode = canCreateAggregate = canCreateEquipmentModel = canCreateComplex = canWork;
 
-            // Проверка системного администратора идёт под той же блокировкой:
-            // вне её она конкурирует с индикаторами layout за общий контекст.
-            isSystemAdmin = await Permissions.IsSystemAdminAsync();
         }
 
         // Названия марок читаются отдельной операцией: внутри блока справочников
@@ -3987,7 +3997,7 @@
         {
             if (!Guid.TryParse(_adminBranchId, out var adminBranchId) || adminBranchId == Guid.Empty)
             {
-                errorMessage = "Укажите организацию для создания ХК.";
+                errorMessage = "Укажите отдел для создания ХК.";
                 return;
             }
             card.BranchId = adminBranchId;
@@ -4105,8 +4115,9 @@
             }
         }
 
-        if (IsNew && selectedLevel == HKObjectLevel.EquipmentModel
-            && selectedMilitaryBranchIds.Count > 0 && card.Id != Guid.Empty)
+            if (IsNew
+                && (selectedLevel == HKObjectLevel.EquipmentModel || IsAutonomousMode)
+                && selectedMilitaryBranchIds.Count > 0 && card.Id != Guid.Empty)
         {
             // CreateAsync не сохраняет военные ветки — фиксируем выбор после создания.
             try

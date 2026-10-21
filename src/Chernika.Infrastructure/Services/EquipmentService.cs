@@ -4390,7 +4390,9 @@ public class EquipmentService
     {
         var card = await _db.HKCards.FindAsync(hkCardId, ct)
             ?? throw new ArgumentException("ХК не найдена.");
-        if (card.ObjectLevel != HKObjectLevel.EquipmentModel)
+        // Автономная карта получает уровень из своей структуры: он может
+        // оказаться уровнем изделия, поэтому роды войск задаются и для неё.
+        if (card.ObjectLevel != HKObjectLevel.EquipmentModel && !card.IsAutonomous)
             throw new InvalidOperationException("Род войск применяется только к ХК изделия.");
 
         var existing = await _db.HKCardMilitaryBranches
