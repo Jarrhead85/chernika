@@ -15,7 +15,7 @@
 /* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
 .hkCompositionLayout {
     display: grid;
-    grid-template-columns: minmax(660px, 1fr) minmax(440px, 500px);
+    grid-template-columns: minmax(600px, 1fr) minmax(400px, 460px);
     gap: 12px;
     align-items: start;
     justify-content: start;
@@ -303,6 +303,10 @@
     white-space: normal;
 }
 
+.hkCompositionTotalsTable thead th {
+    white-space: nowrap;
+}
+
 .hkCompositionTotalsTable th + th,
 .hkCompositionTotalsTable td + td {
     border-left: 1px solid var(--line);
@@ -336,7 +340,7 @@
 }
 
 .hkCompositionTotalsLayout > .hkCompositionTotalsTable {
-    flex: 0 1 400px;
+    flex: 0 1 430px;
     min-width: 0;
 }
 
