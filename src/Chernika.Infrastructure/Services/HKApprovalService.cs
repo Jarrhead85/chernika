@@ -47,6 +47,7 @@ public class HKApprovalService
     private readonly HKCardValidationService _validation;
     private readonly AuditService _audit;
     private readonly HKCardRevisionService _revisions;
+    private readonly HKLibraryRegistrationService _library;
     private readonly NotificationService _notifications;
     private readonly IFileStorageService _fileStorage;
     private readonly TaskService _tasks;
@@ -62,6 +63,7 @@ public class HKApprovalService
         AuditService audit,
         TaskService tasks,
         HKCardRevisionService revisions,
+        HKLibraryRegistrationService library,
         NotificationService notifications,
         IFileStorageService fileStorage,
         TimeProvider time,
@@ -75,6 +77,7 @@ public class HKApprovalService
         _audit = audit;
         _tasks = tasks;
         _revisions = revisions;
+        _library = library;
         _notifications = notifications;
         _fileStorage = fileStorage;
         _time = time;
@@ -955,6 +958,12 @@ public class HKApprovalService
     /// остаётся в силе.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Дописывает к тексту итог регистрации объектов в библиотеке.
+    /// </summary>
+    private static string AppendLibrarySummary(HKLibraryRegistrationResult library) =>
+        string.IsNullOrWhiteSpace(library.Summary) ? string.Empty : " " + library.Summary;
+
     private async Task ApproveCompositionAsyncCore(
         Guid cardId, string? comment, uint expectedRowVersion, CancellationToken ct = default)
     {
@@ -1063,6 +1072,13 @@ public class HKApprovalService
         // ── 4. Указатель на принятую структуру ──
         card.CurrentAcceptedRevisionId = revisionId;
 
+        // ── 4б. Регистрация объектов принятой структуры в библиотеке ──
+        // Объекты строк ХК и сама карта попадают в классификаторы библиотеки:
+        // принятая карта описывает реальные объекты, и они должны быть
+        // доступны для ссылок из других карт. Регистрация идемпотентна и
+        // выполняется в той же транзакции.
+        var library = await _library.RegisterAcceptedAsync(cardId, revisionId, ct);
+
         // ── 5-6. Принятие этапа состава ──
         composition.State = HKApprovalStageState.Approved;
         composition.ApprovedAtUtc = now;
@@ -1087,17 +1103,19 @@ public class HKApprovalService
             FromStatus = previousStatus,
             ToStatus = HKCardStatus.Approved,
             ChangedByUserId = actorId,
-            Comment = string.IsNullOrWhiteSpace(comment) ? "Состав и нормы приняты." : comment,
+            Comment = string.IsNullOrWhiteSpace(comment)
+                ? "Состав и нормы приняты." + AppendLibrarySummary(library)
+                : comment,
             ChangedAt = now
         });
 
         await _audit.LogAsync(new AuditWriteRequest(
             "HKCard", card.Id.ToString(), "CompositionApproved", actorId,
             EntityDisplayName: $"{card.Code} v{card.Version}",
-            Details: previousRevisionId is null
+            Details: (previousRevisionId is null
                 ? $"Состав и нормы приняты. Создана принятая редакция {revisionId}."
                 : $"Состав и нормы приняты. Создана принятая редакция {revisionId}; " +
-                  $"прежняя принятая редакция {previousRevisionId}."), ct);
+                $"прежняя принятая редакция {previousRevisionId}.") + AppendLibrarySummary(library)), ct);
 
         await _audit.LogAsync(new AuditWriteRequest(
             "HKCardRevision", revisionId.ToString(), "Accepted", actorId,
@@ -1111,7 +1129,8 @@ public class HKApprovalService
                 new CreateNotificationCommand(
                     NotificationType.HKApproved,
                     "ХК принята",
-                    $"Карта {card.Code} версии {card.Version} принята: состав и нормы утверждены.",
+                    $"Карта {card.Code} версии {card.Version} принята: состав и нормы утверждены." +
+                    AppendLibrarySummary(library),
                     EntityType: "HKCard",
                     EntityId: card.Id,
                     // Маршрут страницы карты объявлен как @page "/хк/{Id:guid}".

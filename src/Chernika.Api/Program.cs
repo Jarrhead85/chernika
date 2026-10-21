@@ -69,6 +69,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddScoped<HKCardService>();
 builder.Services.AddScoped<HKApprovalService>();
 builder.Services.AddScoped<HKCardRevisionService>();
+builder.Services.AddScoped<HKLibraryRegistrationService>();
 builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<HKCardValidationService>();
 builder.Services.AddScoped<EquipmentService>();
