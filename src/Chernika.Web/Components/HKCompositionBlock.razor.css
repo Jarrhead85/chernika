@@ -14,13 +14,25 @@
 
 /* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
 .hkCompositionLayout {
-    display: grid;
+    display: flex;
     /* Правая панель идёт сразу после структурной формы, без зазора, и не
-       ужимается: вся информация должна влезать в обычный экран. */
-    grid-template-columns: minmax(0, 1fr) minmax(440px, 500px);
+       ужимается: вся информация должна влезать в обычный экран. Flex держит
+       панель вплотную к форме при любой ширине окна. */
     gap: 0;
-    align-items: start;
-    justify-content: start;
+    align-items: flex-start;
+    justify-content: flex-start;
+}
+
+.hkCompositionTreeColumn {
+    /* Форма со структурой занимает всю оставшуюся ширину окна и расширяется
+       вместе с ним; ширина по содержимому оставляла пустое поле. */
+    flex: 1 1 0%;
+    min-width: 0;
+}
+
+.hkCompositionLayout > .hkCompositionDetails {
+    flex: 0 0 500px;
+    width: 500px;
 }
 
 .hkCompositionTreeColumn {
@@ -29,6 +41,13 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
+}
+
+/* Строка поиска и таблица занимают всю ширину формы. */
+.hkCompositionTreeColumn > .hkCompositionToolbar,
+.hkCompositionTreeColumn > .hkCompositionTree,
+.hkCompositionTreeColumn > .hkCompositionSections {
+    width: 100%;
 }
 
 .hkCompositionTreeColumn > .hkCompositionToolbar,
@@ -84,7 +103,11 @@
 }
 
 .hkCompositionTable {
-    width: auto;
+    /* Форма со структурой расширяется вместе с окном и остаётся вплотную
+       к правой панели. Фиксированная раскладка: иначе таблица держала
+       ширину по содержимому и выпирала за пределы колонки. */
+    table-layout: fixed;
+    width: 100%;
 }
 
 .hkCompositionTable th,
@@ -133,11 +156,12 @@
     white-space: nowrap;
 }
 
-/* Наименование — основная ширина дерева, но не бесконечная. */
+/* Наименование забирает оставшуюся ширину формы, длинное название
+   обрезается многоточием. */
 .hkCompositionTable th:nth-child(2),
 .hkCompositionTable td:nth-child(2) {
-    width: 340px;
-    max-width: 340px;
+    width: auto;
+    max-width: none;
 }
 
 .hkCompositionIndent {
