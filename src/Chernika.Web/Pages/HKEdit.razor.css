@@ -30,13 +30,48 @@
 }
 
 /* нормализация контролов (Firefox/Chromium) */
-.hk-form-row .fieldInput,
-.hk-form-row .field-select,
-.hk-form-row .hk-letter-numbers,
-.hk-form-row .hk-level-segmented {
+/* Поля формы одной высоты.
+   ::deep обязателен: поля отрисовывают дочерние компоненты (InputText,
+   InputDate), и на их элементах нет признака области видимости этой
+   таблицы стилей — обычный селектор к ним не применялся, и высота поля
+   даты (41px) отличалась от высоты текстового поля (39px). */
+.hk-form-row ::deep .fieldInput,
+.hk-form-row ::deep .field-select,
+.hk-form-row ::deep .hk-level-segmented {
     box-sizing: border-box;
     height: var(--hk-control-height);
     min-height: var(--hk-control-height);
+    max-height: var(--hk-control-height);
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+/* Группа входящего и исходящего номера: рамка группы съедала два пикселя,
+   поэтому поля внутри были ниже соседних. */
+.hk-form-row ::deep .hk-letter-numbers {
+    box-sizing: border-box;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+}
+
+.hk-form-row ::deep .hk-letter-numbers input {
+    box-sizing: border-box;
+    height: var(--hk-control-height);
+    min-height: var(--hk-control-height);
+    max-height: var(--hk-control-height);
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+/* Однострочные текстовые поля остаются с обычным отступом, многострочные
+   (с изменяемой высотой) — как были. */
+.hk-form-row ::deep textarea.fieldInput:not(.hk-resizable-textarea) {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    height: var(--hk-control-height);
+    min-height: var(--hk-control-height);
+    max-height: var(--hk-control-height);
 }
 
 .hk-form-row input,

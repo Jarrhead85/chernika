@@ -274,6 +274,14 @@
     vertical-align: top;
 }
 
+/* Вертикальные разделители между колонками таблиц правой панели. */
+.hkCompositionContributions th + th,
+.hkCompositionContributions td + td,
+.hkCompositionMaterials th + th,
+.hkCompositionMaterials td + td {
+    border-left: 1px solid var(--line);
+}
+
 .hkCompositionSections {
     margin-top: 0;
 }
@@ -304,6 +312,31 @@
     vertical-align: bottom;
 }
 
+/* Заголовок «Итоги принятой редакции» — по центру таблицы итогов. */
+.hkCompositionTotalsTitleRow th {
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: .04em;
+    padding: 8px 10px;
+}
+
+/* Таблица итогов и полосы вкладов — в одной строке.
+   Ширина таблицы задана явно: по содержимому она занимала всю строку и
+   вытесняла полосы вкладов на следующую. */
+.hkCompositionTotalsLayout {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.hkCompositionTotalsLayout > .hkCompositionTotalsTable {
+    flex: 0 1 480px;
+    min-width: 0;
+}
+
 .hkCompositionOverallRow td {
     font-weight: 700;
     background: var(--panel2);
@@ -311,11 +344,12 @@
 
 /* Вклад разделов: две отдельные полосы — масса и объём. */
 .hkCompositionBars {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: 12px;
-    margin-top: 12px;
-    max-width: 760px;
+    flex: 1 1 320px;
+    min-width: 280px;
+    margin-top: 0;
 }
 
 .hkCompositionBarRow {
@@ -362,6 +396,12 @@
 
     .hkCompositionBars {
         grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 900px) {
+    .hkCompositionTotalsLayout > .hkCompositionTotalsTable {
+        flex: 1 1 100%;
     }
 }
 

@@ -130,10 +130,12 @@ else
                 </table>
             </div>
                 <div class="hkCompositionSections hkCompositionSectionsInColumn">
-                    <div class="hkCompositionDetailsHeading">Итоги принятой редакции</div>
-                    <div class="tableWrap">
+                    <div class="hkCompositionTotalsLayout">
                     <table class="table hkCompositionTotalsTable">
                         <thead>
+                            <tr class="hkCompositionTotalsTitleRow">
+                                <th colspan="6">Итоги принятой редакции</th>
+                            </tr>
                             <tr>
                                 <th>Раздел</th>
                                 <th title="Общая масса ГСМ">Масса</th>
@@ -165,7 +167,6 @@ else
                             }
                         </tbody>
                     </table>
-                    </div>
 
                     @if (MassSections.Any() || VolumeSections.Any())
                     {
@@ -208,6 +209,7 @@ else
                             }
                         </div>
                     }
+                    </div>
 
         </div>
         </div>

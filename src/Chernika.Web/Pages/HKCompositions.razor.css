@@ -18,23 +18,25 @@
     padding: 7px 9px;
     font-size: 12px;
     border-bottom: 1px solid var(--line);
-    text-align: left;
+    /* Содержимое колонки — по центру: колонки короткие, и выравнивание
+       по левому краю разъезжалось. */
+    text-align: center;
     vertical-align: middle;
     white-space: nowrap;
 }
 
-/* Числовые колонки — по правому краю, действия — по центру. */
+/* Вертикальные разделители между колонками. */
+.hkCompositionsTable th + th,
+.hkCompositionsTable td + td {
+    border-left: 1px solid var(--line);
+}
+
+/* Числовые колонки — моноширинным шрифтом, по центру. */
 .hkCompositionsTable th:nth-child(6),
 .hkCompositionsTable td:nth-child(6),
 .hkCompositionsTable th:nth-child(7),
 .hkCompositionsTable td:nth-child(7) {
-    text-align: right;
     font-family: var(--mono);
-}
-
-.hkCompositionsTable th:last-child,
-.hkCompositionsTable td:last-child {
-    text-align: center;
 }
 
 .hkCompositionsTable thead th {

@@ -143,18 +143,12 @@
                                 </div>
                             </div>
                         </div>
-                        @* Род войск виден и у автономной карты: её уровень
-                           определяется структурой и может оказаться уровнем
-                           изделия. Заполнение не обязательно: согласование
-                           его не требует. *@
+                        @* Род войск виден у карты любого уровня и заполняется
+                           по желанию: согласование его не требует. *@
                         @if (selectedLevel == HKObjectLevel.EquipmentModel || IsAutonomousMode)
                         {
                         <div class="field hk-mb-field">
                             <label>Род войск</label>
-                            @if (IsAutonomousMode && selectedLevel != HKObjectLevel.EquipmentModel)
-                            {
-                                <div class="hint hki-muted-xs">Применим к ХК уровня изделия. Заполнение не обязательно.</div>
-                            }
                             @if (selectedMilitaryBranchIds.Any())
                             {
                                 <div class="hki-tags-row">
