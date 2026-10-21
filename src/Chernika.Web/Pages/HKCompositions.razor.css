@@ -62,17 +62,13 @@
     cursor: default;
 }
 
-/* Раскрытый состав — под строкой, во всю ширину таблицы. Отступ от рамки
-   таблицы: раскрытая форма не должна примыкать к границе вплотную. */
+/* Раскрытый состав — под строкой, во всю ширину таблицы. Отступ задаётся
+   на самой ячейке: элементы дочернего компонента не несут признак области
+   видимости родительской таблицы стилей, и отступ на них не действует. */
 .hkCompositionsExpandedRow td {
-    padding: 0;
+    padding: 14px 24px 18px 24px;
     background: var(--panel2);
     border-bottom: 1px solid var(--line);
-}
-
-.hkCompositionsExpandedRow > td > * {
-    display: block;
-    padding: 12px 20px 16px 20px;
 }
 
 .hkCompositionsTable td.mono {
