@@ -15,7 +15,7 @@
 /* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
 .hkCompositionLayout {
     display: grid;
-    grid-template-columns: minmax(600px, 1fr) minmax(400px, 460px);
+    grid-template-columns: minmax(760px, 1fr) minmax(360px, 440px);
     gap: 12px;
     align-items: start;
     justify-content: start;
@@ -54,7 +54,9 @@
 }
 
 .hkCompositionSearchInput {
-    flex: 1 1 auto;
+    /* Фиксированная ширина: растянутое поле выглядело пустым и отодвигало
+       кнопки от поиска. */
+    flex: 0 1 320px;
     min-width: 0;
     height: 32px;
 }
@@ -339,8 +341,11 @@
     flex-wrap: wrap;
 }
 
+/* Таблица итогов — в естественной ширине: ужимать её не нужно, рядом
+   помещается блок «Вклад разделов». */
 .hkCompositionTotalsLayout > .hkCompositionTotalsTable {
-    flex: 0 1 430px;
+    flex: 0 0 auto;
+    width: auto;
     min-width: 0;
 }
 
@@ -356,7 +361,9 @@
     display: flex;
     gap: 16px;
     align-items: center;
-    justify-content: center;
+    /* Вплотную к таблице итогов: центрирование оставляло между ними пустой
+       разрыв. */
+    justify-content: flex-start;
     flex: 1 1 auto;
     min-width: 0;
     align-self: stretch;
