@@ -15,7 +15,7 @@
 /* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
 .hkCompositionLayout {
     display: grid;
-    grid-template-columns: auto minmax(440px, 500px);
+    grid-template-columns: minmax(660px, 1fr) minmax(440px, 500px);
     gap: 12px;
     align-items: start;
     justify-content: start;
@@ -293,11 +293,14 @@
 
 .hkCompositionTotalsTable th,
 .hkCompositionTotalsTable td {
-    padding: 6px 10px;
+    padding: 6px 8px;
     font-size: 12px;
     border-bottom: 1px solid var(--line);
     text-align: left;
     vertical-align: middle;
+    /* Значения переносятся: иначе таблица держала минимальную ширину по
+       содержимому и вытесняла «Вклад разделов» на следующую строку. */
+    white-space: normal;
 }
 
 .hkCompositionTotalsTable th + th,
@@ -333,7 +336,7 @@
 }
 
 .hkCompositionTotalsLayout > .hkCompositionTotalsTable {
-    flex: 0 1 480px;
+    flex: 0 1 400px;
     min-width: 0;
 }
 
@@ -347,11 +350,12 @@
    линейные полосы оставляли под собой пустоту. */
 .hkCompositionCharts {
     display: flex;
-    gap: 18px;
+    gap: 16px;
     align-items: center;
     justify-content: center;
     flex: 1 1 auto;
     min-width: 0;
+    align-self: stretch;
 }
 
 .hkCompositionChart {
@@ -360,13 +364,14 @@
 
 .hkCompositionChartBody {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
 }
 
 .hkCompositionDonut {
-    width: 128px;
-    height: 128px;
+    width: 112px;
+    height: 112px;
     flex: 0 0 auto;
 }
 
@@ -394,7 +399,8 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
+    width: 100%;
 }
 
 .hkCompositionChartLegend li {
@@ -416,12 +422,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    max-width: 150px;
 }
 
 .hkCompositionChartValue {
     margin-left: auto;
     white-space: nowrap;
     font-family: var(--mono);
+    font-size: 11px;
 }
 
 @media (max-width: 1120px) {
@@ -434,6 +442,12 @@
 @media (max-width: 900px) {
     .hkCompositionTotalsLayout > .hkCompositionTotalsTable {
         flex: 1 1 100%;
+    }
+}
+
+@media (max-width: 1240px) {
+    .hkCompositionLayout {
+        grid-template-columns: minmax(0, 1fr);
     }
 }
 
