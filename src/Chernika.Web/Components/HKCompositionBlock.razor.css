@@ -15,7 +15,7 @@
 /* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
 .hkCompositionLayout {
     display: grid;
-    grid-template-columns: auto minmax(420px, 460px);
+    grid-template-columns: auto minmax(440px, 500px);
     gap: 12px;
     align-items: start;
     justify-content: start;
@@ -203,6 +203,14 @@
 }
 
 /* Панель деталей. */
+/* Пустая панель (позиция не выбрана) — по высоте строки поиска. */
+.hkCompositionDetailsEmpty {
+    height: 32px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+}
+
 .hkCompositionDetails {
     min-width: 0;
     border: 1px solid var(--line);

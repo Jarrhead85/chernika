@@ -212,10 +212,13 @@ else
         </div>
         </div>
 
-        <aside class="hkCompositionDetails">
+        <aside class="hkCompositionDetails @(_selected is null ? "hkCompositionDetailsEmpty" : null)">
             @if (_selected is null)
             {
-                <div class="hint">Выберите позицию или конечную строку в дереве.</div>
+                @* Пока позиция не выбрана, панель держит высоту строки поиска:
+                   пустой прямоугольник рядом с поиском выглядит ошибкой
+                   вёрстки. *@
+                <div class="hint">Выберите позицию в дереве</div>
             }
             else
             {
