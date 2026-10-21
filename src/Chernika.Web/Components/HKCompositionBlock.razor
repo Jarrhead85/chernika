@@ -134,7 +134,7 @@ else
                     <table class="table hkCompositionTotalsTable">
                         <thead>
                             <tr class="hkCompositionTotalsTitleRow">
-                                <th colspan="6">Итоги принятой редакции</th>
+                                <th colspan="5">Итоги принятой редакции</th>
                             </tr>
                             <tr>
                                 <th>Раздел</th>
@@ -142,7 +142,6 @@ else
                                 <th title="Общий объём ГСМ">Объём</th>
                                 <th title="Структурных позиций">Позиций</th>
                                 <th title="Конечных строк СЕ">Строк СЕ</th>
-                                <th title="Полнота расчёта">Полнота</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -152,7 +151,6 @@ else
                                 <td>@FormatQuantity(_composition.Overall, HKPhysicalQuantity.Liquid)</td>
                                 <td>@_composition.PositionCount</td>
                                 <td>@_composition.ItemCount</td>
-                                <td>@(_composition.IsComplete ? "полный" : "неполный")</td>
                             </tr>
                             @foreach (var sec in _composition.Sections)
                             {
@@ -162,7 +160,6 @@ else
                                     <td>@FormatQuantity(sec.Totals, HKPhysicalQuantity.Liquid)</td>
                                     <td>@sec.PositionCount</td>
                                     <td>@sec.ItemCount</td>
-                                    <td>@(sec.IsComplete ? "полный" : "неполный")</td>
                                 </tr>
                             }
                         </tbody>

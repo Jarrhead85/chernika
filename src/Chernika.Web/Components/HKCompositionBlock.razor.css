@@ -15,8 +15,10 @@
 /* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
 .hkCompositionLayout {
     display: grid;
-    grid-template-columns: minmax(760px, 1fr) minmax(360px, 440px);
-    gap: 12px;
+    /* Правая панель идёт сразу после структурной формы, без зазора, и не
+       ужимается: вся информация должна влезать в обычный экран. */
+    grid-template-columns: minmax(0, 1fr) minmax(440px, 500px);
+    gap: 0;
     align-items: start;
     justify-content: start;
 }
@@ -54,9 +56,8 @@
 }
 
 .hkCompositionSearchInput {
-    /* Фиксированная ширина: растянутое поле выглядело пустым и отодвигало
-       кнопки от поиска. */
-    flex: 0 1 320px;
+    /* Поиск с кнопками занимает всю ширину структурной формы. */
+    flex: 1 1 auto;
     min-width: 0;
     height: 32px;
 }
@@ -295,10 +296,11 @@
 
 .hkCompositionTotalsTable th,
 .hkCompositionTotalsTable td {
-    padding: 6px 8px;
+    padding: 6px 10px;
     font-size: 12px;
     border-bottom: 1px solid var(--line);
-    text-align: left;
+    /* Значения — по центру своих колонок. */
+    text-align: center;
     vertical-align: middle;
     /* Значения переносятся: иначе таблица держала минимальную ширину по
        содержимому и вытесняла «Вклад разделов» на следующую строку. */
@@ -347,6 +349,9 @@
     flex: 0 0 auto;
     width: auto;
     min-width: 0;
+    /* Таблица шире: колонка «Полнота» убрана, освободившееся место отдано
+       значениям. */
+    font-size: 13px;
 }
 
 .hkCompositionOverallRow td {
@@ -360,10 +365,11 @@
 .hkCompositionCharts {
     display: flex;
     gap: 16px;
-    align-items: center;
-    /* Вплотную к таблице итогов: центрирование оставляло между ними пустой
-       разрыв. */
-    justify-content: flex-start;
+    /* По верхнему краю: название блока должно совпадать по высоте с
+       названием таблицы итогов. */
+    align-items: flex-start;
+    /* По центру между итогами и концом структурной формы. */
+    justify-content: center;
     flex: 1 1 auto;
     min-width: 0;
     align-self: stretch;
@@ -371,6 +377,17 @@
 
 .hkCompositionChart {
     flex: 0 1 auto;
+}
+
+/* Название блока — на одной высоте с названием таблицы итогов. */
+.hkCompositionChart > .hkCompositionDetailsHeading {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: .04em;
+    text-transform: none;
+    padding: 8px 10px 6px;
+    margin-bottom: 4px;
 }
 
 .hkCompositionChartBody {
