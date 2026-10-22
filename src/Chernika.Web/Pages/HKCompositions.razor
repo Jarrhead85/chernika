@@ -70,7 +70,7 @@
                                 <th>Уровень</th>
                                 <th>№ ХК</th>
                                 <th>Название</th>
-                                <th>Версия / редакция</th>
+                                <th>Версия</th>
                                 <th>Дата принятия</th>
                                 <th>Масса ГСМ</th>
                                 <th>Объём ГСМ</th>
@@ -86,10 +86,7 @@
                                     <td>@LevelTitle(item.Level)</td>
                                     <td class="mono">@item.Code</td>
                                     <td>@item.Name</td>
-                                    <td>
-                                        <span class="mono">@item.Version</span>
-                                        <span class="tag ok">редакция №@item.RevisionNumber</span>
-                                    </td>
+                                    <td class="mono">@item.Version</td>
                                     <td class="mono">@(item.AcceptedAtUtc is { } accepted ? AppTime.Fmt(accepted, "dd.MM.yyyy") : "не зафиксирована")</td>
                                     <td>@FormatQuantity(item.Totals, HKPhysicalQuantity.Mass)</td>
                                     <td>@FormatQuantity(item.Totals, HKPhysicalQuantity.Liquid)</td>

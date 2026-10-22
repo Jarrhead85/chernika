@@ -15,10 +15,10 @@
 /* Дерево и панель деталей: ширина естественная, сетка не растягивается. */
 .hkCompositionLayout {
     display: flex;
-    /* Правая панель идёт сразу после структурной формы, без зазора, и не
-       ужимается: вся информация должна влезать в обычный экран. Flex держит
-       панель вплотную к форме при любой ширине окна. */
-    gap: 0;
+    /* Правая панель идёт сразу после структурной формы и не ужимается:
+       вся информация должна влезать в обычный экран. Flex держит панель
+       рядом с формой при любой ширине окна. */
+    gap: 12px;
     align-items: flex-start;
     justify-content: flex-start;
 }
@@ -136,24 +136,28 @@
 .hkCompositionNum {
     width: 76px;
     min-width: 76px;
+    text-align: center;
     font-family: var(--mono);
     white-space: nowrap;
 }
 
 .hkCompositionQty {
-    width: 68px;
-    min-width: 68px;
-    text-align: right;
+    width: 64px;
+    min-width: 64px;
+    text-align: center;
     font-family: var(--mono);
 }
 
 .hkCompositionMass,
 .hkCompositionVolume {
-    width: 104px;
-    min-width: 104px;
-    text-align: right;
+    width: 128px;
+    min-width: 128px;
+    text-align: center;
     font-family: var(--mono);
     white-space: nowrap;
+    /* Значение не выходит за границы своей колонки. */
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Наименование забирает оставшуюся ширину формы, длинное название
@@ -296,7 +300,8 @@
 .hkCompositionMaterials td {
     padding: 4px 6px;
     font-size: 11px;
-    text-align: left;
+    /* Значения — по центру своих колонок, как в таблице итогов. */
+    text-align: center;
     border-bottom: 1px solid var(--line);
     vertical-align: top;
 }
