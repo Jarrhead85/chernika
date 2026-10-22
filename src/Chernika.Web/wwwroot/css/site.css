@@ -2232,6 +2232,26 @@ input:-webkit-autofill:focus {
     background: var(--panel2);
 }
 
+.hk-delete-confirm-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.hk-attachment-message {
+    margin-top: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
+    background: var(--panel2);
+}
+
+.hk-attachment-message--error {
+    border-color: var(--bad);
+    color: var(--bad);
+}
+
 .hk-section-panel {
     display: flex;
     gap: 6px;

@@ -130,7 +130,7 @@ public class HKExpirationForecastServiceTests : IAsyncLifetime
         Assert.Equal(expectedThreshold, predicted.NotificationThreshold);
         Assert.True(predicted.WillNotifyExpiring);
 
-        var expectedKey = HKCardExpirationService.WarningDeduplicationKey(card, expectedThreshold);
+        var expectedKey = HKCardExpirationService.WarningDeduplicationKey(card, Today.AddDays(daysLeft), expectedThreshold);
         Assert.All(actualThreshold, key => Assert.Equal(expectedKey, key));
     }
 
@@ -361,7 +361,9 @@ public class HKExpirationForecastServiceTests : IAsyncLifetime
             EntityType = "HKCard",
             EntityId = cardId,
             NavigationUrl = $"/хк/{cardId}",
-            DeduplicationKey = HKCardExpirationService.WarningDeduplicationKey(cardId, threshold),
+            // Формат ключей с датой срока (PR № 10).
+            DeduplicationKey = HKCardExpirationService.WarningDeduplicationKey(
+                cardId, card.ExpirationDate!.Value, threshold),
             IsRead = true,
             CreatedAtUtc = Today.AddDays(-(90 - threshold)),
         });

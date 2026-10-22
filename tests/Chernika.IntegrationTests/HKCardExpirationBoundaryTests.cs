@@ -215,7 +215,7 @@ public class HKCardExpirationBoundaryTests : IAsyncLifetime
             .ToListAsync();
         Assert.Equal(2, notifications.Count);
         Assert.All(notifications, n =>
-            Assert.Equal(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, threshold), n.DeduplicationKey));
+            Assert.Equal(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, seeded.Card.ExpirationDate!.Value, threshold), n.DeduplicationKey));
         Assert.Equal(
             new[] { seeded.AuthorId, seeded.NormAdminId }.OrderBy(x => x),
             notifications.Select(n => n.UserId).OrderBy(x => x));
@@ -385,7 +385,7 @@ public class HKCardExpirationBoundaryTests : IAsyncLifetime
             .ToListAsync();
         Assert.Equal(2, notifications.Count);
         Assert.All(notifications, n =>
-            Assert.Equal(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, 30), n.DeduplicationKey));
+            Assert.Equal(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, seeded.Card.ExpirationDate!.Value, 30), n.DeduplicationKey));
     }
 
     [Fact]
@@ -405,9 +405,9 @@ public class HKCardExpirationBoundaryTests : IAsyncLifetime
             .ToListAsync()).Distinct().ToList();
 
         Assert.Equal(2, keys.Count);
-        Assert.Contains(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, 90), keys);
-        Assert.Contains(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, 7), keys);
-        Assert.DoesNotContain(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, 30), keys);
+        Assert.Contains(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, seeded.Card.ExpirationDate!.Value, 90), keys);
+        Assert.Contains(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, seeded.Card.ExpirationDate!.Value, 7), keys);
+        Assert.DoesNotContain(HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, seeded.Card.ExpirationDate!.Value, 30), keys);
     }
 
     [Fact]
@@ -424,7 +424,7 @@ public class HKCardExpirationBoundaryTests : IAsyncLifetime
             .ToListAsync();
         Assert.Equal(2, notifications.Count);
         Assert.All(notifications, n =>
-            Assert.Equal(HKCardExpirationService.ExpiredDeduplicationKey(seeded.CardId), n.DeduplicationKey));
+            Assert.Equal(HKCardExpirationService.ExpiredDeduplicationKey(seeded.CardId, seeded.Card.ExpirationDate!.Value), n.DeduplicationKey));
         Assert.Equal(HKCardStatus.Archived, await StatusAsync(seeded));
     }
 
@@ -443,8 +443,199 @@ public class HKCardExpirationBoundaryTests : IAsyncLifetime
             .Select(n => n.DeduplicationKey!)
             .ToListAsync()).Distinct().ToList();
 
-        Assert.Equal(new[] { HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, 7) }, keys);
+        Assert.Equal(new[] { HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, seeded.Card.ExpirationDate!.Value, 7) }, keys);
         Assert.Equal(HKCardStatus.Approved, await StatusAsync(seeded));
+    }
+
+    // ── Реквизиты приняты, состав ещё нет (PR № 10) ──────────────────────
+
+    /// <summary>
+    /// Добавляет карте этапы согласования: реквизиты в указанном состоянии,
+    /// состав — в черновике.
+    /// </summary>
+    private void SeedApprovalStages(TestScope s, Guid cardId, HKApprovalStageState detailsState)
+    {
+        foreach (var stage in new[] { HKApprovalStage.Details, HKApprovalStage.Composition })
+        {
+            s.Db.HKCardApprovals.Add(new HKCardApproval
+            {
+                Id = Guid.NewGuid(),
+                HKCardId = cardId,
+                Stage = stage,
+                State = stage == HKApprovalStage.Details ? detailsState : HKApprovalStageState.Draft,
+                UpdatedAtUtc = Today,
+            });
+        }
+        s.Db.SaveChanges();
+    }
+
+    [Fact]
+    public async Task RequisitesApproved_CompositionNotAccepted_GetsWarning_ButNoArchiveAndNoTask()
+    {
+        // Предупреждения по сроку начинают учитывать карту после принятия
+        // реквизитов, не дожидаясь окончательного принятия состава. При этом
+        // карта не становится утверждённой: архивации и задачи пересмотра нет.
+        await using var s = NewScope();
+        var seeded = Seed(s, daysLeft: 30, status: HKCardStatus.Draft);
+        SeedApprovalStages(s, seeded.CardId, HKApprovalStageState.Approved);
+
+        await seeded.Expiration.ProcessAsync();
+
+        var notifications = await s.Db.Notifications
+            .Where(n => n.EntityId == seeded.CardId && n.Type == NotificationType.HKExpiring)
+            .ToListAsync();
+        Assert.Equal(2, notifications.Count); // автор и NormAdmin филиала
+        Assert.All(notifications, n =>
+            Assert.Equal(HKCardExpirationService.WarningDeduplicationKey(
+                seeded.CardId, seeded.Card.ExpirationDate!.Value, 30), n.DeduplicationKey));
+
+        // Незавершённый состав не объявляется утверждённым.
+        Assert.Equal(HKCardStatus.Draft, await StatusAsync(seeded));
+        Assert.Equal(0, await s.Db.WorkTasks.CountAsync(t =>
+            t.Type == WorkTaskType.HKExpirationReview && t.EntityId == seeded.CardId));
+    }
+
+    [Fact]
+    public async Task RequisitesNotApproved_CardIsNotProcessed()
+    {
+        // Пока реквизиты не приняты, карта в обработку сроков не попадает.
+        await using var s = NewScope();
+        var seeded = Seed(s, daysLeft: 30, status: HKCardStatus.Draft);
+        SeedApprovalStages(s, seeded.CardId, HKApprovalStageState.Draft);
+
+        await seeded.Expiration.ProcessAsync();
+
+        Assert.Equal(0, await s.Db.Notifications.CountAsync(n => n.EntityId == seeded.CardId));
+        Assert.Equal(HKCardStatus.Draft, await StatusAsync(seeded));
+    }
+
+    [Fact]
+    public async Task AfterDetailsReset_CardLeavesProcessing()
+    {
+        // Сброс согласования реквизитов (например, из-за смены основания)
+        // выключает фоновые действия: признак принятия не должен
+        // использоваться устаревшим.
+        await using var s = NewScope();
+        var seeded = Seed(s, daysLeft: 30, status: HKCardStatus.Draft);
+        SeedApprovalStages(s, seeded.CardId, HKApprovalStageState.Approved);
+
+        await seeded.Expiration.ProcessAsync();
+        var afterFirstRun = await s.Db.Notifications.CountAsync(n => n.EntityId == seeded.CardId);
+        Assert.True(afterFirstRun > 0, "предупреждение по сроку должно быть отправлено");
+
+        var details = await s.Db.HKCardApprovals
+            .FirstAsync(a => a.HKCardId == seeded.CardId && a.Stage == HKApprovalStage.Details);
+        details.State = HKApprovalStageState.Draft;
+        await s.Db.SaveChangesAsync();
+
+        await seeded.Expiration.ProcessAsync();
+
+        Assert.Equal(afterFirstRun, await s.Db.Notifications.CountAsync(n => n.EntityId == seeded.CardId));
+    }
+
+    [Fact]
+    public async Task ChangedExpirationDate_StartsNewWarningCycle()
+    {
+        // Изменение согласованного срока не должно навсегда блокировать новые
+        // предупреждения старыми ключами: ключи привязаны к циклу срока.
+        await using var s = NewScope();
+        var seeded = Seed(s, daysLeft: 30);
+
+        await seeded.Expiration.ProcessAsync();
+        var oldKey = HKCardExpirationService.WarningDeduplicationKey(
+            seeded.CardId, seeded.Card.ExpirationDate!.Value, 30);
+        Assert.Contains(oldKey, (await s.Db.Notifications
+            .Where(n => n.EntityId == seeded.CardId && n.Type == NotificationType.HKExpiring)
+            .Select(n => n.DeduplicationKey!).ToListAsync()));
+
+        // Срок изменён: тот же порог 30 в новом цикле должен отправиться снова.
+        var card = await s.Db.HKCards.IgnoreQueryFilters().FirstAsync(c => c.Id == seeded.CardId);
+        card.ExpirationDate = Today.AddDays(20);
+        await s.Db.SaveChangesAsync();
+
+        await seeded.Expiration.ProcessAsync();
+
+        var newKey = HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, Today.AddDays(20), 30);
+        var keys = (await s.Db.Notifications
+            .Where(n => n.EntityId == seeded.CardId && n.Type == NotificationType.HKExpiring)
+            .Select(n => n.DeduplicationKey!).ToListAsync()).Distinct().ToList();
+        Assert.Contains(newKey, keys);
+
+        // Повторный прогон дублей не создаёт.
+        await seeded.Expiration.ProcessAsync();
+        var keysAfter = (await s.Db.Notifications
+            .Where(n => n.EntityId == seeded.CardId && n.Type == NotificationType.HKExpiring)
+            .Select(n => n.DeduplicationKey!).ToListAsync()).Distinct().ToList();
+        Assert.Equal(keys.Count, keysAfter.Count);
+    }
+
+    [Fact]
+    public async Task ArchiveFailure_LeavesNoPartialWrites_AndDoesNotPolluteNextCard()
+    {
+        // Сбой одной карты не должен оставить её откаченное состояние в
+        // трекере общего контекста: иначе следующий SaveChanges дописал бы его
+        // вне транзакции этой карты.
+        await using var s = NewScope();
+
+        // Идентификаторы заданы явно: карта с пустым Id идёт первой по
+        // порядку прогона (сравнение uuid), карта с максимальным — последней.
+        // Так сбой адресован: он приходится ровно на первую карту.
+        var failing = SeedWithId(s, Guid.Empty, daysLeft: -1);
+        var last = SeedWithId(s, Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"), daysLeft: 30);
+
+        FailingCommandInterceptor.ArmAt(@"UPDATE ""HKCards"" SET ""Status""");
+        try
+        {
+            var result = await failing.Expiration.ProcessAsync();
+            Assert.True(result.CardsFailed > 0, "сбой не учтён в результате прогона");
+        }
+        finally
+        {
+            FailingCommandInterceptor.Disarm();
+        }
+
+        // Прерванная карта не архивирована: откат не превратился в запись.
+        Assert.Equal(HKCardStatus.Approved, await StatusAsync(failing));
+        Assert.Equal(0, await s.Db.HKCardStatusLogs.CountAsync(l => l.HKCardId == failing.CardId));
+
+        // Прогон продолжился: карта, обработанная ПОСЛЕ сбойной, получила
+        // своё предупреждение.
+        Assert.True(await s.Db.Notifications.AnyAsync(n =>
+                n.EntityId == last.CardId && n.Type == NotificationType.HKExpiring),
+            "после сбоя обработка следующей карты продолжилась");
+    }
+
+    /// <summary>Карка с заданным идентификатором: порядок обработки задаётся им.</summary>
+    private Seeded SeedWithId(TestScope s, Guid cardId, int daysLeft)
+    {
+        var branch = NewBranch(s, "Филиал порядка ");
+        var author = CreateUser(s, "order_" + Suffix(), branch);
+
+        var card = new HKCard
+        {
+            Id = cardId,
+            Code = "HK-EXP-ORD-" + Suffix(),
+            Version = "v" + Suffix()[..4],
+            Status = HKCardStatus.Approved,
+            ObjectLevel = HKObjectLevel.Node,
+            NodeId = CreateNode(s),
+            BranchId = branch,
+            AuthorId = Guid.Parse(author),
+            CreatedAt = Today.AddDays(-30),
+            ApprovedDate = Today.AddDays(-20),
+            ExpirationDate = Today.AddDays(daysLeft),
+        };
+        s.Db.HKCards.Add(card);
+        s.Db.SaveChanges();
+        _cards.Add(card.Id);
+
+        return new Seeded
+        {
+            Card = card,
+            Scope = s,
+            BranchId = branch,
+            AuthorId = author,
+        };
     }
 
     // ── Карты, которые трогать нельзя ─────────────────────────────────────
@@ -540,25 +731,50 @@ public class HKCardExpirationBoundaryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task NoNormAdmin_RetriesOnNextRun()
+    public async Task NoAssignee_AuditedOncePerCycle_NotDuplicatedEveryRun()
     {
-        // Раньше задача создавалась только при ТОЧНОМ совпадении порога: если
-        // назначение не удалось в день порога, на следующий день порог уже не
-        // совпадал и задача не создавалась никогда.
+        // Попытка назначения повторяется на каждом прогоне, пока срок внутри
+        // окна (раньше попытка терялась навсегда после дня порога), но
+        // ДИАГНОСТИЧЕСКАЯ запись в аудит ограничена: один и тот же привод на
+        // карту и тот же срок не дублируется (PR № 10).
         await using var s = NewScope();
         var seeded = Seed(s, daysLeft: 7, withNormAdmin: false);
 
         await seeded.Expiration.ProcessAsync();
         Assert.Equal(0, await s.Db.WorkTasks.CountAsync(t =>
             t.Type == WorkTaskType.HKExpirationReview && t.EntityId == seeded.CardId));
+        Assert.Equal(1, await s.Db.AuditLogs.CountAsync(a =>
+            a.Action == "Workflow.NoAssignee" && a.Details!.Contains(seeded.CardCode)));
 
-        // Ветка остаётся без NormAdmin, поэтому повтор тоже не назначит —
-        // важно, что попытка ПОВТОРЯЕТСЯ (новая запись в аудите), а не теряется.
+        // Повторный прогон в том же цикле срока: попытка остаётся (задач по-прежнему
+        // нет), но одинаковой записи в аудит не появляется второй раз.
         seeded.Clock.SetUtcNow(new DateTimeOffset(Today.AddDays(1), TimeSpan.Zero));
         await seeded.Expiration.ProcessAsync();
-
-        Assert.Equal(2, await s.Db.AuditLogs.CountAsync(a =>
+        Assert.Equal(0, await s.Db.WorkTasks.CountAsync(t =>
+            t.Type == WorkTaskType.HKExpirationReview && t.EntityId == seeded.CardId));
+        Assert.Equal(1, await s.Db.AuditLogs.CountAsync(a =>
             a.Action == "Workflow.NoAssignee" && a.Details!.Contains(seeded.CardCode)));
+
+        // Изменённый согласованный срок — новый контекст события: появляется
+        // своя запись уже по новому сроку, а не дубль прежней. Срок выбран
+        // внутри окна НЕ самого дальнего порога, чтобы попытка назначения
+        // действительно выполнялась.
+        var card = await s.Db.HKCards
+            .IgnoreQueryFilters()
+            .FirstAsync(c => c.Id == seeded.CardId);
+        card.ExpirationDate = Today.AddDays(4);
+        await s.Db.SaveChangesAsync();
+
+        await seeded.Expiration.ProcessAsync();
+        var noAssigneeEntries = await s.Db.AuditLogs
+            .Where(a => a.Action == "Workflow.NoAssignee" && a.Details!.Contains(seeded.CardCode))
+            .OrderBy(a => a.CreatedAt)
+            .ToListAsync();
+        Assert.Equal(2, noAssigneeEntries.Count);
+        // Первая запись — по исходному сроку (через 7 дней), вторая — по
+        // изменённому (через 4 дня): это разные контексты события.
+        Assert.Contains(Today.AddDays(7).ToString("dd.MM.yyyy"), noAssigneeEntries[0].Details!);
+        Assert.Contains(Today.AddDays(4).ToString("dd.MM.yyyy"), noAssigneeEntries[1].Details!);
     }
 
     // ── Срок задачи пересмотра ────────────────────────────────────────────
@@ -874,7 +1090,10 @@ public class HKCardExpirationBoundaryTests : IAsyncLifetime
             EntityType = "HKCard",
             EntityId = seeded.CardId,
             NavigationUrl = $"/хк/{seeded.CardId}",
-            DeduplicationKey = HKCardExpirationService.WarningDeduplicationKey(seeded.CardId, threshold),
+            // Формат ключей с датой срока (PR № 10): уже отправленные пороги
+            // привязаны к конкретному циклу срока действия карты.
+            DeduplicationKey = HKCardExpirationService.WarningDeduplicationKey(
+                seeded.CardId, seeded.Card.ExpirationDate!.Value, threshold),
             IsRead = true,
             CreatedAtUtc = Today.AddDays(-(90 - threshold)),
         });

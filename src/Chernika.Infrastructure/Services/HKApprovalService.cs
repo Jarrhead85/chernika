@@ -221,10 +221,13 @@ public class HKApprovalService
     /// <summary>
     /// Возможности правки для указанного пользователя.
     /// <para>
-    /// Реквизиты и PDF следуют за этапом реквизитов: PDF — часть основания, и
-    /// он точно так же замораживается на рассмотрении. Состав следует за этапом
-    /// состава; во время рассмотрения реквизитов он остаётся доступен, потому
-    /// что автор заполняет структуру параллельно.
+    /// Состав следует за этапом состава; реквизиты — за этапом реквизитов.
+    /// PDF — часть основания: он заморожен на рассмотрении реквизитов, а ИЗМЕНЕНИЕ
+    /// действующего основания при принятых реквизитах допустимо и сбрасывает их
+    /// согласование (PR № 10), поэтому здесь <c>CanEditPdf</c> шире, чем
+    /// <c>CanEditDetails</c>: запрещена не «принятость», а состояние
+    /// рассмотрения любого этапа — подменять файл под текущим рассмотрением
+    /// реквизитов или состава нельзя.
     /// </para>
     /// </summary>
     public static HKCardEditingCapabilities DeriveEditingCapabilities(
@@ -251,10 +254,14 @@ public class HKApprovalService
                                       || composition.State is HKApprovalStageState.Draft
                                           or HKApprovalStageState.RevisionRequired);
 
+        var pdfEditable = hasWorkPermission
+                          && (details is null || details.State != HKApprovalStageState.OnReview)
+                          && (composition is null || composition.State != HKApprovalStageState.OnReview);
+
         return new HKCardEditingCapabilities(
             detailsEditable,
             compositionEditable,
-            detailsEditable);
+            pdfEditable);
     }
 
     /// <summary>

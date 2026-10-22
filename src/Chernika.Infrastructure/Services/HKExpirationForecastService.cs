@@ -80,7 +80,13 @@ public sealed class HKExpirationForecastService
 
         var cards = await _db.HKCards
             .AsNoTracking()
-            .Where(c => c.Status == HKCardStatus.Approved && c.ExpirationDate.HasValue)
+            .Where(c => c.ExpirationDate.HasValue
+                && c.Status != HKCardStatus.Deleted
+                && c.Status != HKCardStatus.Archived
+                && (c.Status == HKCardStatus.Approved
+                    || _db.HKCardApprovals.Any(a => a.HKCardId == c.Id
+                        && a.Stage == HKApprovalStage.Details
+                        && a.State == HKApprovalStageState.Approved)))
             .OrderBy(c => c.ExpirationDate)
             .ThenBy(c => c.Code)
             .ToListAsync(ct);
@@ -89,8 +95,7 @@ public sealed class HKExpirationForecastService
 
         foreach (var card in cards)
         {
-            result.Add(await BuildCardAsync(
-                card, today, thresholds, options.ReviewTaskDueDays, ct));
+            result.Add(await BuildCardAsync(card, today, thresholds, options.ReviewTaskDueDays, ct));
         }
 
         return new HKExpirationForecast
@@ -193,13 +198,26 @@ public sealed class HKExpirationForecastService
         HKCard card, DateOnly today, int[] thresholds, int reviewDueDays,
         CancellationToken ct)
     {
+        // Обработка различает «категорию» карты свежим запросом, а не по снимку
+        // выборки (PR № 10): утверждённая карта подлежит архивации и задаче
+        // пересмотра; карта с принятыми реквизитами и незавершённым составом —
+        // только предупреждениям, без присвоения статуса и без архива.
+        var isApprovedCard = card.Status == HKCardStatus.Approved;
+        var requisitesApproved = isApprovedCard || await _db.HKCardApprovals
+            .AsNoTracking()
+            .AnyAsync(a => a.HKCardId == card.Id
+                && a.Stage == HKApprovalStage.Details
+                && a.State == HKApprovalStageState.Approved, ct);
+        if (!isApprovedCard && !requisitesApproved)
+            return SkippedCard(card, today, "согласование реквизитов сброшено после выборки");
+
         var expirationDay = DateOnly.FromDateTime(card.ExpirationDate!.Value.Date);
         var daysLeft = expirationDay.DayNumber - today.DayNumber;
 
-        var sent = await SentThresholdsAsync(card.Id, ct);
-        var expiredSent = await ExpiredNotificationSentAsync(card.Id, ct);
+        var sent = await SentThresholdsAsync(card.Id, expirationDay, ct);
+        var expiredSent = await ExpiredNotificationSentAsync(card.Id, expirationDay, ct);
 
-        var willArchive = daysLeft < 0;
+        var willArchive = daysLeft < 0 && isApprovedCard;
         var willNotifyExpired = daysLeft <= 0 && !expiredSent;
         var willNotifyExpiring = false;
         var threshold = 0;
@@ -226,13 +244,13 @@ public sealed class HKExpirationForecastService
             }
         }
 
-        // Задача пересмотра создаётся на любом пройденном пороге КРОМЕ самого
-        // раннего: пересматривать карту за 90 дней рано. Совпадает с обработкой,
-        // где условие выполняется каждый день внутри окна, поэтому сбой
-        // назначения не остаётся незамеченным.
+        // Задача пересмотра создаётся утверждённой карте на любом пройденном
+        // пороге КРОМЕ самого раннего: пересматривать карту за 90 дней рано.
+        // Совпадает с обработкой, где условие выполняется каждый день внутри
+        // окна, поэтому сбой назначения не остаётся незамеченным.
         var nearestThreshold = thresholds.Where(d => d >= daysLeft).DefaultIfEmpty(0).Min();
-        var willCreateReviewTask =
-            nearestThreshold > 0 && nearestThreshold != thresholds[thresholds.Length - 1];
+        var willCreateReviewTask = isApprovedCard
+            && nearestThreshold > 0 && nearestThreshold != thresholds[thresholds.Length - 1];
 
         var openTasks = await _db.WorkTasks
             .AsNoTracking()
@@ -299,7 +317,7 @@ public sealed class HKExpirationForecastService
     private static HKExpirationOptions ReviewTaskDueOptions(int dueDays) =>
         new() { ReviewTaskDueDays = dueDays };
 
-    private async Task<HashSet<int>> SentThresholdsAsync(Guid cardId, CancellationToken ct)
+    private async Task<HashSet<int>> SentThresholdsAsync(Guid cardId, DateOnly expirationDay, CancellationToken ct)
     {
         var keys = await _db.Notifications
             .AsNoTracking()
@@ -309,20 +327,39 @@ public sealed class HKExpirationForecastService
             .Select(n => n.DeduplicationKey!)
             .ToListAsync(ct);
 
-        var result = new HashSet<int>();
-        foreach (var key in keys)
-        {
-            var tail = key[(key.LastIndexOf(':') + 1)..];
-            if (int.TryParse(tail, out var threshold))
-                result.Add(threshold);
-        }
-
-        return result;
+        // Совпадает с обработкой: ключи привязаны к конкретному сроку (PR № 10).
+        return HKCardExpirationService.ParseWarningThresholds(
+            keys, expirationDay.ToDateTime(TimeOnly.MinValue));
     }
 
-    private Task<bool> ExpiredNotificationSentAsync(Guid cardId, CancellationToken ct) =>
+    private Task<bool> ExpiredNotificationSentAsync(Guid cardId, DateOnly expirationDay, CancellationToken ct) =>
         _db.Notifications
             .AsNoTracking()
             .AnyAsync(n => n.EntityType == "HKCard" && n.EntityId == cardId
-                && n.Type == NotificationType.HKExpired, ct);
+                && n.Type == NotificationType.HKExpired
+                && n.DeduplicationKey == HKCardExpirationService.ExpiredDeduplicationKey(
+                    cardId, expirationDay.ToDateTime(TimeOnly.MinValue)), ct);
+
+    private static HKExpirationForecastCard SkippedCard(HKCard card, DateOnly today, string reason)
+    {
+        return new HKExpirationForecastCard
+        {
+            Id = card.Id,
+            Code = card.Code,
+            Version = card.Version,
+            ExpirationDayUtc = DateOnly.FromDateTime(card.ExpirationDate!.Value.Date),
+            DaysLeft = DateOnly.FromDateTime(card.ExpirationDate!.Value.Date).DayNumber - today.DayNumber,
+            WillArchive = false,
+            WillNotifyExpiring = false,
+            WillNotifyExpired = false,
+            WillCreateReviewTask = false,
+            NotificationThreshold = 0,
+            IsCatchUpNotification = false,
+            OpenWorkflowTasksToClose = 0,
+            ComponentLinksToPreserve = 0,
+            StatusLogRowsToPreserve = 0,
+            RecipientsExcluded = 0,
+            PlannedActions = new List<string> { $"не трогается этим прогоном ({reason})" },
+        };
+    }
 }

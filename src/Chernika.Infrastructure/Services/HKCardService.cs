@@ -535,6 +535,22 @@ public class HKCardService
         return result;
     }
 
+    /// <summary>
+    /// Актуальная версия строки карты (xmin).
+    /// <para>
+    /// Нужна там, где версия используется как ожидаемая: после записи карты
+    /// её версия меняется, и старая привела бы к ложному конфликту. Читается
+    /// свежим запросом, а не из отслеживаемого экземпляра: значение токена
+    /// после INSERT обновляется не всегда.
+    /// </para>
+    /// </summary>
+    public async Task<uint?> GetRowVersionAsync(Guid cardId, CancellationToken ct = default) =>
+        await _db.HKCards
+            .AsNoTracking()
+            .Where(c => c.Id == cardId)
+            .Select(c => (uint?)c.RowVersion)
+            .FirstOrDefaultAsync(ct);
+
     public async Task<HKCard?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         // Право и организация проверяются ДО выборки карточки. Сначала читается
@@ -846,6 +862,10 @@ public class HKCardService
 
             // Принятая карта не принимает замену и удаление основания: файл,
             // на который ссылается опубликованная редакция, должен остаться прежним.
+            // Разрешённые по этапам состояния проверяет EnsurePdfChangePolicyAsync:
+            // замена и допустимое удаление действующего основания СБРАСЫВАЮТ
+            // согласование реквизитов, поэтому запретом «принято» свод правил
+            // по состояниям не исчерпывается.
             try
             {
                 EnsureNotAccepted(card);
@@ -854,22 +874,6 @@ public class HKCardService
             {
                 return (null, null, null, ex);
             }
-
-            // PDF — часть основания и блокируется вместе с реквизитами на
-            // рассмотрении их этапа.
-            if (card.Id != Guid.Empty)
-            {
-                try
-                {
-                    await EnsureDetailsEditableAsync(card.Id, ct);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    return (null, null, null, ex);
-                }
-            }
-            if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
-                return (null, null, null, new InvalidOperationException("Вложение доступно только для черновика или карты на доработке."));
         }
         else if (!await _permissions.HasPermissionAsync(actorId.ToString(), PermissionCodes.HKAttachmentView))
         {
@@ -896,20 +900,217 @@ public class HKCardService
                 attachment.SizeBytes, attachment.UploadedByUserName, attachment.UploadedAt);
     }
 
-    public async Task<HKCardAttachmentInfoDto> SaveAttachmentAsync(
-        Guid hkCardId,
-        Stream content,
-        string originalFileName,
-        string? contentType,
-        long declaredSize,
-        CancellationToken ct = default)
+    /// <summary>
+    /// Свод правил PDF-операций по этапам согласования (PR № 10).
+    /// <para>
+    /// Все три операции — загрузка, замена, удаление — подчиняются одному
+    /// набору правил, потому что действующее основание создаёт единое целое
+    /// с реквизитами:
+    /// </para>
+    /// <list type="number">
+    /// <item>этап реквизитов <c>OnReview</c> — операция запрещена: нельзя
+    /// подменить файл под текущим рассмотрением; возврат на доработку
+    /// выполняет согласующий;</item>
+    /// <item>этап реквизитов <c>Approved</c>, а этап состава <c>OnReview</c> —
+    /// запрещена: состав проверяется по принятым реквизитам, подмена
+    /// основания незаметно меняла бы предмет рассмотрения;</item>
+    /// <item>этап реквизитов <c>Approved</c>, состав в <c>Draft</c> или
+    /// <c>RevisionRequired</c> — разрешена и СБРАСЫВАЕТ этап реквизитов в
+    /// черновик: прежнее согласование относится к другому основанию;</item>
+    /// <item>этап реквизитов <c>Draft</c>/<c>RevisionRequired</c> — разрешена
+    /// без сброса: согласование ещё не проведено либо уже возвращено;</item>
+    /// <item>принятая карта (<see cref="EnsureNotAccepted"/>) и карта
+    /// <c>Archived</c>/<c>Deleted</c> — запрещена.</item>
+    /// </list>
+    /// </summary>
+    private async Task<List<HKCardApproval>> EnsurePdfChangePolicyAsync(
+        Guid cardId, HKCard card, CancellationToken ct)
     {
-        if (content is null)
-            throw new InvalidOperationException("Файл не выбран.");
-        if (string.IsNullOrWhiteSpace(originalFileName)
-            || !originalFileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Допускается только PDF-формат.");
+        var stages = await _db.HKCardApprovals
+            .AsNoTracking()
+            .Where(a => a.HKCardId == cardId)
+            .ToListAsync(ct);
 
+        // Карты без записей этапов — до появления модели согласования; для них
+        // действует прежнее правило по общему статусу (Draft/RevisionRequired).
+        if (stages.Count == 0)
+        {
+            if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+                throw new InvalidOperationException(
+                    "Вложение доступно только для черновика или карты на доработке.");
+            return stages;
+        }
+
+        var details = stages.FirstOrDefault(a => a.Stage == HKApprovalStage.Details);
+        if (details is null || details.State is HKApprovalStageState.Draft or HKApprovalStageState.RevisionRequired)
+        {
+            if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
+                throw new InvalidOperationException(
+                    "Вложение доступно только для черновика или карты на доработке.");
+            return stages;
+        }
+
+        if (details.State == HKApprovalStageState.OnReview)
+            throw new InvalidOperationException(
+                "Реквизиты и основание находятся на согласовании: изменение файла недоступно. " +
+                "Основание под текущим рассмотрением подменить нельзя; вернуть реквизиты на доработку должен согласующий.");
+
+        // details.State == Approved: замена/удаление допустимы, но сбрасывают
+        // согласование реквизитов — и запрещены, пока состав сам на рассмотрении.
+        var composition = stages.FirstOrDefault(a => a.Stage == HKApprovalStage.Composition);
+        if (composition?.State == HKApprovalStageState.OnReview)
+            throw new InvalidOperationException(
+                "Состав находится на рассмотрении: изменение основания недоступно, " +
+                "пока согласуется состав по принятым реквизитам.");
+
+        return stages;
+    }
+
+    /// <summary>
+    /// Снимок состояния этапов ПОСЛЕ сохранения файла и перед записью в БД.
+    /// <para>
+    /// Транзакция PostgreSQL не откатывает файловую систему, поэтому все
+    /// проверки допустимости операции заново выполняются на границе записи,
+    /// уже ВНУТРИ транзакции: карта могла быть принята или переведена в другое
+    /// состояние, пока шла передача файла. Этапы читаются отслеживаемыми
+    /// экземплярами — их xmin работает защитой от параллельного изменения:
+    /// конкурентная команда этапа роняет <c>SaveChanges</c> с
+    /// <c>DbUpdateConcurrencyException</c>, и файл откатывается вместе с БД.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Отслеживаемое состояние карты и этапов внутри транзакции. Карта нужна
+    /// для xmin-конкурентного контроля строки, этапы — для атомарного сброса.
+    /// </summary>
+    private sealed record BoundaryStageSnapshot(
+        HKCard Card,
+        HKCardApproval? Details,
+        HKCardApproval? Composition);
+
+    private async Task<BoundaryStageSnapshot> LoadBoundaryStagesAsync(Guid cardId, CancellationToken ct)
+    {
+        var card = await _db.HKCards
+            .FirstOrDefaultAsync(c => c.Id == cardId, ct)
+            ?? throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+        var stages = await _db.HKCardApprovals
+            .Where(a => a.HKCardId == cardId)
+            .ToListAsync(ct);
+
+        return new BoundaryStageSnapshot(
+            card,
+            stages.FirstOrDefault(a => a.Stage == HKApprovalStage.Details),
+            stages.FirstOrDefault(a => a.Stage == HKApprovalStage.Composition));
+    }
+
+    /// <summary>
+    /// Повторная проверка допустимости на границе записи, уже внутри транзакции.
+    /// Несовпадение состояния с ожидаемым означает параллельную команду: это
+    /// конфликт версии, а не «молчаливый обход» запрещённого состояния.
+    /// </summary>
+    private async Task<BoundaryStageSnapshot> EnsureAttachmentBoundaryAsync(
+        Guid hkCardId,
+        uint? expectedRowVersion,
+        HKApprovalStageState? expectedDetailsState,
+        HKApprovalStageState? expectedCompositionState,
+        CancellationToken ct)
+    {
+        var boundary = await LoadBoundaryStagesAsync(hkCardId, ct);
+        var card = boundary.Card;
+
+        if (card.Status == HKCardStatus.Deleted)
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+        try
+        {
+            EnsureNotAccepted(card);
+        }
+        catch (InvalidOperationException)
+        {
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+        }
+
+        if (expectedRowVersion is { } expected && card.RowVersion != expected)
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+        // Пока шла передача файла, этапы могли перейти в другое состояние
+        // (например, реквизиты отправили на рассмотрение). Записывать поверх —
+        // значит подменить предмет согласования; операции отказано.
+        if (boundary.Details?.State != expectedDetailsState)
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+        if (boundary.Composition?.State != expectedCompositionState)
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+        return boundary;
+    }
+
+    /// <summary>
+    /// Загрузка, замена, удаление и сброс согласования — одна операция.
+    /// <para>
+    /// Изменение ДЕЙСТВУЮЩЕГО основания (замена либо удаление файла при
+    /// принятых реквизитах) сбрасывает этап реквизитов в черновик, пересчитывает
+    /// общий статус по этапам и фиксирует сброс в аудите. Странным прочтением
+    /// было бы стереть строки или принять незаконченное решение: строки
+    /// остаются, решения сохраняют историю (<c>ApprovedAtUtc</c> не
+    /// обнуляется), принятым считается только актуальное состояние этапов.
+    /// </para>
+    /// </summary>
+    private sealed record AttachmentMutationPlan(
+        HKCard Card,
+        ApplicationUser Actor,
+        Guid OldAttachmentId,
+        string OldStorageKey,
+        HKApprovalStageState? ExpectedDetailsState,
+        HKApprovalStageState? ExpectedCompositionState);
+
+    /// <summary>
+    /// Общая подготовка записи/удаления вложения: доступ, ожидаемая версия и
+    /// свод правил по этапам считается ДО операции с файлом.
+    /// </summary>
+    private async Task<AttachmentMutationPlan> PrepareAttachmentMutationAsync(
+        Guid hkCardId, uint? expectedRowVersion, CancellationToken ct)
+    {
+        var (card, actor, authError, businessError) = await EnsureAttachmentAccessAsync(hkCardId, requireEdit: true, ct);
+        if (card is null)
+        {
+            if (businessError is not null)
+                throw businessError;
+            throw authError ?? new UnauthorizedAccessException("Нет доступа к вложению ХК.");
+        }
+        if (actor is null)
+            throw new UnauthorizedAccessException("Пользователь не найдена.");
+
+        if (expectedRowVersion is { } expected && card.RowVersion != expected)
+            throw new HkCardVersionConflictException(
+                "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+        var policyStages = await EnsurePdfChangePolicyAsync(hkCardId, card, ct);
+        var details = policyStages.FirstOrDefault(a => a.Stage == HKApprovalStage.Details);
+        var composition = policyStages.FirstOrDefault(a => a.Stage == HKApprovalStage.Composition);
+
+        var existing = await _db.HKCardAttachments.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
+
+        return new AttachmentMutationPlan(
+            card,
+            actor,
+            existing?.Id ?? Guid.Empty,
+            existing?.StorageKey ?? string.Empty,
+            details?.State,
+            composition?.State);
+    }
+
+    /// <summary>Буферизация файла с проверкой размера и сигнатуры PDF.</summary>
+    private async Task<byte[]> BufferPdfAsync(
+        Stream content, string? contentType, long declaredSize, CancellationToken ct)
+    {
         var maxBytes = _fileOptions.Value.MaxPdfSizeBytes > 0
             ? _fileOptions.Value.MaxPdfSizeBytes
             : 20L * 1024 * 1024;
@@ -919,18 +1120,8 @@ public class HKCardService
         if (!string.IsNullOrEmpty(contentType) && !contentType.Contains("pdf", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Недопустимый тип содержимого файла (ожидается PDF).");
 
-        var (card, actor, authError, businessError) = await EnsureAttachmentAccessAsync(hkCardId, requireEdit: true, ct);
-        if (card is null)
-        {
-            if (businessError is not null)
-                throw businessError;
-            throw authError ?? new UnauthorizedAccessException("Нет доступа к вложению ХК.");
-        }
-
-        if (actor is null)
-            throw new UnauthorizedAccessException("Пользователь не найден.");
-
-        // Поток может быть non-seekable (IBrowserFile): буферизуем с ограничением размера.
+        // Расширение .pdf и Content-Type проверка НЕ считаются достаточными:
+        // решение принимает сигнатура непустого потока.
         using var buffered = new MemoryStream();
         var buffer = new byte[81920];
         long total = 0;
@@ -948,103 +1139,245 @@ public class HKCardService
         if (total < 5 || buffered.GetBuffer()[0] != 0x25 || buffered.GetBuffer()[1] != 0x50
             || buffered.GetBuffer()[2] != 0x44 || buffered.GetBuffer()[3] != 0x46 || buffered.GetBuffer()[4] != 0x2D)
             throw new InvalidOperationException("Файл не является корректным PDF (неверная сигнатура).");
-        buffered.Position = 0;
 
-        var existing = await _db.HKCardAttachments
-            .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
-        var oldStorageKey = existing?.StorageKey;
+        return buffered.ToArray();
+    }
+
+    /// <summary>
+    /// Загрузка (замена) PDF-основания. Единственная сервисная операция для
+    /// UI и API: файл кладётся в хранилище ДО транзакции, ссылка на него
+    /// публикует сама база, а прежний файл не затрагивается до успешной
+    /// фиксации. При неуспехе БД новый файл удаляется явно — транзакция
+    /// PostgreSQL файловую систему не откатывает.
+    /// </summary>
+    public async Task<HKCardAttachmentMutationResult> SaveAttachmentAsync(
+        Guid hkCardId,
+        Stream content,
+        string originalFileName,
+        string? contentType,
+        long declaredSize,
+        uint? expectedRowVersion = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(originalFileName)
+            || !originalFileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Допускается только PDF-формат.");
+        originalFileName = Path.GetFileName(originalFileName);
+
+        // Допустимость операции проверяется ДО чтения файла: запрещённое
+        // состояние должно объясняться им, а не ошибкой разбора файла, и
+        // большой файл не читается впустую.
+        var plan = await PrepareAttachmentMutationAsync(hkCardId, expectedRowVersion, ct);
+
+        var file = await BufferPdfAsync(content, contentType, declaredSize, ct);
 
         var storageKey = $"hk/{hkCardId}/{Guid.NewGuid():N}.pdf";
-        var saved = await _fileStorage.SaveAsync(buffered, storageKey, ct);
-
-        if (existing is not null)
-            _db.HKCardAttachments.Remove(existing);
-        var attachment = new HKCardAttachment
-        {
-            Id = Guid.NewGuid(),
-            HKCardId = hkCardId,
-            OriginalFileName = Path.GetFileName(originalFileName),
-            StorageKey = saved.StorageKey,
-            ContentType = "application/pdf",
-            SizeBytes = saved.SizeBytes,
-            Sha256 = saved.Sha256,
-            UploadedByUserId = actor.Id,
-            UploadedByUserName = actor.FullName ?? actor.UserName ?? string.Empty,
-            UploadedAt = DateTime.UtcNow,
-        };
-        _db.HKCardAttachments.Add(attachment);
+        FileStoreResult saved;
+        await using (var savedStream = new MemoryStream(file, writable: false))
+            saved = await _fileStorage.SaveAsync(savedStream, storageKey, ct);
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-        if (existing is not null)
-        {
-            await _audit.CreateLogAsync(new AuditWriteRequest(
-                "HKCardAttachment", existing.Id.ToString(), "Deleted",
-                _currentUser.GetRequiredUserId(),
-                EntityDisplayName: $"{card.Code} v{card.Version} — {existing.OriginalFileName}"), ct);
-        }
-        await _audit.CreateLogAsync(new AuditWriteRequest(
-            "HKCardAttachment", attachment.Id.ToString(), "Created",
-            _currentUser.GetRequiredUserId(),
-            EntityDisplayName: $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"), ct);
-
+        var invalidated = false;
+        BoundaryStageSnapshot boundary;
+        HKCardAttachment attachment;
+        string? replacedStorageKey = null;
         try
         {
+            // Границы записи: состояние заново проверяется ВНУТРИ транзакции.
+            boundary = await EnsureAttachmentBoundaryAsync(hkCardId, expectedRowVersion,
+                plan.ExpectedDetailsState, plan.ExpectedCompositionState, ct);
+
+            var existing = await _db.HKCardAttachments
+                .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
+            if (existing is not null)
+            {
+                // Ключ удаляемого файла берётся ИЗ САМОЙ УДАЛЯЕМОЙ ЗАПИСИ:
+                // предварительное чтение могло устареть, а удалять надо тот
+                // файл, который перестал быть вложением.
+                replacedStorageKey = existing.StorageKey;
+                await _audit.CreateLogAsync(new AuditWriteRequest(
+                    "HKCardAttachment", existing.Id.ToString(), "Deleted",
+                    _currentUser.GetRequiredUserId(),
+                    EntityDisplayName: $"{boundary.Card.Code} v{boundary.Card.Version} — {existing.OriginalFileName}"), ct);
+                _db.HKCardAttachments.Remove(existing);
+            }
+
+            attachment = new HKCardAttachment
+            {
+                Id = Guid.NewGuid(),
+                HKCardId = hkCardId,
+                OriginalFileName = originalFileName,
+                StorageKey = saved.StorageKey,
+                ContentType = "application/pdf",
+                SizeBytes = saved.SizeBytes,
+                Sha256 = saved.Sha256,
+                UploadedByUserId = plan.Actor.Id,
+                UploadedByUserName = plan.Actor.FullName ?? plan.Actor.UserName ?? string.Empty,
+                UploadedAt = _time.GetUtcNow().UtcDateTime,
+            };
+            _db.HKCardAttachments.Add(attachment);
+
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "HKCardAttachment", attachment.Id.ToString(), "Created",
+                _currentUser.GetRequiredUserId(),
+                EntityDisplayName: $"{boundary.Card.Code} v{boundary.Card.Version} — {attachment.OriginalFileName}"), ct);
+
+            invalidated = await ApplyBoundaryResetAsync(boundary, ct);
+
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }
         catch
         {
             await transaction.RollbackAsync(ct);
-            try { await _fileStorage.DeleteAsync(saved.StorageKey, ct); } catch { /* уже залогировано выше при удалении */ }
-            throw;
-        }
-
-        if (!string.IsNullOrEmpty(oldStorageKey) && oldStorageKey != saved.StorageKey)
-        {
+            // Откаченное состояние не должно дописаться следующим SaveChanges
+            // этого же контекста.
+            _db.ChangeTracker.Clear();
             try
             {
-                await _fileStorage.DeleteAsync(oldStorageKey, ct);
+                await _fileStorage.DeleteAsync(saved.StorageKey, ct);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Не удалось удалить предыдущий файл вложения {StorageKey}", oldStorageKey);
+                _logger.LogWarning(ex, "Не удалось удалить не зафиксированный файл вложения {StorageKey}", saved.StorageKey);
+            }
+            throw;
+        }
+
+        // Прежний файл удаляется ПОСЛЕ успешной фиксации: он может
+        // принадлежать историческому снимку, и хранилище откажет в удалении
+        // такой ссылки само.
+        if (!string.IsNullOrEmpty(replacedStorageKey) && replacedStorageKey != saved.StorageKey)
+        {
+            try
+            {
+                await _fileStorage.DeleteAsync(replacedStorageKey, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Не удалось удалить предыдущий файл вложения {StorageKey}", replacedStorageKey);
             }
         }
 
-        return new HKCardAttachmentInfoDto(attachment.Id, attachment.OriginalFileName,
-            attachment.SizeBytes, attachment.UploadedByUserName, attachment.UploadedAt);
+        return new HKCardAttachmentMutationResult(
+            hkCardId,
+            new HKCardAttachmentInfoDto(attachment.Id, attachment.OriginalFileName,
+                attachment.SizeBytes, attachment.UploadedByUserName, attachment.UploadedAt),
+            boundary.Card.RowVersion,
+            boundary.Card.Status,
+            boundary.Details?.State,
+            boundary.Composition?.State,
+            invalidated);
     }
 
-    public async Task DeleteAttachmentAsync(Guid hkCardId, CancellationToken ct = default)
+    /// <summary>
+    /// Удаление PDF-основания с тем же сводом правил и тем же сбросом
+    /// согласования, что у замены: для принятых реквизитов допустимое удаление
+    /// основания тоже инвалидирует прежнее согласование.
+    /// </summary>
+    public async Task<HKCardAttachmentMutationResult> DeleteAttachmentAsync(
+        Guid hkCardId,
+        uint? expectedRowVersion = null,
+        CancellationToken ct = default)
     {
-        var (card, _, authError, businessError) = await EnsureAttachmentAccessAsync(hkCardId, requireEdit: true, ct);
-        if (card is null)
-        {
-            if (businessError is not null)
-                throw businessError;
-            throw authError ?? new UnauthorizedAccessException("Нет доступа к вложению ХК.");
-        }
-        var attachment = await _db.HKCardAttachments
-            .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct);
-        if (attachment is null)
+        var plan = await PrepareAttachmentMutationAsync(hkCardId, expectedRowVersion, ct);
+        if (plan.OldAttachmentId == Guid.Empty)
             throw new InvalidOperationException("Вложение не найдено.");
 
-        var storageKey = attachment.StorageKey;
-        _db.HKCardAttachments.Remove(attachment);
-        await _audit.CreateLogAsync(new AuditWriteRequest(
-            "HKCardAttachment", attachment.Id.ToString(), "Deleted",
-            _currentUser.GetRequiredUserId(),
-            EntityDisplayName: $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"), ct);
-        await _db.SaveChangesAsync(ct);
-
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var invalidated = false;
+        BoundaryStageSnapshot boundary;
+        string? removedStorageKey = null;
         try
         {
-            await _fileStorage.DeleteAsync(storageKey, ct);
+            boundary = await EnsureAttachmentBoundaryAsync(hkCardId, expectedRowVersion,
+                plan.ExpectedDetailsState, plan.ExpectedCompositionState, ct);
+
+            var existing = await _db.HKCardAttachments
+                .FirstOrDefaultAsync(a => a.HKCardId == hkCardId, ct)
+                ?? throw new HkCardVersionConflictException(
+                    "Карточка была изменена другим пользователем. Обновите страницу и повторите попытку.");
+
+            // Ключ удаляемого файла берётся из самой удаляемой записи:
+            // предварительное чтение могло устареть.
+            removedStorageKey = existing.StorageKey;
+            _db.HKCardAttachments.Remove(existing);
+            await _audit.CreateLogAsync(new AuditWriteRequest(
+                "HKCardAttachment", existing.Id.ToString(), "Deleted",
+                _currentUser.GetRequiredUserId(),
+                EntityDisplayName: $"{boundary.Card.Code} v{boundary.Card.Version} — {existing.OriginalFileName}"), ct);
+
+            invalidated = await ApplyBoundaryResetAsync(boundary, ct);
+
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.LogWarning(ex, "Не удалось удалить файл вложения {StorageKey}", storageKey);
+            await transaction.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+            throw;
         }
+
+        // Физическое удаление — после фиксации. Ключи, на которые ссылается
+        // принятая редакция, хранилище не отдаёт на удаление.
+        if (!string.IsNullOrEmpty(removedStorageKey))
+        {
+            try
+            {
+                await _fileStorage.DeleteAsync(removedStorageKey, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Не удалось удалить файл вложения {StorageKey}", removedStorageKey);
+            }
+        }
+
+        return new HKCardAttachmentMutationResult(
+            hkCardId,
+            null,
+            boundary.Card.RowVersion,
+            boundary.Card.Status,
+            boundary.Details?.State,
+            boundary.Composition?.State,
+            invalidated);
+    }
+
+    /// <summary>
+    /// Сброс согласования реквизитов при смене действующего основания.
+    /// <para>
+    /// Строки и материалы не трогаются, история решений не переписывается
+    /// (ApprovedAtUtc не обнуляется), новые задачи согласования не создаются —
+    /// следующая отправка выполняется пользователем явно и проходит серверную
+    /// проверку содержания. Общий статус пересчитывается по этапам.
+    /// </para>
+    /// </summary>
+    private async Task<bool> ApplyBoundaryResetAsync(BoundaryStageSnapshot boundary, CancellationToken ct)
+    {
+        var details = boundary.Details;
+        if (details is null || details.State != HKApprovalStageState.Approved)
+            return false;
+
+        var now = _time.GetUtcNow().UtcDateTime;
+        details.State = HKApprovalStageState.Draft;
+        details.UpdatedAtUtc = now;
+
+        var stages = new List<HKCardApproval> { details };
+        if (boundary.Composition is not null)
+            stages.Add(boundary.Composition);
+        if (HKApprovalService.DeriveOverallStatus(stages) != boundary.Card.Status)
+        {
+            boundary.Card.Status = HKApprovalService.DeriveOverallStatus(stages);
+            boundary.Card.UpdatedAt = now;
+        }
+
+        await _audit.CreateLogAsync(new AuditWriteRequest(
+            "HKCard", boundary.Card.Id.ToString(), "DetailsInvalidated",
+            _currentUser.GetRequiredUserId(),
+            EntityDisplayName: $"{boundary.Card.Code} v{boundary.Card.Version}",
+            Details: "Изменён файл основания (PDF): прежнее согласование реквизитов недействительно, требуется повторное согласование."), ct);
+
+        return true;
     }
 
     public async Task<HKCardAttachmentContentDto?> OpenAttachmentAsync(
@@ -4551,6 +4884,15 @@ public class HKCardService
             .Select(u => u.Id)
             .ToListAsync();
     }
+
+    /// <summary>
+    /// Действующее право пользователя по его идентификатору. Тонкая
+    /// обёртка для сервисов, которым нужна чужая пригодность, а не право
+    /// текущего пользователя (например, задача «Пересмотр ХК» проверяет
+    /// кандидата на право пересмотра).
+    /// </summary>
+    public Task<bool> HasPermissionAsync(string userId, string permissionCode) =>
+        _permissions.HasPermissionAsync(userId, permissionCode);
 
     private async Task<string?> GetAnyUserInRoleAsync(string role)
     {

@@ -319,6 +319,31 @@
         if (!_authChecked || _disposed)
             return;
 
+        // Перекрывающийся запуск недопустим: индикаторы читаются через общий
+        // DbContext, и вторая операция началась бы до конца первой — EF
+        // считает это нарушением и роняет circuit необработанной ошибкой.
+        // Пропущенный запуск данные не теряет: текущий обновит их сам.
+        if (Interlocked.CompareExchange(ref _layoutRefreshBusy, 1, 0) != 0)
+            return;
+
+        try
+        {
+            await RefreshLayoutIndicatorsCoreAsync();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _layoutRefreshBusy, 0);
+        }
+    }
+
+    /// <summary>Признак идущего обновления индикаторов: защита от перекрытия.</summary>
+    private int _layoutRefreshBusy;
+
+    private async Task RefreshLayoutIndicatorsCoreAsync()
+    {
+        if (!_authChecked || _disposed)
+            return;
+
         _layoutRefreshCts?.Cancel();
         _layoutRefreshCts?.Dispose();
         _layoutRefreshCts = new CancellationTokenSource();

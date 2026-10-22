@@ -738,101 +738,55 @@ public class HKCardsController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Загрузка (замена) PDF-основания. Вся бизнес-логика — в
+    /// <see cref="HKCardService.SaveAttachmentAsync"/>: проверка прав и событий
+    /// этапов, валидация файла и сигнатуры, атомарность замены и сброс
+    /// согласования при смене действующего основания (PR № 10). Раньше
+    /// контроллер дублировал загрузку прямым доступом к БД и мог подменить файл
+    /// под текущим рассмотрением реквизитов — такого обхода больше нет.
+    /// <para>
+    /// Необязательная форма <c>rowVersion</c> передаёт ожидаемую версию строки
+    /// карты; при передаче конфликт возвращает 409, при отсутствии проверяется
+    /// только текущее состояние на границе записи.
+    /// </para>
+    /// </summary>
     [HttpPost("{id}/attachment")]
     [Authorize(Policy = "HKAttachmentEdit")]
-    public async Task<ActionResult> UploadAttachment(Guid id, IFormFile file)
+    public async Task<ActionResult> UploadAttachment(
+        Guid id, IFormFile file, [FromForm(Name = "rowVersion")] uint? rowVersion = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest("Файл не выбран.");
 
-        var card = await _hkCards.GetByIdAsync(id);
-        if (card == null) return NotFound();
-
-        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
-            return BadRequest("Загрузка вложения доступна только для черновика или карты на доработке.");
-
-        var actorId = _currentUser.GetRequiredUserId();
-        var actor = await _db.Users.FirstOrDefaultAsync(u => u.Id == actorId.ToString());
-        if (actor == null) return Unauthorized();
-
-        var existingAttachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);
-        if (existingAttachment != null)
-        {
-            await _fileStorage.DeleteAsync(existingAttachment.StorageKey);
-            _db.HKCardAttachments.Remove(existingAttachment);
-            _db.AuditLogs.Add(new AuditLog
-            {
-                Id = Guid.NewGuid(),
-                EntityType = "HKCardAttachment",
-                EntityId = existingAttachment.Id.ToString(),
-                Action = "Deleted",
-                UserId = actorId,
-                CreatedAt = DateTime.UtcNow,
-                EntityDisplayName = $"{card.Code} v{card.Version} — {existingAttachment.OriginalFileName}"
-            });
-        }
-
-        if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-            return BadRequest("Допускается только PDF-формат.");
-
-        var maxBytes = _fileOptions.Value.MaxPdfSizeBytes > 0
-            ? _fileOptions.Value.MaxPdfSizeBytes
-            : 20L * 1024 * 1024;
-        if (file.Length > maxBytes)
-            return BadRequest($"Размер файла не должен превышать {FormatFileSize(maxBytes)}.");
-
-        if (!string.IsNullOrEmpty(file.ContentType)
-            && !IsPdfContentType(file.ContentType))
-            return BadRequest("Недопустимый тип содержимого файла (ожидается PDF).");
-
-        await using var stream = file.OpenReadStream();
-
-        var firstBytes = new byte[5];
-        var read = await stream.ReadAsync(firstBytes.AsMemory(0, 5));
-        stream.Position = 0;
-        if (read < 5 || firstBytes[0] != 0x25 || firstBytes[1] != 0x50 || firstBytes[2] != 0x44 || firstBytes[3] != 0x46 || firstBytes[4] != 0x2D)
-            return BadRequest("Файл не является корректным PDF (неверная сигнатура).");
-
-        var storageKey = $"hk/{id}/{Guid.NewGuid():N}.pdf";
-        var result = await _fileStorage.SaveAsync(stream, storageKey);
-
-        var attachment = new HKCardAttachment
-        {
-            Id = Guid.NewGuid(),
-            HKCardId = id,
-            OriginalFileName = Path.GetFileName(file.FileName),
-            StorageKey = result.StorageKey,
-            ContentType = "application/pdf",
-            SizeBytes = result.SizeBytes,
-            Sha256 = result.Sha256,
-            UploadedByUserId = actorId.ToString(),
-            UploadedByUserName = actor.FullName ?? actor.UserName,
-            UploadedAt = DateTime.UtcNow
-        };
-
-        _db.HKCardAttachments.Add(attachment);
-        _db.AuditLogs.Add(new AuditLog
-        {
-            Id = Guid.NewGuid(),
-            EntityType = "HKCardAttachment",
-            EntityId = attachment.Id.ToString(),
-            Action = "Created",
-            UserId = actorId,
-            CreatedAt = DateTime.UtcNow,
-            EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
-        });
-
         try
         {
-            await _db.SaveChangesAsync();
+            await using var stream = file.OpenReadStream();
+            var result = await _hkCards.SaveAttachmentAsync(
+                id, stream, file.FileName, file.ContentType, file.Length, rowVersion);
+            return Ok(new
+            {
+                attachment = new
+                {
+                    result.Attachment!.Id,
+                    result.Attachment.OriginalFileName,
+                    result.Attachment.SizeBytes,
+                    result.Attachment.UploadedByUserName,
+                    result.Attachment.UploadedAt
+                },
+                cardRowVersion = result.CardRowVersion,
+                cardStatus = result.CardStatus.ToString(),
+                detailsState = result.DetailsState?.ToString(),
+                compositionState = result.CompositionState?.ToString(),
+                approvalInvalidated = result.ApprovalInvalidated,
+            });
         }
-        catch
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+                                      or UnauthorizedAccessException
+                                      or HkCardVersionConflictException)
         {
-            await _fileStorage.DeleteAsync(storageKey);
-            throw;
+            return ToStageError(ex);
         }
-
-        return Ok(new { attachment.Id, attachment.OriginalFileName, attachment.SizeBytes, attachment.Sha256 });
     }
 
     [HttpGet("{id}/attachment/content")]
@@ -864,37 +818,35 @@ public class HKCardsController : ControllerBase
         return File(stream, attachment.ContentType, attachment.OriginalFileName, enableRangeProcessing: true);
     }
 
+    /// <summary>
+    /// Удаление PDF-основания. Бизнес-логика — в
+    /// <see cref="HKCardService"/>: свод правил по этапам и сброс согласования
+    /// при допустимом удалении действующего основания (PR № 10). Файл принятой
+    /// редакции хранилище не отдаёт на удаление.
+    /// </summary>
     [HttpDelete("{id}/attachment")]
     [Authorize(Policy = "HKAttachmentEdit")]
-    public async Task<ActionResult> DeleteAttachment(Guid id)
+    public async Task<ActionResult> DeleteAttachment(
+        Guid id, [FromQuery(Name = "rowVersion")] uint? rowVersion = null)
     {
-        var card = await _hkCards.GetByIdAsync(id);
-        if (card == null) return NotFound();
-
-        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired))
-            return BadRequest("Удаление вложения доступно только для черновика или карты на доработке.");
-
-        var attachment = await _db.HKCardAttachments.FirstOrDefaultAsync(a => a.HKCardId == id);
-        if (attachment == null) return NotFound();
-
-        var storageKey = attachment.StorageKey;
-        _db.HKCardAttachments.Remove(attachment);
-
-        _db.AuditLogs.Add(new AuditLog
+        try
         {
-            Id = Guid.NewGuid(),
-            EntityType = "HKCardAttachment",
-            EntityId = attachment.Id.ToString(),
-            Action = "Deleted",
-            UserId = _currentUser.GetRequiredUserId(),
-            CreatedAt = DateTime.UtcNow,
-            EntityDisplayName = $"{card.Code} v{card.Version} — {attachment.OriginalFileName}"
-        });
-
-        await _db.SaveChangesAsync();
-        await _fileStorage.DeleteAsync(storageKey);
-
-        return NoContent();
+            var result = await _hkCards.DeleteAttachmentAsync(id, rowVersion);
+            return Ok(new
+            {
+                cardRowVersion = result.CardRowVersion,
+                cardStatus = result.CardStatus.ToString(),
+                detailsState = result.DetailsState?.ToString(),
+                compositionState = result.CompositionState?.ToString(),
+                approvalInvalidated = result.ApprovalInvalidated,
+            });
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+                                      or UnauthorizedAccessException
+                                      or HkCardVersionConflictException)
+        {
+            return ToStageError(ex);
+        }
     }
 
     [HttpPost("{id}/versions")]

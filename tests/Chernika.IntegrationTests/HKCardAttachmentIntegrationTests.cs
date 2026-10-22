@@ -161,12 +161,12 @@ public class HKCardAttachmentIntegrationTests
 
         Assert.Null(await s.HK.GetAttachmentInfoAsync(cardId));
         var saved = await s.HK.SaveAttachmentAsync(cardId, PdfStream(), "скан.pdf", "application/pdf", 100);
-        Assert.Equal("скан.pdf", saved.OriginalFileName);
+        Assert.Equal("скан.pdf", saved.Attachment!.OriginalFileName);
 
         var info = await s.HK.GetAttachmentInfoAsync(cardId);
         Assert.NotNull(info);
         Assert.Equal("скан.pdf", info!.OriginalFileName);
-        Assert.Equal(saved.SizeBytes, info.SizeBytes);
+        Assert.Equal(saved.Attachment.SizeBytes, info.SizeBytes);
         Assert.False(string.IsNullOrEmpty(info.UploadedByUserName));
     }
 
@@ -265,8 +265,8 @@ public class HKCardAttachmentIntegrationTests
 
         var info = await s.HK.GetAttachmentInfoAsync(cardId);
         Assert.NotNull(info);
-        Assert.Equal(first.OriginalFileName, info!.OriginalFileName);
-        Assert.Equal(first.SizeBytes, info.SizeBytes);
+        Assert.Equal(first.Attachment!.OriginalFileName, info!.OriginalFileName);
+        Assert.Equal(first.Attachment.SizeBytes, info.SizeBytes);
     }
 
     [Fact]
@@ -279,13 +279,13 @@ public class HKCardAttachmentIntegrationTests
         var first = await s.HK.SaveAttachmentAsync(cardId, PdfStream("first"), "first.pdf", "application/pdf", 100);
         var second = await s.HK.SaveAttachmentAsync(cardId, PdfStream("second"), "second.pdf", "application/pdf", 100);
 
-        Assert.NotEqual(first.Id, second.Id);
-        Assert.Equal(1, await CountAuditsAsync(s, "HKCardAttachment", second.Id.ToString(), "Created"));
-        Assert.Equal(1, await CountAuditsAsync(s, "HKCardAttachment", first.Id.ToString(), "Deleted"));
+        Assert.NotEqual(first.Attachment!.Id, second.Attachment!.Id);
+        Assert.Equal(1, await CountAuditsAsync(s, "HKCardAttachment", second.Attachment.Id.ToString(), "Created"));
+        Assert.Equal(1, await CountAuditsAsync(s, "HKCardAttachment", first.Attachment.Id.ToString(), "Deleted"));
 
         var record = await s.Db.HKCardAttachments.AsNoTracking()
             .SingleAsync(a => a.HKCardId == cardId);
-        Assert.Equal(second.Id, record.Id);
+        Assert.Equal(second.Attachment.Id, record.Id);
         Assert.Equal("second.pdf", record.OriginalFileName);
     }
 
@@ -301,7 +301,7 @@ public class HKCardAttachmentIntegrationTests
         var saved = await s.HK.SaveAttachmentAsync(cardId, PdfStream(), "scan.pdf", "application/pdf", 100);
         await s.HK.DeleteAttachmentAsync(cardId);
 
-        Assert.Equal(1, await CountAuditsAsync(s, "HKCardAttachment", saved.Id.ToString(), "Deleted"));
+        Assert.Equal(1, await CountAuditsAsync(s, "HKCardAttachment", saved.Attachment!.Id.ToString(), "Deleted"));
         Assert.Null(await s.Db.HKCardAttachments.AsNoTracking().FirstOrDefaultAsync(a => a.HKCardId == cardId));
         await Assert.ThrowsAsync<InvalidOperationException>(() => s.HK.DeleteAttachmentAsync(cardId));
     }

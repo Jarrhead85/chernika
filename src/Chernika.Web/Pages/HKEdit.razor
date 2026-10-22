@@ -24,6 +24,7 @@
 @inject CircuitDbLock DbLock
 @inject HKApprovalService Approvals
 @inject HKCardRevisionService Revisions
+@inject TimeProvider TimeProvider
 
 <div class="stack">
     <section class="panel">
@@ -258,6 +259,29 @@
                                     <span class="hki-pdf-size">Файл не прикреплён</span>
                                 </div>
                             }
+                            @if (!string.IsNullOrEmpty(_attachmentError))
+                            {
+                                <div class="hk-attachment-message hk-attachment-message--error" role="alert">@_attachmentError</div>
+                            }
+                            else if (!string.IsNullOrEmpty(_attachmentNotice))
+                            {
+                                <div class="hk-attachment-message" role="status">@_attachmentNotice</div>
+                            }
+                            @if (_attachmentConfirmAction != AttachmentConfirmation.None)
+                            {
+                                <div class="hk-delete-confirm" role="dialog" aria-label="Подтверждение изменения основания">
+                                    <span>
+                                        @(_attachmentConfirmAction == AttachmentConfirmation.Replace
+                                            ? "Заменить PDF-основание? Изменение сбросит согласование по прежнему файлу."
+                                            : "Удалить PDF-основание? Изменение сбросит согласование по прежнему файлу.")
+                                        <b>Потребуется повторное согласование реквизитов и состава.</b>
+                                    </span>
+                                    <div class="hk-delete-confirm-actions">
+                                        <button type="button" class="btn hki-danger" @onclick="ConfirmAttachmentAction">Подтвердить</button>
+                                        <button type="button" class="btn" @onclick="CancelAttachmentAction">Отмена</button>
+                                    </div>
+                                </div>
+                            }
                         </div>
                     </div>
 
@@ -431,6 +455,11 @@
                         <div class="hk-editor-part-head hk-editor-part-head--requisites">
                             <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Details)</span>
                             <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Details))">@StageStateBadge(StageState(HKApprovalStage.Details))</span>
+                            @if (StageApprovedAt(HKApprovalStage.Details) is { } detailsApprovedAt)
+                            {
+                                <span class="hint">Реквизиты приняты: @AppTime.Fmt(detailsApprovedAt, "dd.MM.yyyy")</span>
+                            }
+                            <span class="hint">@ExpirationHint()</span>
                             @StageButtons(HKApprovalStage.Details)
                         </div>
                     }
@@ -578,6 +607,10 @@
                             {
                                 <span class="hk-stage-label">@StagePartTitle(HKApprovalStage.Composition)</span>
                                 <span class="tag @StageStateBadgeClass(StageState(HKApprovalStage.Composition))">@StageStateBadge(StageState(HKApprovalStage.Composition))</span>
+                                @if (StageApprovedAt(HKApprovalStage.Composition) is { } compositionApprovedAt)
+                                {
+                                    <span class="hint">Состав принят: @AppTime.Fmt(compositionApprovedAt, "dd.MM.yyyy")</span>
+                                }
                                 @StageButtons(HKApprovalStage.Composition)
                             }
                             @if (!IsNew && acceptedRevisionNumber is { } acceptedNumber)
@@ -1788,6 +1821,38 @@
         _ => "Согласование"
     };
 
+    /// <summary>
+    /// Дата принятия этапа согласования. Это решение, а не срок действия
+    /// документа: три даты показываются раздельно (PR № 10).
+    /// </summary>
+    private DateTime? StageApprovedAt(HKApprovalStage stage) =>
+        approvalStages.FirstOrDefault(s => s.Stage == stage)?.ApprovedAtUtc;
+
+    /// <summary>
+    /// Краткая строка о сроке действия и предупреждении об истечении.
+    /// <para>
+    /// Срок действия и предупреждение о его окончании — разные вещи:
+    /// предупреждение приходит заранее (пороги 90/30/7), а сам срок
+    /// наступает в дату окончания. Наличие принятой нормативной структуры —
+    /// третье, отдельное состояние.
+    /// </para>
+    /// </summary>
+    private string ExpirationHint()
+    {
+        if (!card.ExpirationDate.HasValue)
+            return "Срок действия не задан";
+
+        var expiration = card.ExpirationDate.Value.Date;
+        var today = TimeProvider.GetUtcNow().UtcDateTime.Date;
+        var days = (expiration - today).Days;
+
+        if (days < 0)
+            return $"Срок действия истёк {AppTime.Fmt(expiration, "dd.MM.yyyy")}";
+        if (days == 0)
+            return $"Срок действия истекает сегодня ({AppTime.Fmt(expiration, "dd.MM.yyyy")})";
+        return $"Действует до {AppTime.Fmt(expiration, "dd.MM.yyyy")} (осталось {days} дн.)";
+    }
+
     /// <summary>Состояние этапа по виду этапа; без этапа — черновик.</summary>
     private HKApprovalStageState StageState(HKApprovalStage stage) =>
         approvalStages.FirstOrDefault(s => s.Stage == stage)?.State
@@ -1906,12 +1971,33 @@
     private AttachmentInfo? _attachment;
     private bool _uploading;
     private string? _attachmentError;
+    private string? _attachmentNotice;
     private PendingFile? _pendingFile;
     private int _fileInputKey;
 
-    // PDF следует за блокировкой реквизитов, а не за общим флагом правки.
-    private bool CanSelectAttachment => canEditPdf && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired or HKCardStatus.OnReview);
-    private bool CanManageAttachment => !IsNew && canEditPdf && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired or HKCardStatus.OnReview;
+    /// <summary>Текущее действие, требующее подтверждения.</summary>
+    private enum AttachmentConfirmation { None, Replace, Delete }
+    private AttachmentConfirmation _attachmentConfirmAction = AttachmentConfirmation.None;
+
+    /// <summary>Состояние этапа реквизитов по загруженным данным этапов.</summary>
+    private HKApprovalStageState? DetailsStageState =>
+        approvalStages.FirstOrDefault(s => s.Stage == HKApprovalStage.Details)?.State;
+
+    /// <summary>
+    /// Смена/удаление основания при ПРИНЯТЫХ реквизитах сбрасывает их
+    /// согласование (PR № 10) — поэтому такое действие выполняется только
+    /// после подтверждения с объяснением последствий.
+    /// </summary>
+    private bool AttachmentChangeResetsApproval =>
+        !IsNew && DetailsStageState == HKApprovalStageState.Approved;
+
+    /// <summary>
+    /// PDF доступен для выбора: решение принимает сервис, но явный запрет
+    /// статуса рассмотрения не даёт пользователю получить неинформативную
+    /// ошибку кнопкой, которая заведомо не сработает.
+    /// </summary>
+    private bool CanSelectAttachment => canEditPdf && (IsNew || card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired);
+    private bool CanManageAttachment => !IsNew && canEditPdf && card.Status is HKCardStatus.Draft or HKCardStatus.RevisionRequired;
 
     private string? PendingChipTitle => _attachmentError ?? "Файл будет прикреплён при сохранении";
 
@@ -3769,6 +3855,20 @@
     {
         errorMessage = null;
 
+        // Несохранённые правки на экране нельзя отправлять молча: сервер
+        // проверил бы ЗАПИСАННУЮ часть, а не то, что видит пользователь.
+        // Сначала сохранение, затем отправка (PR № 10).
+        if (stage == HKApprovalStage.Details && HasUnsavedRequisites())
+        {
+            errorMessage = "Сохраните реквизиты перед отправкой: на экране есть несохранённые изменения.";
+            return;
+        }
+        if (stage == HKApprovalStage.Composition && structureDirty)
+        {
+            errorMessage = "Сохраните структуру перед отправкой: в составе есть несохранённые изменения.";
+            return;
+        }
+
         string? approverUserId = null;
         if (stage == HKApprovalStage.Details)
         {
@@ -4046,6 +4146,13 @@
                 {
                     await HKCardService.UpdateAsync(card);
                 }
+
+                // Версия строки после записи меняется: следующая операция с
+                // ожидаемой версией (загрузка PDF, отправка этапа) иначе
+                // получила бы ложный конфликт.
+                var freshVersion = await HKCardService.GetRowVersionAsync(card.Id);
+                if (freshVersion is { } version)
+                    loadedRowVersion = version;
             }
         }
         catch (ArgumentException ex)
@@ -5093,6 +5200,15 @@
 
         if (!IsNew)
         {
+            // Замена действующего основания при принятых реквизитах сбрасывает
+            // их согласование: требуется подтверждение с объяснением.
+            if (AttachmentChangeResetsApproval)
+            {
+                _attachmentConfirmAction = AttachmentConfirmation.Replace;
+                StateHasChanged();
+                return;
+            }
+
             await UploadAttachment();
 
             // Не удалось загрузить — возвращаем поле в прежнее состояние с ошибкой.
@@ -5141,11 +5257,11 @@
     private async Task UploadAttachment()
     {
         if (card.Id == Guid.Empty) return;
-        if (!canEdit) return;
-        if (card.Status is not (HKCardStatus.Draft or HKCardStatus.RevisionRequired)) return;
+        if (!canEditPdf) return;
         if (_pendingFile == null) return;
 
         _attachmentError = null;
+        _attachmentNotice = null;
         _uploading = true;
         StateHasChanged();
 
@@ -5155,10 +5271,18 @@
             await using (await DbLock.WaitAsync())
             {
                 using var stream = new MemoryStream(pending.Content);
-                var info = await HKCardService.SaveAttachmentAsync(
-                    card.Id, stream, pending.Name, pending.ContentType, pending.Size);
-                _attachment = new AttachmentInfo(info.Id, info.OriginalFileName, info.SizeBytes,
-                    info.UploadedByUserName, info.UploadedAt);
+                var result = await HKCardService.SaveAttachmentAsync(
+                    card.Id, stream, pending.Name, pending.ContentType, pending.Size, loadedRowVersion);
+                if (result.Attachment is not null)
+                {
+                    _attachment = new AttachmentInfo(result.Attachment.Id, result.Attachment.OriginalFileName,
+                        result.Attachment.SizeBytes, result.Attachment.UploadedByUserName, result.Attachment.UploadedAt);
+                }
+
+                // После операции обновляются версия строки и состояния этапов
+                // без перезагрузки всей формы: несохранённый ввод реквизитов и
+                // структуры не теряется (PR № 10).
+                await ApplyApprovalRefreshAsync(result);
             }
 
             _pendingFile = null;
@@ -5187,11 +5311,33 @@
     private async Task DeleteAttachment()
     {
         if (_attachment == null) return;
+
+        // Удаление при принятых реквизитах — то же изменение действующего
+        // основания, что и замена: подтверждение с объяснением последствий.
+        if (AttachmentChangeResetsApproval)
+        {
+            _attachmentConfirmAction = AttachmentConfirmation.Delete;
+            StateHasChanged();
+            return;
+        }
+
+        await ExecuteAttachmentDelete();
+    }
+
+    private async Task ExecuteAttachmentDelete()
+    {
+        if (_attachment == null) return;
+        _attachmentError = null;
+        _attachmentNotice = null;
         try
         {
             await using (await DbLock.WaitAsync())
             {
-                await HKCardService.DeleteAttachmentAsync(card.Id);
+                var result = await HKCardService.DeleteAttachmentAsync(card.Id, loadedRowVersion);
+
+                // После удаления тоже обновляем версию строки и состояния этапов
+                // без перезагрузки формы (PR № 10).
+                await ApplyApprovalRefreshAsync(result);
             }
             _attachment = null;
             _fileInputKey++;
@@ -5210,6 +5356,78 @@
             _attachmentError = "Не удалось выполнить операцию с вложением.";
         }
         StateHasChanged();
+    }
+
+    /// <summary>Подтверждённое изменение основания: выполняет отложенное действие.</summary>
+    private async Task ConfirmAttachmentAction()
+    {
+        var action = _attachmentConfirmAction;
+        _attachmentConfirmAction = AttachmentConfirmation.None;
+        if (action == AttachmentConfirmation.Replace)
+        {
+            await UploadAttachment();
+            if (!string.IsNullOrEmpty(_attachmentError))
+            {
+                _pendingFile = null;
+                _fileInputKey++;
+            }
+        }
+        else if (action == AttachmentConfirmation.Delete)
+        {
+            await ExecuteAttachmentDelete();
+        }
+    }
+
+    /// <summary>Отказ от подтверждаемого изменения: поле возвращается как было.</summary>
+    private void CancelAttachmentAction()
+    {
+        _attachmentConfirmAction = AttachmentConfirmation.None;
+        if (_pendingFile is not null && _attachment is not null)
+        {
+            _pendingFile = null;
+            _fileInputKey++;
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Обновление отображаемого состояния после операции с вложением по её
+    /// единому результату: статус, версия строки и возможности правки.
+    /// </summary>
+    private async Task ApplyApprovalRefreshAsync(HKCardAttachmentMutationResult result)
+    {
+        card.Status = result.CardStatus;
+        statusStr = result.CardStatus.ToString();
+        loadedRowVersion = result.CardRowVersion;
+
+        if (result.ApprovalInvalidated)
+        {
+            _attachmentNotice = "Файл основания изменён: прежнее согласование сброшено. " +
+                "Требуется повторное согласование реквизитов и состава.";
+        }
+
+        await RefreshStagesAsync();
+    }
+
+    /// <summary>Перечитывает возможности правки по состоянию этапов (без перезагрузки карты).</summary>
+    private async Task RefreshStagesAsync()
+    {
+        try
+        {
+            var caps = await LoadApprovalStateCoreAsync(card.Id, card.Status, default);
+            approvalStages = caps.Stages.ToList();
+            canSubmit = caps.CanSubmit;
+            canEditDetails = caps.CanEditDetails;
+            canEditComposition = caps.CanEditComposition;
+            canEditPdf = caps.CanEditPdf;
+            canView = caps.CanView;
+            canEdit = canEditDetails || canEditComposition;
+            canQuickCreate = canEditComposition;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Не удалось перечитать этапы согласования после операции с вложением {CardId}", card.Id);
+        }
     }
 
     private async Task OpenAttachmentPreview()

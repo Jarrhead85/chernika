@@ -20,12 +20,30 @@ namespace Chernika.Infrastructure.Services;
 /// реализации; оно не менялось, а зафиксировано явно и покрыто тестами.
 /// </para>
 /// <para>
+/// <b>Когда карта попадает в обработку (PR № 10).</b> Раньше прогон смотрел
+/// только карты в статусе <c>Approved</c>. Теперь карта учитывается и когда
+/// ПРИНЯТЫ РЕКВИЗИТЫ, а состав ещё не принят: предупреждения об окончании
+/// срока и уведомление об истечении начинают действовать раньше, а статус
+/// карты при этом не трогается — незавершённый состав не объявляется
+/// утверждённым, автоматическая архивация остаётся правилом только
+/// утверждённых карт, и задача «Пересмотр ХК» создаётся только им.
+/// </para>
+/// <para>
 /// <b>Догоняющая обработка.</b> Пороги 90/30/7 выбирались по ТОЧНОМУ совпадению
 /// числа дней, поэтому простой приложения пропускал уведомления безвозвратно.
 /// Теперь, если порог уже прошёл, отправляется ОДИН наиболее актуальный ещё не
 /// отправленный порог, а картам, запущенным уже после истечения, — одно
 /// догоняющее уведомление об истечении. Лавины старых уведомлений не
 /// возникает: не более одного уведомления о приближении на карту за прогон.
+/// </para>
+/// <para>
+/// <b>Смена согласованного срока.</b> Ключи дедупликации привязаны к
+/// конкретному <c>ExpirationDate</c>: предупреждения, отправленные по прежнему
+/// сроку, не блокируют новые предупреждения по изменённому сроку. Исторические
+/// уведомления при этом не удаляются; ключи в старом формате (без даты) вне
+/// цикла нового срока не учитываются, поэтому после внедрения новой разметки
+/// один порог может отправиться повторно — осознанный размен против вечной
+/// блокировки старыми ключами.
 /// </para>
 /// <para>
 /// <b>Защита от двух прогонов.</b> Перед обработкой берётся advisory lock уровня
@@ -112,9 +130,21 @@ public class HKCardExpirationService
 
         try
         {
+            // В обработку входят: утверждённые карты И карты с принятыми
+            // реквизитами, состав которых ещё не принят. Архивные и удалённые
+            // карты не трогаются никогда. Принадлежность к «реквизиты приняты»
+            // переоценивается заново для каждой карты в момент её обработки,
+            // а не берётся из снимка выборки: сброс согласования реквизитов
+            // (PR № 10) сразу прекращает фоновые действия по карте.
             var cards = await _db.HKCards
                 .AsNoTracking()
-                .Where(c => c.Status == HKCardStatus.Approved && c.ExpirationDate.HasValue)
+                .Where(c => c.ExpirationDate.HasValue
+                    && c.Status != HKCardStatus.Deleted
+                    && c.Status != HKCardStatus.Archived
+                    && (c.Status == HKCardStatus.Approved
+                        || _db.HKCardApprovals.Any(a => a.HKCardId == c.Id
+                            && a.Stage == HKApprovalStage.Details
+                            && a.State == HKApprovalStageState.Approved)))
                 .OrderBy(c => c.Id)
                 .ToListAsync(ct);
 
@@ -212,42 +242,84 @@ public class HKCardExpirationService
         var expiration = card.ExpirationDate!.Value.Date;
         var daysLeft = (expiration - today).Days;
 
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
-
-        if (daysLeft < 0)
+        try
         {
-            // Действует весь день окончания, значит архивирование — со следующего
-            // дня. Перед архивированием доставляем догоняющее уведомление об
-            // истечении: если приложение запустили уже после истечения, уведомление
-            // за день истечения было пропущено, и молча архивировать карту значит
-            // оставить пользователя без известия. Ключ дедупликации делает это
-            // идемпотентным.
-            if (await CreateExpiredNotificationAsync(card, counters, ct) > 0)
-                counters.ExpiryNotifications++;
+            // Свежая переоценка в момент обработки: выборка могла устареть, а
+            // сброс согласования реквизитов выключает фоновые действия сразу.
+            // Утверждённой считается только реальный статус; незавершённому
+            // составу утверждённость не присваивается ради фоновой обработки.
+            var state = await _db.HKCards
+                .AsNoTracking()
+                .Where(c => c.Id == card.Id)
+                .Select(c => new
+                {
+                    c.Status,
+                    RequisitesApproved = _db.HKCardApprovals.Any(a => a.HKCardId == c.Id
+                        && a.Stage == HKApprovalStage.Details
+                        && a.State == HKApprovalStageState.Approved),
+                })
+                .FirstOrDefaultAsync(ct);
+            if (state is null)
+                return; // карта удалена между выборкой и обработкой
 
-            if (await _hkCards.ArchiveExpiredAsync(card.Id, ct))
-                counters.Archived++;
-        }
-        else if (daysLeft == 0)
-        {
-            if (await CreateExpiredNotificationAsync(card, counters, ct) > 0)
-                counters.ExpiryNotifications++;
-        }
-        else
-        {
-            var outcome = await CreateWarningAsync(card, daysLeft, options, counters, ct);
-            counters.WarningsSent += outcome.NotificationsSent;
-            counters.ReviewTasksCreated += outcome.ReviewTaskCreated ? 1 : 0;
-        }
+            var isApprovedCard = state.Status == HKCardStatus.Approved;
+            var isProcessingCurrent = isApprovedCard || state.RequisitesApproved;
+            if (!isProcessingCurrent)
+                return; // согласование реквизитов сброшено — карта вне обработки
 
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+            if (daysLeft < 0)
+            {
+                // Действует весь день окончания, значит архивирование — со следующего
+                // дня. Перед архивированием доставляем догоняющее уведомление об
+                // истечении: если приложение запустили уже после истечения, уведомление
+                // за день истечения было пропущено, и молча архивировать карту значит
+                // оставить пользователя без известия. Ключ дедупликации делает это
+                // идемпотентным.
+                if (await CreateExpiredNotificationAsync(card, counters, ct) > 0)
+                    counters.ExpiryNotifications++;
+
+                // Автоархивация — только утверждённых карт. Для карты с
+                // принятыми реквизитами и незавершённым составом уведомление об
+                // истечении остаётся, архивировать черновик фоном нельзя.
+                if (isApprovedCard && await _hkCards.ArchiveExpiredAsync(card.Id, ct))
+                    counters.Archived++;
+            }
+            else if (daysLeft == 0)
+            {
+                if (await CreateExpiredNotificationAsync(card, counters, ct) > 0)
+                    counters.ExpiryNotifications++;
+            }
+            else
+            {
+                var outcome = await CreateWarningAsync(card, daysLeft, options, isApprovedCard, counters, ct);
+                counters.WarningsSent += outcome.NotificationsSent;
+                counters.ReviewTasksCreated += outcome.ReviewTaskCreated ? 1 : 0;
+            }
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Сбой одной карты останавливается на ней: откат транзакции
+            // выполняет dispose, а трекер общего контекста очищается — иначе
+            // откаченное состояние дописалось бы следующим SaveChanges и
+            // «мёртвый» шаг жертвы оказался бы в базе без транзакции.
+            _db.ChangeTracker.Clear();
+            throw;
+        }
     }
 
     private sealed record WarningOutcome(int NotificationsSent, bool ReviewTaskCreated);
 
     private async Task<WarningOutcome> CreateWarningAsync(
-        HKCard card, int daysLeft, HKExpirationOptions options, Counters counters, CancellationToken ct)
+        HKCard card, int daysLeft, HKExpirationOptions options, bool isApprovedCard, Counters counters, CancellationToken ct)
     {
         var thresholds = options.WarningDays
             .Distinct()
@@ -257,10 +329,10 @@ public class HKCardExpirationService
         if (thresholds.Length == 0)
             return new WarningOutcome(0, false);
 
-        // Уже отправленные пороги этой карты: без этого запроса после простоя
-        // приложения порог 90 отправился бы заново вместе с 30 и 7 — три
-        // уведомления вместо одного.
-        var alreadySent = await SentWarningThresholdsAsync(card.Id, ct);
+        // Уже отправленные пороги ЭТОГО СРОКА: ключи содержат дату окончания,
+        // поэтому изменённый согласованный срок не блокируется старыми
+        // предупреждениями, а повторный прогон не создаёт дублей (PR № 10).
+        var alreadySent = await SentWarningThresholdsAsync(card.Id, card.ExpirationDate!.Value, ct);
 
         // Порог считается ПРОЙДЕННЫМ, когда дней осталось не больше него: в этом и
         // состоит разница между штатным днём порога (daysLeft == threshold) и
@@ -288,7 +360,7 @@ public class HKCardExpirationService
                 EntityId: card.Id,
                 NavigationUrl: $"/хк/{card.Id}",
                 BranchId: card.BranchId,
-                DeduplicationKey: WarningDeduplicationKey(card.Id, threshold));
+                DeduplicationKey: WarningDeduplicationKey(card.Id, card.ExpirationDate.Value, threshold));
 
             foreach (var userId in recipients)
             {
@@ -298,19 +370,22 @@ public class HKCardExpirationService
             }
         }
 
-        // Задача пересмотра: как и прежде, на любом пороге КРОМЕ самого раннего
-        // (90 дней — слишком рано, чтобы пересматривать). Условие «не самый
-        // дальний» вместо «последний порог» сохранено намеренно: сужение до
-        // одного порога означало бы, что карта на 30 днях останется без задачи.
+        // Задача пересмотра создаётся ТОЛЬКО утверждённой карте: для карты с
+        // принятыми реквизитами состав ещё готовится, и пересмотр возлагается
+        // на автора, а не на согласующего библиотеки.
         //
-        // При этом попытка больше не зависит от того, отправлено ли НОВОЕ
-        // уведомление. Раньше она была вложена в ветку «точное совпадение
-        // порога»: если назначение не удалось в день порога, на следующий день
-        // порог уже не совпадал и задача не создавалась никогда. Теперь условие
-        // выполняется каждый день, пока срок внутри окна, поэтому попытка
-        // повторяется и сбой назначения не остаётся навсегда незамеченным.
+        // На любом пороге КРОМЕ самого раннего (90 дней — слишком рано, чтобы
+        // пересматривать). Условие «не самый дальний» вместо «последний порог»
+        // сохранено намеренно: сужение до одного порога означало бы, что карта
+        // на 30 днях останется без задачи.
+        //
+        // Попытка не зависит от того, отправлено ли НОВОЕ уведомление: если
+        // назначение не удалось в день порога, на следующий день порог уже не
+        // совпадал и задача не создавалась никогда. Теперь условие выполняется
+        // каждый день, пока срок внутри окна, поэтому попытка повторяется и
+        // сбой назначения не остаётся навсегда незамеченным.
         var reviewTaskCreated = false;
-        if (nearest > 0 && nearest != thresholds[thresholds.Length - 1])
+        if (isApprovedCard && nearest > 0 && nearest != thresholds[thresholds.Length - 1])
             reviewTaskCreated = await CreateReviewTaskAsync(card, options, ct);
 
         if (sent > 0 || reviewTaskCreated)
@@ -331,14 +406,49 @@ public class HKCardExpirationService
     /// Ключ дедупликации уведомления о приближении. Публичный статический метод:
     /// сервис и его тесты обязаны строить ключ одинаково, иначе дедупликация
     /// перестанет работать незаметно.
+    /// <para>
+    /// С PR № 10 ключ содержит дату окончания: предупреждение привязано к
+    /// конкретному сроку, и изменённый согласованный срок начинает собственный
+    /// цикл предупреждений, не будучи заблокированным ключами прежнего срока.
+    /// </para>
     /// </summary>
-    public static string WarningDeduplicationKey(Guid cardId, int threshold) =>
-        $"hk-exp-warning:{cardId}:{threshold}";
+    public static string WarningDeduplicationKey(Guid cardId, DateTime expirationUtc, int threshold) =>
+        $"hk-exp-warning:{cardId}:{expirationUtc.Date:yyyyMMdd}:{threshold}";
 
-    /// <summary>Ключ дедупликации уведомления об истечении.</summary>
-    public static string ExpiredDeduplicationKey(Guid cardId) => $"hk-expired:{cardId}";
+    /// <summary>Ключ дедупликации уведомления об истечении по конкретному сроку.</summary>
+    public static string ExpiredDeduplicationKey(Guid cardId, DateTime expirationUtc) =>
+        $"hk-expired:{cardId}:{expirationUtc.Date:yyyyMMdd}";
 
-    private async Task<HashSet<int>> SentWarningThresholdsAsync(Guid cardId, CancellationToken ct)
+    /// <summary>
+    /// Пороги, уже отправленные по карте в цикле УКАЗАННОГО срока. Ключи
+    /// последнего сегмента, помимо собственно числа, содержат дату
+    /// <c>yyyyMMdd</c> (см. <see cref="WarningDeduplicationKey"/>); ключи в
+    /// старом формате, где даты нет, признаются принадлежащими неизвестному
+    /// циклу и не считаются отправленными в текущем — иначе изменённый срок
+    /// навсегда оставался бы заблокированным старыми ключами.
+    /// Статический метод доступен прогнозу (<c>HKExpirationForecastService</c>),
+    /// который обязан оценивать те же правила.
+    /// </summary>
+    public static HashSet<int> ParseWarningThresholds(IEnumerable<string> keys, DateTime expirationUtc)
+    {
+        var cycle = expirationUtc.Date.ToString("yyyyMMdd");
+        var result = new HashSet<int>();
+        foreach (var key in keys)
+        {
+            if (!key.StartsWith("hk-exp-warning:", StringComparison.Ordinal))
+                continue;
+            var inner = key["hk-exp-warning:".Length..];
+            var parts = inner.Split(':');
+            if (parts.Length != 3 || parts[1] != cycle)
+                continue;
+            if (int.TryParse(parts[2], out var threshold))
+                result.Add(threshold);
+        }
+
+        return result;
+    }
+
+    private async Task<HashSet<int>> SentWarningThresholdsAsync(Guid cardId, DateTime expirationUtc, CancellationToken ct)
     {
         var keys = await _db.Notifications
             .AsNoTracking()
@@ -348,33 +458,37 @@ public class HKCardExpirationService
             .Select(n => n.DeduplicationKey!)
             .ToListAsync(ct);
 
-        var result = new HashSet<int>();
-        foreach (var key in keys)
-        {
-            var tail = key[(key.LastIndexOf(':') + 1)..];
-            if (int.TryParse(tail, out var threshold))
-                result.Add(threshold);
-        }
-
-        return result;
+        return ParseWarningThresholds(keys, expirationUtc);
     }
 
     private async Task<bool> CreateReviewTaskAsync(HKCard card, HKExpirationOptions options, CancellationToken ct)
     {
-        var assignee = (await _hkCards.GetBranchUsersInRoleAsync(card.BranchId, "NormAdmin")).FirstOrDefault();
+        var assignee = await ResolveReviewAssigneeAsync(card, ct);
         if (string.IsNullOrWhiteSpace(assignee))
         {
-            // Нет адресата — это проблема назначения, а не повод уронить цикл.
-            // Фиксируется записью в аудит; обработка остальных карт продолжается.
-            // На следующем прогоне попытка повторится: порог проверяется как
-            // «срок подошёл», а не «точное совпадение дня».
-            await _audit.CreateLogAsync(new AuditWriteRequest(
-                EntityType: "HKCard",
-                EntityId: card.Id.ToString(),
-                Action: "Workflow.NoAssignee",
-                ActorUserId: Guid.Empty,
-                EntityDisplayName: $"{card.Code} v{card.Version}",
-                Details: $"Нет активного пользователя с ролью NormAdmin в организации для задачи «Пересмотр ХК {card.Code}»."), ct);
+            // Нет допустимого адресата — проблема назначения, а не повод уронить
+            // цикл. Обработка остальных карт продолжается, а попытка повторится:
+            // порог проверяется как «срок подошёл», а не «точное совпадение дня».
+            // Чтобы один и тот же привод не записывался в аудит на каждом
+            // прогоне, запись ограничивается одной на карту и конкретный срок.
+            var details = $"Нет допустимого адресата для задачи «Пересмотр ХК {card.Code}» " +
+                $"(окончание {card.ExpirationDate!.Value:dd.MM.yyyy}): в организации нет активного " +
+                "пользователя с ролью NormAdmin и правом пересмотра.";
+            var recorded = await _db.AuditLogs
+                .AsNoTracking()
+                .AnyAsync(a => a.EntityType == "HKCard" && a.EntityId == card.Id.ToString()
+                    && a.Action == "Workflow.NoAssignee"
+                    && a.Details == details, ct);
+            if (!recorded)
+            {
+                await _audit.CreateLogAsync(new AuditWriteRequest(
+                    EntityType: "HKCard",
+                    EntityId: card.Id.ToString(),
+                    Action: "Workflow.NoAssignee",
+                    ActorUserId: Guid.Empty,
+                    EntityDisplayName: $"{card.Code} v{card.Version}",
+                    Details: details), ct);
+            }
             return false;
         }
 
@@ -405,6 +519,30 @@ public class HKCardExpirationService
             ct: ct);
 
         return true;
+    }
+
+    /// <summary>
+    /// Исполнитель задачи «Пересмотр ХК»: активный пользователь организации
+    /// карты с ролью NormAdmin и действующим правом пересмотра.
+    /// <para>
+    /// «Первый попавшийся с ролью» недопустим: исполнителя не выбирают молча
+    /// без проверки пригодности. Кандидаты перечисляются в детерминированном
+    /// порядке (по Id), и каждый проверяется на право <c>HK.Review</c> — иначе
+    /// задача могла бы оказаться неисполняемой у человека без полномочий.
+    /// Если допустимого исполнителя нет, задача не создаётся, а отказ
+    /// фиксируется диагностикой (см. выше).
+    /// </para>
+    /// </summary>
+    private async Task<string?> ResolveReviewAssigneeAsync(HKCard card, CancellationToken ct)
+    {
+        var candidates = await _hkCards.GetBranchUsersInRoleAsync(card.BranchId, "NormAdmin");
+        foreach (var candidate in candidates.OrderBy(id => id, StringComparer.Ordinal))
+        {
+            if (await _hkCards.HasPermissionAsync(candidate, PermissionCodes.HKReview))
+                return candidate;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -448,7 +586,7 @@ public class HKCardExpirationService
             EntityId: card.Id,
             NavigationUrl: $"/хк/{card.Id}",
             BranchId: card.BranchId,
-            DeduplicationKey: ExpiredDeduplicationKey(card.Id));
+            DeduplicationKey: ExpiredDeduplicationKey(card.Id, card.ExpirationDate.Value));
 
         var created = 0;
         foreach (var userId in recipients)

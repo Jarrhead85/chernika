@@ -83,6 +83,11 @@ public sealed class ChernikaApiFactory : WebApplicationFactory<Program>, IAsyncL
 
         builder.UseSetting("ConnectionStrings:DefaultConnection", HttpConnectionString);
         builder.UseSetting("IndividualCards:Enabled", "false");
+        // Файлы HTTP-тестов не должны попадать в рабочее хранилище
+        // (D:/Chernika-storage из appsettings.Development.json): тестовая среда
+        // изолирована от рабочих файлов.
+        builder.UseSetting("FileStorage:RootPath",
+            Path.Combine(Path.GetTempPath(), "chernika-http-tests-storage"));
         builder.UseEnvironment("Development");
 
         builder.ConfigureLogging(l => l.ClearProviders());
