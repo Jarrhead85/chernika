@@ -36,7 +36,16 @@ public sealed record HKAcceptedCompositionRowDto(
     int InstancesInCard,
     IReadOnlyList<HKMeasuredTotal> PerOne,
     IReadOnlyList<HKMeasuredTotal> TotalInCard,
-    IReadOnlyList<HKAcceptedCompositionContributionDto> Contributions);
+    IReadOnlyList<HKAcceptedCompositionContributionDto> Contributions,
+    /// <summary>
+    /// Ключ виртуальной группы «Без раздела».
+    /// <para>
+    /// У каждой группы свой ключ — он указывает на первую самостоятельную ветку
+    /// блока. Общий ключ у всех групп означал бы одинаковые @key в дереве, а
+    /// поиск и сворачивание не должны менять идентичность строк.
+    /// </para>
+    /// </summary>
+    string? GroupKey = null);
 
 /// <summary>Итог раздела принятой редакции.</summary>
 public sealed record HKAcceptedCompositionSectionDto(
@@ -136,6 +145,8 @@ public static class HKAcceptedCompositionProjection
         {
             if (row.Kind == HKStructureRowKind.Section)
             {
+                // Раздел закрывает блок «Без раздела»: следующий блок веток
+                // без раздела получит собственную виртуальную группу.
                 withoutSectionOpen = false;
 
                 // У раздела нет собственного количества и нормы на экземпляр:
@@ -152,26 +163,16 @@ public static class HKAcceptedCompositionProjection
                 continue;
             }
 
-            if (row.Kind == HKStructureRowKind.Position && row.SectionId is null && row.Depth == 0)
+            // Самостоятельная ветка без раздела: перед ней открывается группа
+            // «Без раздела». Это только группировка показа — фиктивной записи
+            // в БД у неё нет, нумерация не меняется.
+            //
+            // Группа открывается только на верхнем уровне: вложенные строки
+            // такой ветки остаются внутри неё и своих заголовков не создают.
+            if (row.SectionId is null && row.Depth == 0 && !withoutSectionOpen)
             {
-                // (группа «Без раздела» открывается ниже)
-                // Самостоятельная ветка без раздела: перед ней видна группа
-                // «Без раздела». Это только группировка показа — фиктивной
-                // записи в БД у неё нет, нумерация не меняется.
-                if (!withoutSectionOpen)
-                {
-                    withoutSectionOpen = true;
-                    result.Add(new HKAcceptedCompositionRowDto(
-                        string.Empty, row.Depth, HKStructureRowKind.Section, null, null, null,
-                        "Без раздела", null, null, 0,
-                        Array.Empty<HKMeasuredTotal>(),
-                        Array.Empty<HKMeasuredTotal>(),
-                        Array.Empty<HKAcceptedCompositionContributionDto>()));
-                }
-            }
-            else if (row.Kind != HKStructureRowKind.Section)
-            {
-                withoutSectionOpen = false;
+                withoutSectionOpen = true;
+                result.Add(WithoutSectionGroup(row));
             }
 
             if (row.Kind == HKStructureRowKind.Position && row.NodeId is { } nodeId)
@@ -199,26 +200,6 @@ public static class HKAcceptedCompositionProjection
                 var item = itemsById[itemId];
                 var itemTotals = HKStructureTotals.CalculateItem(input, itemId);
 
-                // Группа «Без раздела» — видимая виртуальная группировка:
-                // фиктивной записи в БД у неё нет, нумерация не меняется.
-                if (row.SectionId is null)
-                {
-                    if (!withoutSectionOpen)
-                    {
-                        withoutSectionOpen = true;
-                        result.Add(new HKAcceptedCompositionRowDto(
-                            string.Empty, row.Depth, HKStructureRowKind.Section, null, null, null,
-                            "Без раздела", null, null, 0,
-                            Array.Empty<HKMeasuredTotal>(),
-                            Array.Empty<HKMeasuredTotal>(),
-                            Array.Empty<HKAcceptedCompositionContributionDto>()));
-                    }
-                }
-                else
-                {
-                    withoutSectionOpen = false;
-                }
-
                 result.Add(new HKAcceptedCompositionRowDto(
                     row.Number, row.Depth, row.Kind, null, row.ItemId, row.SectionId,
                     ItemTitle(item),
@@ -233,52 +214,40 @@ public static class HKAcceptedCompositionProjection
             }
         }
 
-        // Эффективный раздел: вложенная позиция наследует раздел своего
-        // корня, поэтому счётчики раздела включают и вложенные позиции.
-        var effectiveSectionByNode = new Dictionary<Guid, Guid?>();
-        foreach (var node in revision.Nodes.OrderBy(n => n.SortOrder))
+        // Эффективный раздел записи выводится по родителям, а не по порядку
+        // записей: верхняя позиция и корневая строка СЕ берут свой раздел,
+        // вложенные наследуют раздел своего корня. Отсутствие родителя в
+        // промежуточном кэше не доказывает отсутствие раздела.
+        var effective = ResolveEffectiveSections(
+            revision.Nodes,
+            revision.Items,
+            revision.Sections.Select(s => s.SectionId).ToHashSet());
+
+        // Счётчики разделов: каждая снимковая позиция и каждая конечная
+        // строка учитываются ровно один раз. Это количество записей
+        // структуры, а не сумма Quantity и не число экземпляров в ХК.
+        var positionCountBySection = new Dictionary<Guid, int>();
+        var itemCountBySection = new Dictionary<Guid, int>();
+        var withoutSectionPositions = 0;
+        var withoutSectionItems = 0;
+
+        foreach (var node in revision.Nodes)
         {
-            if (node.SectionId is { } own)
-            {
-                effectiveSectionByNode[node.Id] = own;
-                continue;
-            }
-
-            Guid? parentSection = null;
-            var parentId = node.ParentId;
-            var guard = 0;
-            while (parentId is { } id && guard++ <= revision.Nodes.Count)
-            {
-                if (effectiveSectionByNode.TryGetValue(id, out var known))
-                {
-                    parentSection = known;
-                    break;
-                }
-
-                var step = revision.Nodes.FirstOrDefault(n => n.Id == id);
-                if (step is null)
-                    break;
-
-                parentId = step.ParentId;
-            }
-
-            effectiveSectionByNode[node.Id] = parentSection;
+            var section = effective.NodeSections.TryGetValue(node.Id, out var own) ? own : null;
+            if (section is { } sectionId)
+                positionCountBySection[sectionId] = positionCountBySection.GetValueOrDefault(sectionId) + 1;
+            else
+                withoutSectionPositions++;
         }
 
-        var positionCountBySection = revision.Nodes
-            .Where(n => effectiveSectionByNode.TryGetValue(n.Id, out var section) && section is not null)
-            .GroupBy(n => effectiveSectionByNode[n.Id]!.Value)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        var itemCountBySection = revision.Items
-            .Where(i => i.NodeId is { } nodeId && effectiveSectionByNode.TryGetValue(nodeId, out var section) && section is not null)
-            .GroupBy(i => effectiveSectionByNode[i.NodeId!.Value]!.Value)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        var withoutSectionPositions = revision.Nodes
-            .Count(n => effectiveSectionByNode.TryGetValue(n.Id, out var section) && section is null);
-        var withoutSectionItems = revision.Items
-            .Count(i => i.NodeId is null && i.SectionId is null);
+        foreach (var item in revision.Items)
+        {
+            var section = effective.ItemSections.TryGetValue(item.Id, out var own) ? own : null;
+            if (section is { } sectionId)
+                itemCountBySection[sectionId] = itemCountBySection.GetValueOrDefault(sectionId) + 1;
+            else
+                withoutSectionItems++;
+        }
 
         var sections = new List<HKAcceptedCompositionSectionDto>();
         foreach (var section in revision.Sections.OrderBy(s => s.SortOrder).ThenBy(s => s.SectionId))
@@ -298,10 +267,9 @@ public static class HKAcceptedCompositionProjection
         }
 
         // «Без раздела» показывается, только если есть соответствующие ветки.
-        var hasWithoutSection = revision.Nodes.Any(n => n.ParentId is null && n.SectionId is null)
-            || revision.Items.Any(i => i.NodeId is null && i.SectionId is null);
-
-        if (hasWithoutSection)
+        // В группу входят и вложенные позиции таких веток: они тоже остались
+        // без раздела.
+        if (withoutSectionPositions > 0 || withoutSectionItems > 0)
         {
             sections.Add(new HKAcceptedCompositionSectionDto(
                 Guid.Empty, "Без раздела", null, withoutSectionTotals,
@@ -313,8 +281,13 @@ public static class HKAcceptedCompositionProjection
         var diagnostics = totals.Overall
             .Where(t => !t.IsComplete)
             .SelectMany(t => t.Diagnostics)
+            .Concat(effective.Diagnostics)
             .Distinct()
             .ToList();
+
+        // Повреждённая структура не выдаётся за корректную: итог помечается
+        // неполным, а причины перечисляются в диагностике.
+        var isComplete = totals.Overall.All(t => t.IsComplete) && effective.Diagnostics.Count == 0;
 
         return new HKAcceptedCompositionDto(
             cardId,
@@ -329,11 +302,151 @@ public static class HKAcceptedCompositionProjection
             revision.Items.Count,
             sections,
             totals.Overall,
-            totals.Overall.All(t => t.IsComplete),
+            isComplete,
             diagnostics,
             result,
             revision.Items);
     }
+
+    /// <summary>
+    /// Виртуальная группа «Без раздела» перед блоком самостоятельных веток.
+    /// <para>
+    /// Заголовок не имеет номера и своей записи в БД: это только группировка
+    /// показа. Ключ группы указывает на первую ветку блока — у каждой группы
+    /// он свой.
+    /// </para>
+    /// </summary>
+    private static HKAcceptedCompositionRowDto WithoutSectionGroup(HKStructureRow row) =>
+        new(string.Empty, row.Depth, HKStructureRowKind.Section, null, null, null,
+            "Без раздела", null, null, 0,
+            Array.Empty<HKMeasuredTotal>(),
+            Array.Empty<HKMeasuredTotal>(),
+            Array.Empty<HKAcceptedCompositionContributionDto>(),
+            GroupKey: row.NodeId is { } nodeId ? $"node:{nodeId}" : $"item:{row.ItemId}");
+
+    /// <summary>Эффективные разделы записей снимка и диагностики повреждений.</summary>
+    private sealed record EffectiveSections(
+        IReadOnlyDictionary<Guid, Guid?> NodeSections,
+        IReadOnlyDictionary<Guid, Guid?> ItemSections,
+        IReadOnlyList<string> Diagnostics);
+
+    /// <summary>
+    /// Раздел каждой позиции и каждой конечной строки снимка.
+    /// <para>
+    /// Раздел выводится по родителям и не зависит от порядка записей: верхняя
+    /// позиция и корневая строка СЕ берут свой раздел, вложенные наследуют
+    /// раздел своего корня. Повреждённая структура — цикл или отсутствующий
+    /// родитель — не превращается молча в корректную группу «Без раздела»:
+    /// она перечисляется в диагностике.
+    /// </para>
+    /// </summary>
+    private static EffectiveSections ResolveEffectiveSections(
+        IReadOnlyList<HKAcceptedNodeDto> nodes,
+        IReadOnlyList<HKAcceptedItemDto> items,
+        IReadOnlySet<Guid> sectionIds)
+    {
+        var nodesById = nodes.ToDictionary(n => n.Id);
+        var nodeSections = new Dictionary<Guid, Guid?>();
+        var diagnostics = new List<string>();
+
+        foreach (var node in nodes)
+        {
+            if (nodeSections.ContainsKey(node.Id))
+                continue;
+
+            ResolveNodeSection(
+                node, nodesById, sectionIds, nodeSections, diagnostics, new HashSet<Guid>());
+        }
+
+        var itemSections = new Dictionary<Guid, Guid?>();
+
+        foreach (var item in items)
+        {
+            Guid? section;
+
+            if (item.NodeId is { } nodeId)
+            {
+                // Строка под позицией наследует раздел этой позиции.
+                if (nodesById.ContainsKey(nodeId))
+                    section = nodeSections.TryGetValue(nodeId, out var nodeSection) ? nodeSection : null;
+                else
+                {
+                    diagnostics.Add(
+                        $"Конечная строка «{ItemTitle(item)}» ссылается на позицию, "
+                        + "которой нет в снимке принятой редакции.");
+                    section = null;
+                }
+            }
+            else
+            {
+                // Корневая строка СЕ использует собственный раздел.
+                section = OwnSection(item.SectionId, sectionIds);
+            }
+
+            itemSections[item.Id] = section;
+        }
+
+        return new EffectiveSections(nodeSections, itemSections, diagnostics);
+    }
+
+    /// <summary>
+    /// Раздел позиции: собственный у верхней, унаследованный у вложенной.
+    /// <para>
+    /// Обход защищён от цикла и от отсутствующего родителя: повреждённая
+    /// структура помечается диагностикой, а не молча считается безраздельной.
+    /// </para>
+    /// </summary>
+    private static Guid? ResolveNodeSection(
+        HKAcceptedNodeDto node,
+        Dictionary<Guid, HKAcceptedNodeDto> nodesById,
+        IReadOnlySet<Guid> sectionIds,
+        Dictionary<Guid, Guid?> nodeSections,
+        List<string> diagnostics,
+        HashSet<Guid> visiting)
+    {
+        if (nodeSections.TryGetValue(node.Id, out var known))
+            return known;
+
+        if (!visiting.Add(node.Id))
+        {
+            diagnostics.Add($"Позиция «{node.Name}» замыкает цикл в структуре снимка.");
+            nodeSections[node.Id] = null;
+            return null;
+        }
+
+        Guid? section;
+
+        if (node.ParentId is null)
+        {
+            section = OwnSection(node.SectionId, sectionIds);
+        }
+        else if (!nodesById.TryGetValue(node.ParentId.Value, out var parent))
+        {
+            diagnostics.Add(
+                $"У позиции «{node.Name}» отсутствует родитель в снимке принятой редакции.");
+            section = null;
+        }
+        else
+        {
+            section = ResolveNodeSection(
+                parent, nodesById, sectionIds, nodeSections, diagnostics, visiting);
+        }
+
+        visiting.Remove(node.Id);
+        nodeSections[node.Id] = section;
+
+        return section;
+    }
+
+    /// <summary>
+    /// Собственный раздел записи, если он есть среди разделов снимка.
+    /// <para>
+    /// Ссылка на несуществующий раздел не превращается в раздел: такая запись
+    /// остаётся без раздела, как её показывает нумерация и считают итоги.
+    /// </para>
+    /// </summary>
+    private static Guid? OwnSection(Guid? sectionId, IReadOnlySet<Guid> sectionIds) =>
+        sectionId is { } id && sectionIds.Contains(id) ? id : null;
 
     /// <summary>
     /// Уровень карты по её принятой структуре.

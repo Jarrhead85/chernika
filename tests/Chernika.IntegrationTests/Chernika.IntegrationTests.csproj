@@ -18,6 +18,10 @@
          иначе WebApplicationFactory поднимет другой рантайм-конвейер, чем
          проверяемое приложение. -->
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.6" />
+    <!-- Рендер компонента просмотра принятого состава: повторяющиеся @key
+         ломают дерево Blazor, а перекрывающиеся загрузки незаметны без
+         самого компонента. -->
+    <PackageReference Include="bunit" Version="1.34.0" />
   </ItemGroup>
 
   <ItemGroup>

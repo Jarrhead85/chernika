@@ -3,8 +3,9 @@
 @using Chernika.Domain.Structure
 @using Chernika.Infrastructure.Services
 @using Chernika.Web.Services
-@inject HKCardRevisionService Revisions
+@inject IHKAcceptedCompositionReader Revisions
 @inject CircuitDbLock DbLock
+@inject ILogger<HKCompositionBlock> Logger
 @implements IDisposable
 
 @if (_loading)
@@ -13,7 +14,15 @@
 }
 else if (_error is not null)
 {
-    <div class="error">@_error</div>
+    <div class="error">
+        @_error
+        @if (_canRetry)
+        {
+            @* Техническая ошибка — не «принятой структуры нет»: повтор загрузки
+               должен быть возможен прямо здесь. *@
+            <button type="button" class="btn ghost" @onclick="ReloadAsync">Повторить</button>
+        }
+    </div>
 }
 else if (_composition is null)
 {
@@ -308,11 +317,27 @@ else
     private HKAcceptedCompositionDto? _composition;
     private HKAcceptedCompositionRowDto? _selected;
     private string? _error;
+    private bool _canRetry;
     private bool _loading = true;
     private string _search = string.Empty;
     private int _matchCount;
     private readonly HashSet<Guid> _collapsed = new();
     private CancellationTokenSource? _loadCts;
+
+    /// <summary>
+    /// Поколение загрузки.
+    /// <para>
+    /// Публикуется только результат актуального поколения: завершившаяся позже
+    /// старая загрузка не должна перезаписать новую карту.
+    /// </para>
+    /// </summary>
+    private long _loadGeneration;
+
+    /// <summary>Карта, для которой начата текущая загрузка.</summary>
+    private Guid? _loadedCardId;
+
+    /// <summary>Компонент уничтожен: результат публиковать уже некуда.</summary>
+    private bool _disposed;
 
     private HKAcceptedItemDto? _selectedItem =>
         _selected?.ItemId is { } itemId && _composition is not null
@@ -321,47 +346,111 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        // Повторный рендер родителя с той же картой не перезагружает состав и
+        // не сбрасывает состояние просмотра: поиск, выбранная строка и
+        // раскрытые ветки сохраняются.
+        if (_loadedCardId == CardId && (_loading || _composition is not null || _error is not null))
+            return;
+
+        await LoadAsync(CardId);
+    }
+
+    /// <summary>Повторная загрузка после технической ошибки.</summary>
+    private Task ReloadAsync() => LoadAsync(CardId);
+
+    private async Task LoadAsync(Guid cardId)
+    {
+        // Карта, поколение и токен операции фиксируются ДО ожидания: после
+        // await публикуется только результат актуальной операции.
+        var generation = ++_loadGeneration;
+
         // Смена карты отменяет прежнюю загрузку: старый результат не должен
         // перезаписать новую карту.
         _loadCts?.Cancel();
         _loadCts?.Dispose();
-        _loadCts = new CancellationTokenSource();
-        var ct = _loadCts.Token;
+        var cts = new CancellationTokenSource();
+        _loadCts = cts;
+        var ct = cts.Token;
 
+        _loadedCardId = cardId;
         _loading = true;
         _error = null;
+        _canRetry = false;
         _composition = null;
         _selected = null;
         _collapsed.Clear();
         _search = string.Empty;
+        _matchCount = 0;
 
         try
         {
-            await using (await DbLock.WaitAsync("HKCompositionBlock: чтение принятой редакции"))
+            // Результат сначала получается в локальную переменную: в поле он
+            // попадает только после проверки актуальности операции.
+            HKAcceptedCompositionDto? composition;
+
+            await using (await DbLock.WaitAsync(
+                "HKCompositionBlock: чтение принятой редакции", ct))
             {
-                _composition = await Revisions.GetAcceptedCompositionAsync(CardId, ct);
+                composition = await Revisions.GetAcceptedCompositionAsync(cardId, ct);
             }
+
+            if (!IsCurrent(generation, cardId))
+                return;
+
+            _composition = composition;
         }
         catch (OperationCanceledException)
         {
+            // Отмена устаревшей загрузки — не ошибка: её состояние обновит
+            // новая операция.
             return;
         }
         catch (UnauthorizedAccessException ex)
         {
+            if (!IsCurrent(generation, cardId))
+                return;
+
             _error = ex.Message;
         }
         catch (ArgumentException ex)
         {
+            if (!IsCurrent(generation, cardId))
+                return;
+
             _error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            // Техническая ошибка, в том числе таймаут ожидания БД: подробности
+            // со стеком — в журнал, пользователю — понятное сообщение и
+            // повтор загрузки. Ошибка не выдаётся за отсутствие принятой
+            // структуры, а необработанное исключение не роняет circuit.
+            Logger.LogError(
+                ex, "HKCompositionBlock: не удалось загрузить принятую редакцию карты {CardId}.", cardId);
+
+            if (!IsCurrent(generation, cardId))
+                return;
+
+            _error = "Не удалось загрузить принятую редакцию. Повторите попытку.";
+            _canRetry = true;
         }
         finally
         {
-            _loading = false;
+            // Прежняя операция не должна сбрасывать состояние новой.
+            if (IsCurrent(generation, cardId))
+                _loading = false;
         }
     }
 
+    /// <summary>
+    /// Актуальна ли операция: то же поколение, та же карта, компонент жив.
+    /// </summary>
+    private bool IsCurrent(long generation, Guid cardId) =>
+        !_disposed && generation == _loadGeneration && cardId == _loadedCardId;
+
     public void Dispose()
     {
+        _disposed = true;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
     }
@@ -578,8 +667,11 @@ else
         _matchCount = _composition?.Rows.Count(Matches) ?? 0;
     }
 
+    /// <summary>
+    /// Устойчивый ключ строки: он не зависит от поиска и от свёрнутых веток.
+    /// </summary>
     private static string RowKey(HKAcceptedCompositionRowDto row) =>
-        $"{row.Kind}:{row.NodeId?.ToString() ?? row.ItemId?.ToString() ?? "section" + row.SectionId}";
+        HKCompositionRowKey.Of(row);
 
     private string RowClass(HKAcceptedCompositionRowDto row)
     {

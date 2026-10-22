@@ -114,7 +114,7 @@ public sealed record HKAcceptedStructureDto(
 /// для этого понадобится.
 /// </para>
 /// </summary>
-public sealed class HKCardRevisionService
+public sealed class HKCardRevisionService : IHKAcceptedCompositionReader
 {
     private readonly AppDbContext _db;
     private readonly ICurrentUserService _currentUser;
@@ -825,6 +825,13 @@ public sealed class HKCardRevisionService
     /// <summary>
     /// Реестр карт с принятыми редакциями.
     /// <para>
+    /// Номер, название, версия и дата принятия берутся из СНИМКА принятой
+    /// редакции, на который указывает указатель карты. Рабочая карта нужна
+    /// для доступа, филиала, идентичности карты и самого указателя, но не
+    /// как источник нормативных метаданных: показанные и найденные значения
+    /// должны совпадать.
+    /// </para>
+    /// <para>
     /// Итоги страницы считаются ОДНИМ запросом по снимкам строк и позиций
     /// всех карт страницы: запрос на каждую строку реестра дал бы N+1.
     /// </para>
@@ -841,53 +848,76 @@ public sealed class HKCardRevisionService
 
         var safeBranchId = await GetAccessibleBranchIdAsync(branchId, ct);
 
-        var query = _db.HKCards
+        // Снимок принятой редакции присоединяется к карте ЛЕВЫМ соединением:
+        // отсутствующий снимок должен быть виден как нарушение целостности, а
+        // не исчезать из реестра молча. Проекция только скалярная: материализация
+        // сущностей в соединении открывает вторую операцию над контекстом, и
+        // чтение реестра падает из-за гонки с обновлением панели.
+        var cardsQuery = _db.HKCards
             .AsNoTracking()
             .Where(c => c.CurrentAcceptedRevisionId != null);
 
         if (safeBranchId.HasValue)
-            query = query.Where(c => c.BranchId == safeBranchId.Value);
+            cardsQuery = cardsQuery.Where(c => c.BranchId == safeBranchId.Value);
+
+        var query =
+            from card in cardsQuery
+            join revision in _db.HKCardRevisions.AsNoTracking()
+                on card.CurrentAcceptedRevisionId equals (Guid?)revision.Id into revisions
+            from revision in revisions.DefaultIfEmpty()
+            select new
+            {
+                card.Id,
+                card.CurrentAcceptedRevisionId,
+                card.ObjectLevel,
+                card.IsAutonomous,
+                card.NodeRootCardLevel,
+                RevisionId = revision != null ? revision.Id : (Guid?)null,
+                RevisionNumber = revision != null ? revision.RevisionNumber : (int?)null,
+                RevisionCode = revision != null ? revision.Code : null,
+                RevisionName = revision != null ? revision.Name : null,
+                RevisionVersion = revision != null ? revision.Version : null,
+                AcceptedAtUtc = revision != null ? revision.AcceptedAtUtc : (DateTime?)null
+            };
 
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
+
+            // Поиск идёт по тем же снимковым значениям, которые показывает
+            // реестр: расхождение с показанным списком вводит в заблуждение.
             query = query.Where(c =>
-                (c.Code != null && EF.Functions.ILike(c.Code, "%" + term + "%"))
-                || (c.Name != null && EF.Functions.ILike(c.Name, "%" + term + "%")));
+                EF.Functions.ILike(c.RevisionCode ?? string.Empty, "%" + term + "%")
+                || EF.Functions.ILike(c.RevisionName ?? string.Empty, "%" + term + "%"));
         }
 
         var total = await query.CountAsync(ct);
 
-        var cards = await query
-            .OrderByDescending(c => c.ApprovedDate ?? c.CreatedAt)
+        var rows = await query
+            // Дата принятия — снимковая. Карты без зафиксированной даты идут
+            // в конце: даты принятия у них нет, и ставить их первыми нельзя.
+            .OrderBy(c => c.AcceptedAtUtc != null ? 0 : 1)
+            .ThenByDescending(c => c.AcceptedAtUtc)
+            // Вторичный ключ — идентификатор карты: порядок устойчив.
             .ThenBy(c => c.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(c => new
-            {
-                c.Id,
-                c.Code,
-                c.Name,
-                c.Version,
-                c.CurrentAcceptedRevisionId,
-                c.ApprovedDate,
-                c.ObjectLevel,
-                c.IsAutonomous,
-                c.NodeRootCardLevel
-            })
             .ToListAsync(ct);
+
+        var cards = rows
+            .Select(r => new
+            {
+                r.Id,
+                r.CurrentAcceptedRevisionId,
+                r.ObjectLevel,
+                r.IsAutonomous,
+                r.NodeRootCardLevel
+            })
+            .ToList();
 
         var revisionIds = cards
             .Select(c => c.CurrentAcceptedRevisionId!.Value)
             .ToList();
-
-        var revisions = revisionIds.Count == 0
-            ? new List<HKCardRevisionListRow>()
-            : await _db.HKCardRevisions
-                .AsNoTracking()
-                .Where(r => revisionIds.Contains(r.Id))
-                .Select(r => new HKCardRevisionListRow(r.Id, r.RevisionNumber, r.AcceptedAtUtc))
-                .ToListAsync(ct);
 
         var nodes = revisionIds.Count == 0
             ? new List<HKCardRevisionNodeRow>()
@@ -907,25 +937,44 @@ public sealed class HKCardRevisionService
                     i.RevisionId, i.Id, i.NodeId, i.Quantity, i.Volume, i.UnitOfMeasure, i.SortOrder, i.SectionId))
                 .ToListAsync(ct);
 
-        var revisionById = revisions.ToDictionary(r => r.Id);
         var nodesByRevision = nodes.GroupBy(n => n.RevisionId).ToDictionary(g => g.Key, g => g.ToList());
         var itemsByRevision = items.GroupBy(i => i.RevisionId).ToDictionary(g => g.Key, g => g.ToList());
 
         var result = new List<HKAcceptedCompositionListItemDto>();
 
-        foreach (var card in cards)
+        for (var i = 0; i < rows.Count; i++)
         {
+            var card = cards[i];
+            var row = rows[i];
+
+            if (row.RevisionId is null)
+            {
+                // Указатель принятой редакции ссылается на отсутствующий
+                // снимок: это нарушение целостности, а не «редакция № 0» с
+                // рабочими данными и достоверными нулевыми итогами.
+                throw new InvalidOperationException(
+                    "Указатель принятой редакции карты ссылается на отсутствующий снимок.");
+            }
+
             var revisionId = card.CurrentAcceptedRevisionId!.Value;
-            var revision = revisionById.TryGetValue(revisionId, out var found) ? found : null;
+
+            // Снимок может оказаться пустым: отсутствующие узлы и строки — это
+            // пустые списки, а не отсутствие данных.
+            var cardNodes = nodesByRevision.TryGetValue(revisionId, out var foundNodes)
+                ? foundNodes
+                : new List<HKCardRevisionNodeRow>();
+            var cardItems = itemsByRevision.TryGetValue(revisionId, out var foundItems)
+                ? foundItems
+                : new List<HKCardRevisionItemRow>();
 
             // Расчёт тот же, что и в подробном просмотре: формулы не дублируются.
             var input = new Domain.Structure.HKStructureInput(
                 Array.Empty<Domain.Structure.HKStructureSectionInput>(),
-                (nodesByRevision.TryGetValue(revisionId, out var cardNodes) ? cardNodes : new())
+                cardNodes
                     .Select(n => new Domain.Structure.HKStructureNodeInput(
                         n.Id, n.ParentId, n.Level, n.Name, n.Quantity, n.SortOrder, n.SectionId))
                     .ToList(),
-                (itemsByRevision.TryGetValue(revisionId, out var cardItems) ? cardItems : new())
+                cardItems
                     .Select(i => new Domain.Structure.HKStructureItemInput(
                         i.Id, i.NodeId, i.Quantity, i.Volume, i.UnitOfMeasure, i.SortOrder, i.SectionId))
                     .ToList());
@@ -947,11 +996,13 @@ public sealed class HKCardRevisionService
 
             result.Add(new HKAcceptedCompositionListItemDto(
                 card.Id,
-                card.Code,
-                card.Name,
-                card.Version,
-                revision?.RevisionNumber ?? 0,
-                revision?.AcceptedAtUtc ?? card.ApprovedDate,
+                row.RevisionCode,
+                row.RevisionName,
+                row.RevisionVersion,
+                row.RevisionNumber ?? 0,
+                // Дата принятия из снимка: если она не зафиксирована, реестр
+                // показывает «не зафиксирована», а не дату создания карты.
+                row.AcceptedAtUtc,
                 totals.Overall,
                 input.Nodes.Count,
                 input.Items.Count,
@@ -967,10 +1018,6 @@ public sealed class HKCardRevisionService
             PageSize = pageSize
         };
     }
-
-    /// <summary>Строка реестра: метаданные принятой редакции.</summary>
-    private sealed record HKCardRevisionListRow(
-        Guid Id, int RevisionNumber, DateTime? AcceptedAtUtc);
 
     /// <summary>Строка снимка позиции для расчёта итогов реестра.</summary>
     private sealed record HKCardRevisionNodeRow(

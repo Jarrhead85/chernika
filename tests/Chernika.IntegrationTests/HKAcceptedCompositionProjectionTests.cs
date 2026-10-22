@@ -1,6 +1,7 @@
 using Chernika.Domain.Enums;
 using Chernika.Domain.Structure;
 using Chernika.Infrastructure.Services;
+using Chernika.Web.Components;
 using Xunit;
 
 namespace Chernika.IntegrationTests;
@@ -55,6 +56,29 @@ public class HKAcceptedCompositionProjectionTests
                 },
             DateTime.UtcNow, "user-1");
     }
+
+    /// <summary>Снимок с произвольным составом: разделы, позиции и строки.</summary>
+    private static HKAcceptedStructureDto SnapshotWith(
+        IReadOnlyList<HKAcceptedNodeDto> nodes,
+        IReadOnlyList<HKAcceptedItemDto> items,
+        IReadOnlyList<HKAcceptedSectionDto> sections) =>
+        new(
+            Guid.NewGuid(), 1, DateTime.UtcNow,
+            "Карточка ХК", "ХК-2026-1", "v1026", HKObjectLevel.Aggregate,
+            null, null, null, null, null, false,
+            nodes, items, sections,
+            DateTime.UtcNow, "user-1");
+
+    private static HKAcceptedNodeDto Node(
+        Guid id, Guid? parentId, string name, int sortOrder = 0,
+        Guid? sectionId = null, HKObjectLevel level = HKObjectLevel.Aggregate) =>
+        new(id, parentId, level, name, 1, sortOrder, sectionId);
+
+    private static HKAcceptedItemDto Item(
+        Guid id, Guid? nodeId, int sortOrder = 0, Guid? sectionId = null) =>
+        new(id, nodeId, Guid.NewGuid(), "АС-005", "Деталь",
+            1, 100m, "г", null, null, sortOrder, sectionId,
+            new List<HKAcceptedMaterialDto>());
 
     [Fact]
     public void Build_TreeAndTotals_ReferToTheSameRevision()
@@ -160,6 +184,300 @@ public class HKAcceptedCompositionProjectionTests
         Assert.Equal(4, contribution.Quantity);
         Assert.Equal(12m, contribution.Multiplier);
         Assert.Equal(6000m, contribution.BaseValue);
+    }
+
+    // ── Группировка «Без раздела» ──
+
+    /// <summary>
+    /// Виртуальная группа открывается перед веткой без раздела и не
+    /// появляется внутри неё: потомки ветки остаются в группе.
+    /// </summary>
+    [Fact]
+    public void Build_WithoutSectionBranch_OpensGroupBeforeBranch_AndKeepsDescendantsInside()
+    {
+        var root = Guid.NewGuid();
+        var child = Guid.NewGuid();
+        var item = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(root, null, "Верхняя позиция", 0),
+                Node(child, root, "Узел", 0, level: HKObjectLevel.Node)
+            },
+            new List<HKAcceptedItemDto> { Item(item, child) },
+            new List<HKAcceptedSectionDto>()));
+
+        var group = Assert.Single(view.Rows.Where(r => r.Kind == HKStructureRowKind.Section));
+        Assert.Equal("Без раздела", group.Name);
+
+        // Заголовок стоит перед веткой, а не внутри её.
+        var groupIndex = view.Rows.ToList().IndexOf(group);
+        var rootIndex = view.Rows.ToList().FindIndex(r => r.NodeId == root);
+        Assert.True(groupIndex < rootIndex, "Заголовок группы должен идти перед веткой.");
+
+        // Внутри ветки своих заголовков нет: их ровно один на весь блок.
+        Assert.Equal(1, view.Rows.Count(r => r.Kind == HKStructureRowKind.Section));
+
+        // Нумерация не изменилась: виртуальная группа номера не занимает.
+        Assert.Equal("1", view.Rows.Single(r => r.NodeId == root).Number);
+        Assert.Equal("1.1", view.Rows.Single(r => r.NodeId == child).Number);
+        Assert.Equal("1.1.1", view.Rows.Single(r => r.ItemId == item).Number);
+    }
+
+    /// <summary>Соседние ветки без раздела образуют один блок с одной группой.</summary>
+    [Fact]
+    public void Build_AdjacentBranchesWithoutSection_ShareOneGroup()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(first, null, "Первая ветка", 0),
+                Node(second, null, "Вторая ветка", 1)
+            },
+            new List<HKAcceptedItemDto>(),
+            new List<HKAcceptedSectionDto>()));
+
+        var group = Assert.Single(view.Rows.Where(r => r.Kind == HKStructureRowKind.Section));
+        Assert.Equal("Без раздела", group.Name);
+
+        // Обе ветки идут после заголовка группы.
+        var groupIndex = view.Rows.ToList().IndexOf(group);
+        Assert.True(groupIndex < view.Rows.ToList().FindIndex(r => r.NodeId == first));
+        Assert.True(view.Rows.ToList().FindIndex(r => r.NodeId == first) < view.Rows.ToList().FindIndex(r => r.NodeId == second));
+    }
+
+    /// <summary>
+    /// Блоки без раздела, разделённые другим разделом, показываются каждый
+    /// со своей группой.
+    /// </summary>
+    [Fact]
+    public void Build_WithoutSectionBlocksSeparatedBySection_RepeatGroup()
+    {
+        var sectionId = Guid.NewGuid();
+        var before = Guid.NewGuid();
+        var inSection = Guid.NewGuid();
+        var after = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(before, null, "Ветка до раздела", 0),
+                Node(inSection, null, "Позиция раздела", 1, sectionId),
+                Node(after, null, "Ветка после раздела", 2)
+            },
+            new List<HKAcceptedItemDto>(),
+            new List<HKAcceptedSectionDto>
+            {
+                new(sectionId, HKCardSectionType.Oils, "Масла", 1)
+            }));
+
+        var groups = view.Rows.Where(r => r.Kind == HKStructureRowKind.Section).ToList();
+
+        // Два блока без раздела — две группы, и у каждой свой ключ.
+        var withoutSectionGroups = groups.Where(g => g.Name == "Без раздела").ToList();
+        Assert.Equal(2, withoutSectionGroups.Count);
+        Assert.NotEqual(withoutSectionGroups[0].GroupKey, withoutSectionGroups[1].GroupKey);
+        Assert.All(withoutSectionGroups, g => Assert.False(string.IsNullOrWhiteSpace(g.GroupKey)));
+
+        // Вторая группа стоит после раздела.
+        var sectionIndex = view.Rows.ToList().FindIndex(r => r.Kind == HKStructureRowKind.Section && r.SectionId == sectionId);
+        var secondGroupIndex = view.Rows.ToList().IndexOf(withoutSectionGroups[1]);
+        Assert.True(sectionIndex < secondGroupIndex);
+    }
+
+    /// <summary>
+    /// Ключи строк дерева уникальны и не зависят от фильтра: повторяющиеся
+    /// @key в дереве Blazor недопустимы.
+    /// </summary>
+    [Fact]
+    public void Build_RowKeys_AreUnique_AndIndependentOfFiltering()
+    {
+        var sectionId = Guid.NewGuid();
+        var root = Guid.NewGuid();
+        var child = Guid.NewGuid();
+        var item = Guid.NewGuid();
+        var lonely = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(root, null, "Верхняя позиция", 0, sectionId),
+                Node(child, root, "Узел", 0, level: HKObjectLevel.Node),
+                Node(lonely, null, "Ветка без раздела", 1)
+            },
+            new List<HKAcceptedItemDto> { Item(item, child) },
+            new List<HKAcceptedSectionDto>
+            {
+                new(sectionId, HKCardSectionType.Oils, "Масла", 0)
+            }));
+
+        var keys = view.Rows.Select(HKCompositionRowKey.Of).ToList();
+
+        Assert.Equal(keys.Count, keys.Distinct().Count());
+        Assert.All(keys, k => Assert.False(string.IsNullOrWhiteSpace(k)));
+
+        // Поиск по названию не меняет идентичность строк.
+        var filtered = view.Rows.Where(r => r.Name?.Contains("Узел") == true).ToList();
+        Assert.NotEmpty(filtered);
+        Assert.All(filtered, r => Assert.Contains(HKCompositionRowKey.Of(r), keys));
+    }
+
+    // ── Эффективный раздел и счётчики ──
+
+    /// <summary>
+    /// Вложенная позиция наследует раздел корня, даже если родитель стоит в
+    /// наборе позже потомка.
+    /// </summary>
+    [Fact]
+    public void Build_ParentAfterChildInInput_StillInheritsSection()
+    {
+        var sectionId = Guid.NewGuid();
+        var parent = Guid.NewGuid();
+        var child = Guid.NewGuid();
+
+        // Родитель идёт позже потомка и позже по SortOrder: прежний обход
+        // считал потомка безраздельным.
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(child, parent, "Узел", 0, level: HKObjectLevel.Node),
+                Node(parent, null, "Верхняя позиция", 1, sectionId)
+            },
+            new List<HKAcceptedItemDto>(),
+            new List<HKAcceptedSectionDto>
+            {
+                new(sectionId, HKCardSectionType.Oils, "Масла", 0)
+            }));
+
+        var section = Assert.Single(view.Sections.Where(s => s.SectionId == sectionId));
+        Assert.Equal(2, section.PositionCount);
+        Assert.Equal(0, section.ItemCount);
+        Assert.DoesNotContain(view.Sections, s => s.Name == "Без раздела");
+    }
+
+    /// <summary>
+    /// Счётчики раздела включают и корневые записи раздела, и записи под
+    /// позициями любой вложенности.
+    /// </summary>
+    [Fact]
+    public void Build_SectionCounters_CountRootAndNestedRecords()
+    {
+        var sectionId = Guid.NewGuid();
+        var rootPosition = Guid.NewGuid();
+        var nestedPosition = Guid.NewGuid();
+        var itemUnderPosition = Guid.NewGuid();
+        var rootItem = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(rootPosition, null, "Верхняя позиция", 0, sectionId),
+                Node(nestedPosition, rootPosition, "Узел", 0, level: HKObjectLevel.Node)
+            },
+            new List<HKAcceptedItemDto>
+            {
+                Item(itemUnderPosition, nestedPosition),
+                Item(rootItem, null, 1, sectionId)
+            },
+            new List<HKAcceptedSectionDto>
+            {
+                new(sectionId, HKCardSectionType.Oils, "Масла", 0)
+            }));
+
+        var section = Assert.Single(view.Sections.Where(s => s.SectionId == sectionId));
+
+        // Две позиции: верхняя и вложенная. Две строки: под позицией и
+        // корневая строка СЕ самого раздела.
+        Assert.Equal(2, section.PositionCount);
+        Assert.Equal(2, section.ItemCount);
+
+        // Сумма счётчиков равна общему количеству записей редакции.
+        Assert.Equal(view.PositionCount, view.Sections.Sum(s => s.PositionCount));
+        Assert.Equal(view.ItemCount, view.Sections.Sum(s => s.ItemCount));
+    }
+
+    /// <summary>
+    /// В группу «Без раздела» входят и вложенные записи её веток.
+    /// </summary>
+    [Fact]
+    public void Build_WithoutSectionCounters_IncludeNestedRecords()
+    {
+        var root = Guid.NewGuid();
+        var nested = Guid.NewGuid();
+        var item = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(root, null, "Верхняя позиция", 0),
+                Node(nested, root, "Узел", 0, level: HKObjectLevel.Node)
+            },
+            new List<HKAcceptedItemDto> { Item(item, nested) },
+            new List<HKAcceptedSectionDto>()));
+
+        var withoutSection = Assert.Single(view.Sections.Where(s => s.Name == "Без раздела"));
+
+        Assert.Equal(2, withoutSection.PositionCount);
+        Assert.Equal(1, withoutSection.ItemCount);
+
+        Assert.Equal(view.PositionCount, view.Sections.Sum(s => s.PositionCount));
+        Assert.Equal(view.ItemCount, view.Sections.Sum(s => s.ItemCount));
+    }
+
+    /// <summary>
+    /// Повреждённая структура не выдаётся за корректную: отсутствующий
+    /// родитель попадает в диагностику, а итог считается неполным.
+    /// </summary>
+    [Fact]
+    public void Build_DamagedStructure_ReportsDiagnostic_AndIsNotComplete()
+    {
+        var orphan = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(orphan, Guid.NewGuid(), "Сирота", 0)
+            },
+            new List<HKAcceptedItemDto>(),
+            new List<HKAcceptedSectionDto>()));
+
+        Assert.False(view.IsComplete);
+        Assert.Contains(view.Diagnostics, d => d.Contains("родитель"));
+    }
+
+    /// <summary>
+    /// Исправление группировки и счётчиков не меняет нормативные итоги:
+    /// масса карты остаётся той же.
+    /// </summary>
+    [Fact]
+    public void Build_CounterFix_DoesNotChangeMassTotals()
+    {
+        var sectionId = Guid.NewGuid();
+        var root = Guid.NewGuid();
+        var nested = Guid.NewGuid();
+        var item = Guid.NewGuid();
+
+        var view = HKAcceptedCompositionProjection.Build(Guid.NewGuid(), SnapshotWith(
+            new List<HKAcceptedNodeDto>
+            {
+                Node(root, null, "Верхняя позиция", 0, sectionId),
+                Node(nested, root, "Узел", 0, level: HKObjectLevel.Node)
+            },
+            new List<HKAcceptedItemDto> { Item(item, nested) },
+            new List<HKAcceptedSectionDto>
+            {
+                new(sectionId, HKCardSectionType.Oils, "Масла", 0)
+            }));
+
+        // Одна строка по 100 г: итог карты — 100 г в базовой единице.
+        Assert.Equal(100m, Mass(view.Overall));
+
+        var section = Assert.Single(view.Sections.Where(s => s.SectionId == sectionId));
+        Assert.Equal(100m, Mass(section.Totals));
     }
 
     // ── Уровень карты по принятой структуре ──

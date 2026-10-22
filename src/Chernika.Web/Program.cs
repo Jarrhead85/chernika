@@ -98,6 +98,10 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddScoped<HKCardService>();
 builder.Services.AddScoped<HKApprovalService>();
 builder.Services.AddScoped<HKCardRevisionService>();
+// Просмотр принятого состава работает с узким контрактом чтения: подменять
+// его нечем, а проверять компонент удобно без всей службы.
+builder.Services.AddScoped<IHKAcceptedCompositionReader>(
+    sp => sp.GetRequiredService<HKCardRevisionService>());
 builder.Services.AddScoped<HKLibraryRegistrationService>();
 builder.Services.AddScoped<HKCardItemService>();
 builder.Services.AddScoped<HKCardValidationService>();
