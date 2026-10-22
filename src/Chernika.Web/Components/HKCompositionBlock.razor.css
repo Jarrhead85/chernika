@@ -133,39 +133,71 @@
     vertical-align: bottom;
 }
 
-.hkCompositionNum {
-    width: 76px;
-    min-width: 76px;
+/* Ширины колонок — в долях: при расширении окна масштабируются все
+   колонки, а не одна «Наименование». */
+.hkCompositionTable th:nth-child(1),
+.hkCompositionTable td:nth-child(1) {
+    width: 7%;
+}
+
+.hkCompositionTable th:nth-child(2),
+.hkCompositionTable td:nth-child(2) {
+    width: 34%;
+    max-width: none;
+}
+
+.hkCompositionTable th:nth-child(3),
+.hkCompositionTable td:nth-child(3) {
+    width: 10%;
+}
+
+/* «Экз. в ХК» — шире остальных числовых колонок. */
+.hkCompositionTable th:nth-child(4),
+.hkCompositionTable td:nth-child(4) {
+    width: 13%;
+}
+
+.hkCompositionTable th:nth-child(5),
+.hkCompositionTable td:nth-child(5) {
+    width: 18%;
+}
+
+.hkCompositionTable th:nth-child(6),
+.hkCompositionTable td:nth-child(6) {
+    width: 18%;
+}
+
+/* Числовые колонки — по центру своих колонок. «Наименование» остаётся
+   слева: правило ниже перебивает общее выравнивание таблицы. */
+.hkCompositionTable th:nth-child(1),
+.hkCompositionTable td:nth-child(1),
+.hkCompositionTable th:nth-child(3),
+.hkCompositionTable td:nth-child(3),
+.hkCompositionTable th:nth-child(4),
+.hkCompositionTable td:nth-child(4),
+.hkCompositionTable th:nth-child(5),
+.hkCompositionTable td:nth-child(5),
+.hkCompositionTable th:nth-child(6),
+.hkCompositionTable td:nth-child(6) {
     text-align: center;
+}
+
+.hkCompositionNum {
     font-family: var(--mono);
     white-space: nowrap;
 }
 
 .hkCompositionQty {
-    width: 64px;
-    min-width: 64px;
-    text-align: center;
     font-family: var(--mono);
 }
 
 .hkCompositionMass,
 .hkCompositionVolume {
-    width: 128px;
-    min-width: 128px;
-    text-align: center;
     font-family: var(--mono);
     white-space: nowrap;
     /* Значение не выходит за границы своей колонки. */
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* Наименование забирает оставшуюся ширину формы, длинное название
-   обрезается многоточием. */
-.hkCompositionTable th:nth-child(2),
-.hkCompositionTable td:nth-child(2) {
-    width: auto;
-    max-width: none;
 }
 
 .hkCompositionIndent {
@@ -372,14 +404,12 @@
     flex-wrap: wrap;
 }
 
-/* Таблица итогов — в естественной ширине: ужимать её не нужно, рядом
-   помещается блок «Вклад разделов». */
+/* Таблица итогов занимает свободное место строки и растёт вместе с окном;
+   блок «Вклад разделов» сохраняет свою ширину. */
 .hkCompositionTotalsLayout > .hkCompositionTotalsTable {
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     width: auto;
     min-width: 0;
-    /* Таблица шире: колонка «Полнота» убрана, освободившееся место отдано
-       значениям. */
     font-size: 13px;
 }
 
@@ -399,8 +429,10 @@
     align-items: flex-start;
     /* По центру между итогами и концом структурной формы. */
     justify-content: center;
-    flex: 1 1 auto;
-    min-width: 0;
+    /* Своя ширина: свободное место строки забирает таблица итогов, она же
+       подстраивается под окно. Минимум — чтобы легенды диаграмм читались. */
+    flex: 0 0 auto;
+    min-width: 300px;
     align-self: stretch;
 }
 
