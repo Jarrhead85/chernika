@@ -5400,6 +5400,22 @@
         statusStr = result.CardStatus.ToString();
         loadedRowVersion = result.CardRowVersion;
 
+        // Замена основания может переписать строку карты (сброс согласования
+        // меняет производный статус, например Approved→Draft), увеличив её
+        // RowVersion. Отображаемый объект card живёт вне change tracker EF и
+        // не всегда синхронизируется автоматически: если его экземпляр не
+        // совпал с отслеживаемым при записи, следующее сохранение черновика
+        // или отправка прочитают устаревшую версию и получат ложный конфликт
+        // «карта изменена другим пользователем». Привязываемся к свежему
+        // значению из базы. Блокировка НЕ запрашивается: метод вызывается
+        // только из операций, уже удерживающих CircuitDbLock (не реентерабельный).
+        var freshRowVersion = await HKCardService.GetRowVersionAsync(card.Id);
+        if (freshRowVersion.HasValue)
+        {
+            card.RowVersion = freshRowVersion.Value;
+            loadedRowVersion = freshRowVersion.Value;
+        }
+
         if (result.ApprovalInvalidated)
         {
             _attachmentNotice = "Файл основания изменён: прежнее согласование сброшено. " +
